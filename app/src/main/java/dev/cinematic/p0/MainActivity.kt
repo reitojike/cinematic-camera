@@ -15,6 +15,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -30,6 +31,11 @@ class MainActivity : ComponentActivity() {
         permission = checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
         setContent {
             MaterialTheme {
+                var reportPickerPending by rememberSaveable { mutableStateOf(false) }
+                val reportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
+                    reportPickerPending = false
+                    if (uri == null) probe.reportPickerCancelled() else probe.exportVerificationReport(uri)
+                }
                 val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
                     permission = granted
                     probe.log.write("PERMISSION granted=$granted")
@@ -45,6 +51,13 @@ class MainActivity : ComponentActivity() {
                         verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("Cinematic Camera — P0.5 probe", style = MaterialTheme.typography.titleLarge)
                         Text("Pixel 9a / CameraX 1.6.2 / ${BuildConfig.VERSION_NAME}")
+                        Button(onClick = {
+                            try {
+                                reportPickerPending = true
+                                reportLauncher.launch("cinematic-verification-${System.currentTimeMillis()}.txt")
+                            } catch (failure: Exception) { reportPickerPending = false; probe.reportPickerFailure(failure) }
+                        }, enabled = !reportPickerPending && !probe.exportingReport && !probe.busy && !probe.recordingBusy) { Text("Save verification report") }
+                        Text("Report contains device build, settings and a bounded log tail; no media bytes. Review before sharing. No automatic upload.")
                         if (!permission) {
                             Text("Camera permission required. If denied permanently, enable Camera in Android app settings.")
                             Button(onClick = { launcher.launch(Manifest.permission.CAMERA) }) { Text("Grant camera permission") }

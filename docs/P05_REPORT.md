@@ -1,6 +1,6 @@
 # P0.5 検証レポート
 
-対象: `dev.cinematic.p0` / `0.0.5-p05` / CameraX **1.6.2**
+対象: `dev.cinematic.p0` / `0.0.6-p05` / CameraX **1.6.2**
 
 関連: [Issue #8](https://github.com/reitojike/cinematic-camera/issues/8) / [spec](../specs/002-live-capture/spec.md) / [plan](../specs/002-live-capture/plan.md)
 
@@ -47,8 +47,9 @@ JPEGはheader寸法、DNGはExif寸法を記録するが、DNG全体のdecode証
 ## 機械的検証
 
 - ローカル `:app:assembleDebug :app:testDebugUnitTest :app:lintDebug` を実行。
-- unit **30件、failure/error/skip 0**。既存11件に、能力候補選択・希望値fallback・録画状態/旧token隔離・
-  音声途中失敗/無音警告・出力close/検証/公開/cleanupの12件、EV/thermalの3件、override能力/範囲/fallback/保存保持の4件を追加。
+- unit **33件、failure/error/skip 0**。既存11件に、能力候補選択・希望値fallback・録画状態/旧token隔離・
+  音声途中失敗/無音警告・出力close/検証/公開/cleanupの12件、EV/thermalの3件、override能力/範囲/fallback/保存保持の4件、
+  report UTF-8/tail境界とopen/write/flush/close失敗の3件を追加。
 - lint **error 0 / warning 9**。Gradle更新案内1、任意のKTX提案5、metadata記録に使う標準ExifInterfaceへの
   Jetpack推奨3。baselineや抑制は追加しない。Exif読み込みは素材の現像/有効性判定に使用しない。
 - API1.6.2の実artifactでcompileし、MediaStore/音声/SessionConfigの署名を確認。
@@ -109,3 +110,18 @@ AE anti-bandingはMANUAL AEで効果を持たない。30件のunit/build/lint成
 追加の手動検証は、STILL/CINEごとのWB/MF/anti-banding復元、WB変更後もmanual ISO/時間が残ること、
 MF/AF往復、AUTO全解除、色照明下のpreset比較、50/60Hzとmanual shutter比較。
 すべて実機未確認であり、原本/素材の自動撮影・公開はしていない。
+
+## B3: 検証レポートのSAF保存
+
+[Issue #17](https://github.com/reitojike/cinematic-camera/issues/17)の範囲で、Save verification reportから
+標準CreateDocument(text/plain)を起動し、本人が選んだ文書へUTF-8で保存する。新permission/persistable grantはない。
+main上の状態/要求/実結果/能力snapshotと、IO上で後から読む現在session log tailを区別して時刻を示す。
+tailは最大128KiB、最初の部分行/UTF-8断片を捨て、省略と不完全なlogであることを明記する。
+
+出力はIO executor上で行い、write/flush/closeすべて完了してから成功表示する。
+provider/書込/close失敗は部分文書が残る可能性を表示し、文書や写真原本を勝手に削除しない。
+取消・picker起動失敗・重複・録画/Finalize中を扱い、旧Activity終了後はUIを書き換えずログへ結果を残す。
+
+写真/動画/音声本体・GPS・端末serialを追加取得しない。レポートは機種/build/設定/出力URI等を含むため、
+本人が内容を確認してから共有する。アプリからIssue/クラウドへの自動送信はない。
+SAFでの保存/取消/権限失敗/読み戻し、録画中の抑止、端末での内容確認は未検証。
