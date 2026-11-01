@@ -30,3 +30,10 @@ LibRaw / NDK、独自現像、動画、GPU / LUT、21:9出力、共有、ギャ�
 ## CIとAPK配布
 
 think-canvasの運用をP0向けに絞った[運用・配布手順](docs/OPERATIONS.md)を参照してください。main初期化後は作業branch / Draft PRを使います。最小CIはbuild / unit / lint、配布は7日間のActions artifactとmainから作る明示tagのpre-releaseです。P0 APKは一時debug署名で、継続更新用の固定署名は未導入です。非公開repoのため、GitHubへのログインとread accessが必要です。
+
+## 仕様とSpec Kit
+
+[GitHub Spec Kit 1.2.5](docs/SPEC_KIT.md)をCodex skillsで利用します。[P0 spec](specs/001-p0-camera-probe/spec.md)、
+[plan](specs/001-p0-camera-probe/plan.md)、[tasks](specs/001-p0-camera-probe/tasks.md)で合意内容・設計・残件を追跡します。
+実装済みのチェックとPixel 9a実機ACの合格は別です。インストールとカメラ操作にはユーザー報告がありますが、
+実機ACは未完了、P1未判定です。

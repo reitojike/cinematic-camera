@@ -45,4 +45,5 @@ Upgrade to GitHub Pro or make this repository public to enable this feature.
 
 固定署名鍵の生成・Secrets登録・think-canvasの秘密のコピーは行っていない。P0は一時debug署名であり、別runのAPKとの上書き更新互換は保証しない。Pixel 9aへは利用者がGitHubにログインしてAPKを取得し、[配布・インストール手順](OPERATIONS.md#pixel-9aで受け取る)に従って手動でインストールする。
 
-公開範囲は利用者の確認待ちで、現時点ではprivateを維持している。[公開前検査](PUBLICATION_REVIEW.md)を追加し、サーバー保護を有効にするためだけの公開化は行っていない。
+利用者がリポジトリ全体のpublic化を明示承認した。追加したSpec Kitを含む[公開前検査](PUBLICATION_REVIEW.md)を
+完了してから切り替える。privateでの保護制約とは別の、利用者が明示した公開方針として扱う。
