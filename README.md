@@ -61,6 +61,9 @@ FIT_CENTERの黒帯がsensor範囲内へ変換される場合は照会がtrueに
 対応するAE/AWB lockをAUTO時だけ一時要求できます。locksは保存せず、mode/camera/rebind/StopStart/AUTO全解除で解除します。
 MANUAL露出はAE lock、固定WB presetはAWB lockを解除します。同一bindingの背景復帰で要求が残る場合は実結果を確認してください。
 AE lock中もEV変更で露出が変化し得ます。受付はセンサーの実ロックや画質を保証しません。
+撮影要求→ファイルcallback→公開→UI通知、Record/Stop→event→出力処理のelapsed時間もログへ記録します。
+これはアプリ段階の時間で、sensor shutter lag/codec遅延/Gallery反映時間ではありません。
+sensorPeriodFpsは実FRAME_DURATIONの逆数サンプルで、preview描画fps・MP4の記録fpsとは別です。
 `Save verification report`はAndroid標準の文書保存画面から、現在の設定・能力・CaptureResultと最大128KiBの
 現在セッションlog tailをUTF-8で保存します。写真/動画/音声本体は含めません。録画/Finalize中は実行できません。
 省略された過去ログは切断表示し、保存/close失敗では選択文書が部分的な場合があることを示します。

@@ -500,9 +500,11 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                     val now = SystemClock.elapsedRealtime()
                     if (!still && now - lastSample < 1000) return
                     lastSample = now
+                    val periodRate = Exposure.sensorPeriodFps(result.get(CaptureResult.SENSOR_FRAME_DURATION))
+                        ?.let { String.format(java.util.Locale.ROOT, "%.2f", it) } ?: "unknown"
                     val locks = "requestAELock=${request.get(CaptureRequest.CONTROL_AE_LOCK)} actualAELock=${result.get(CaptureResult.CONTROL_AE_LOCK)} aeState=${result.get(CaptureResult.CONTROL_AE_STATE)} requestAWBLock=${request.get(CaptureRequest.CONTROL_AWB_LOCK)} actualAWBLock=${result.get(CaptureResult.CONTROL_AWB_LOCK)}"
                     val regions = "requestAFRegions=${request.get(CaptureRequest.CONTROL_AF_REGIONS)?.contentToString()} actualAFRegions=${result.get(CaptureResult.CONTROL_AF_REGIONS)?.contentToString()} requestAERegions=${request.get(CaptureRequest.CONTROL_AE_REGIONS)?.contentToString()} actualAERegions=${result.get(CaptureResult.CONTROL_AE_REGIONS)?.contentToString()}"
-                    val actual = "$locks $regions frame=${result.frameNumber} sensorTimestamp=${result.get(CaptureResult.SENSOR_TIMESTAMP)} intent=${request.get(CaptureRequest.CONTROL_CAPTURE_INTENT)} requestAE=${request.get(CaptureRequest.CONTROL_AE_MODE)} requestISO=${request.get(CaptureRequest.SENSOR_SENSITIVITY)} requestNs=${request.get(CaptureRequest.SENSOR_EXPOSURE_TIME)} actualAE=${result.get(CaptureResult.CONTROL_AE_MODE)} actualISO=${result.get(CaptureResult.SENSOR_SENSITIVITY)} actualNs=${result.get(CaptureResult.SENSOR_EXPOSURE_TIME)} frameDurationNs=${result.get(CaptureResult.SENSOR_FRAME_DURATION)} requestAF=${request.get(CaptureRequest.CONTROL_AF_MODE)} actualAF=${result.get(CaptureResult.CONTROL_AF_MODE)} afState=${result.get(CaptureResult.CONTROL_AF_STATE)} requestFocusLensUnits=${request.get(CaptureRequest.LENS_FOCUS_DISTANCE)} actualFocusLensUnits=${result.get(CaptureResult.LENS_FOCUS_DISTANCE)} requestAWB=${request.get(CaptureRequest.CONTROL_AWB_MODE)} actualAWB=${result.get(CaptureResult.CONTROL_AWB_MODE)} awbState=${result.get(CaptureResult.CONTROL_AWB_STATE)} requestEV=${request.get(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION)} actualEV=${result.get(CaptureResult.CONTROL_AE_EXPOSURE_COMPENSATION)} requestAntiBanding=${request.get(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE)} actualAntiBanding=${result.get(CaptureResult.CONTROL_AE_ANTIBANDING_MODE)} sceneFlicker=${result.get(CaptureResult.STATISTICS_SCENE_FLICKER)}"
+                    val actual = "sensorPeriodFps=$periodRate (period sample; not preview/encoded FPS) $locks $regions frame=${result.frameNumber} sensorTimestamp=${result.get(CaptureResult.SENSOR_TIMESTAMP)} intent=${request.get(CaptureRequest.CONTROL_CAPTURE_INTENT)} requestAE=${request.get(CaptureRequest.CONTROL_AE_MODE)} requestISO=${request.get(CaptureRequest.SENSOR_SENSITIVITY)} requestNs=${request.get(CaptureRequest.SENSOR_EXPOSURE_TIME)} actualAE=${result.get(CaptureResult.CONTROL_AE_MODE)} actualISO=${result.get(CaptureResult.SENSOR_SENSITIVITY)} actualNs=${result.get(CaptureResult.SENSOR_EXPOSURE_TIME)} frameDurationNs=${result.get(CaptureResult.SENSOR_FRAME_DURATION)} requestAF=${request.get(CaptureRequest.CONTROL_AF_MODE)} actualAF=${result.get(CaptureResult.CONTROL_AF_MODE)} afState=${result.get(CaptureResult.CONTROL_AF_STATE)} requestFocusLensUnits=${request.get(CaptureRequest.LENS_FOCUS_DISTANCE)} actualFocusLensUnits=${result.get(CaptureResult.LENS_FOCUS_DISTANCE)} requestAWB=${request.get(CaptureRequest.CONTROL_AWB_MODE)} actualAWB=${result.get(CaptureResult.CONTROL_AWB_MODE)} awbState=${result.get(CaptureResult.CONTROL_AWB_STATE)} requestEV=${request.get(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION)} actualEV=${result.get(CaptureResult.CONTROL_AE_EXPOSURE_COMPENSATION)} requestAntiBanding=${request.get(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE)} actualAntiBanding=${result.get(CaptureResult.CONTROL_AE_ANTIBANDING_MODE)} sceneFlicker=${result.get(CaptureResult.STATISTICS_SCENE_FLICKER)}"
                     main.execute {
                         if (generation == epoch && !closed) {
                             measured = actual
@@ -667,6 +669,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         if (!controlReady) { event("Capture disabled: exposure control not accepted; use AUTO or stop/restart"); return }
         val capture = imageCapture ?: return
         val token = UUID.randomUUID().toString()
+        val appCaptureStart = SystemClock.elapsedRealtime()
         val generation = epoch
         val cameraId = selectedId
         val captureFormat = format
@@ -681,6 +684,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             }
         }
         fun failed(e: Exception) {
+            log.write("CAPTURE_TIMING token=$token failureAfterAppRequestMs=${SystemClock.elapsedRealtime() - appCaptureStart}; not sensor shutter lag")
             if (isCurrent()) {
                 busy = false; activeCaptureToken = null
                 error("capture/shared save token=$token", e)
@@ -705,7 +709,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             log.write("CAPTURE_BEGIN token=$token id=$cameraId format=${formatName(captureFormat)} desired=[$desired] selectedResolution=${capture.resolutionInfo?.resolution} target=${PhotoPublisher.RELATIVE_PATH}")
             val callback = object : ImageCapture.OnImageSavedCallback {
                 private fun fail(e: Exception) {
-                    if (terminal) { log.write("CAPTURE_LATE_CALLBACK_ERROR token=$token ${e.javaClass.simpleName}"); return }
+                    if (terminal) { log.write("CAPTURE_LATE_CALLBACK_ERROR token=$token afterAppRequestMs=${SystemClock.elapsedRealtime() - appCaptureStart} ${e.javaClass.simpleName}"); return }
                     terminal = true
                     mediaIo.execute { clean(staging) }
                     failed(e)
@@ -713,15 +717,20 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                 override fun onImageSaved(result: ImageCapture.OutputFileResults) {
                     try {
                         if (terminal) {
+                            log.write("CAPTURE_IGNORED_FILE_CALLBACK token=$token imageFormat=${result.imageFormat} afterAppRequestMs=${SystemClock.elapsedRealtime() - appCaptureStart}; terminal already handled")
                             if (!publishing) mediaIo.execute { clean(staging) }
                             return
                         }
                         check(result.imageFormat in expectedFormats) { "Unexpected camera output format ${result.imageFormat}" }
-                        if (!received.add(result.imageFormat) || received != expectedFormats) return
+                        if (!received.add(result.imageFormat)) return
+                        log.write("CAPTURE_FILE_CALLBACK token=$token imageFormat=${result.imageFormat} afterAppRequestMs=${SystemClock.elapsedRealtime() - appCaptureStart}; includes camera/file/callback delivery, not shutter lag")
+                        if (received != expectedFormats) return
                         terminal = true; publishing = true
+                        val allCallbacksAt = SystemClock.elapsedRealtime()
                         // CameraX has finished every file. Publish together off the UI thread.
                         mediaIo.execute {
                             try {
+                                val mediaWorkStart = SystemClock.elapsedRealtime()
                                 sources.forEach { source ->
                                     try {
                                         if (source.format == PhotoFormat.JPEG) {
@@ -739,7 +748,9 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                                 val photos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                                     PhotoPublisher(AndroidImageStore(context.applicationContext.contentResolver)).publish(sources)
                                 } else throw IllegalStateException("MediaStore saving requires Android 10+")
+                                val publishedAt = SystemClock.elapsedRealtime()
                                 main.execute {
+                                    log.write("CAPTURE_TIMING token=$token allFileCallbacksAfterAppRequestMs=${allCallbacksAt - appCaptureStart} ioQueueMs=${mediaWorkStart - allCallbacksAt} metadataAndPublishWorkMs=${publishedAt - mediaWorkStart} appRequestToPublishedMs=${publishedAt - appCaptureStart} publishToUiNotificationMs=${SystemClock.elapsedRealtime() - publishedAt}; app stages only, not sensor shutter lag")
                                     val current = isCurrent()
                                     if (current) { busy = false; activeCaptureToken = null }
                                     photos.forEach { photo ->

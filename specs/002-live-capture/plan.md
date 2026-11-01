@@ -270,8 +270,22 @@ requested/ACCEPTEDとactual AE/AWB lock・AE/AWB stateを別に記録する。AE
 AE OFFでのAWBの挙動には端末差があり、色の安定やちらつきのない移行を保証しない。実機の照明/EV/手動/preset/
 再bind/背景/動画の組合せは未検証として残す。新権限/use-case/AF lock/色gain/持続設定は追加しない。
 
+## P0.5-B6: 応答段階と周期サンプル（Issue #25）
+
+既存のcallback/保存とCaptureResultを使い、SystemClock.elapsedRealtimeの差分でアプリ内の段階を記録する。
+写真は要求→各形式file callback→全file完了→IO queue/metadata/publication→UI通知を分離し、
+RAW+JPEGや失敗/遅延callbackもtokenを維持する。動画は要求→Start通知、Stop要求→terminal通知、
+terminal→IO完了→UI通知を区別する。出力/cleanup・gate/epochを変えない。
+
+単一CaptureResultのSENSOR_FRAME_DURATIONが正なら逆数を周期換算fpsとして表示し、null/非正値はunknown。
+既存の1秒sample throttle後にだけ換算する。独自FPS estimator、毎frame画像処理、新use-case/権限は追加しない。
+アプリ時間はsensor shutter lag/codec遅延/Gallery indexing時間ではなく、周期サンプルはpreview描画や
+保存MP4のsample timestamp由来fpsを保証しない。Pixel 9aの条件別応答/周期/熱との関係は未確認とする。
+
 ## 公式資料による採用判断
 
+- [CaptureResultのframe duration](https://developer.android.com/reference/android/hardware/camera2/CaptureResult#SENSOR_FRAME_DURATION)：
+  センサー周期の値を単一サンプルとして扱う。アプリcallbackやpreview/保存動画のFPSへ読み替えない。
 - [PreviewViewの測光点](https://developer.android.com/reference/androidx/camera/view/PreviewView#getMeteringPointFactory())：
   ScaleType/layoutに従う標準変換を使い、未準備のinvalid点を安全に扱う。1.6.2実artifactでは
   full sensor範囲の判定と表示crop境界が別であることも確認し、全黒帯拒否を保証しない。

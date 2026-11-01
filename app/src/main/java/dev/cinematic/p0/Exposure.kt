@@ -6,6 +6,10 @@ import java.math.RoundingMode
 data class ManualExposure(val iso: Int, val exposureNs: Long)
 
 object Exposure {
+    /** Reciprocal of one reported sensor period, not preview-rendered or encoded-video FPS. */
+    fun sensorPeriodFps(frameDurationNs: Long?): Double? =
+        frameDurationNs?.takeIf { it > 0 }?.let { 1_000_000_000.0 / it }
+
     fun millisecondsToNs(text: String): Long = BigDecimal(text.trim())
         .multiply(BigDecimal(1_000_000)).setScale(0, RoundingMode.UNNECESSARY).longValueExact()
 

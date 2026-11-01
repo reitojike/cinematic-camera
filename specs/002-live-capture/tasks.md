@@ -1,4 +1,4 @@
-# Tasks: P0.5-A 最小STILL/CINE probe
+# Tasks: P0.5 撮影技術probe
 
 **Issue**: [#8](https://github.com/reitojike/cinematic-camera/issues/8)
 
@@ -78,3 +78,10 @@ P0証拠補完はIssue #4、運用設定はIssue #6。次のAF/WB/LED検証導�
 - [x] T039 `app/src/main/java/dev/cinematic/p0/CameraProbe.kt` / `MainActivity.kt` へ一時要求・単一snapshot・実lock観測と最小UIを追加する。
 - [x] T040 `app/src/test/java/dev/cinematic/p0/AutoLocksTest.kt` のgate/移行unit、build/lint・公開前検査・独立レビューを完了し、`docs/P05_REPORT.md` へ自動検証を記録する。最終headのcanonical/CIはIssue/PRで証跡を管理する。
 - [ ] T041 ユーザーが照明変化・EV/手動/preset・mode/rebind・背景・動画での実lock/stateを確認し、最終結果を `docs/P05_REPORT.md` へ統合する。
+
+## B6: 応答段階・sensor周期（Issue #25）
+
+- [x] T042 `app/src/main/java/dev/cinematic/p0/CameraProbe.kt` へ写真callback/公開/UI通知の段階別elapsed時間を追加する。
+- [x] T043 `app/src/main/java/dev/cinematic/p0/CineRecorder.kt` へRecord/Stop/terminal/IO/UI時間、`Exposure.kt` へ周期換算を追加する。
+- [x] T044 `app/src/test/java/dev/cinematic/p0/ExposureTest.kt` の値変換unit、build/lint・公開前検査・独立レビューを完了し、`docs/P05_REPORT.md` へ自動検証を記録する。最終headのcanonical/CIはIssue/PRで証跡を管理する。
+- [ ] T045 ユーザーが条件別のapp応答・sensor周期・MP4/描画fps・熱の関係を実機確認し、最終結果を `docs/P05_REPORT.md` へ統合する。

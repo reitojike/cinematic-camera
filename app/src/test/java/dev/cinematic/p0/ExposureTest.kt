@@ -4,6 +4,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ExposureTest {
+    @Test fun sensorPeriodConversionKeepsUnknownSeparateFromReportedRate() {
+        assertEquals(60.0, Exposure.sensorPeriodFps(16_666_667L)!!, .00001)
+        assertEquals(30.0, Exposure.sensorPeriodFps(33_333_333L)!!, .00001)
+        assertEquals(.5, Exposure.sensorPeriodFps(2_000_000_000L)!!, .00001)
+        assertNull(Exposure.sensorPeriodFps(null))
+        assertNull(Exposure.sensorPeriodFps(0))
+        assertNull(Exposure.sensorPeriodFps(-1))
+    }
+
     @Test fun convertsDecimalMillisecondsWithoutFloatLoss() {
         assertEquals(8_333_333L, Exposure.millisecondsToNs("8.333333"))
         assertEquals(1_000L, Exposure.millisecondsToNs("0.001"))

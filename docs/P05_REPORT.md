@@ -1,6 +1,6 @@
 # P0.5 検証レポート
 
-対象: `dev.cinematic.p0` / `0.0.8-p05` / CameraX **1.6.2**
+対象: `dev.cinematic.p0` / `0.0.9-p05` / CameraX **1.6.2**
 
 関連: [Issue #8](https://github.com/reitojike/cinematic-camera/issues/8) / [spec](../specs/002-live-capture/spec.md) / [plan](../specs/002-live-capture/plan.md)
 
@@ -47,10 +47,10 @@ JPEGはheader寸法、DNGはExif寸法を記録するが、DNG全体のdecode証
 ## 機械的検証
 
 - ローカル `:app:assembleDebug :app:testDebugUnitTest :app:lintDebug` を実行。
-- unit **36件、failure/error/skip 0**。既存11件に、能力候補選択・希望値fallback・録画状態/旧token隔離・
+- unit **37件、failure/error/skip 0**。既存11件に、能力候補選択・希望値fallback・録画状態/旧token隔離・
   音声途中失敗/無音警告・出力close/検証/公開/cleanupの12件、EV/thermalの3件、override能力/範囲/fallback/保存保持の4件、
   report UTF-8/tail境界とopen/write/flush/close失敗の3件、view座標変換/非finite/範囲/未準備の1件、
-  AE/AWB lockの能力/AUTO条件と不適用時解除の2件を追加。
+  AE/AWB lockの能力/AUTO条件と不適用時解除の2件、周期換算/unknownの1件を追加。
 - lint **error 0 / warning 9**。Gradle更新案内1、任意のKTX提案5、metadata記録に使う標準ExifInterfaceへの
   Jetpack推奨3。baselineや抑制は追加しない。Exif読み込みは素材の現像/有効性判定に使用しない。
 - API1.6.2の実artifactでcompileし、MediaStore/音声/SessionConfigの署名を確認。
@@ -159,3 +159,20 @@ Futureはepoch/closedで隔離し、同期/非同期失敗は状態unknownとAUT
 requested/ACCEPTEDとactual AE/AWB lock・AE/AWB stateを別に観測し、記録開始時のlock希望もログに残す。
 AE lock中もEVは露出を変え得る。AE OFF時のAWBは端末依存で、色安定・フリッカーなしの移行を保証しない。
 36件のunit/build/lint成功と、照明変化・EV/手動/preset・mode/rebind・背景・動画の実機結果は別であり、後者は未確認。
+
+## B6: アプリ応答段階とsensor周期サンプル
+
+[Issue #25](https://github.com/reitojike/cinematic-camera/issues/25)で、単調clockのelapsed差を既存のcallback/
+保存処理へ追加した。写真は要求→各形式file callback→全callback→IO queue/metadataと公開→UI通知を分ける。
+RAW+JPEGは両callbackを記録し、失敗/遅延callbackでもtokenに対応した時間を残す。
+動画は要求→Start event、最初のStop要求→terminal event、terminal→IO/検証/公開完了→UI通知を分ける。
+次のrecordingでStop時刻を初期化し、既存gate/token/epoch/cleanupを変えない。
+
+時間はアプリ操作/配送/IOを含む段階の観測であり、sensor shutter lagやcodecの処理遅延を分離計測したものではない。
+MediaStore公開のAPI戻り時刻は、Googleフォト等が一覧へ索引/表示する時刻でもない。
+CaptureResultの正のSENSOR_FRAME_DURATIONだけを逆数fpsへ換算し、null/非正値はunknownとする。
+既存1秒sample throttle後だけに換算し、preview描画fpsやMP4のsample timestamp由来fpsと区別する。
+新しい毎frame処理・独自推定・画像分析・use-case/permissionはない。
+
+37件のunit/build/lint成功は、Pixel 9aでの実際の応答時間・period/MP4/表示fps・熱との関係の検証ではない。
+同じカメラ/モード/照明/露出・形式で比較し、要求/実period/出力MP4/各app段階を別に記録する。実機条件は未確認。

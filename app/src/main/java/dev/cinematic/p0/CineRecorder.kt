@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.SystemClock
 import androidx.camera.video.FileDescriptorOutputOptions
 import androidx.camera.video.Recorder
 import androidx.camera.video.Recording
@@ -21,6 +22,7 @@ class CineRecorder(context: Context, private val event: (String) -> Unit, privat
     private val main = ContextCompat.getMainExecutor(app)
     private val gate = RecordingGate()
     private var recording: Recording? = null
+    private var stopRequestedAtMs: Long? = null
     var stage by mutableStateOf(RecordingStage.IDLE); private set
     var stats by mutableStateOf("No recording yet; quality/audio/device validation pending"); private set
     val busy get() = gate.busy
@@ -35,11 +37,16 @@ class CineRecorder(context: Context, private val event: (String) -> Unit, privat
             return
         }
         val token = UUID.randomUUID().toString()
+        val appRecordStart = SystemClock.elapsedRealtime()
         val audioNotes = AudioQualityNotes(audio)
+        stopRequestedAtMs = null
         gate.begin(token); refresh()
         var output: PendingVideoOutput? = null
         fun finalize(error: String?) {
             if (!gate.finalize(token)) return
+            val terminalAt = SystemClock.elapsedRealtime()
+            val stopToTerminalMs = stopRequestedAtMs?.let { terminalAt - it }
+            event("VIDEO_TIMING token=$token appRequestToTerminalMs=${terminalAt - appRecordStart} stopRequestToTerminalMs=$stopToTerminalMs; event notification, not codec/sensor latency")
             recording = null; refresh()
             val sink = output
             io.execute {
@@ -47,8 +54,10 @@ class CineRecorder(context: Context, private val event: (String) -> Unit, privat
                     check(sink != null) { error ?: "No recording output created" }
                     VideoPublication.finish(sink, error)
                 }
+                val ioFinishedAt = SystemClock.elapsedRealtime()
                 main.execute {
                     gate.complete(token); refresh()
+                    event("VIDEO_TIMING token=$token terminalToIoFinishedMs=${ioFinishedAt - terminalAt} appRequestToIoFinishedMs=${ioFinishedAt - appRecordStart} ioFinishedToUiNotificationMs=${SystemClock.elapsedRealtime() - ioFinishedAt} outputSuccess=${result.isSuccess}; app stages only")
                     result.fold(onSuccess = { file ->
                         val warning = audioNotes.warning(file.hasAudio)
                         stats = "Saved ${file.width}×${file.height}, ${file.durationMs} ms, sample fps=${file.sampleFps}, audioTrack=${file.hasAudio}$warning"
@@ -73,7 +82,10 @@ class CineRecorder(context: Context, private val event: (String) -> Unit, privat
                 audioNotes.observe(audioStats.hasError(), audioStats.errorCause?.message,
                     audioStats.audioState == AudioStats.AUDIO_STATE_SOURCE_SILENCED)
                 when (update) {
-                    is VideoRecordEvent.Start -> { gate.started(token); refresh(); event("VIDEO_START token=$token") }
+                    is VideoRecordEvent.Start -> {
+                        gate.started(token); refresh()
+                        event("VIDEO_START token=$token afterAppRecordRequestMs=${SystemClock.elapsedRealtime() - appRecordStart}; event notification, not sensor latency")
+                    }
                     is VideoRecordEvent.Status -> {
                         if (gate.token != token) return@recordEvent
                         val stat = update.recordingStats
@@ -94,6 +106,7 @@ class CineRecorder(context: Context, private val event: (String) -> Unit, privat
 
     fun stop(reason: String) {
         if (!gate.stop()) return
+        stopRequestedAtMs = SystemClock.elapsedRealtime()
         refresh(); event("VIDEO_STOP reason=$reason; awaiting Finalize and output publication")
         try { recording?.stop() }
         catch (failure: Exception) { event("ERROR video stop ${failure.message}; waiting for recorder Finalize") }
