@@ -39,3 +39,12 @@ P0証拠補完はIssue #4、運用設定はIssue #6。次のAF/WB/LED検証導�
 - [x] T015 EV範囲/モード制約とthermal方針を `app/src/main/java/dev/cinematic/p0/ProbeControls.kt` / `app/src/test/java/dev/cinematic/p0/ProbeControlsTest.kt` で検証する。
 - [x] T016 build/unit/lintと独立レビューを行い、`docs/P05_REPORT.md` へ確認結果・限界を記録する。canonical/CIの証跡はIssue/PRで管理する。
 - [ ] T017 ユーザーがAF追従・AE補正・LED/照明・熱の実機条件を確認し、`docs/P05_REPORT.md` へ最終結果を統合する。自動検証で代用しない。
+
+## B2: WB preset・MF・AE anti-banding（Issue #15）
+
+- [x] T018 対応mode/request key/校正とMF範囲を `app/src/main/java/dev/cinematic/p0/CameraReport.kt` / `SensorOverrides.kt` へ定義する。
+- [x] T019 単一snapshot・focus解除・AUTO全解除とmode別復元を `app/src/main/java/dev/cinematic/p0/CameraProbe.kt` へ統合する。
+- [x] T020 対応候補/不適用条件と要求/結果の最小UIを `app/src/main/java/dev/cinematic/p0/MainActivity.kt` へ追加する。
+- [x] T021 非対応・非finite・範囲端・独立fallbackを `app/src/test/java/dev/cinematic/p0/SensorOverridesTest.kt` で検証する。
+- [x] T022 build/unit/lint・公開前検査・独立レビューを完了し、`docs/P05_REPORT.md` へ最終自動検証を記録する。最終headのcanonical/CIはIssue/PRで管理する。
+- [ ] T023 ユーザーがWB色光比較、MF/AF往復、mode復元、AUTO全解除、LED条件を実機確認し、最終結果を `docs/P05_REPORT.md` へ統合する。

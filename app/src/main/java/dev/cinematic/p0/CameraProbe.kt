@@ -66,6 +66,10 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     var evStatus by mutableStateOf("No EV request"); private set
     var focusStatus by mutableStateOf("No focus/metering request"); private set
     var thermalStatus by mutableStateOf("OS thermal status unknown; not a temperature measurement"); private set
+    var overrides by mutableStateOf(SensorOverrides()); private set
+    var overrideStatus by mutableStateOf("CameraX defaults; no accepted overrides"); private set
+    var requestedFocus by mutableStateOf("0"); private set
+    private var appliedExposure: ManualExposure? = null
     private var thermalCode = -1
     private var removeThermalListener: (() -> Unit)? = null
     private var provider: ProcessCameraProvider? = null
@@ -179,7 +183,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         if (!owner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
             event("Recording requires a visible activity; retry Record after resume"); return
         }
-        cine.start(session.recorder, audioWanted, "${session.choice.label} exposure=[$desired]")
+        cine.start(session.recorder, audioWanted, "${session.choice.label} exposure=[$desired] overrides=[$overrides]")
     }
     fun stopRecording() { cine.stop("user") }
     fun reportAudioPermission(granted: Boolean) {
@@ -196,9 +200,9 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         val previewView = view ?: return
         try {
             check(previewView.width > 0 && previewView.height > 0) { "Preview layout not ready" }
-            var flags = if (selectedReport?.autoFocusAvailable == true) FocusMeteringAction.FLAG_AF else 0
+            var flags = if (selectedReport?.autoFocusAvailable == true && overrides.focusDistance == null) FocusMeteringAction.FLAG_AF else 0
             if (!manualExposure) flags = flags or FocusMeteringAction.FLAG_AE
-            check(flags != 0) { "No autofocus mode and AE is manual" }
+            check(flags != 0) { "AF unavailable or MF selected, and AE is manual; use AF/default or AUTO reset" }
             val point = previewView.meteringPointFactory.createPoint(previewView.width / 2f, previewView.height / 2f)
             val action = FocusMeteringAction.Builder(point, flags).setAutoCancelDuration(5, TimeUnit.SECONDS).build()
             check(c.cameraInfo.isFocusMeteringSupported(action)) { "CameraX center focus/metering unsupported" }
@@ -268,6 +272,95 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         format = value; preferences.put("format/$selectedId", value.toString()); bind()
     }
 
+    fun editFocus(value: String) { requestedFocus = value; preferences.put(exposureKey() + "/focusDraft", value) }
+    fun selectWhiteBalance(value: Int?) = changeOverrides(overrides.copy(whiteBalance = value), OverrideField.WHITE_BALANCE)
+    fun selectAntiBanding(value: Int?) = changeOverrides(overrides.copy(antiBanding = value), OverrideField.ANTI_BANDING)
+    fun restoreAutofocus() = changeOverrides(overrides.copy(focusDistance = null), OverrideField.FOCUS)
+    fun applyManualFocus() {
+        try { changeOverrides(overrides.copy(focusDistance = requestedFocus.trim().toFloat()), OverrideField.FOCUS) }
+        catch (failure: Exception) { error("manual focus input", failure) }
+    }
+
+    private fun saveOverrides(key: String, value: SensorOverrides) {
+        OverrideField.entries.forEach { field ->
+            value.persistencePatch(field).forEach { (name, saved) -> preferences.put("$key/$name", saved) }
+        }
+    }
+
+    private fun savedOverrides(key: String): SensorOverrides {
+        fun integer(name: String): Int? {
+            val text = preferences.text("$key/$name")
+            return text.toIntOrNull().also { if (text.isNotBlank() && it == null) log.write("OVERRIDE_FALLBACK invalid saved $name; CameraX default, request retained") }
+        }
+        val focusText = preferences.text("$key/focus")
+        val focus = focusText.toFloatOrNull()
+        if (focusText.isNotBlank() && focus == null) log.write("OVERRIDE_FALLBACK invalid saved focus; CameraX default, request retained")
+        return SensorOverrides(integer("wb"), focus, integer("antiBanding"))
+            .supportedFallback(selectedReport?.overrides ?: OverrideCapabilities()) { log.write("OVERRIDE_FALLBACK $it") }
+    }
+
+    private fun changeOverrides(candidate: SensorOverrides, edited: OverrideField) {
+        if (busy || recordingBusy || !bound || !controlReady) return
+        val c = camera ?: return
+        var started = false
+        try {
+            candidate.validate(selectedReport?.overrides ?: OverrideCapabilities())
+            val generation = epoch
+            val key = exposureKey()
+            busy = true; controlReady = false; started = true
+            overrideStatus = "Requested=$candidate PENDING; no quality claim"
+            requestSnapshot(c, generation, appliedExposure, candidate, clearFirst = false,
+                cancelFocus = candidate.focusDistance != overrides.focusDistance,
+                accepted = {
+                    overrides = candidate
+                    candidate.persistencePatch(edited).forEach { (name, saved) -> preferences.put("$key/$name", saved) }
+                    busy = false; controlReady = true
+                    overrideStatus = "Accepted=$candidate; inspect CaptureResult. AE anti-banding has no effect in MANUAL exposure."
+                    event("OVERRIDES $overrideStatus")
+                }, failed = { failure ->
+                    busy = false; controlReady = false
+                    overrideStatus = "FAILED; sensor state unknown, use AUTO reset or restart"
+                    error("control snapshot", failure)
+                })
+        } catch (failure: Exception) {
+            if (started) { busy = false; controlReady = false; overrideStatus = "FAILED; use AUTO reset or restart" }
+            error("override validation/control", failure)
+        }
+    }
+
+    /** One replacement snapshot prevents independent controls from silently erasing each other. */
+    private fun requestSnapshot(c: Camera, generation: Int, exposure: ManualExposure?, extras: SensorOverrides,
+        clearFirst: Boolean, cancelFocus: Boolean, accepted: () -> Unit, failed: (Exception) -> Unit) {
+        val control = Camera2CameraControl.from(c.cameraControl)
+        val builder = CaptureRequestOptions.Builder()
+        exposure?.let {
+            builder.setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+                .setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, it.iso)
+                .setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, it.exposureNs)
+        }
+        extras.whiteBalance?.let { builder.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, it) }
+        extras.antiBanding?.let { builder.setCaptureRequestOption(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE, it) }
+        extras.focusDistance?.let {
+            builder.setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
+                .setCaptureRequestOption(CaptureRequest.LENS_FOCUS_DISTANCE, it)
+        }
+        fun await(future: com.google.common.util.concurrent.ListenableFuture<*>, next: () -> Unit) {
+            future.addListener({
+                if (generation != epoch || closed) return@addListener
+                try { future.get(); next() } catch (failure: Exception) { failed(failure) }
+            }, main)
+        }
+        fun apply() {
+            if (exposure == null && extras.isEmpty) {
+                if (clearFirst) accepted() else await(control.clearCaptureRequestOptions(), accepted)
+            } else await(control.setCaptureRequestOptions(builder.build()), accepted)
+        }
+        fun clearAndApply() {
+            if (clearFirst) await(control.clearCaptureRequestOptions(), ::apply) else apply()
+        }
+        if (cancelFocus) await(c.cameraControl.cancelFocusAndMetering(), ::clearAndApply) else clearAndApply()
+    }
+
     fun bind() {
         if (busy || recordingBusy || closed) return
         val p = provider ?: return
@@ -277,11 +370,13 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         val settingsKey = exposureKey()
         requestedIso = preferences.text("$settingsKey/iso", "100")
         requestedMs = preferences.text("$settingsKey/ms", "10")
+        requestedFocus = preferences.text("$settingsKey/focusDraft", "0")
         camera?.cameraInfo?.cameraState?.removeObservers(owner)
         bound = false; controlReady = false; formats = emptySet()
         videoSelection = "No applied video profile for this session; requested preference retained"
         stillResolution = "No applied image resolution for this session; requested preference retained"
         manualExposure = false; evStatus = "No accepted EV for this session"; focusStatus = "No focus request for this session"
+        overrides = SensorOverrides(); appliedExposure = null; overrideStatus = "No accepted overrides for this session"
         camera = null; imageCapture = null; cineSession = null; videoChoices = emptyList()
         desired = "AUTO reset required"; measured = "Awaiting new session result"
         try {
@@ -303,7 +398,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                     val now = SystemClock.elapsedRealtime()
                     if (!still && now - lastSample < 1000) return
                     lastSample = now
-                    val actual = "frame=${result.frameNumber} sensorTimestamp=${result.get(CaptureResult.SENSOR_TIMESTAMP)} intent=${request.get(CaptureRequest.CONTROL_CAPTURE_INTENT)} requestAE=${request.get(CaptureRequest.CONTROL_AE_MODE)} requestISO=${request.get(CaptureRequest.SENSOR_SENSITIVITY)} requestNs=${request.get(CaptureRequest.SENSOR_EXPOSURE_TIME)} actualAE=${result.get(CaptureResult.CONTROL_AE_MODE)} actualISO=${result.get(CaptureResult.SENSOR_SENSITIVITY)} actualNs=${result.get(CaptureResult.SENSOR_EXPOSURE_TIME)} frameDurationNs=${result.get(CaptureResult.SENSOR_FRAME_DURATION)} requestAF=${request.get(CaptureRequest.CONTROL_AF_MODE)} actualAF=${result.get(CaptureResult.CONTROL_AF_MODE)} afState=${result.get(CaptureResult.CONTROL_AF_STATE)} focusDiopters=${result.get(CaptureResult.LENS_FOCUS_DISTANCE)} actualAWB=${result.get(CaptureResult.CONTROL_AWB_MODE)} awbState=${result.get(CaptureResult.CONTROL_AWB_STATE)} requestEV=${request.get(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION)} actualEV=${result.get(CaptureResult.CONTROL_AE_EXPOSURE_COMPENSATION)} requestAntiBanding=${request.get(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE)} actualAntiBanding=${result.get(CaptureResult.CONTROL_AE_ANTIBANDING_MODE)}"
+                    val actual = "frame=${result.frameNumber} sensorTimestamp=${result.get(CaptureResult.SENSOR_TIMESTAMP)} intent=${request.get(CaptureRequest.CONTROL_CAPTURE_INTENT)} requestAE=${request.get(CaptureRequest.CONTROL_AE_MODE)} requestISO=${request.get(CaptureRequest.SENSOR_SENSITIVITY)} requestNs=${request.get(CaptureRequest.SENSOR_EXPOSURE_TIME)} actualAE=${result.get(CaptureResult.CONTROL_AE_MODE)} actualISO=${result.get(CaptureResult.SENSOR_SENSITIVITY)} actualNs=${result.get(CaptureResult.SENSOR_EXPOSURE_TIME)} frameDurationNs=${result.get(CaptureResult.SENSOR_FRAME_DURATION)} requestAF=${request.get(CaptureRequest.CONTROL_AF_MODE)} actualAF=${result.get(CaptureResult.CONTROL_AF_MODE)} afState=${result.get(CaptureResult.CONTROL_AF_STATE)} requestFocusLensUnits=${request.get(CaptureRequest.LENS_FOCUS_DISTANCE)} actualFocusLensUnits=${result.get(CaptureResult.LENS_FOCUS_DISTANCE)} requestAWB=${request.get(CaptureRequest.CONTROL_AWB_MODE)} actualAWB=${result.get(CaptureResult.CONTROL_AWB_MODE)} awbState=${result.get(CaptureResult.CONTROL_AWB_STATE)} requestEV=${request.get(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION)} actualEV=${result.get(CaptureResult.CONTROL_AE_EXPOSURE_COMPENSATION)} requestAntiBanding=${request.get(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE)} actualAntiBanding=${result.get(CaptureResult.CONTROL_AE_ANTIBANDING_MODE)} sceneFlicker=${result.get(CaptureResult.STATISTICS_SCENE_FLICKER)}"
                     main.execute {
                         if (generation == epoch && !closed) {
                             measured = actual
@@ -392,6 +487,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         videoSelection = "Unbound; no applied video profile"
         stillResolution = "Unbound; no applied image resolution"
         focusStatus = "Unbound; no active focus request"; evStatus = "Unbound; no accepted EV"; manualExposure = false
+        overrides = SensorOverrides(); appliedExposure = null; overrideStatus = "Unbound; no accepted overrides"
         try {
             camera?.cameraInfo?.cameraState?.removeObservers(owner)
             provider?.unbindAll(); camera = null; imageCapture = null; cineSession = null; bound = false
@@ -415,27 +511,23 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                     }
                 }
             } else null
-            val label = value?.let { "MANUAL ISO=${it.iso} exposureNs=${it.exposureNs}" } ?: "AUTO (Interop cleared)"
+            val label = value?.let { "MANUAL ISO=${it.iso} exposureNs=${it.exposureNs}" }
+                ?: if (restoreSaved) "AUTO exposure (clear then restore supported mode controls)" else "AUTO reset (all Interop controls cleared)"
             desired = "$label PENDING"; busy = true; controlReady = false
             log.write("DESIRED id=$selectedId $desired")
             val generation = epoch
             val key = exposureKey()
-            val control = Camera2CameraControl.from(c.cameraControl)
-            val future = if (value == null) control.clearCaptureRequestOptions() else {
-                control.setCaptureRequestOptions(CaptureRequestOptions.Builder()
-                    .setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
-                    .setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, value.iso)
-                    .setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, value.exposureNs).build())
-            }
-            future.addListener({
-                if (generation != epoch || closed) return@addListener
-                try {
-                    future.get()
+            val extras = if (restoreSaved) savedOverrides(key) else if (manual) overrides else SensorOverrides()
+            requestSnapshot(c, generation, value, extras, clearFirst = !manual, cancelFocus = !manual,
+                accepted = {
                     val finish = {
                         busy = false; controlReady = true; manualExposure = manual
+                        appliedExposure = value; overrides = extras
+                        overrideStatus = "Accepted=$extras; check actual result; anti-banding affects AUTO AE only"
                         desired = "$label ACCEPTED (check actual result)"; event(desired)
                         if (remember) {
                             preferences.put("$key/manual", manual)
+                            if (!manual) { saveOverrides(key, SensorOverrides()); preferences.put("$key/ev", "0") }
                             if (manual) {
                                 preferences.put("$key/appliedIso", iso)
                                 preferences.put("$key/appliedMs", ms)
@@ -446,16 +538,14 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                             preferences.text("$key/appliedIso", requestedIso), preferences.text("$key/appliedMs", requestedMs), remember = false)
                     }
                     if (manual) finish() else {
-                        val ev = if (restoreSaved && preferences.flag("$key/manual")) 0 else preferences.text("$key/ev", "0").toIntOrNull() ?: 0
+                        val ev = if (!restoreSaved || preferences.flag("$key/manual")) 0 else preferences.text("$key/ev", "0").toIntOrNull() ?: 0
                         applyEv(c, generation, key, ev, persist = false, accepted = finish)
                     }
-                }
-                catch (e: Exception) {
+                }, failed = { e ->
                     busy = false
                     desired = "$label FAILED; sensor state unknown; use AUTO or stop/restart"
                     error("exposure", e)
-                }
-            }, main)
+                })
         } catch (e: Exception) {
             if (!remember && manual) { controlReady = false; desired = "Saved MANUAL not applied; use AUTO or valid values" }
             if (busy) desired = "Exposure control FAILED; sensor state unknown; use AUTO or stop/restart"

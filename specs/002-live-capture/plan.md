@@ -196,6 +196,26 @@ spec/planと要件品質checklistだけを追加する。研究判断・評価pr
 P0残件との重複を確認し、P0.5-Aの範囲を承認した時点で必要最小限に切り出す。
 この計画を理由に新しいIssue群・実装・素材公開・Releaseを作らない。
 
+## P0.5-B2: 対応WB preset・MF・AE anti-banding（Issue #15）
+
+FR-003/004の限定実装として、Camera2 available modesとrequest keysの両方でWB/anti-bandingを判定する。
+WB OFF/gains/transform/Kelvinは含めず、既知の標準presetだけを提示する。
+MFはMANUAL_SENSOR、AF OFF、両request key、finiteなminimumFocusDistance > 0を条件とし、
+0..maximumのlens unitsを指定する。校正がUNCALIBRATED/UNKNOWNならdioptersやメートルを保証しない。
+
+露出と追加controlを一つのsnapshotで置換し、個別操作で他の制御キーを消さない。
+MF変更前はCameraX cancelFocusAndMetering完了を待ち、AF復帰はAF_MODE/LENS_FOCUS_DISTANCEを除外する。
+MF中のCenter操作はAUTO AEがあればAEだけとし、AF要求を重ねない。
+`AUTO reset all`は全Interopとfocus要求を解除し、EVをneutralへ戻す明示操作とする。
+mode再bindでは一度clearし、対応する保存control、EV、必要なら保存済みMANUAL露出を直列復元する。
+非対応の保存値は項目別にCameraX defaultへfallbackし、理由をログ/UIへ示して希望値を保持する。
+
+AE anti-bandingはMANUAL AEで効果を持たない。指定値を保存・表示できてもLED/PWM除去を保証しない。
+request/accepted/CaptureResult（WB、focus lens units、anti-banding、scene flicker）を別に扱う。
+録画中は変更せず、Futureはbusy/epoch/closedで隔離する。新権限・新依存・独自Camera2 sessionは追加しない。
+検証は入力能力/範囲/fallback unit、build/lintと独立レビュー。実機ではmode復元、AUTO全解除、
+WBの色光比較、MF/AF往復、50/60Hzと手動shutter比較を別途行い、未実施を合格にしない。
+
 ## 公式資料による採用判断
 
 - [CameraX動画構成](https://developer.android.com/media/camera/camerax/video-capture)：

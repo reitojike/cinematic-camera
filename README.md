@@ -13,7 +13,7 @@ Stage Dramatic / Cinema T&O、custom編集やLUT入出力は後続です。ル�
 - Android SDK Platform 37、Build Tools 36.0.0
 - JDK 17以上（本環境はJDK 25）、Gradle wrapper 9.8.1
 - AGP 9.4.1の組み込みKotlin + Compose compiler plugin 2.4.21
-- CameraXの直接依存はcore / camera2 / lifecycle / viewの全て1.6.2に固定
+- CameraXの直接依存はcore / camera2 / lifecycle / view / videoの全て1.6.2に固定
 
 SDKをAndroid Studioで選ぶか、`ANDROID_HOME` / gitignore対象の`local.properties`に指定します。
 
@@ -48,6 +48,11 @@ MP4は`Movies/Cinematic Camera/`へ保存します。初期値は実対応候補
 公称48MP、4K60、HDR、音声品質を保証せず、要求/適用/実出力とfallback理由を表示します。
 [P0.5検証結果と未確認条件](docs/P05_REPORT.md)を参照してください。
 Center AF/AE、AUTO時のEV、AF/AWB/照明の能力・実測、OS thermal statusも確認できます。
+対応する標準WB preset、MF lens units、AE anti-bandingも操作できます。WB OFF/色gain/Kelvin指定は未実装です。
+MFの校正が不明/未校正なら距離メートルへ換算しません。MF中のCenter操作はAUTO AEの測光だけです。
+anti-bandingはMANUAL露出中に効果を持たず、LED/PWMの除去を保証しません。
+`AUTO reset all`は全Interop・focus要求・EVを解除/neutral化します。mode復帰では対応する保存設定を復元し、
+項目の個別変更は他の受付済み制御を保持します。要求・API受付・実CaptureResultを別に比較してください。
 APIの合焦結果は画質合格ではなく、SEVERE以上のOS熱状態では録画停止/新規録画抑止を行います。
 LibRaw / NDK、独自現像、GPU / LUT、21:9出力、共有、ギャラリー、バックエンドは未実装です。
 
