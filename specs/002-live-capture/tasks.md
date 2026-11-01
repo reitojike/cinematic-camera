@@ -48,3 +48,12 @@ P0証拠補完はIssue #4、運用設定はIssue #6。次のAF/WB/LED検証導�
 - [x] T021 非対応・非finite・範囲端・独立fallbackを `app/src/test/java/dev/cinematic/p0/SensorOverridesTest.kt` で検証する。
 - [x] T022 build/unit/lint・公開前検査・独立レビューを完了し、`docs/P05_REPORT.md` へ最終自動検証を記録する。最終headのcanonical/CIはIssue/PRで管理する。
 - [ ] T023 ユーザーがWB色光比較、MF/AF往復、mode復元、AUTO全解除、LED条件を実機確認し、最終結果を `docs/P05_REPORT.md` へ統合する。
+
+## B3: 検証レポートのSAF保存（Issue #17）
+
+- [x] T024 UTF-8 log tail上限とclose完了条件を `app/src/main/java/dev/cinematic/p0/VerificationReport.kt` / `ProbeLog.kt` へ実装する。
+- [x] T025 mainの状態snapshot、IO保存と遅延完了処理を `app/src/main/java/dev/cinematic/p0/CameraProbe.kt` へ実装する。
+- [x] T026 ユーザー操作のCreateDocumentと取消/重複抑止を `app/src/main/java/dev/cinematic/p0/MainActivity.kt` へ追加する。
+- [x] T027 tail/UTF-8とopen/write/flush/close失敗を `app/src/test/java/dev/cinematic/p0/VerificationReportTest.kt` で検証する。
+- [x] T028 build/unit/lint・公開前検査・独立レビューを完了し、`docs/P05_REPORT.md` へ自動検証を記録する。最終headのcanonical/CIはIssue/PRで管理する。
+- [ ] T029 ユーザーがSAF保存/取消/読み戻し/録画中抑止と、媒体本体を含まないことを端末で確認し、最終結果を `docs/P05_REPORT.md` へ統合する。

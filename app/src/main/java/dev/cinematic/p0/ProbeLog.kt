@@ -8,11 +8,13 @@ import java.time.Instant
 
 class ProbeLog(context: Context) {
     val file = File(context.filesDir, "reports/p0-${System.currentTimeMillis()}.txt")
+    val deviceInfo = "DEVICE manufacturer=${Build.MANUFACTURER} model=${Build.MODEL} Android=${Build.VERSION.RELEASE} SDK=${Build.VERSION.SDK_INT} build=${Build.DISPLAY} fingerprint=${Build.FINGERPRINT} app=${BuildConfig.VERSION_NAME} CameraX=1.6.2"
     var onLine: (String) -> Unit = {}
     init {
         try { file.parentFile?.mkdirs() } catch (_: Exception) { /* write() reports failure */ }
-        write("DEVICE manufacturer=${Build.MANUFACTURER} model=${Build.MODEL} Android=${Build.VERSION.RELEASE} SDK=${Build.VERSION.SDK_INT} build=${Build.DISPLAY} fingerprint=${Build.FINGERPRINT} app=${BuildConfig.VERSION_NAME} CameraX=1.6.2")
+        write(deviceInfo)
     }
+    @Synchronized fun tail() = VerificationReport.readTail(file)
     @Synchronized fun write(message: String) {
         val line = "${Instant.now()} $message"
         Log.i("CinematicP0", line)

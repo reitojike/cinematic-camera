@@ -54,6 +54,10 @@ anti-bandingはMANUAL露出中に効果を持たず、LED/PWMの除去を保証�
 `AUTO reset all`は全Interop・focus要求・EVを解除/neutral化します。mode復帰では対応する保存設定を復元し、
 項目の個別変更は他の受付済み制御を保持します。要求・API受付・実CaptureResultを別に比較してください。
 APIの合焦結果は画質合格ではなく、SEVERE以上のOS熱状態では録画停止/新規録画抑止を行います。
+`Save verification report`はAndroid標準の文書保存画面から、現在の設定・能力・CaptureResultと最大128KiBの
+現在セッションlog tailをUTF-8で保存します。写真/動画/音声本体は含めません。録画/Finalize中は実行できません。
+省略された過去ログは切断表示し、保存/close失敗では選択文書が部分的な場合があることを示します。
+保存先と内容は利用者が確認し、公開Issueへ完全な未確認レポートを自動投稿しません。実機SAF動作は未検証です。
 LibRaw / NDK、独自現像、GPU / LUT、21:9出力、共有、ギャラリー、バックエンドは未実装です。
 
 ## CIとAPK配布

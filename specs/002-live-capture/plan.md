@@ -216,8 +216,24 @@ request/accepted/CaptureResult（WB、focus lens units、anti-banding、scene fl
 検証は入力能力/範囲/fallback unit、build/lintと独立レビュー。実機ではmode復元、AUTO全解除、
 WBの色光比較、MF/AF往復、50/60Hzと手動shutter比較を別途行い、未実施を合格にしない。
 
+## P0.5-B3: 検証レポートの取得（Issue #17）
+
+実機証拠を端末から取り出すため、標準SAF CreateDocument(text/plain)を明示ボタンで起動する。
+ユーザーが選んだ文書だけへUTF-8で書き、追加のstorage permission/persistable grantは要求しない。
+mainで状態/要求/実CaptureResult/能力をfreezeし、process IO executor上で現在ログの末尾最大128KiBを読む。
+tailは最初の部分行/UTF-8断片を捨てて切断を示し、完全なsession logと誤認させない。
+写真/動画/音声本体・GPS・serialは追加取得せず、現像/共有製品機能へ広げない。
+
+書込/flush/close完了後だけ成功表示。provider/cancel/Activity終了を扱い、失敗文書が部分的な可能性を示す。
+外部文書や原本を自動削除しない。録画/Finalize中と重複保存は抑止し、完成後も本人が内容確認してから共有する。
+自動送信や公開Issueコメントは実装しない。UTF-8上限・書込/close失敗のunit、build/lintと独立レビューを行い、
+端末のSAF許可/拒否/取消/読み戻しは実機未確認として残す。
+
 ## 公式資料による採用判断
 
+- [SAF/文書Intent](https://developer.android.com/guide/components/intents-common#Storage)：
+  ACTION_CREATE_DOCUMENTでユーザーが選んだDocumentProviderのcontent URIへ一度だけ書く。
+  写真の取得/送信Intentやバックエンド、継続grantの取得へ広げない。
 - [CameraX動画構成](https://developer.android.com/media/camera/camerax/video-capture)：
   Recorder/VideoCapture、音声の明示有効化とFinalize結果を出発点にする。
   現行referenceには1.7のQuality.QHD等も含まれるため、例をそのままコピーせず1.6.2で照合する。

@@ -9,6 +9,7 @@ import android.hardware.camera2.TotalCaptureResult
 import android.os.SystemClock
 import android.os.Build
 import android.os.PowerManager
+import android.net.Uri
 import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.Camera2Interop
@@ -69,6 +70,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     var overrides by mutableStateOf(SensorOverrides()); private set
     var overrideStatus by mutableStateOf("CameraX defaults; no accepted overrides"); private set
     var requestedFocus by mutableStateOf("0"); private set
+    var exportingReport by mutableStateOf(false); private set
     private var appliedExposure: ManualExposure? = null
     private var thermalCode = -1
     private var removeThermalListener: (() -> Unit)? = null
@@ -115,6 +117,50 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     private fun event(message: String) { status = message; log.write(message) }
     private fun error(operation: String, e: Exception) {
         event("ERROR $operation ${e.javaClass.simpleName}: ${e.message}")
+    }
+
+    fun reportPickerFailure(failure: Exception) { error("verification report picker", failure) }
+    fun reportPickerCancelled() { event("Verification report save cancelled; no document written") }
+    fun exportVerificationReport(uri: Uri) {
+        if (closed || exportingReport || recordingBusy) {
+            if (!closed) event("Report save unavailable while recording/finalizing or another report is pending")
+            return
+        }
+        val snapshotAt = java.time.Instant.now()
+        val snapshot = """
+            applicationId=${BuildConfig.APPLICATION_ID} version=${BuildConfig.VERSION_NAME} code=${BuildConfig.VERSION_CODE}
+            cameraId=$selectedId mode=$mode bound=$bound ready=$controlReady operationPending=$busy
+            state=$status
+            desiredExposure=$desired
+            requestedIsoDraft=$requestedIso requestedMsDraft=$requestedMs
+            controlSnapshot=$overrideStatus
+            focus=$focusStatus EV=$evStatus thermal=$thermalStatus
+            observedCaptureResult=$measured
+            still=$stillResolution
+            video=$videoSelection
+            recordingStage=$recordingStage recordingStats=$recordingStats
+            CameraX capabilities:
+            $cameraXReports
+            Camera2 capabilities:
+            ${reports.joinToString("\n\n") { it.text }}
+        """.trimIndent()
+        val resolver = context.applicationContext.contentResolver
+        exportingReport = true
+        mediaIo.execute {
+            try {
+                val text = VerificationReport.render(snapshotAt, log.deviceInfo, snapshot, log.tail())
+                val bytes = VerificationReport.write({ resolver.openOutputStream(uri, "w") }, text)
+                main.execute {
+                    if (!closed) { exportingReport = false; event("REPORT_SAVED uri=$uri bytes=$bytes; review before sharing; no automatic upload") }
+                    else log.write("LATE REPORT_SAVED uri=$uri bytes=$bytes")
+                }
+            } catch (failure: Exception) {
+                main.execute {
+                    if (!closed) { exportingReport = false; error("report save; selected document may be partial, original media unchanged", failure) }
+                    else log.write("LATE REPORT_ERROR ${failure.javaClass.simpleName}; selected document may be partial")
+                }
+            }
+        }
     }
 
     fun initialize(previewView: PreviewView) {
