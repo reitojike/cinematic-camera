@@ -4,8 +4,16 @@ import java.math.BigDecimal
 import java.math.RoundingMode
 
 data class ManualExposure(val iso: Int, val exposureNs: Long)
+data class ManualExposureInput(val iso: String, val milliseconds: String)
 
 object Exposure {
+    /** Only a complete accepted pair may be restored; an input draft is never a fallback. */
+    fun savedManual(acceptedIso: String, acceptedMs: String, isoRange: IntRange?, nsRange: LongRange?): ManualExposureInput {
+        require(acceptedIso.isNotBlank() && acceptedMs.isNotBlank()) { "Saved MANUAL pair is incomplete; use AUTO reset or apply valid values" }
+        parse(acceptedIso, acceptedMs, isoRange, nsRange)
+        return ManualExposureInput(acceptedIso, acceptedMs)
+    }
+
     /** Reciprocal of one reported sensor period, not preview-rendered or encoded-video FPS. */
     fun sensorPeriodFps(frameDurationNs: Long?): Double? =
         frameDurationNs?.takeIf { it > 0 }?.let { 1_000_000_000.0 / it }

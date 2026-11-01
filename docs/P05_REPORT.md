@@ -1,6 +1,6 @@
 # P0.5 検証レポート
 
-対象: `dev.cinematic.p0` / `0.0.9-p05` / CameraX **1.6.2**
+対象: `dev.cinematic.p0` / `0.0.10-p05` / CameraX **1.6.2**
 
 関連: [Issue #8](https://github.com/reitojike/cinematic-camera/issues/8) / [spec](../specs/002-live-capture/spec.md) / [plan](../specs/002-live-capture/plan.md)
 
@@ -47,11 +47,11 @@ JPEGはheader寸法、DNGはExif寸法を記録するが、DNG全体のdecode証
 ## 機械的検証
 
 - ローカル `:app:assembleDebug :app:testDebugUnitTest :app:lintDebug` を実行。
-- unit **37件、failure/error/skip 0**。既存11件に、能力候補選択・希望値fallback・録画状態/旧token隔離・
+- unit **40件、failure/error/skip 0**。既存11件に、能力候補選択・希望値fallback・録画状態/旧token隔離・
   音声途中失敗/無音警告・出力close/検証/公開/cleanupの12件、EV/thermalの3件、override能力/範囲/fallback/保存保持の4件、
   report UTF-8/tail境界とopen/write/flush/close失敗の3件、view座標変換/非finite/範囲/未準備の1件、
-  AE/AWB lockの能力/AUTO条件と不適用時解除の2件、周期換算/unknownの1件を追加。
-- lint **error 0 / warning 9**。Gradle更新案内1、任意のKTX提案5、metadata記録に使う標準ExifInterfaceへの
+  AE/AWB lockの能力/AUTO条件と不適用時解除の2件、周期換算/unknownの1件、保存済み露出pairの復元境界3件を追加。
+- lint **error 0 / warning 10**。Gradle更新案内1、任意のKTX提案6、metadata記録に使う標準ExifInterfaceへの
   Jetpack推奨3。baselineや抑制は追加しない。Exif読み込みは素材の現像/有効性判定に使用しない。
 - API1.6.2の実artifactでcompileし、MediaStore/音声/SessionConfigの署名を確認。
 - 独立レビューで適用済み表示のsession分離と音声警告の保持を確認する。最終headのcanonical結果・CI・threadは
@@ -176,3 +176,51 @@ CaptureResultの正のSENSOR_FRAME_DURATIONだけを逆数fpsへ換算し、null
 
 37件のunit/build/lint成功は、Pixel 9aでの実際の応答時間・period/MP4/表示fps・熱との関係の検証ではない。
 同じカメラ/モード/照明/露出・形式で比較し、要求/実period/出力MP4/各app段階を別に記録する。実機条件は未確認。
+
+## 統合品質と自動検証の保証境界
+
+[Issue #29](https://github.com/reitojike/cinematic-camera/issues/29)の対象は、個別機能間のsession/保存/復元境界。
+独立の横断静的監査では、連続mode切替、Record/Stopと音声許可拒否、背景/Destroy、旧callback隔離、
+pending保存とcleanup、UIのrequested/accepted/actual分離を確認した。実際のActivityResult配送やCameraX/MediaStore実行を再現した検証ではない。
+
+修正した境界：以前はmanual flagと受付済みISO/時間を別々に保存し、片方が欠けた復元時に入力draftで補っていた。
+部分保存状態から未適用値を適用できるため、flagと受付済みpairを単一editorで保存する。
+復元は完全かつ現在の範囲内のpairだけを使い、欠落/不正なら保存希望を維持してcontrolReady=falseとAUTO reset案内を出す。
+中断時に必ず欠落するという主張でも、SharedPreferencesの永続化完了を保証する変更でもない。
+
+| unit対象 | 件数 | 確認する境界 | 確認しないもの |
+|---|---:|---|---|
+| Exposure | 8 | 単位/範囲/対応条件、周期unknown、受付済み完全/欠落/不正pair | CameraProbeの全非同期列、センサー実反映、SharedPreferencesの実disk書込み |
+| PhotoPublisher | 7 | byte不変コピー、両stream close後の公開、insert/open/write/close/publish失敗と自分のrowのrollback | CameraX撮影callback配送、Android MediaStore provider、DNG全decode |
+| VideoPolicy / RecordingGate / AudioQualityNotes | 7 | 候補優先/fallback、開始中Stop・重複/旧token、公開待ちgate、音声警告保持 | 権限画面/lifecycle配送、native encoder、実音声/同期/歪み |
+| VideoPublication | 5 | close→metadata検査→公開、Recorder/close/validate/publish/delete失敗 | MediaExtractorの実ファイル処理、全frame decode、実provider cleanup |
+| ProbeControls | 4 | EV範囲/AUTO条件、view座標/非finite、OS thermal severity判定 | 実tapのsensor mapping、EV反映、実温度/発熱安全性 |
+| SensorOverrides / AutoLocks | 6 | 支持能力/値/独立fallback/保存項目、AUTO条件と不適用lock解除 | Camera2とCameraXの実競合、AF追従、実AWB/lock/LED効果 |
+| VerificationReport | 3 | UTF-8/tail上限、open/write/flush/close失敗と完了判定 | Android SAF picker/provider、実端末の文書読み戻し |
+
+37件の基準に受付済みpairの回帰3件を加えた40件。静的監査と純粋unitは相互補完であり、
+実カメラやAndroid非同期処理の統合テストではない。mock基盤のための大規模変更や追加GMDは導入しない。
+
+lintの分類：
+
+| 警告 | 件数 | 判断 |
+|---|---:|---|
+| AndroidGradlePluginVersion | 1 | Gradle 9.8.2の更新案内。現行9.8.1でbuild成功、Renovate別PRで独立レビューする |
+| UseKtx | 6 | Uri変換3、SharedPreferences edit3の任意style提案。原子的保存のeditor追加で1件増加。新依存や抑制を追加しない |
+| ExifInterface | 3 | AndroidX実装の推奨。現行は標準ExifでDNG寸法を診断用に読むだけで、失敗は記録して撮影原本の公開を続ける。RAW有効性/現像品質を判断しない。P1で必要性を再評価 |
+
+### 朝の実機確認（5項目）
+
+1. 最新Releaseの版を確認する。一時debug署名は旧版と異なり上書き不可。必要なアプリ内ログ/設定/媒体を退避し、再インストールの判断は本人が行う。
+2. STILLでJPEG/DNGを保存して共有フォルダーから開く。STILL/CINEに異なるISO/時間をApplyし、draftだけ編集して往復し、Desiredの受付値と実CaptureResultを確認する。
+3. CINEでマイク拒否→録画されないこと、明示audio off→短いMP4保存/再生、許可後audio on→再生と音声を確認する。要求候補と保存metadataは別に確認する。
+4. 録画中の背景化/回転→停止/保存完了→再録画を確認する。継続録画は保証しない。クラッシュ/無応答/保存失敗時は後続操作を控え、表示エラーと再現条件を残す。
+5. Save verification reportで文書保存・取消・読み戻しを確認する。共有前に内容を確認し、写真/音声や未編集のログをpublic Gitへ置かない。
+
+| 優先度 | 実機残件の管理先 |
+|---|---|
+| 最優先 | #8: 切替/設定復元・録画/権限・MP4再生・背景/回転後の再録画。#17: 証拠文書の保存/取消/読み戻し |
+| 次 | #13/#15/#21/#23: AF追従/測光位置・WB/MF・lock・LED/色照明・熱。#25: app応答/センサー周期とMP4/描画fpsの比較 |
+| 証拠補完 | #4: P0成功報告の端末/build/camera ID・個別値/ファイル等の不足資料。P0.5の成功へ流用しない |
+
+実機結果がない項目は未確認のまま。Stage Clear等のルック/RAW現像/製品UIはこの統合修正に含めない。
