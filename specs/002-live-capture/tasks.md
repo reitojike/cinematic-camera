@@ -57,3 +57,9 @@ P0証拠補完はIssue #4、運用設定はIssue #6。次のAF/WB/LED検証導�
 - [x] T027 tail/UTF-8とopen/write/flush/close失敗を `app/src/test/java/dev/cinematic/p0/VerificationReportTest.kt` で検証する。
 - [x] T028 build/unit/lint・公開前検査・独立レビューを完了し、`docs/P05_REPORT.md` へ自動検証を記録する。最終headのcanonical/CIはIssue/PRで管理する。
 - [ ] T029 ユーザーがSAF保存/取消/読み戻し/録画中抑止と、媒体本体を含まないことを端末で確認し、最終結果を `docs/P05_REPORT.md` へ統合する。
+
+## UI/アイコン比較候補（Issue #19）
+
+- [x] T030 3案の自己完結simulationを `designs/camera-ui-comparison.html`、比較軸と限界を `designs/README.md` へ用意する。
+- [x] T031 desktop/狭幅render・keyboard・mode保持・guide/仮録画・通信/公開前検査と独立レビューを完了する。最終headのcanonical/CIはIssue/PRで証跡を管理する。
+- [ ] T032 本人が配置/配色/アイコンを比較して最終選択する。未決定のままAndroid製品UIへ置換しない。
