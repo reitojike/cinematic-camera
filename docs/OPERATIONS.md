@@ -10,6 +10,42 @@ think-canvasのソース・設定・署名秘密は変更・コピーしない�
 
 以後は`feat/...`、`fix/...`、`chore/...`などの作業branchからmainへ**Draft PR**を作る。build / unit / lint、現在のheadに対するレビューと未解決会話、mainとの差分を確認し、利用者のmerge許可がなければmerge前で停止する。APPROVEの代行、admin merge、チェック免除、force pushによる回避は行わない。
 
+## 最終headの独立レビューとマージ条件
+
+think-canvasの[現行収束手順](https://github.com/reitojike/think-canvas/blob/main/docs/runbooks/post-pr-convergence.md)に従う。
+本P0には独自のGMD/IME quarantineを移植せず、実際のAndroid CIとserver設定にある必須チェックを使う。
+
+開発は原則Issueを起点とし、既存の適切なIssueを再利用する。現在/直近の限定作業だけを起票し、
+目的/背景/範囲/対象外/AC/検証・停止条件を定めてからbranch/PRを関連付ける。
+途中からIssueを整備した場合も事実に沿って記録し、先にIssueが存在したように扱わない。
+
+1. baseはmain、最新base/headとmergeabilityを確認する。behind・不明なら更新後のheadで再検証する。
+2. 最終candidate headを固定し、実際に必須のCIが全て成功していることを確認する。
+3. GitHubのPRへtop-levelの `@codex review` を依頼する。最後の依頼より後で、現行headに対応すると
+   確認できるfindingなし、または指摘解消済みの結果をcanonical evidenceとする。時刻/対象が不明ならHOLD。
+4. 作者自身のself-reviewを独立承認に数えない。実装担当と独立したreviewerの明示的OKを記録し、
+   P1/P2等のmaterial findingを解消する。独立agentの結果とGitHubのformal APPROVEは別物であり、
+   formal APPROVEを代行しない。別providerの利用は保存・privacy・署名・レビュー手順等のリスクに応じ検討する。
+5. outdatedを含む全threadを確認して未解決0件にする。適用外も理由を記録し、必要な会話を勝手に消さない。
+6. 上記と作業範囲内のmerge許可が揃う場合だけ通常mergeする。レビュー後のhead変更ではCI/レビューを再取得する。
+
+canonical結果・独立OK・CI・base/threadの証拠がmissing/pending/unknown/stale/failedならmergeはHOLD。
+待機中も独立して安全な別作業は続けられるが、代替経路やadmin bypassでmergeしない。
+GitHub Copilot/CodeRabbitの指摘は参考であり、canonical Codex reviewの代用にはしない。
+
+bounded correctionは原則2 roundまで。同じfamilyの指摘が繰り返される場合、または3 round目が必要な場合は、
+read-onlyで関連surfaceとauthority/責務/rollback境界を確認し、限定補正・別責務のfollow-up・設計再検討を選ぶ。
+回数を避けるためのfinding細分化、blind rerunや閾値緩和はしない。収束した最終headでcanonical reviewを依頼する。
+
+## RenovateとCodeRabbit
+
+Renovateは既存のonboarding PRを確認して有効化し、重複config/Issueを作らない。
+依存PRにも最終headの独立レビュー・canonical review・必須CI等を適用する。無条件automergeは有効にしない。
+CameraX 1.6.2等の合意した固定版を更新候補の存在だけで変更せず、対象依存の仕様条件を先に確認する。
+
+CodeRabbit自動レビューは本repoの `.coderabbit.yml` の `reviews.auto_review.enabled: false` で停止する。
+他repo/account-wide設定、GitHub App権限やOAuthは変更しない。設定反映と実際のbot結果を区別して確認する。
+
 ## main保護の差分と適用予定
 
 新規repoの初期状態は保護なし。think-canvasの[active ruleset 24034192](https://github.com/reitojike/think-canvas/rules/24034192)に合わせ、次を適用する計画とする。
