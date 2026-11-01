@@ -1,8 +1,8 @@
 # P0 技術検証レポート
 
-作成日: 2026-11-01 / 初版`0.0.1-p0`・共有保存候補`0.0.2-p0` (`dev.cinematic.p0`) / CameraX: **1.6.2固定**
+作成日: 2026-11-01 / 初版`0.0.1-p0`・共有保存版`v0.0.2-dev.1` (`dev.cinematic.p0`) / CameraX: **1.6.2固定**
 
-**状態: 実装・ビルド・ユニットテスト・lint完了 / インストールとカメラ操作の成功はユーザー報告あり。
+**状態: 実装・ビルド・ユニットテスト・lint完了 / インストール・カメラ操作に加え、JPEGのCinematic Cameraフォルダー保存とRAW撮影DNGのギャラリー表示はユーザー報告あり。
 実機AC全体は未完了、端末・使用APKの同定は未確認。P1判定は未判定（NOT_EVALUATED）。**
 
 GO / GO_WITH_LIMITATIONS / NO_GOは実機証拠を得てから選ぶ。実機がないことを端末非対応やNO_GOの根拠にしない。
@@ -20,7 +20,7 @@ GO / GO_WITH_LIMITATIONS / NO_GOは実機証拠を得てから選ぶ。実機が
 - Preview / ImageCaptureに観測用session capture callback。CameraDevice / CameraCaptureSessionを操作しない。通常結果は最大約1回/秒、still intentはその都度ログ。request側とresult側のAE/ISO/ns、frame number、sensor timestamp、frame durationを記録。
 - logcat `CinematicP0`とprivate `files/reports/`にセッションログ。画面は最近の16,000文字、privateファイルは全記録。DNG / JPEGはprivate `files/captures/`。UUIDで上書きを避け、出力形式・ファイル名・サイズ・未検証の読み込み状態を記録。
 
-上記のprivate撮影保存は初版の仕様。追加要件により、共有保存候補では新撮影を標準MediaStoreの
+上記のprivate撮影保存は初版の仕様。追加要件により、共有保存版では新撮影を標準MediaStoreの
 `Pictures/Cinematic Camera/`へバイトコピーする。ログはprivateのまま。以下の共有保存追補を参照。
 
 ## 環境・ビルド結果
@@ -37,7 +37,7 @@ GO / GO_WITH_LIMITATIONS / NO_GOは実機証拠を得てから選ぶ。実機が
 | lintDebug | 成功。error 0、warning 1（Gradle 9.8.2更新の案内。検証版9.8.1を維持） |
 | 1.6.2実API検証 | 解決済みartifactでcompile成功。runtime依存のCameraXは全て1.6.2、1.7系なし |
 | ADB端末一覧 | daemon起動失敗: `cannot connect to daemon`。接続端末を確認できず |
-| 実機撮影・インストール | エージェントによる操作は未実施。ユーザーがインストールとカメラ操作の成功を報告。撮影形式・保存・実測は未確認 |
+| 実機撮影・インストール | エージェントによる操作は未実施。ユーザーがインストール・カメラ操作、JPEGのフォルダー保存、RAW撮影DNGのギャラリー表示を報告。ファイル実物・実測ログは未取得 |
 
 初回のsandbox内Gradleはlocalhostのdaemonへ接続できず失敗。ビルド目的の昇格実行でwrapper生成に成功。端末操作・撮影・公開は行っていない。
 
@@ -49,7 +49,7 @@ GO / GO_WITH_LIMITATIONS / NO_GOは実機証拠を得てから選ぶ。実機が
 
 RAW判定・保存callback、AUTO解除、request/resultの区別、lifecycle / callback race / cleanup、エラーUIを1巡確認した。再bindでInterop設定を明示解除しない問題と、Camera2-only ID選択失敗時に前IDのRAW対応表示が残る問題の2件を修正。修正後にbuild / unit / lintを再実行し、全て成功。実機成立性を保証するレビューではなく、実機AC全体は引き続き未完了。
 
-### ユーザー報告（2026-11-01）
+### 初版案内後のユーザー報告（2026-11-01）
 
 インストールでき、端末のカメラを操作できたとの報告を受けた。その後、露出・感度は操作できていそうとの
 報告も受けたが、CaptureResult一致を示す証拠ではなくAC4の合格にはしない。`v0.0.1-dev.1`の配布案内への返信だが、
@@ -57,18 +57,30 @@ RAW判定・保存callback、AUTO解除、request/resultの区別、lifecycle / 
 完全な検証とは断定しない。権限フロー全体、Stop/Start・背景復帰、撮影形式、DNG保存、手動露出値、
 エラー処理の成功はまだ確認されていない。AC1の部分的なユーザー報告として扱い、ACの一括PASSはしない。
 
+### 共有保存版案内後のユーザー報告（2026-11-01）
+
+[`v0.0.2-dev.1`](https://github.com/reitojike/cinematic-camera/releases/tag/v0.0.2-dev.1)の案内後、
+JPEGを撮影して保存先が`Cinematic Camera`フォルダーになっていることと、RAWで撮影したDNGを
+ギャラリーアプリで表示できたことが報告された。AC3とAC8の部分証拠として記録する。
+
+端末名・Android build・camera ID・使用APK/実ファイルのhash・撮影件数・閲覧アプリ名/版は未提示。
+特定の配布物・端末を同定した実測ではなく、Googleフォトでの確認とも断定しない。
+DNG表示は埋め込みpreviewによる可能性があり、RAW全体のdecodeや5ファイルのPC viewer検証済みとは扱わない。
+許可フロー全体・Stop/Start/背景復帰（AC1）、CaptureResult一致（AC4）、AUTO/MANUAL切替（AC5）等は
+この報告では確認されていない。初版の露出/感度を操作できていそうとの報告も、実測値の一致へ拡大しない。
+
 ## ACの状態
 
 | AC | 状態 | 必要な証拠 |
 |---|---|---|
 | AC1 | 部分確認（ユーザー報告）/ 未完了 | インストール・カメラ操作は成功報告あり。端末/版の同定、権限全体・Stop/Start・復帰は未確認 |
 | AC2 | 未検証 | Pixel 9aからの実測能力ログ |
-| AC3 | 未検証 | DNG 5回以上保存、PC viewerで各ファイルを開く |
+| AC3 | 部分証拠（ユーザー報告）/ 未完了 | RAW撮影DNGのギャラリー表示報告あり。件数・ファイル実物は未取得、DNG 5回以上保存と各ファイルのPC viewer検証は未確認 |
 | AC4 | 未検証（操作感のユーザー報告のみ） | ISO 2値以上・露光時間2値以上のrequest/result比較。実測値は未提示 |
 | AC5 | 未検証 | AUTO→MANUAL→AUTOで無停止・無クラッシュ |
 | AC6 | 実装済み・実機未検証 | 非対応、範囲外入力、APIエラー時のUI / log / 非クラッシュ |
 | AC7 | 文書作成済み・部分完了 | ビルド結果を記録し、実機ログとP1判断を追記する |
-| AC8（追加） | 実装/単体検証済み・実機未確認 | 新JPEGの共有フォルダー/Googleフォト等での可視性。DNGの登録と閲覧アプリ対応を別に確認 |
+| AC8（追加） | 部分確認（ユーザー報告）/ 未完了 | JPEGのCinematic Cameraフォルダー保存、DNGのギャラリー表示報告あり。アプリ名/版・端末/使用APKの同定、ファイル/URIによる確認は未完了 |
 
 **実機ACの合格は0件。** 非対応が実測された場合は該当ACを`BLOCKED / 実機非対応`にし、camera ID・対応フラグ・CameraX形式・エラー・再現条件を残す。回避策の追加やCamera2全面移行は行わない。
 
@@ -78,14 +90,14 @@ RAW判定・保存callback、AUTO解除、request/resultの区別、lifecycle / 
 |---|---|
 | 端末名 | 未確認（対象はGoogle Pixel 9a） |
 | Android version / build / fingerprint | 未確認 |
-| アプリバージョン / 検証日 | ソース既定`0.0.1-p0`、配布`v0.0.1-dev.1`。実機で使用した版/hashは未提示。報告日2026-11-01 |
+| アプリバージョン / 検証日 | 初版`v0.0.1-dev.1`、共有保存版`v0.0.2-dev.1`の案内後に各報告あり。実機で使用した版/hashは未提示。報告日2026-11-01 |
 | Camera ID / lens / hardware level | 未確認 |
 | RAW / MANUAL_SENSOR (Camera2) | 未確認 |
 | CameraX output formats | 未確認 |
 | ISO / exposure range / max frame duration | 未確認 |
 | 最小フォーカス距離 / F値 / RAWサイズ | 未確認 |
 | AUTO JPEGとpreviewの一致 | 未確認。JPEGは処理済み、RAWは未現像なのでRAWの見た目の一致を要求しない |
-| AUTO / RAW / MANUAL要約 | カメラ操作成功と露出/感度を操作できそうとの報告あり。出力保存・値の実測反映は未確認 |
+| AUTO / RAW / MANUAL要約 | カメラ操作、JPEGのフォルダー保存、RAW撮影DNGのギャラリー表示をユーザーが報告。露出/感度は操作できそうとの報告のみ。AUTO時の撮影か・値の実測反映は未確認 |
 | CameraX / Interop制御競合 | 未確認。競合なしとは判断していない |
 
 ### DNG検証（同じcamera IDで5回以上）
@@ -98,7 +110,8 @@ RAW判定・保存callback、AUTO解除、request/resultの区別、lifecycle / 
 | 4 | 未取得 | — | — | 未確認 |
 | 5 | 未取得 | — | — | 未確認 |
 
-SAVED / 非ゼロbyteだけではDNG有効と判断しない。RAW+JPEGも別途、同じUUIDの両ファイルを確認する。
+ギャラリー表示のユーザー報告はあるが、個別ファイルの情報がないため上表へ検証済みファイルを割り当てない。
+埋め込みpreview表示、SAVED / 非ゼロbyteだけではRAW全体の有効性を判断しない。RAW+JPEGも別途、同じUUIDの両ファイルを確認する。
 
 ### 手動露出の記入欄
 
@@ -156,7 +169,7 @@ externalFilesDir、Downloads、DCIM、MediaStoreではない。applicationIdは`
 現配布版のrun固有debug鍵は継続用として保管していない。SAFの取り出しボタンと旧写真の移行機能は、
 最新指示で不要となり実装していない。
 
-### 共有保存候補の追補（実機未確認）
+### 共有保存版の追補（ユーザー報告の部分証拠あり）
 
 - 新撮影を`cacheDir/capture-staging`へCameraX 1.6.2で出力した後、標準MediaStore Imagesへコピーする。
 - RELATIVE_PATHは`Pictures/Cinematic Camera/`、JPEGは`image/jpeg`、DNGは`image/x-adobe-dng`。
@@ -169,10 +182,11 @@ externalFilesDir、Downloads、DCIM、MediaStoreではない。applicationIdは`
 - 旧`files/captures`を読み出す移行や一括削除は実装しない。一時cacheだけを後処理する。
 - local build成功、unit 11件成功（露出/能力4 + 保存7）、lint error 0 / warning 4。
   1巡の独立レビューで修正が必要な具体的不具合は見つからなかった。
-- **MediaStore上の実保存、Googleフォト等でのJPEG可視性、DNGの閲覧対応は未確認。** DNGのrow登録と
-  特定アプリで開けることを同じ合格にしない。JPEG1件→DNG1件→RAW+JPEG→5件viewer確認の順に試す。
+- JPEGの`Cinematic Camera`フォルダー保存とDNGのギャラリー表示はユーザー報告あり。MediaStore URI・
+  ファイル実物・閲覧アプリ名/版は未取得。Googleフォト対応やRAW全体のdecodeは未確認で、ACの一括合格にしない。
+  RAW+JPEG両出力と、同じcamera IDでのDNG 5件のPC viewer確認は引き続き必要。
 - 署名は旧配布版と異なる。今回の旧テスト写真が失われることを説明し、利用者自身が必要に応じて
-  手動再インストールする。正式pre-releaseにはmain取り込み許可が必要で、勝手にmergeしない。
+  手動再インストールする。共有保存版は利用者の別途承認後にmainへ取り込み、`v0.0.2-dev.1`を配布済み。
 
 ## 失敗・制約・停止条件
 
@@ -182,8 +196,9 @@ externalFilesDir、Downloads、DCIM、MediaStoreではない。applicationIdは`
 - 通常のCaptureResultログは約1秒間隔。無期限に撮影する製品用途を想定しない。必要な検証後はStopで止める。
 - RAW+JPEG失敗時に片方だけ保存され得る。部分ファイルは証拠として残り得るため、成功回数へ含めない。
 - callbackはアプリのmain executorへ配送し、保存本体のIOはCameraXへ任せる。独自executorやCameraDevice / sessionの所有は追加しない。実機での停止中撮影やlate callbackも検証対象。
-- インストールとカメラ操作はユーザー報告あり。エージェントは実機を操作していない。
-  DNG撮影・保存、手動値実測、外部viewerでの検証は未確認。バックエンド・独自回避・Camera2直接制御は追加していない。
+- インストール・カメラ操作、JPEGのフォルダー保存、RAW撮影DNGのギャラリー表示はユーザー報告あり。
+  エージェントは実機を操作していない。DNG全体のdecode・5件のPC検証、手動値実測は未確認。
+  バックエンド・独自回避・Camera2直接制御は追加していない。
 
 | 失敗 | 再現手順 | 結果 / 次の対応 |
 |---|---|---|
@@ -193,9 +208,10 @@ externalFilesDir、Downloads、DCIM、MediaStoreではない。applicationIdは`
 
 ## P1判定と次の一手
 
-**NOT_EVALUATED（未判定）**。次は利用者がRAW出力を選べるか、DNGを1枚保存できるかを確認し、
-エラーがあれば表示内容を記録する。その後、Pixel 9aの端末/版を確認して上記マトリクスを進め、
-DNG 5件のviewer確認と露出2値以上の実測を揃える。AC3/4がBLOCKEDの場合はログを根拠に、
+**NOT_EVALUATED（未判定）**。JPEGのフォルダー保存とDNGのギャラリー表示はユーザー報告まで得られた。
+次はPixel 9aの端末/Android build・camera ID・使用APKを同定して上記マトリクスを進め、
+DNG 5件のPC viewer確認（埋め込みpreview表示とRAW全体のdecodeを区別）と露出2値以上の実測を揃える。
+AC3/4がBLOCKEDの場合はログを根拠に、
 制限付きで進むか・Camera2で問題となる最小ケースだけ比較するかを相談する。
 現時点でCamera2への移行を提案する実測根拠はない。
 

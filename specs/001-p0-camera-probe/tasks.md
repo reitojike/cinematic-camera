@@ -3,8 +3,10 @@
 **Input**: [spec.md](spec.md)、[plan.md](plan.md)、既存実装とビルド/レビュー証拠。
 
 `[x]`はその実装・文書・機械的検証が完了した印であり、実機AC合格の印ではない。
-実機AC全体は未完了で、対応する作業を`[ ]`のまま残す。インストールとカメラ操作の成功は
-ユーザー報告があるが、使用APK/hash、端末/Android build、camera IDは未提示。P1採否は未判定。
+実機AC全体は未完了で、対応する作業を`[ ]`のまま残す。インストール・カメラ操作に加え、
+`v0.0.2-dev.1`案内後にJPEGのCinematic Cameraフォルダー保存とRAW撮影DNGのギャラリー表示の
+ユーザー報告あり。使用APK/実ファイルhash、端末/Android build、camera ID、件数、閲覧アプリ名/版は未提示。
+埋め込みpreview表示とRAW全体のdecodeを区別し、P1採否は未判定を維持する。
 
 ## Phase 1: Setup
 
@@ -33,7 +35,7 @@
 
 - [x] T009 [US2] 対応確認後にRAW ImageCaptureを構築し、DNGを保存する `app/src/main/java/dev/cinematic/p0/CameraProbe.kt` の導線を実装する。
 - [x] T010 [US2] RAW+JPEGの2出力callback、部分保存、停止後のLATE結果、token別の完了を `app/src/main/java/dev/cinematic/p0/CameraProbe.kt` に記録する。
-- [ ] T011 [US2] まずRAWを1枚保存できるかとエラー表示を確認し、その後対応IDでDNGを5回以上保存して、PC viewerで各ファイルを開いた結果/サイズ/ファイル名を `docs/P0_REPORT.md` に記録する（AC3）。
+- [ ] T011 [US2] まずRAWを1枚保存できるかとエラー表示を確認し、その後対応IDでDNGを5回以上保存して、PC viewerで各ファイルを開いた結果/サイズ/ファイル名を `docs/P0_REPORT.md` に記録する（AC3）。進捗: RAW撮影DNGのギャラリー表示はユーザー報告あり。件数・個別ファイル情報・RAW全体のdecode・5件のPC検証は未確認のため未完了。
 - [ ] T012 [US2] AUTO JPEGとpreview、対応時のRAW+JPEG両出力、連続保存後/背景復帰後の撮影を `docs/P0_REPORT.md` のマトリクスで確認する。
 
 ## Phase 5: US3 — 手動露出とAUTO復帰 (Priority: P1)
@@ -61,9 +63,9 @@
 - [x] T024 [US4] `app/src/main/java/dev/cinematic/p0/CameraProbe.kt` と `MainActivity.kt` を新撮影の共有保存・URI表示へ変更する。旧内部写真の移行/削除は実装しない。
 - [x] T025 [US4] `app/src/test/java/dev/cinematic/p0/PhotoPublisherTest.kt` でJPEG/DNGバイト不変、部分失敗のcleanup、公開失敗のrollbackを検証する。
 - [x] T026 [US4] build/unit/lintとレビューを実行し、`docs/BUILD_VALIDATION.md` に結果とAPKの署名差を残す。
-- [ ] T027 [US4] 新JPEGのGoogleフォト等での可視性とDNGの登録/閲覧対応を別々に実機確認し `docs/P0_REPORT.md` に記録する（AC8）。
+- [ ] T027 [US4] 新JPEGのGoogleフォト等での可視性とDNGの登録/閲覧対応を別々に実機確認し `docs/P0_REPORT.md` に記録する（AC8）。進捗: JPEGのCinematic Cameraフォルダー保存とDNGのギャラリー表示はユーザー報告あり。Googleフォトでの確認とは断定せず、アプリ名/版・端末/使用APKの同定とファイル/URIによる確認は未完了。
 
-T022/T023 → T024 → T025/T026 → T027。実装/機械的検証5件は完了、T027の実機検証は未完了。
+T022/T023 → T024 → T025/T026 → T027。実装/機械的検証5件は完了、T027はユーザー報告の部分証拠あり・実機検証全体は未完了。
 
 
 ## Dependencies & Execution Order
