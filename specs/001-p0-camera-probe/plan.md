@@ -7,8 +7,9 @@
 ## Summary
 
 Pixel 9aでCameraXのRAW静止画とCamera2Interopの手動ISO/露光時間が成立するかを測る。
-最小の単一app、PreviewView、能力レポート、アプリ専用DNG保存、AUTO/MANUAL、要求と実測ログを使う。
-実装は初期mainに存在するが、実機ACは未確認。Spec Kit導入はその契約と残作業の整理である。
+最小の単一app、PreviewView、能力レポート、MediaStoreへのDNG/JPEG保存、AUTO/MANUAL、要求と実測ログを使う。
+このplanは既存P0の設計を定義する。最新の受入結果は[P0_REPORT](../../docs/P0_REPORT.md)、残件は
+[Issue #4](https://github.com/reitojike/cinematic-camera/issues/4)を参照する。
 
 ## Technical Context
 
@@ -99,10 +100,11 @@ JPEGの標準ギャラリー可視性と、DNGの閲覧アプリ対応は別々�
 
 ### 検証と停止条件
 
-手順と結果欄は[既存の実機マトリクス](../../docs/P0_REPORT.md#実機検証手順)を使う。
+受入条件は[既存P0 spec](spec.md)、結果は[最終検証レポート](../../docs/P0_REPORT.md)を使う。
 許可・lifecycle、AUTO JPEG、RAW5回、RAW+JPEG、ISO2値、時間2値、AUTO復帰、背景復帰、エラーを含む。
 DNGはPC viewerで全件開く。実機AC3/4が仕様上不可能なら根拠付きBLOCKEDとし、例外的な回避を追加しない。
-P1のGO / GO_WITH_LIMITATIONS / NO_GOは実測後。現状はNOT_EVALUATED。
+P1のGO / GO_WITH_LIMITATIONS / NO_GOは証拠と制約を基に判断し、最新の判断案は最終レポートを参照する。
+後続の製品優先順位とP0.5計画は[002 plan](../002-live-capture/plan.md)で扱い、P0のACを変更しない。
 
 ### 文書の最小化
 
