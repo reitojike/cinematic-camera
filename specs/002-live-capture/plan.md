@@ -123,6 +123,17 @@ P0の機能成功報告を取り消したり、全項目を再撮影したりし
 各単位を小さなPRで独立レビュー・CI・回帰確認する。具体的な実装taskの範囲を明示し、
 合意した作業範囲内ではレビュー/CI成功を条件に反映する。製品全体の一括実装へ範囲を広げない。
 
+### B1: AF/AE・照明と熱状態の観測
+
+[Issue #13](https://github.com/reitojike/cinematic-camera/issues/13)では、AF/AWB/anti-bandingとAE補正の能力・
+CaptureResultを追加する。center AF/AEはCameraX標準FocusMeteringActionを対応照会後に使い、APIの合焦結果を
+動体追従/画質の合格にしない。EVはAUTO受付済みの範囲内に限定し、mode別の希望を復元する。
+focus/EVのFutureはsession世代で隔離し、bind/stop時は適用済み表示を初期化する。
+
+PowerManagerのthermal statusを観測し、SEVERE以上では録画停止/Finalizeへ進める。
+温度℃・安全温度・実機性能の証拠には読み替えず、closeでlistenerを解除する。
+WB/MF/anti-bandingの手動上書きUI、フリッカー解消アルゴリズム、実機のAF/熱/画質評価はこの単位へ抱き込まない。
+
 ## Stage Clear評価設計（P1）
 
 ### サンプル提案

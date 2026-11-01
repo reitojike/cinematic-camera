@@ -8,6 +8,7 @@ import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.TotalCaptureResult
 import android.os.SystemClock
 import android.os.Build
+import android.os.PowerManager
 import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.Camera2Interop
@@ -21,6 +22,7 @@ import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.core.AspectRatio
+import androidx.camera.core.FocusMeteringAction
 import android.hardware.camera2.CameraCharacteristics
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
@@ -33,6 +35,7 @@ import androidx.lifecycle.LifecycleOwner
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 @androidx.annotation.OptIn(markerClass = [androidx.camera.camera2.interop.ExperimentalCamera2Interop::class])
 class CameraProbe(private val context: Context, private val owner: LifecycleOwner) {
@@ -59,6 +62,12 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     var videoChoices by mutableStateOf(emptyList<VideoChoice>()); private set
     var videoSelection by mutableStateOf("Not selected; capabilities not queried"); private set
     var stillResolution by mutableStateOf("Highest available requested; actual resolution pending"); private set
+    var manualExposure by mutableStateOf(false); private set
+    var evStatus by mutableStateOf("No EV request"); private set
+    var focusStatus by mutableStateOf("No focus/metering request"); private set
+    var thermalStatus by mutableStateOf("OS thermal status unknown; not a temperature measurement"); private set
+    private var thermalCode = -1
+    private var removeThermalListener: (() -> Unit)? = null
     private var provider: ProcessCameraProvider? = null
     private var camera: Camera? = null
     private var imageCapture: ImageCapture? = null
@@ -76,7 +85,28 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     private var activeCaptureToken: String? = null
     val sharedSaveSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
     val selectedReport get() = reports.find { it.id == selectedId }
-    init { log.onLine = { line -> main.execute { if (!closed) lines = (lines + "\n" + line).takeLast(16000) } } }
+    init {
+        log.onLine = { line -> main.execute { if (!closed) lines = (lines + "\n" + line).takeLast(16000) } }
+        observeThermals()
+    }
+
+    private fun observeThermals() {
+        if (Build.VERSION.SDK_INT < 29) return
+        try {
+            val power = context.getSystemService(PowerManager::class.java)
+            fun update(value: Int) {
+                if (closed) return
+                thermalCode = value
+                thermalStatus = "OS ${ProbeControls.thermalName(value)} ($value); not temperature °C or a quality test"
+                log.write("THERMAL $thermalStatus")
+                if (ProbeControls.shouldStopRecording(value) && recordingBusy) cine.stop("OS thermal ${ProbeControls.thermalName(value)}")
+            }
+            val listener = PowerManager.OnThermalStatusChangedListener { update(it) }
+            power.addThermalStatusListener(main, listener)
+            removeThermalListener = { power.removeThermalStatusListener(listener) }
+            update(power.currentThermalStatus)
+        } catch (failure: Exception) { log.write("THERMAL_UNAVAILABLE ${failure.message}") }
+    }
 
     private fun event(message: String) { status = message; log.write(message) }
     private fun error(operation: String, e: Exception) {
@@ -142,6 +172,10 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     fun startRecording() {
         if (mode != CaptureMode.CINE || !bound || !controlReady || busy || recordingBusy) return
         val session = cineSession ?: return
+        if (ProbeControls.shouldStopRecording(thermalCode)) {
+            event("Recording blocked by OS thermal ${ProbeControls.thermalName(thermalCode)}; wait for cooling")
+            return
+        }
         if (!owner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
             event("Recording requires a visible activity; retry Record after resume"); return
         }
@@ -154,6 +188,79 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     fun onBackground() { cine.stop("activity background; no background recording") }
     private fun onCineChanged() {
         if (!closed && pendingStop && !recordingBusy) { pendingStop = false; stop() }
+    }
+
+    fun focusCenter() {
+        if (busy || recordingBusy || !bound || !controlReady) return
+        val c = camera ?: return
+        val previewView = view ?: return
+        try {
+            check(previewView.width > 0 && previewView.height > 0) { "Preview layout not ready" }
+            var flags = if (selectedReport?.autoFocusAvailable == true) FocusMeteringAction.FLAG_AF else 0
+            if (!manualExposure) flags = flags or FocusMeteringAction.FLAG_AE
+            check(flags != 0) { "No autofocus mode and AE is manual" }
+            val point = previewView.meteringPointFactory.createPoint(previewView.width / 2f, previewView.height / 2f)
+            val action = FocusMeteringAction.Builder(point, flags).setAutoCancelDuration(5, TimeUnit.SECONDS).build()
+            check(c.cameraInfo.isFocusMeteringSupported(action)) { "CameraX center focus/metering unsupported" }
+            val generation = epoch
+            val includesAf = flags and FocusMeteringAction.FLAG_AF != 0
+            busy = true; focusStatus = "Center ${if (includesAf) "AF" else "AE only"} pending"
+            val future = c.cameraControl.startFocusAndMetering(action)
+            future.addListener({
+                if (generation != epoch || closed) return@addListener
+                busy = false
+                try {
+                    val result = future.get()
+                    focusStatus = if (includesAf) "AF API result=${result.isFocusSuccessful}; inspect actual focus/image quality"
+                        else "Center AE metering API completed; no AF requested"
+                    event("FOCUS $focusStatus")
+                } catch (failure: Exception) { focusStatus = "Focus request failed"; error("focus", failure) }
+            }, main)
+        } catch (failure: Exception) {
+            busy = false; focusStatus = "Center focus/metering request rejected: ${failure.message}"
+            error("focus validation", failure)
+        }
+    }
+
+    fun compensateEv(delta: Int) {
+        if (busy || recordingBusy || !bound || !controlReady) return
+        val c = camera ?: return
+        try {
+            val state = c.cameraInfo.exposureState
+            val range = state.exposureCompensationRange
+            val target = ProbeControls.evTarget(state.exposureCompensationIndex, delta, range.lower..range.upper,
+                state.isExposureCompensationSupported, !manualExposure && controlReady)
+            val generation = epoch
+            applyEv(c, generation, exposureKey(), target, persist = true) { busy = false; controlReady = true }
+        } catch (failure: Exception) { error("EV validation", failure) }
+    }
+
+    private fun applyEv(c: Camera, generation: Int, key: String, requested: Int, persist: Boolean, accepted: () -> Unit) {
+        try {
+            val state = c.cameraInfo.exposureState
+            if (!state.isExposureCompensationSupported) {
+                evStatus = "CameraX EV unsupported; requested index=$requested not applied"
+                log.write("EV_UNSUPPORTED $evStatus")
+                accepted(); return
+            }
+            val range = state.exposureCompensationRange
+            val target = if (range.contains(requested)) requested else 0
+            require(range.contains(target)) { "No neutral EV fallback available in $range" }
+            val fallback = if (requested != target) "; request outside current $range, neutral fallback, saved request retained" else ""
+            evStatus = "Requested index=$requested step=${state.exposureCompensationStep}; target=$target PENDING$fallback"
+            busy = true; controlReady = false
+            val future = c.cameraControl.setExposureCompensationIndex(target)
+            future.addListener({
+                if (generation != epoch || closed) return@addListener
+                try {
+                    val value = future.get()
+                    if (persist) preferences.put("$key/ev", requested.toString())
+                    evStatus = "Requested index=$requested, CameraX accepted=$value step=${state.exposureCompensationStep}$fallback; check actual CaptureResult"
+                    log.write("EV $evStatus")
+                    accepted()
+                } catch (failure: Exception) { busy = false; controlReady = false; error("EV control", failure) }
+            }, main)
+        } catch (failure: Exception) { busy = false; controlReady = false; error("EV control", failure) }
     }
     fun selectFormat(value: Int) {
         if (busy || recordingBusy || mode != CaptureMode.STILL) return
@@ -174,6 +281,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         bound = false; controlReady = false; formats = emptySet()
         videoSelection = "No applied video profile for this session; requested preference retained"
         stillResolution = "No applied image resolution for this session; requested preference retained"
+        manualExposure = false; evStatus = "No accepted EV for this session"; focusStatus = "No focus request for this session"
         camera = null; imageCapture = null; cineSession = null; videoChoices = emptyList()
         desired = "AUTO reset required"; measured = "Awaiting new session result"
         try {
@@ -195,7 +303,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                     val now = SystemClock.elapsedRealtime()
                     if (!still && now - lastSample < 1000) return
                     lastSample = now
-                    val actual = "frame=${result.frameNumber} sensorTimestamp=${result.get(CaptureResult.SENSOR_TIMESTAMP)} intent=${request.get(CaptureRequest.CONTROL_CAPTURE_INTENT)} requestAE=${request.get(CaptureRequest.CONTROL_AE_MODE)} requestISO=${request.get(CaptureRequest.SENSOR_SENSITIVITY)} requestNs=${request.get(CaptureRequest.SENSOR_EXPOSURE_TIME)} actualAE=${result.get(CaptureResult.CONTROL_AE_MODE)} actualISO=${result.get(CaptureResult.SENSOR_SENSITIVITY)} actualNs=${result.get(CaptureResult.SENSOR_EXPOSURE_TIME)} frameDurationNs=${result.get(CaptureResult.SENSOR_FRAME_DURATION)}"
+                    val actual = "frame=${result.frameNumber} sensorTimestamp=${result.get(CaptureResult.SENSOR_TIMESTAMP)} intent=${request.get(CaptureRequest.CONTROL_CAPTURE_INTENT)} requestAE=${request.get(CaptureRequest.CONTROL_AE_MODE)} requestISO=${request.get(CaptureRequest.SENSOR_SENSITIVITY)} requestNs=${request.get(CaptureRequest.SENSOR_EXPOSURE_TIME)} actualAE=${result.get(CaptureResult.CONTROL_AE_MODE)} actualISO=${result.get(CaptureResult.SENSOR_SENSITIVITY)} actualNs=${result.get(CaptureResult.SENSOR_EXPOSURE_TIME)} frameDurationNs=${result.get(CaptureResult.SENSOR_FRAME_DURATION)} requestAF=${request.get(CaptureRequest.CONTROL_AF_MODE)} actualAF=${result.get(CaptureResult.CONTROL_AF_MODE)} afState=${result.get(CaptureResult.CONTROL_AF_STATE)} focusDiopters=${result.get(CaptureResult.LENS_FOCUS_DISTANCE)} actualAWB=${result.get(CaptureResult.CONTROL_AWB_MODE)} awbState=${result.get(CaptureResult.CONTROL_AWB_STATE)} requestEV=${request.get(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION)} actualEV=${result.get(CaptureResult.CONTROL_AE_EXPOSURE_COMPENSATION)} requestAntiBanding=${request.get(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE)} actualAntiBanding=${result.get(CaptureResult.CONTROL_AE_ANTIBANDING_MODE)}"
                     main.execute {
                         if (generation == epoch && !closed) {
                             measured = actual
@@ -283,6 +391,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         activeCaptureToken = null
         videoSelection = "Unbound; no applied video profile"
         stillResolution = "Unbound; no applied image resolution"
+        focusStatus = "Unbound; no active focus request"; evStatus = "Unbound; no accepted EV"; manualExposure = false
         try {
             camera?.cameraInfo?.cameraState?.removeObservers(owner)
             provider?.unbindAll(); camera = null; imageCapture = null; cineSession = null; bound = false
@@ -320,21 +429,29 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             }
             future.addListener({
                 if (generation != epoch || closed) return@addListener
-                busy = false
                 try {
-                    future.get(); controlReady = true
-                    desired = "$label ACCEPTED (check actual result)"; event(desired)
-                    if (remember) {
-                        preferences.put("$key/manual", manual)
-                        if (manual) {
-                            preferences.put("$key/appliedIso", iso)
-                            preferences.put("$key/appliedMs", ms)
+                    future.get()
+                    val finish = {
+                        busy = false; controlReady = true; manualExposure = manual
+                        desired = "$label ACCEPTED (check actual result)"; event(desired)
+                        if (remember) {
+                            preferences.put("$key/manual", manual)
+                            if (manual) {
+                                preferences.put("$key/appliedIso", iso)
+                                preferences.put("$key/appliedMs", ms)
+                            }
                         }
+                        if (manual) evStatus = "EV inactive while MANUAL exposure is requested"
+                        if (restoreSaved && preferences.flag("$key/manual")) setExposure(
+                            preferences.text("$key/appliedIso", requestedIso), preferences.text("$key/appliedMs", requestedMs), remember = false)
                     }
-                    if (restoreSaved && preferences.flag("$key/manual")) setExposure(
-                        preferences.text("$key/appliedIso", requestedIso), preferences.text("$key/appliedMs", requestedMs), remember = false)
+                    if (manual) finish() else {
+                        val ev = if (restoreSaved && preferences.flag("$key/manual")) 0 else preferences.text("$key/ev", "0").toIntOrNull() ?: 0
+                        applyEv(c, generation, key, ev, persist = false, accepted = finish)
+                    }
                 }
                 catch (e: Exception) {
+                    busy = false
                     desired = "$label FAILED; sensor state unknown; use AUTO or stop/restart"
                     error("exposure", e)
                 }
@@ -455,6 +572,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     fun close() {
         closed = true; controlReady = false; activeCaptureToken = null; ++epoch
         cine.stop("activity destroyed")
+        try { removeThermalListener?.invoke(); removeThermalListener = null }
+        catch (failure: Exception) { log.write("THERMAL_REMOVE_ERROR ${failure.message}") }
         try { camera?.cameraInfo?.cameraState?.removeObservers(owner); provider?.unbindAll() }
         catch (e: Exception) { log.write("ERROR close ${e.javaClass.simpleName}: ${e.message}") }
     }

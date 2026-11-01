@@ -30,3 +30,12 @@
 T001〜T003 → T004/T005/T006 → T007/T008 → T009/T010。T011はユーザー実機確認。
 独立したファイルの調査は並行できるが、カメラ/マイクの自動作動は行わない。
 P0証拠補完はIssue #4、運用設定はIssue #6。次のAF/WB/LED検証導線は別の限定Issueへ切り出す。
+
+## B1: AF/AE・照明テレメトリーと熱状態（Issue #13）
+
+- [x] T012 AF/AWB/anti-bandingとAE補正能力を `app/src/main/java/dev/cinematic/p0/CameraReport.kt` へ追加する。
+- [x] T013 center AF/AE、AUTO時EV、世代分離とthermal listenerを `app/src/main/java/dev/cinematic/p0/CameraProbe.kt` へ実装する。
+- [x] T014 要求/実測・focus/EV/熱状態の最小表示を `app/src/main/java/dev/cinematic/p0/MainActivity.kt` へ追加する。
+- [x] T015 EV範囲/モード制約とthermal方針を `app/src/main/java/dev/cinematic/p0/ProbeControls.kt` / `app/src/test/java/dev/cinematic/p0/ProbeControlsTest.kt` で検証する。
+- [x] T016 build/unit/lintと独立レビューを行い、`docs/P05_REPORT.md` へ確認結果・限界を記録する。canonical/CIの証跡はIssue/PRで管理する。
+- [ ] T017 ユーザーがAF追従・AE補正・LED/照明・熱の実機条件を確認し、`docs/P05_REPORT.md` へ最終結果を統合する。自動検証で代用しない。

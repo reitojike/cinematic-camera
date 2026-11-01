@@ -36,7 +36,8 @@ DNGの閲覧対応は[最終検証結果](docs/P0_REPORT.md)のユーザー報�
 画像本体は再エンコードせずコピーし、広範囲ストレージ権限を追加しません。
 API29未満では共有保存は非対応として表示します。ギャラリーやSNSのアプリ内UI、旧写真の移行は作りません。
 
-**共有保存のpre-releaseは[v0.0.2-dev.1](https://github.com/reitojike/cinematic-camera/releases/tag/v0.0.2-dev.1)**です。
+P0共有保存の基準版は[v0.0.2-dev.1](https://github.com/reitojike/cinematic-camera/releases/tag/v0.0.2-dev.1)です。
+新しい検証APKは[Releases](https://github.com/reitojike/cinematic-camera/releases)でtag・source・versionを確認して取得してください。
 旧`v0.0.1-dev.1`の内部写真は`files/captures/`にあり、
 アプリ削除で失われます。ログは新旧ともprivateの`files/reports/`。ログに画像本体・位置情報・端末シリアルは
 記録せず、写真や完全な実機ログはGitへ追加しないでください。署名差と手動更新の注意はReleaseページを参照してください。
@@ -46,6 +47,8 @@ API29未満では共有保存は非対応として表示します。ギャラリ
 MP4は`Movies/Cinematic Camera/`へ保存します。初期値は実対応候補から高解像度/高fpsを優先し、保存済みユーザー希望を尊重します。
 公称48MP、4K60、HDR、音声品質を保証せず、要求/適用/実出力とfallback理由を表示します。
 [P0.5検証結果と未確認条件](docs/P05_REPORT.md)を参照してください。
+Center AF/AE、AUTO時のEV、AF/AWB/照明の能力・実測、OS thermal statusも確認できます。
+APIの合焦結果は画質合格ではなく、SEVERE以上のOS熱状態では録画停止/新規録画抑止を行います。
 LibRaw / NDK、独自現像、GPU / LUT、21:9出力、共有、ギャラリー、バックエンドは未実装です。
 
 ## CIとAPK配布
