@@ -63,3 +63,11 @@ P0証拠補完はIssue #4、運用設定はIssue #6。次のAF/WB/LED検証導�
 - [x] T030 3案の自己完結simulationを `designs/camera-ui-comparison.html`、比較軸と限界を `designs/README.md` へ用意する。
 - [x] T031 desktop/狭幅render・keyboard・mode保持・guide/仮録画・通信/公開前検査と独立レビューを完了する。最終headのcanonical/CIはIssue/PRで証跡を管理する。
 - [ ] T032 本人が配置/配色/アイコンを比較して最終選択する。未決定のままAndroid製品UIへ置換しない。
+
+## B4: preview tap測光（Issue #21）
+
+- [x] T033 `app/src/main/java/dev/cinematic/p0/PreviewFocusGesture.kt` へ標準tap認識とaccessibility click通知を追加する。
+- [x] T034 `app/src/main/java/dev/cinematic/p0/CameraProbe.kt` へ中央/tap共通処理、公開対応照会、要求点/実regionの分離を実装する。
+- [x] T035 `app/src/main/java/dev/cinematic/p0/ProbeControls.kt` / `app/src/test/java/dev/cinematic/p0/ProbeControlsTest.kt` でview座標変換/範囲/非finite/未準備を検証する。
+- [x] T036 build/unit/lint・公開前検査・独立レビューを完了し、`docs/P05_REPORT.md` へ自動検証を記録する。最終headのcanonical/CIはIssue/PRで証跡を管理する。
+- [ ] T037 ユーザーが中央/四隅/黒帯/drag・MF/AE・lens/mode/回転のmappingと実regionを確認し、最終結果を `docs/P05_REPORT.md` へ統合する。

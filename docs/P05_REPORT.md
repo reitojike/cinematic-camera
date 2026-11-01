@@ -1,6 +1,6 @@
 # P0.5 検証レポート
 
-対象: `dev.cinematic.p0` / `0.0.6-p05` / CameraX **1.6.2**
+対象: `dev.cinematic.p0` / `0.0.7-p05` / CameraX **1.6.2**
 
 関連: [Issue #8](https://github.com/reitojike/cinematic-camera/issues/8) / [spec](../specs/002-live-capture/spec.md) / [plan](../specs/002-live-capture/plan.md)
 
@@ -47,9 +47,9 @@ JPEGはheader寸法、DNGはExif寸法を記録するが、DNG全体のdecode証
 ## 機械的検証
 
 - ローカル `:app:assembleDebug :app:testDebugUnitTest :app:lintDebug` を実行。
-- unit **33件、failure/error/skip 0**。既存11件に、能力候補選択・希望値fallback・録画状態/旧token隔離・
+- unit **34件、failure/error/skip 0**。既存11件に、能力候補選択・希望値fallback・録画状態/旧token隔離・
   音声途中失敗/無音警告・出力close/検証/公開/cleanupの12件、EV/thermalの3件、override能力/範囲/fallback/保存保持の4件、
-  report UTF-8/tail境界とopen/write/flush/close失敗の3件を追加。
+  report UTF-8/tail境界とopen/write/flush/close失敗の3件、view座標変換/非finite/範囲/未準備の1件を追加。
 - lint **error 0 / warning 9**。Gradle更新案内1、任意のKTX提案5、metadata記録に使う標準ExifInterfaceへの
   Jetpack推奨3。baselineや抑制は追加しない。Exif読み込みは素材の現像/有効性判定に使用しない。
 - API1.6.2の実artifactでcompileし、MediaStore/音声/SessionConfigの署名を確認。
@@ -65,7 +65,7 @@ unitは実カメラ・Android MediaStore provider・マイク・encoderの代用
 |---|---|---|
 | V01 | STILL/CINE往復、mode別ISO/時間、設定保持、切替の待機/blackout/画角 | 未確認 |
 | V06 | Record/Stop、音声許可/拒否/off、MP4再生、実寸法/fps/range、音声/同期/歪み | 未確認 |
-| V08 | 録画中/停止後の背景化、Finalize/音声解放/保存、復帰後の撮影 | 未確認 |
+| V08 | 録画中/停止直後の背景化、回転による停止、Finalize/音声解放/保存、復帰後の再録画 | 未確認 |
 | P0回帰 | JPEG/RAW/RAW+JPEG、AUTO/MANUAL、既存共有保存と実測ログ | 新実装での再確認は未実施 |
 | 高能力/HDR | 実カメラの対応一覧、初期選択、4K60等の実出力、HDR codec/transferと閲覧 | 未確認 |
 | V02〜V05/V07 | 暗所/動体AF/色照明/LED/応答/発熱の品質 | 未確認、後続の限定検証 |
@@ -76,7 +76,7 @@ unitは実カメラ・Android MediaStore provider・マイク・encoderの代用
 ## B1: 標準AF/AEと照明・熱テレメトリー
 
 [Issue #13](https://github.com/reitojike/cinematic-camera/issues/13)の範囲で、Camera2のAF/AWB/anti-banding mode、
-AF/AE領域、AE補正範囲/stepと、CaptureResultのAF/AWB状態・focus diopters・EV・anti-bandingを追加した。
+AF/AE領域、AE補正範囲/stepと、CaptureResultのAF/AWB状態・focus lens units・EV・anti-bandingを追加した。
 値が取得できなければnull/unknownとし、能力・要求・結果を別に扱う。
 
 - Center AF/AEはPreviewViewのmetering pointとCameraX標準APIを使用。対応照会後にユーザー操作で要求し、
@@ -125,3 +125,22 @@ provider/書込/close失敗は部分文書が残る可能性を表示し、文�
 写真/動画/音声本体・GPS・端末serialを追加取得しない。レポートは機種/build/設定/出力URI等を含むため、
 本人が内容を確認してから共有する。アプリからIssue/クラウドへの自動送信はない。
 SAFでの保存/取消/権限失敗/読み戻し、録画中の抑止、端末での内容確認は未検証。
+
+## B4: preview tapによる標準AF/AE
+
+[Issue #21](https://github.com/reitojike/cinematic-camera/issues/21)で、標準GestureDetectorの単一tapを
+中央ボタンと同じFocusMetering処理へ接続した。drag/long pressを生のACTION_UPでfocusへ変換しない。
+accessibility用の中央ボタンを残す。操作中/録画/Finalize中は新しい要求を行わない。
+
+有限view座標・寸法とCOMPATIBLE previewのSTREAMINGを確認し、公開factoryと対応照会だけを使う。
+MeteringPointのRestricted getter、独自matrix/顔検出/追従、新permission/use-caseは追加していない。
+CameraX判定はfull sensor上の有効点/一部group対応の判定であり、AF/AE全groupや表示crop境界の保証ではない。
+FIT_CENTER黒帯がsensor範囲内へ変換される場合は受理され得るため、表示画像内へのtapを案内する。
+
+要求はviewNormalized/flagsとして記録し、sensor座標と呼ばない。実request/result AF/AE regionsを別に観測する。
+MFはAFを要求せず、AUTO AEが有効ならAEだけ。MANUAL AEかつMFでは理由を表示する。
+Futureはepoch/closedで隔離し、5秒autoCancelを維持する。
+
+view座標のunitとbuild/lintは成功したが、中央/四隅/黒帯・lens/mode/回転ごとのmapping、
+スクロールとのgesture競合、実region、動体合焦品質は実機未確認。
+回転時はActivity再生成により録画を停止する設計で、継続録画を保証しない。回転→保存完了→再録画をV08へ含める。

@@ -1,6 +1,12 @@
 package dev.cinematic.p0
 
 object ProbeControls {
+    fun normalizedPreviewPoint(x: Float, y: Float, width: Int, height: Int): Pair<Float, Float> {
+        require(width > 0 && height > 0) { "Preview layout not ready" }
+        require(x.isFinite() && y.isFinite() && x >= 0 && y >= 0 && x <= width && y <= height) { "Tap outside preview view bounds" }
+        return x / width to y / height
+    }
+
     fun evTarget(current: Int, delta: Int, range: IntRange, supported: Boolean, autoAccepted: Boolean): Int {
         require(supported) { "CameraX exposure compensation unsupported" }
         require(autoAccepted) { "EV requires accepted AUTO exposure" }

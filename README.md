@@ -54,6 +54,10 @@ anti-bandingはMANUAL露出中に効果を持たず、LED/PWMの除去を保証�
 `AUTO reset all`は全Interop・focus要求・EVを解除/neutral化します。mode復帰では対応する保存設定を復元し、
 項目の個別変更は他の受付済み制御を保持します。要求・API受付・実CaptureResultを別に比較してください。
 APIの合焦結果は画質合格ではなく、SEVERE以上のOS熱状態では録画停止/新規録画抑止を行います。
+idle時は表示画像内のtapでも同じAF/AEを要求できます。invalid/未準備/非対応点はCameraXの対応照会で拒否し、
+スクロール/dragはtapと区別します。表示するview正規化座標はsensor座標ではなく、実AF/AE regionはCaptureResultで確認します。
+CameraXの対応判定は少なくとも一部の測光groupが有効という意味で、AF/AE両方の反映や動体追従品質を保証しません。
+FIT_CENTERの黒帯がsensor範囲内へ変換される場合は照会がtrueになるため、黒帯を避けてください。黒帯境界/配置精度は実機未確認です。
 `Save verification report`はAndroid標準の文書保存画面から、現在の設定・能力・CaptureResultと最大128KiBの
 現在セッションlog tailをUTF-8で保存します。写真/動画/音声本体は含めません。録画/Finalize中は実行できません。
 省略された過去ログは切断表示し、保存/close失敗では選択文書が部分的な場合があることを示します。

@@ -241,33 +241,43 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     }
 
     fun focusCenter() {
+        val previewView = view ?: return
+        focusAt(previewView.width / 2f, previewView.height / 2f, "center")
+    }
+
+    fun focusAt(x: Float, y: Float, source: String = "tap") {
         if (busy || recordingBusy || !bound || !controlReady) return
         val c = camera ?: return
         val previewView = view ?: return
         try {
-            check(previewView.width > 0 && previewView.height > 0) { "Preview layout not ready" }
+            val requestedPoint = ProbeControls.normalizedPreviewPoint(x, y, previewView.width, previewView.height)
+            check(previewView.previewStreamState.value == PreviewView.StreamState.STREAMING) { "Preview not streaming; wait for the visible image before metering" }
             var flags = if (selectedReport?.autoFocusAvailable == true && overrides.focusDistance == null) FocusMeteringAction.FLAG_AF else 0
             if (!manualExposure) flags = flags or FocusMeteringAction.FLAG_AE
             check(flags != 0) { "AF unavailable or MF selected, and AE is manual; use AF/default or AUTO reset" }
-            val point = previewView.meteringPointFactory.createPoint(previewView.width / 2f, previewView.height / 2f)
+            val point = previewView.meteringPointFactory.createPoint(x, y)
             val action = FocusMeteringAction.Builder(point, flags).setAutoCancelDuration(5, TimeUnit.SECONDS).build()
-            check(c.cameraInfo.isFocusMeteringSupported(action)) { "CameraX center focus/metering unsupported" }
+            // Public support check validates the full-sensor point, not every displayed-image/letterbox boundary.
+            check(c.cameraInfo.isFocusMeteringSupported(action)) { "CameraX cannot meter this point: unsupported/invalid point or preview transform not ready" }
             val generation = epoch
             val includesAf = flags and FocusMeteringAction.FLAG_AF != 0
-            busy = true; focusStatus = "Center ${if (includesAf) "AF" else "AE only"} pending"
+            val kinds = if (includesAf) { if (flags and FocusMeteringAction.FLAG_AE != 0) "AF+AE" else "AF only" } else "AE only"
+            val target = "$source requested=$kinds at viewNormalized=$requestedPoint (not sensor coordinates)"
+            busy = true; focusStatus = "$target PENDING"
+            log.write("FOCUS_DESIRED $target flags=$flags; actual sensor mapping is observed separately in request/result regions")
             val future = c.cameraControl.startFocusAndMetering(action)
             future.addListener({
                 if (generation != epoch || closed) return@addListener
                 busy = false
                 try {
                     val result = future.get()
-                    focusStatus = if (includesAf) "AF API result=${result.isFocusSuccessful}; inspect actual focus/image quality"
-                        else "Center AE metering API completed; no AF requested"
+                    focusStatus = if (includesAf) "$target AF API result=${result.isFocusSuccessful}; supported portions only, inspect actual regions/quality"
+                        else "$target AE metering API completed; no AF requested; inspect actual region"
                     event("FOCUS $focusStatus")
                 } catch (failure: Exception) { focusStatus = "Focus request failed"; error("focus", failure) }
             }, main)
         } catch (failure: Exception) {
-            busy = false; focusStatus = "Center focus/metering request rejected: ${failure.message}"
+            busy = false; focusStatus = "Focus/metering request rejected: ${failure.message}"
             error("focus validation", failure)
         }
     }
@@ -444,7 +454,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                     val now = SystemClock.elapsedRealtime()
                     if (!still && now - lastSample < 1000) return
                     lastSample = now
-                    val actual = "frame=${result.frameNumber} sensorTimestamp=${result.get(CaptureResult.SENSOR_TIMESTAMP)} intent=${request.get(CaptureRequest.CONTROL_CAPTURE_INTENT)} requestAE=${request.get(CaptureRequest.CONTROL_AE_MODE)} requestISO=${request.get(CaptureRequest.SENSOR_SENSITIVITY)} requestNs=${request.get(CaptureRequest.SENSOR_EXPOSURE_TIME)} actualAE=${result.get(CaptureResult.CONTROL_AE_MODE)} actualISO=${result.get(CaptureResult.SENSOR_SENSITIVITY)} actualNs=${result.get(CaptureResult.SENSOR_EXPOSURE_TIME)} frameDurationNs=${result.get(CaptureResult.SENSOR_FRAME_DURATION)} requestAF=${request.get(CaptureRequest.CONTROL_AF_MODE)} actualAF=${result.get(CaptureResult.CONTROL_AF_MODE)} afState=${result.get(CaptureResult.CONTROL_AF_STATE)} requestFocusLensUnits=${request.get(CaptureRequest.LENS_FOCUS_DISTANCE)} actualFocusLensUnits=${result.get(CaptureResult.LENS_FOCUS_DISTANCE)} requestAWB=${request.get(CaptureRequest.CONTROL_AWB_MODE)} actualAWB=${result.get(CaptureResult.CONTROL_AWB_MODE)} awbState=${result.get(CaptureResult.CONTROL_AWB_STATE)} requestEV=${request.get(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION)} actualEV=${result.get(CaptureResult.CONTROL_AE_EXPOSURE_COMPENSATION)} requestAntiBanding=${request.get(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE)} actualAntiBanding=${result.get(CaptureResult.CONTROL_AE_ANTIBANDING_MODE)} sceneFlicker=${result.get(CaptureResult.STATISTICS_SCENE_FLICKER)}"
+                    val regions = "requestAFRegions=${request.get(CaptureRequest.CONTROL_AF_REGIONS)?.contentToString()} actualAFRegions=${result.get(CaptureResult.CONTROL_AF_REGIONS)?.contentToString()} requestAERegions=${request.get(CaptureRequest.CONTROL_AE_REGIONS)?.contentToString()} actualAERegions=${result.get(CaptureResult.CONTROL_AE_REGIONS)?.contentToString()}"
+                    val actual = "$regions frame=${result.frameNumber} sensorTimestamp=${result.get(CaptureResult.SENSOR_TIMESTAMP)} intent=${request.get(CaptureRequest.CONTROL_CAPTURE_INTENT)} requestAE=${request.get(CaptureRequest.CONTROL_AE_MODE)} requestISO=${request.get(CaptureRequest.SENSOR_SENSITIVITY)} requestNs=${request.get(CaptureRequest.SENSOR_EXPOSURE_TIME)} actualAE=${result.get(CaptureResult.CONTROL_AE_MODE)} actualISO=${result.get(CaptureResult.SENSOR_SENSITIVITY)} actualNs=${result.get(CaptureResult.SENSOR_EXPOSURE_TIME)} frameDurationNs=${result.get(CaptureResult.SENSOR_FRAME_DURATION)} requestAF=${request.get(CaptureRequest.CONTROL_AF_MODE)} actualAF=${result.get(CaptureResult.CONTROL_AF_MODE)} afState=${result.get(CaptureResult.CONTROL_AF_STATE)} requestFocusLensUnits=${request.get(CaptureRequest.LENS_FOCUS_DISTANCE)} actualFocusLensUnits=${result.get(CaptureResult.LENS_FOCUS_DISTANCE)} requestAWB=${request.get(CaptureRequest.CONTROL_AWB_MODE)} actualAWB=${result.get(CaptureResult.CONTROL_AWB_MODE)} awbState=${result.get(CaptureResult.CONTROL_AWB_STATE)} requestEV=${request.get(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION)} actualEV=${result.get(CaptureResult.CONTROL_AE_EXPOSURE_COMPENSATION)} requestAntiBanding=${request.get(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE)} actualAntiBanding=${result.get(CaptureResult.CONTROL_AE_ANTIBANDING_MODE)} sceneFlicker=${result.get(CaptureResult.STATISTICS_SCENE_FLICKER)}"
                     main.execute {
                         if (generation == epoch && !closed) {
                             measured = actual
