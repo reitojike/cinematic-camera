@@ -1,12 +1,12 @@
 # Cinematic Camera
 
 ライブパフォーマンスの静止画/動画を最優先に、風景・ポートレートでも映画的な色と構図を楽しむAndroidアプリを目指します。
-現在の実装はPixel 9aでCameraX 1.6.2のRAW保存とCamera2Interopの手動露出を検証するP0です。
+現在の実装はCameraX 1.6.2のRAW/manual基盤と、STILL/CINE・動画/音声の成立性を調べるP0.5 probeです。
 アプリ名・packageは仮称です。リポジトリは`reitojike/cinematic-camera`（公開前検査後に承認を得てpublic化）。
 
 [製品方針](specs/002-live-capture/spec.md)と[検証・開発計画](specs/002-live-capture/plan.md)を参照してください。
 P0 → P0.5ライブ技術検証 → P1 Stage Clear → P2写真/動画ルック統合 → P3非破壊crop/出力/共有/製品UIの順です。
-Stage Dramatic / Cinema T&O、custom編集やLUT入出力は後続です。動画・ルック・編集UIはまだ実装していません。
+Stage Dramatic / Cinema T&O、custom編集やLUT入出力は後続です。ルック・編集UIはまだ実装していません。
 
 ## Build
 
@@ -25,7 +25,10 @@ APK: `app/build/outputs/apk/debug/app-debug.apk`。P0の実機手順・採否判
 
 ## 実機での操作
 
-許可 → Camera ID選択 → JPEG / RAW / RAW+JPEG選択 → AUTOまたはISO/露光時間(ms)を入力してApply MANUAL → Capture。カメラ・出力を変更すると再bindしてAUTOになります。Stop / Startは明示的なunbind / bindです。背景での停止・再開はCameraXとActivityのlifecycleに任せています。
+許可 → Camera ID選択 → STILLまたはCINEを選びます。STILLはJPEG / RAW / RAW+JPEG → AUTOまたはISO/露光時間(ms)をApply → Capture。
+CINEは実対応のquality/range/fps候補と音声を選んでRecord → Stop recording。音声ありのRecord時だけマイク権限を要求します。
+起動やmode切替だけでは録画しません。Finalizeと出力処理完了までは次の操作を待ちます。
+mode別の受付済み露出を、Interop解除後に復元します。Stop / Startは明示unbind / bindです。背景録画は行いません。
 
 共有保存版の新しいJPEG/DNGは、標準MediaStoreの`Pictures/Cinematic Camera/`へ保存します。
 撮影ボタンの下のState / Recent logでURI・名前・byte数を確認できます。JPEGのGoogleフォト等での表示と
@@ -40,8 +43,10 @@ API29未満では共有保存は非対応として表示します。ギャラリ
 
 権限が恒久拒否された場合はAndroidのアプリ設定で許可してください。操作受付は実測成功ではありません。`ACCEPTED`の後もCaptureResultを比較し、DNGをPCで開くまでは合格扱いにしません。出力の失敗時は部分ファイルが残り得るので、保存成功ログとファイル一覧を照合してください。
 
-現行P0ではLibRaw / NDK、独自現像、動画、GPU / LUT、21:9出力、共有、ギャラリー、バックエンドは未実装です。
-camera-viewの推移依存にcamera-videoが含まれる場合も、現行P0は動画機能を使用していません。
+MP4は`Movies/Cinematic Camera/`へ保存します。初期値は実対応候補から高解像度/高fpsを優先し、保存済みユーザー希望を尊重します。
+公称48MP、4K60、HDR、音声品質を保証せず、要求/適用/実出力とfallback理由を表示します。
+[P0.5検証結果と未確認条件](docs/P05_REPORT.md)を参照してください。
+LibRaw / NDK、独自現像、GPU / LUT、21:9出力、共有、ギャラリー、バックエンドは未実装です。
 
 ## CIとAPK配布
 

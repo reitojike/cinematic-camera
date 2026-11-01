@@ -22,6 +22,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 class MainActivity : ComponentActivity() {
     private lateinit var probe: CameraProbe
     private var permission by mutableStateOf(false)
+    private var pendingAudioRequest = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -33,10 +34,16 @@ class MainActivity : ComponentActivity() {
                     permission = granted
                     probe.log.write("PERMISSION granted=$granted")
                 }
+                val microphoneLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+                    val requested = pendingAudioRequest
+                    pendingAudioRequest = false
+                    probe.reportAudioPermission(granted)
+                    if (granted && requested) probe.startRecording()
+                }
                 Surface(Modifier.fillMaxSize()) {
                     Column(Modifier.safeDrawingPadding().padding(12.dp).verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Cinematic Camera — P0", style = MaterialTheme.typography.titleLarge)
+                        Text("Cinematic Camera — P0.5 probe", style = MaterialTheme.typography.titleLarge)
                         Text("Pixel 9a / CameraX 1.6.2 / ${BuildConfig.VERSION_NAME}")
                         if (!permission) {
                             Text("Camera permission required. If denied permanently, enable Camera in Android app settings.")
@@ -50,47 +57,80 @@ class MainActivity : ComponentActivity() {
                                 }
                             }, modifier = Modifier.fillMaxWidth().height(240.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = probe::bind, enabled = !probe.busy && !probe.bound) { Text("Start") }
+                                Button(onClick = probe::bind, enabled = !probe.busy && !probe.recordingBusy && !probe.bound) { Text("Start") }
                                 Button(onClick = probe::stop, enabled = probe.bound) { Text("Stop") }
+                            }
+                            Row {
+                                CaptureMode.entries.forEach { mode ->
+                                    TextButton(onClick = { probe.selectMode(mode) }, enabled = !probe.busy && !probe.recordingBusy) {
+                                        Text("${if (probe.mode == mode) "● " else ""}$mode")
+                                    }
+                                }
                             }
                             Text("Camera ID (Camera2-only IDs show an unsupported reason when selected)")
                             probe.reports.forEach { report ->
-                                TextButton(onClick = { probe.selectCamera(report.id) }, enabled = !probe.busy) {
+                                TextButton(onClick = { probe.selectCamera(report.id) }, enabled = !probe.busy && !probe.recordingBusy) {
                                     Text("${if (report.id == probe.selectedId) "● " else ""}Camera ${report.id}")
                                 }
                             }
-                            Text("Output: ${CameraProbe.formatName(probe.format)}. Changing camera/output rebinds in AUTO.")
+                            if (probe.mode == CaptureMode.STILL) {
+                            Text("Output: ${CameraProbe.formatName(probe.format)}. Rebind clears Interop then restores this mode's saved exposure.")
                             Row {
                                 listOf(ImageCapture.OUTPUT_FORMAT_JPEG, ImageCapture.OUTPUT_FORMAT_RAW,
                                     ImageCapture.OUTPUT_FORMAT_RAW_JPEG).forEach { f ->
                                     TextButton(onClick = { probe.selectFormat(f) },
-                                        enabled = !probe.busy && f in probe.formats) { Text(CameraProbe.formatName(f)) }
+                                        enabled = !probe.busy && !probe.recordingBusy && f in probe.formats) { Text(CameraProbe.formatName(f)) }
                                 }
                             }
                             if (ImageCapture.OUTPUT_FORMAT_RAW !in probe.formats) Text("RAW unavailable: CameraX did not advertise OUTPUT_FORMAT_RAW.")
                             if (ImageCapture.OUTPUT_FORMAT_RAW_JPEG !in probe.formats) Text("RAW+JPEG unavailable: CameraX did not advertise OUTPUT_FORMAT_RAW_JPEG.")
-                            var iso by remember { mutableStateOf("100") }
-                            var ms by remember { mutableStateOf("10") }
-                            OutlinedTextField(iso, { iso = it }, label = { Text("Requested ISO") }, singleLine = true,
-                                enabled = !probe.busy, modifier = Modifier.fillMaxWidth())
-                            OutlinedTextField(ms, { ms = it }, label = { Text("Requested exposure (ms), e.g. 8.333333") },
-                                singleLine = true, enabled = !probe.busy, modifier = Modifier.fillMaxWidth())
+                            Row {
+                                Checkbox(probe.highResolution, probe::chooseHighResolution, enabled = !probe.busy && !probe.recordingBusy)
+                                Text("Prefer highest available still resolution (may be slower)")
+                            }
+                            Text(probe.stillResolution)
+                            } else {
+                                Text("Video selection: ${probe.videoSelection}")
+                                Text("Supported combinations (device quality/HDR/audio still unverified)")
+                                probe.videoChoices.forEach { choice ->
+                                    TextButton(onClick = { probe.selectVideo(choice.key) }, enabled = !probe.busy && !probe.recordingBusy) {
+                                        Text(choice.label)
+                                    }
+                                }
+                                Row {
+                                    Checkbox(probe.audioWanted, probe::setAudio, enabled = !probe.busy && !probe.recordingBusy)
+                                    Text("Record audio (permission requested on Record)")
+                                }
+                                Text("${probe.recordingStage}: ${probe.recordingStats}")
+                                Button(onClick = {
+                                    if (probe.audioWanted && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                                        pendingAudioRequest = true
+                                        microphoneLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                    } else probe.startRecording()
+                                }, enabled = probe.bound && probe.controlReady && !probe.busy && !probe.recordingBusy) { Text("Record") }
+                                Button(onClick = probe::stopRecording,
+                                    enabled = probe.recordingStage == RecordingStage.STARTING || probe.recordingStage == RecordingStage.RECORDING) { Text("Stop recording") }
+                            }
+                            OutlinedTextField(probe.requestedIso, probe::editIso, label = { Text("Requested ISO (${probe.mode})") }, singleLine = true,
+                                enabled = !probe.busy && !probe.recordingBusy, modifier = Modifier.fillMaxWidth())
+                            OutlinedTextField(probe.requestedMs, probe::editMs, label = { Text("Requested exposure ms (${probe.mode})") },
+                                singleLine = true, enabled = !probe.busy && !probe.recordingBusy, modifier = Modifier.fillMaxWidth())
                             val reason = probe.selectedReport?.manualBlockReason
                             reason?.let { Text("MANUAL unavailable: $it") }
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = { probe.setExposure() }, enabled = probe.bound && !probe.busy) { Text("AUTO") }
-                                Button(onClick = { probe.setExposure(iso, ms) },
-                                    enabled = probe.bound && !probe.busy && probe.selectedReport != null && reason == null) { Text("Apply MANUAL") }
+                                Button(onClick = { probe.setExposure() }, enabled = probe.bound && !probe.busy && !probe.recordingBusy) { Text("AUTO") }
+                                Button(onClick = { probe.setExposure(probe.requestedIso, probe.requestedMs) },
+                                    enabled = probe.bound && !probe.busy && !probe.recordingBusy && probe.selectedReport != null && reason == null) { Text("Apply MANUAL") }
                             }
                             Text("Desired: ${probe.desired}")
                             Text("CaptureResult: ${probe.measured}")
                             if (!probe.sharedSaveSupported) Text("Shared photo saving requires Android 10 or newer.")
-                            Button(onClick = probe::capture, enabled = probe.bound && probe.controlReady && probe.sharedSaveSupported && !probe.busy) { Text("Capture ${CameraProbe.formatName(probe.format)}") }
+                            if (probe.mode == CaptureMode.STILL) Button(onClick = probe::capture, enabled = probe.bound && probe.controlReady && probe.sharedSaveSupported && !probe.busy && !probe.recordingBusy) { Text("Capture ${CameraProbe.formatName(probe.format)}") }
                         }
                         SelectionContainer {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("State: ${probe.status}${if (probe.busy) " [operation pending]" else ""}")
-                                Text("Log: ${probe.log.file.absolutePath}\nImages: ${PhotoPublisher.RELATIVE_PATH} (MediaStore)")
+                                Text("Log: ${probe.log.file.absolutePath}\nImages: ${PhotoPublisher.RELATIVE_PATH}\nVideos: Movies/Cinematic Camera/ (MediaStore)")
                                 Text("CameraX output capabilities (separate from Camera2)\n${probe.cameraXReports}")
                                 Text("Camera2 characteristics\n${probe.reports.joinToString("\n\n") { it.text }}")
                                 Text("Recent log (full session saved privately)\n${probe.lines}")
@@ -108,8 +148,13 @@ class MainActivity : ComponentActivity() {
         if (::probe.isInitialized) probe.log.write("LIFECYCLE onResume permission=$permission")
     }
     override fun onStop() {
+        if (::probe.isInitialized) probe.onBackground()
         if (::probe.isInitialized) probe.log.write("LIFECYCLE onStop; CameraX lifecycle owns suspension")
         super.onStop()
+    }
+    override fun onPause() {
+        if (::probe.isInitialized) probe.onBackground()
+        super.onPause()
     }
     override fun onDestroy() {
         if (::probe.isInitialized) probe.close()

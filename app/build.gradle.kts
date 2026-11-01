@@ -9,8 +9,8 @@ android {
         applicationId = "dev.cinematic.p0"
         minSdk = 28
         targetSdk = 37
-        versionCode = providers.environmentVariable("CINEMATIC_VERSION_CODE").orNull?.toInt() ?: 2
-        versionName = providers.environmentVariable("CINEMATIC_VERSION_NAME").orNull ?: "0.0.2-p0"
+        versionCode = providers.environmentVariable("CINEMATIC_VERSION_CODE").orNull?.toInt() ?: 3
+        versionName = providers.environmentVariable("CINEMATIC_VERSION_NAME").orNull ?: "0.0.3-p05"
     }
     buildFeatures { compose = true; buildConfig = true }
     compileOptions {
@@ -30,5 +30,6 @@ dependencies {
     implementation("androidx.camera:camera-camera2:$cameraX")
     implementation("androidx.camera:camera-lifecycle:$cameraX")
     implementation("androidx.camera:camera-view:$cameraX")
+    implementation("androidx.camera:camera-video:$cameraX")
     testImplementation("junit:junit:4.13.2")
 }
