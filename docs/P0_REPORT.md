@@ -1,156 +1,119 @@
 # P0 技術検証レポート
 
-作成日: 2026-11-01 / アプリ: `0.0.1-p0` (`dev.cinematic.p0`) / CameraX: **1.6.2固定**
+対象: Cinematic Camera / `dev.cinematic.p0` / CameraX **1.6.2固定**
 
-**状態: 実装・ビルド・ユニットテスト・lint完了 / Pixel 9a実機未検証。P1判定は未判定（NOT_EVALUATED）。**
+判定対象リリース: [v0.0.2-dev.1](https://github.com/reitojike/cinematic-camera/releases/tag/v0.0.2-dev.1)
 
-GO / GO_WITH_LIMITATIONS / NO_GOは実機証拠を得てから選ぶ。実機がないことを端末非対応やNO_GOの根拠にしない。
+検証結果の整理日: 2026-11-01
 
-## 実装した検証導線
+**結論: RAW保存・PCでの読み込み、手動露出の実測反映、AUTO/MANUAL切替・背景復帰はユーザーから問題なしと報告された。P1判断案は GO_WITH_LIMITATIONS。**
 
-- Camera permission、PreviewView、Activity lifecycleへのbind、手動Stop / Start。
-- CameraManagerのcameraIdList全体についてCameraCharacteristicsを表示・ログ保存。個別取得に失敗したIDもエラー記録。
-- レンズ向き・焦点距離・physical IDs、ハードウェアレベル、RAW / MANUAL_SENSOR、ISO / 露光時間範囲、最長フレーム時間、最小フォーカス距離、F値、RAW_SENSORサイズ。
-- CameraX availableCameraInfos別にsupportedOutputFormatsを記録。Camera2のRAWフラグからCameraX対応を推測しない。CameraXから選択できないIDはその旨をログに記録。
-- JPEGのAUTO基準撮影、RAW対応時のDNG保存、RAW+JPEG対応時の同時保存を別々に選択。各形式を選択すると再bindしてAUTOに戻す。非対応の形式のImageCaptureは構築しない。
-- MANUAL_SENSOR・AE_OFF・request keys・範囲が全て確認できるときだけ手動露出を許可。msを浮動小数点を介さず整数nsへ変換し、範囲外は拒否（黙って丸めない）。
-- 手動時はCamera2CameraControl.setCaptureRequestOptionsでAE_OFF / ISO / 露光時間を設定。AUTO時はclearCaptureRequestOptionsで全Interop上書きを解除。Future受付とセンサー結果は別々に記録。
-- 再bind時にもInterop設定を明示解除し、受付完了までは撮影を抑止。解除失敗時は撮影不可のまま理由を表示する。選択するIDごとにCameraX形式集合を初期化し、別IDの能力を流用しない。
-- Preview / ImageCaptureに観測用session capture callback。CameraDevice / CameraCaptureSessionを操作しない。通常結果は最大約1回/秒、still intentはその都度ログ。request側とresult側のAE/ISO/ns、frame number、sensor timestamp、frame durationを記録。
-- logcat `CinematicP0`とprivate `files/reports/`にセッションログ。画面は最近の16,000文字、privateファイルは全記録。DNG / JPEGはprivate `files/captures/`。UUIDで上書きを避け、出力形式・ファイル名・サイズ・未検証の読み込み状態を記録。
+この判断案はユーザー報告を根拠とする。エージェントによる実機測定や証拠原本の独立検証ではなく、P0全ACの無条件合格・P1着手承認を意味しない。
 
-## 環境・ビルド結果
+## 検証対象と証拠の範囲
 
-| 項目 | 結果 |
+最初の対象端末はGoogle Pixel 9a。配布物は次のとおり同定済みだが、実機に入ったAPKとの同一性は未確認。
+
+| 項目 | 配布物の検証結果 |
 |---|---|
-| 作業環境 | Windows / PowerShell、独立フォルダー `cinematic-camera-p0` |
-| 指示ファイル | 作業フォルダーと祖先のAGENTS.md、およびMyProject/.agentsを確認。該当ファイルなし |
-| Android SDK | Platform 37.0 / Build Tools 36.0.0あり |
-| JDK / Gradle / AGP | Oracle JDK 25.0.4.1 / 9.8.1 / 9.4.1 |
-| wrapper生成 | 成功 |
-| assembleDebug | 成功。debug APK生成 |
-| testDebugUnitTest | 成功。4件、失敗0、error 0、skip 0 |
-| lintDebug | 成功。error 0、warning 1（Gradle 9.8.2更新の案内。検証版9.8.1を維持） |
-| 1.6.2実API検証 | 解決済みartifactでcompile成功。runtime依存のCameraXは全て1.6.2、1.7系なし |
-| ADB端末一覧 | daemon起動失敗: `cannot connect to daemon`。接続端末を確認できず |
-| 実機撮影・インストール | 未実施 |
+| source main | `e166ddb4975e755ee91604448b9fc38429fc8b33` |
+| versionName / versionCode | `v0.0.2-dev.1` / `2` |
+| applicationId | `dev.cinematic.p0` |
+| APK SHA-256 | `d7b93dcee70ab1684815df989a1a7f4a7b4d4f322ca3accdc4b57dbc527d8a7f` |
+| 署名証明書SHA-256 | `13b532a690a29dfd48dff4f6df9c3b39c90b77ad6033271aee4f440e2e8143c6` |
 
-初回のsandbox内Gradleはlocalhostのdaemonへ接続できず失敗。ビルド目的の昇格実行でwrapper生成に成功。端末操作・撮影・公開は行っていない。
+実機結果は上記リリースの案内後のユーザー報告として扱う。端末名、Android version/build、camera ID、
+使用APK hash、個別ファイル名/サイズ/hash、閲覧アプリ名/版、指定値とCaptureResult原本は未取得。
+未提示の値は推定して埋めない。写真本体・未編集の実機ログは公開履歴へ保存しない。
 
-その後、利用者が`reitojike/cinematic-camera`の非公開repo作成とAPK配布を承認した。branch / main保護 / 最小CI / 一時debug署名でのpre-release配布の方針は[OPERATIONS.md](OPERATIONS.md)に記録する。初版のローカルAPKと、CI / Releaseで配布するrun別APKのhashを混同しない。実機ACとP1判定は変更しない。
+## 最終検証サマリー
 
-詳細なコマンド、成果物のSHA-256、テスト範囲は[BUILD_VALIDATION.md](BUILD_VALIDATION.md)を参照。
-
-### 納品前の独立レビュー
-
-RAW判定・保存callback、AUTO解除、request/resultの区別、lifecycle / callback race / cleanup、エラーUIを1巡確認した。再bindでInterop設定を明示解除しない問題と、Camera2-only ID選択失敗時に前IDのRAW対応表示が残る問題の2件を修正。修正後にbuild / unit / lintを再実行し、全て成功。実機成立性を保証するレビューではなく、実機ACは引き続き未検証。
-
-## ACの状態
-
-| AC | 状態 | 必要な証拠 |
+| 確認事項 | ユーザー報告による結果 | 独立確認・詳細証拠の範囲 |
 |---|---|---|
-| AC1 | 未検証 | Pixel 9aで許可・preview・Stop/Start・復帰 |
-| AC2 | 未検証 | Pixel 9aからの実測能力ログ |
-| AC3 | 未検証 | DNG 5回以上保存、PC viewerで各ファイルを開く |
-| AC4 | 未検証 | ISO 2値以上・露光時間2値以上のrequest/result比較 |
-| AC5 | 未検証 | AUTO→MANUAL→AUTOで無停止・無クラッシュ |
-| AC6 | 実装済み・実機未検証 | 非対応、範囲外入力、APIエラー時のUI / log / 非クラッシュ |
-| AC7 | 文書作成済み・部分完了 | ビルド結果を記録し、実機ログとP1判断を追記する |
+| インストール・カメラ操作 | 成功 | 実機の端末/使用APKの同定は未完了 |
+| JPEG撮影・保存先 | `Cinematic Camera`フォルダーへの保存を確認 | MediaStore URI、JPEGの閲覧アプリ名は未取得 |
+| RAW撮影・ギャラリー表示 | DNGをギャラリーで表示できた | アプリ名/版不明。ギャラリー表示だけではRAW全体のdecodeを証明しない |
+| DNGを5回以上保存しPCのRAWビューアで各ファイルを開く | 問題なしとの確認報告 | 個別ファイル名/サイズ/ID、PC viewer名/版、RAW全体のdecode経路は未取得 |
+| ISO・露光時間をそれぞれ2値以上変更し実測値へ反映 | 問題なしとの確認報告 | 各指定値、CaptureResult値、誤差、frame durationの原本は未取得 |
+| AUTO/MANUAL切替・バックグラウンド復帰 | 問題なしとの確認報告 | 試行回数、詳細手順、lifecycle/AE解除ログは未取得 |
 
-**実機ACの合格は0件。** 非対応が実測された場合は該当ACを`BLOCKED / 実機非対応`にし、camera ID・対応フラグ・CameraX形式・エラー・再現条件を残す。回避策の追加やCamera2全面移行は行わない。
+「残りの確認もいずれも問題なし」との報告は、直前に案内したDNG 5回以上＋PC読み込み、
+ISO/露光時間それぞれ2値以上の実測反映、AUTO/MANUAL切替・背景復帰に適用する。
+能力一覧の採取、権限拒否/再許可、明示Stop/Start、RAW+JPEG同時出力、非対応/API失敗処理まで
+包括的に確認済みとはしない。先の「露出・感度は操作できていそう」という報告と、今回の実測反映確認を区別する。
 
-## 実機結果記入欄
+## ACごとの評価
 
-| 項目 | 実測値 |
-|---|---|
-| 端末名 | 未確認（対象はGoogle Pixel 9a） |
-| Android version / build / fingerprint | 未確認 |
-| アプリバージョン / 検証日 | `0.0.1-p0` / 未実施 |
-| Camera ID / lens / hardware level | 未確認 |
-| RAW / MANUAL_SENSOR (Camera2) | 未確認 |
-| CameraX output formats | 未確認 |
-| ISO / exposure range / max frame duration | 未確認 |
-| 最小フォーカス距離 / F値 / RAWサイズ | 未確認 |
-| AUTO JPEGとpreviewの一致 | 未確認。JPEGは処理済み、RAWは未現像なのでRAWの見た目の一致を要求しない |
-| AUTO / RAW / MANUAL要約 | 全て未実施 |
-| CameraX / Interop制御競合 | 未確認。競合なしとは判断していない |
+`USER_REPORTED_PASS`は該当する機能確認の成功報告を指し、個別測定資料を独立検証した印ではない。
 
-### DNG検証（同じcamera IDで5回以上）
-
-| 回 | Camera ID / UUIDファイル名 | byte数 | Viewer名/版 | 読込成功・寸法・内容確認 |
-|---|---|---|---|---|
-| 1 | 未取得 | — | — | 未確認 |
-| 2 | 未取得 | — | — | 未確認 |
-| 3 | 未取得 | — | — | 未確認 |
-| 4 | 未取得 | — | — | 未確認 |
-| 5 | 未取得 | — | — | 未確認 |
-
-SAVED / 非ゼロbyteだけではDNG有効と判断しない。RAW+JPEGも別途、同じUUIDの両ファイルを確認する。
-
-### 手動露出の記入欄
-
-範囲内でISOを2値、露光時間を2値以上選ぶ。例は端末範囲を確認してから決める。ISO変更中は時間を固定し、時間変更中はISOを固定。安定後の複数frameとstill結果を記録し、AUTO復帰後はAEが自動に戻ることを確認する。
-
-| 条件 | 指定ISO/ns | request AE/ISO/ns | actual AE/ISO/ns | frame duration | 誤差/安定までの時間 |
-|---|---|---|---|---|---|
-| AUTO基準 | AUTO | 未確認 | 未確認 | 未確認 | 未確認 |
-| ISO A | 未選定 | 未確認 | 未確認 | 未確認 | 未確認 |
-| ISO B | 未選定 | 未確認 | 未確認 | 未確認 | 未確認 |
-| exposure A | 未選定 | 未確認 | 未確認 | 未確認 | 未確認 |
-| exposure B | 未選定 | 未確認 | 未確認 | 未確認 | 未確認 |
-| AUTO復帰 | clear | 未確認 | 未確認 | 未確認 | 未確認 |
-
-誤差は実測-指定のns/ISOと相対差を記録する。採否に使う許容差は実測と端末制約を根拠に説明し、都合よく変更しない。
-
-## 実機検証手順
-
-1. APKをPixel 9aへ手動インストール。撮影に人・画面内の個人情報・位置情報が含まれない被写体を用意する。ログのDEVICE行で端末ビルドとアプリ版を控える。
-2. 初回拒否→再許可、許可済み起動を確認。Preview開始→Stop→Start、ホームへ移動→復帰、画面回転・再生成を確認。各操作のCAMERA_STATEとLIFECYCLEを残す。
-3. Camera2全IDとCameraX形式を採取し、この文書へ転記。各CameraX IDを選んでpreview / JPEGを確認。非対応IDや形式はUI / logに理由が出ることを確認。
-4. AUTO JPEGを撮影。previewの構図・露出と保存画像を比較する（RAWに同一の見た目は要求しない）。
-5. RAWがadvertiseされたIDでRAWを選択、AUTOで5回以上Capture。各SAVED / CAPTURE_COMPLETE / byte数を確認。連続5回の意味は各保存完了後に次を撮ること。無制限のburst性能は評価しない。
-6. RAW+JPEGがadvertiseされれば別途選択して撮影。UUIDが一致するDNGとJPEGの2つの完了を確認する。未advertiseならBLOCKED/非対応として記録。
-7. 能力範囲内でISO A→B（時間固定）、時間A→B（ISO固定）を適用。PENDING→ACCEPTEDとRESULTを比較。プレビュー安定後のframeとstill intentの結果を残す。長時間露光ではframe durationとpreview低fpsも記録する。
-8. AUTO→MANUAL→AUTOを複数回実施。AUTOはclearCaptureRequestOptionsで解除し、request / actual AEとISO/時間の自動変化を確認。MANUAL→出力変更、MANUAL→Stop/Startでも明示解除の受付後にAUTOへ戻るか確認。停止・クラッシュ・CameraX上書きがあれば再現手順を記録する。
-9. 範囲外ISO、負の時間、不正文字列、未対応機能、カメラ占有/切断等を安全に再現できる範囲で確認し、エラーUI/logを残す。撮影中・適用中は他操作を抑止するがStopは利用可。Stop後に遅れて来た撮影結果はLATEとして記録し、新しいセッションの操作状態を書き換えない。背景復帰後にも撮影可能か確認。
-10. privateログと撮影物をPCの**リポジトリ外**へ取得し、各DNGをRAW viewerで開く。ファイル名・byte数・viewer・読み込み成否だけを記入。ログを公開する前に端末ビルドなどの共有可否も確認する。
-
-debug APKのファイル取得例（実機操作は利用者が実行）:
-
-```powershell
-adb shell run-as dev.cinematic.p0 ls -l files/reports
-adb shell run-as dev.cinematic.p0 ls -l files/captures
-# Android Studio Device Explorer: data/data/dev.cinematic.p0/files からPCへ保存。
-# PowerShellでバイナリstdoutをテキストとしてリダイレクトしないこと。
-```
-
-## 失敗・制約・停止条件
-
-- 実機の画質・性能・RAW有効性・制御競合は未評価。Camera2にRAWがあってもCameraXの同時stream構成でbindできるとは限らない。bind失敗は自動でJPEGにフォールバックせず理由を表示する。
-- ISO/nsは範囲内でもquantization、frame duration、HAL、CameraXの静止画処理により実測が違い得る。frame数・sensor timestamp・requestとresultを照合し、受付成功と一致を混同しない。長時間露光でUIが待機する可能性も実機確認する。
-- RESULTのdesiredはcallbackをUIへ届けた時点の操作ラベル。操作境界付近のframeには遅延があり得るので、sensor timestampとrequest値を優先し、安定後の複数frameを採用する。CaptureResultと保存ファイルの厳密な1対1対応は保証せず、撮影token/時刻/intentで調査する。
-- 通常のCaptureResultログは約1秒間隔。無期限に撮影する製品用途を想定しない。必要な検証後はStopで止める。
-- RAW+JPEG失敗時に片方だけ保存され得る。部分ファイルは証拠として残り得るため、成功回数へ含めない。
-- callbackはアプリのmain executorへ配送し、保存本体のIOはCameraXへ任せる。独自executorやCameraDevice / sessionの所有は追加しない。実機での停止中撮影やlate callbackも検証対象。
-- インストール、カメラ撮影、外部viewerでの検証は未実施。バックエンド・独自回避・Camera2直接制御は追加していない。
-
-| 失敗 | 再現手順 | 結果 / 次の対応 |
+| AC | 評価 | 残る証拠・範囲 |
 |---|---|---|
-| sandbox内Gradle daemon接続 | 初回wrapper生成 | localhost接続不可。ビルド昇格実行でwrapper成功 |
-| ADB daemon起動 | `adb devices -l` | daemonへ接続不可。実機接続状態は不明、再試行/撮影はしていない |
-| 実機CameraX / Interopの失敗 | 未検証 | 実測後記入 |
+| AC1 許可・preview開始/停止/復帰 | 部分確認（ユーザー報告） | インストール・カメラ操作・背景復帰は報告あり。権限フロー全体、明示Stop/Start、端末/版の同定は未完了 |
+| AC2 実機能力記録 | 未確認 | camera ID別のRAW/MANUAL_SENSOR、ISO/時間範囲、RAWサイズ、CameraX出力形式の実測一覧 |
+| AC3 DNG 5回以上＋PC viewer | USER_REPORTED_PASS / 詳細証拠未取得 | 個別ファイル名/サイズ、camera ID、viewer名/版、RAW全体のdecode確認資料 |
+| AC4 ISO/時間各2値以上の実測反映 | USER_REPORTED_PASS / 数値証拠未取得 | 指定値とCaptureResult原本、誤差・フレーム周期等の制約 |
+| AC5 AUTO→MANUAL→AUTO | USER_REPORTED_PASS / 詳細ログ未取得 | 切替は問題なしとの報告。試行条件と停止/クラッシュ有無を裏付ける記録 |
+| AC6 非対応/APIエラー | 実装済み・実機未確認 | 範囲外入力、非対応、API失敗時の非クラッシュ・UI/log・回復 |
+| AC7 ビルド・実機証拠・採否報告 | 最終サマリー・判断案作成 / 証拠整備未完了 | 対象同定、能力/数値/ファイル資料、残るAC、P1採否の承認 |
+| AC8 共有保存と閲覧 | ユーザー確認済み範囲あり | JPEGフォルダー保存とDNGギャラリー表示の報告。Googleフォトの利用や全viewer対応は未確認 |
 
-## P1判定と次の一手
+実機非対応の報告・再現根拠は得られておらず、現時点でBLOCKED/端末非対応には分類しない。
 
-**NOT_EVALUATED（未判定）**。まずPixel 9aで上記マトリクスを実施し、DNG 5件と露出2値以上の実測を揃える。AC3/4がBLOCKEDの場合はログを根拠に、制限付きで進むか・Camera2で問題となる最小ケースだけ比較するかを相談する。現時点でCamera2への移行を提案する実測根拠はない。
+## 実装・機械的検証
 
-## 確認した公式資料
+- Kotlin / Jetpack Compose、PreviewView、CAMERA permission、lifecycleへのbind、Start/Stopを実装。
+- Camera2の各camera IDの能力と、CameraXのsupportedOutputFormatsを別々に記録。Camera2のRAWフラグだけでCameraX対応を推定しない。
+- 対応形式を確認後にJPEG / RAW / RAW+JPEGを構築。AE_OFFとISO/露光時間は必要なCamera2Interopだけで指定し、
+  AUTO復帰・再bind時はclearCaptureRequestOptionsの受付を待つ。指定/受付/CaptureResultは別に記録する。
+- CameraXが管理するCameraDevice / CameraCaptureSessionは直接操作しない。固定絞りの操作UIはない。
+- 新撮影はcache一時出力から再エンコードせずMediaStore Imagesへコピー。`Pictures/Cinematic Camera/`、
+  `image/jpeg` / `image/x-adobe-dng`、IS_PENDINGを使用し、保存URI・byte数をUI/logへ記録。
+- RAW+JPEGは両callbackと全stream close後に公開。失敗時は今回作ったrowを削除し、cleanup失敗も表示。
+  公開はrowごとの順次updateであり、一括DB transactionではない。旧内部写真の移行/一括削除は行わない。
+- 独立レビューで再bind時のInterop残存とID変更時の旧能力表示を修正済み。共有保存の独立レビューでも追加の具体的不具合なし。
+- [自然main CI](https://github.com/reitojike/cinematic-camera/actions/runs/41321192520)：
+  build成功、unit **11件・failure/error/skip 0**、lint **error 0 / warning 4**。
+- [Release workflow](https://github.com/reitojike/cinematic-camera/actions/runs/41321498215)：
+  lint/unit/build、署名検証、配布成功。公開URLからの実ダウンロードとAPKのpackage/version/hashを照合済み。
 
-- [CameraX release notes: 1.6.2](https://developer.android.com/jetpack/androidx/releases/camera#1.6.2) — 1.6.2固定。サンプルの1.7 rc指定は採用しない。
-- [ImageCapture](https://developer.android.com/reference/androidx/camera/core/ImageCapture) / [ImageCaptureCapabilities](https://developer.android.com/reference/androidx/camera/core/ImageCaptureCapabilities) — RAW / RAW_JPEG / 2出力takePictureは1.5.0から。
-- [CameraCharacteristics](https://developer.android.com/reference/android/hardware/camera2/CameraCharacteristics)
-- [CameraX architecture](https://developer.android.com/media/camera/camerax/architecture)
-- [Camera2CameraControl](https://developer.android.com/reference/androidx/camera/camera2/interop/Camera2CameraControl) — 1.6.2のset/clearCaptureRequestOptionsを使用。1.7のapplyCamera2Interopは採用しない。
-- [AGP 9.4 compatibility](https://developer.android.com/build/releases/agp-9-4-0-release-notes)
+SDK 37.0 / Build Tools 36.0.0、JDK 25、Gradle 9.8.1、AGP 9.4.1を使用。
+CameraXは全依存1.6.2でcompile済み、1.7系APIは使用していない。
+詳細な機械的検証は[BUILD_VALIDATION.md](BUILD_VALIDATION.md)、配布・署名は[OPERATIONS.md](OPERATIONS.md)を参照。
 
-API referenceは最新版も含むため、実際に解決した1.6.2 artifactでのcompile結果を別途記録する。
+## 既知の制約と未取得資料
+
+- RAW画質・ノイズ・色・性能の定量評価はP0対象外。ギャラリーの埋め込みpreviewとRAW全体のdecodeを区別する。
+  PC RAW viewer読み込みの成功報告はあるが、現時点の資料だけでdecode経路や全画素の有効性を独立検証できない。
+- CameraXの受付成功はCaptureResult一致を保証しない。ユーザーは実測反映を確認したと報告しているが、
+  quantization、frame duration、長時間露光、HAL/静止画処理の制約を判断できる数値資料は未取得。
+- Camera2能力とCameraXのbind可能な出力組合せは別。RAW+JPEG両出力、未対応ID、
+  MANUAL中の出力変更/Stop/Start、遅延callback、カメラ占有/API失敗の実機確認は未完了。
+- AUTO/MANUAL切替・背景復帰で問題なしとの報告はあるが、全条件で競合がないとは断定しない。
+  再現されたCameraX/Interop競合や端末非対応を示す具体的な失敗条件は未提示。
+- 共有保存はAPI29以上。広範囲ストレージ権限は追加せず、DNG表示は閲覧アプリに依存する。
+- 配布は一時debug署名。旧v0.0.1-dev.1や別CI候補とは署名が異なり上書きできない。
+  固定鍵・Secrets・継続署名運用は未導入。今回の旧内部テスト写真の消失許可を将来へ一般化しない。
+- エージェントは実機を操作していない。実機端末情報、ファイル原本、CaptureResult原本を推測・捏造しない。
+
+## P1判断案と残る確認
+
+**提案: GO_WITH_LIMITATIONS（採否承認前）**。
+
+中核となるRAW素材の保存/PC読み込みと手動露出の実測反映、切替・復帰で成功報告があり、
+CameraX中心の構成を直ちに破棄すべき実測の不具合は得られていない。
+この範囲を根拠に、制約付きでP1の仕様検討へ進む案を提示する。
+
+残る条件は、端末/Android build/camera ID/使用APKの同定、能力一覧と数値・DNG個別資料の補完、
+AC1の未確認範囲とAC6のエラー処理、RAW+JPEG等の未確認条件の評価、およびP1採否の承認。
+これらが未完了のため、P0全ACの無条件合格や制約なしGOにはしない。P1実装は未依頼であり開始しない。
+
+AC3/4が今後端末仕様で不成立と判明した場合は、指定値/実測値・形式・エラー・再現条件を根拠に
+BLOCKEDを記録し、制限付きで進むか最小のCamera2比較を行うかを相談する。
+現時点で全面Camera2移行や独自回避を正当化する失敗根拠はない。
+
+## 記録の管理
+
+このファイルにはP0の最終検証結果・制約・採否根拠を残す。確定した振る舞いと受入条件は
+[spec](../specs/001-p0-camera-probe/spec.md)、ACに対応する完了状態は
+[tasks](../specs/001-p0-camera-probe/tasks.md)で管理する。
+日々の作業状況、確認のやり取り、試行ログはIssue等で扱い、時系列の進捗追記をこのファイルへ積み上げない。

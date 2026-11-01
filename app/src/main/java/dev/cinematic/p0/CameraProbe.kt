@@ -7,6 +7,7 @@ import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.TotalCaptureResult
 import android.os.SystemClock
+import android.os.Build
 import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.Camera2Interop
@@ -26,6 +27,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.Executors
 
 @androidx.annotation.OptIn(markerClass = [androidx.camera.camera2.interop.ExperimentalCamera2Interop::class])
 class CameraProbe(private val context: Context, private val owner: LifecycleOwner) {
@@ -49,6 +51,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     private var view: PreviewView? = null
     private var epoch = 0
     private var closed = false
+    private var activeCaptureToken: String? = null
+    val sharedSaveSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
     val selectedReport get() = reports.find { it.id == selectedId }
     init { log.onLine = { line -> main.execute { if (!closed) lines = (lines + "\n" + line).takeLast(16000) } } }
 
@@ -157,6 +161,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         ++epoch
         busy = false
         controlReady = false
+        activeCaptureToken = null
         try {
             camera?.cameraInfo?.cameraState?.removeObservers(owner)
             provider?.unbindAll(); camera = null; imageCapture = null; bound = false
@@ -206,48 +211,83 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
 
     fun capture() {
         if (busy) return
+        if (!sharedSaveSupported) { event("UNSUPPORTED shared image saving requires Android 10+"); return }
         if (!controlReady) { event("Capture disabled: exposure control not accepted; use AUTO or stop/restart"); return }
         val capture = imageCapture ?: return
         val token = UUID.randomUUID().toString()
         val generation = epoch
         val cameraId = selectedId
         val captureFormat = format
+        busy = true; activeCaptureToken = token
+        var staging = emptyList<File>()
+        fun isCurrent() = !closed && generation == epoch && activeCaptureToken == token
+        fun clean(files: List<File>) {
+            files.forEach { file ->
+                try {
+                    if (file.exists() && !file.delete()) log.write("WARN staging cleanup failed token=$token")
+                } catch (e: Exception) { log.write("WARN staging cleanup token=$token ${e.javaClass.simpleName}") }
+            }
+        }
+        fun failed(e: Exception) {
+            if (isCurrent()) {
+                busy = false; activeCaptureToken = null
+                error("capture/shared save token=$token", e)
+            } else log.write("CAPTURE_LATE_ERROR token=$token ${e.javaClass.simpleName}: ${e.message}")
+        }
         try {
-            val dir = File(context.filesDir, "captures").also { check(it.exists() || it.mkdirs()) { "Cannot create capture directory" } }
+            val dir = File(context.cacheDir, "capture-staging")
+            check(dir.isDirectory || dir.mkdirs()) { "Cannot create capture staging directory" }
             val raw = File(dir, "$token.dng")
             val jpeg = File(dir, "$token.jpg")
-            var remaining = if (captureFormat == ImageCapture.OUTPUT_FORMAT_RAW_JPEG) 2 else 1
-            val expected = if (captureFormat == ImageCapture.OUTPUT_FORMAT_RAW_JPEG) listOf(raw, jpeg)
-                else listOf(if (captureFormat == ImageCapture.OUTPUT_FORMAT_RAW) raw else jpeg)
-            val saved = mutableSetOf<Int>()
-            busy = true
-            log.write("CAPTURE_BEGIN token=$token id=$cameraId format=${formatName(captureFormat)} desired=[$desired]")
+            val sources = when (captureFormat) {
+                ImageCapture.OUTPUT_FORMAT_RAW_JPEG -> listOf(PhotoSource(raw, PhotoFormat.DNG), PhotoSource(jpeg, PhotoFormat.JPEG))
+                ImageCapture.OUTPUT_FORMAT_RAW -> listOf(PhotoSource(raw, PhotoFormat.DNG))
+                else -> listOf(PhotoSource(jpeg, PhotoFormat.JPEG))
+            }
+            staging = sources.map { it.file }
+            val expectedFormats = sources.map { if (it.format == PhotoFormat.DNG) ImageFormat.RAW_SENSOR else ImageFormat.JPEG }.toSet()
+            val received = mutableSetOf<Int>()
+            var terminal = false
+            var publishing = false
+            busy = true; activeCaptureToken = token
+            log.write("CAPTURE_BEGIN token=$token id=$cameraId format=${formatName(captureFormat)} desired=[$desired] target=${PhotoPublisher.RELATIVE_PATH}")
             val callback = object : ImageCapture.OnImageSavedCallback {
+                private fun fail(e: Exception) {
+                    if (terminal) { log.write("CAPTURE_LATE_CALLBACK_ERROR token=$token ${e.javaClass.simpleName}"); return }
+                    terminal = true
+                    mediaIo.execute { clean(staging) }
+                    failed(e)
+                }
                 override fun onImageSaved(result: ImageCapture.OutputFileResults) {
-                    val file = if (result.imageFormat == ImageFormat.RAW_SENSOR) raw else jpeg
-                    val bytes = file.length()
-                    val resultFormat = result.imageFormat
-                    main.execute {
-                        if (closed || generation != epoch) {
-                            log.write("CAPTURE_LATE_SAVED token=$token imageFormat=$resultFormat path=${file.absolutePath} bytes=$bytes viewerValidity=UNVERIFIED")
-                            return@execute
+                    try {
+                        if (terminal) {
+                            if (!publishing) mediaIo.execute { clean(staging) }
+                            return
                         }
-                        if (saved.add(resultFormat)) remaining--
-                        event("SAVED token=$token imageFormat=$resultFormat path=${file.absolutePath} bytes=$bytes viewerValidity=UNVERIFIED")
-                        if (remaining == 0) {
-                            busy = false
-                            if (expected.any { !it.isFile || it.length() == 0L }) event("ERROR missing/empty capture output token=$token")
-                            else log.write("CAPTURE_COMPLETE token=$token files=${expected.joinToString { it.name }}")
+                        check(result.imageFormat in expectedFormats) { "Unexpected camera output format ${result.imageFormat}" }
+                        if (!received.add(result.imageFormat) || received != expectedFormats) return
+                        terminal = true; publishing = true
+                        // CameraX has finished every file. Publish together off the UI thread.
+                        mediaIo.execute {
+                            try {
+                                val photos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                    PhotoPublisher(AndroidImageStore(context.applicationContext.contentResolver)).publish(sources)
+                                } else throw IllegalStateException("MediaStore saving requires Android 10+")
+                                main.execute {
+                                    val current = isCurrent()
+                                    if (current) { busy = false; activeCaptureToken = null }
+                                    photos.forEach { photo ->
+                                        val message = "${if (current) "SAVED" else "CAPTURE_LATE_SAVED"} token=$token mime=${photo.format.mimeType} uri=${photo.uri} name=${photo.name} bytes=${photo.bytes} folder=${PhotoPublisher.RELATIVE_PATH} viewerValidity=UNVERIFIED"
+                                        if (current) event(message) else log.write(message)
+                                    }
+                                    log.write("CAPTURE_COMPLETE token=$token files=${photos.joinToString { it.name }}")
+                                }
+                            } catch (e: Exception) { main.execute { failed(e) } }
+                            finally { clean(staging) }
                         }
-                    }
+                    } catch (e: Exception) { fail(e) }
                 }
-                override fun onError(exception: ImageCaptureException) {
-                    main.execute {
-                        if (closed || generation != epoch) {
-                            log.write("CAPTURE_LATE_ERROR token=$token code=${exception.imageCaptureError}; partial outputs may exist")
-                        } else { busy = false; error("capture token=$token partial outputs may exist", exception) }
-                    }
-                }
+                override fun onError(exception: ImageCaptureException) { fail(exception) }
             }
             fun options(file: File) = ImageCapture.OutputFileOptions.Builder(file).build()
             when (captureFormat) {
@@ -255,16 +295,24 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                 ImageCapture.OUTPUT_FORMAT_RAW -> capture.takePicture(options(raw), main, callback)
                 else -> capture.takePicture(options(jpeg), main, callback)
             }
-        } catch (e: Exception) { busy = false; error("capture token=$token", e) }
+        } catch (e: Exception) {
+            mediaIo.execute { clean(staging) }
+            failed(e)
+        }
     }
 
     fun close() {
-        closed = true; controlReady = false; ++epoch
+        closed = true; controlReady = false; activeCaptureToken = null; ++epoch
         try { camera?.cameraInfo?.cameraState?.removeObservers(owner); provider?.unbindAll() }
         catch (e: Exception) { log.write("ERROR close ${e.javaClass.simpleName}: ${e.message}") }
     }
 
     companion object {
+        // Process-scoped IO: late CameraX callbacks remain valid after an Activity closes.
+        // No Activity or ContentResolver is retained by the executor itself.
+        private val mediaIo = Executors.newSingleThreadExecutor { work ->
+            Thread(work, "p0-media-save").apply { isDaemon = true }
+        }
         fun formatName(value: Int): String = when (value) {
             ImageCapture.OUTPUT_FORMAT_JPEG -> "JPEG"
             ImageCapture.OUTPUT_FORMAT_RAW -> "RAW"

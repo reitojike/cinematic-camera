@@ -85,3 +85,28 @@ One independent review covered RAW capability gating and save callbacks, AUTO re
 2. Selecting a Camera2-only ID could retain the previous camera's advertised output formats. Bind now clears the format set before querying the new ID and explicitly reports an unavailable CameraX ID.
 
 No further definite defects were identified in that review pass. The final build, all 4 unit tests and lint were rerun after these changes; the result and APK digest above refer to the reviewed source. No device tests were substituted with static review.
+
+## 共有画像保存の追加検証（2026-11-01）
+
+新撮影を標準MediaStoreの`Pictures/Cinematic Camera/`へ保存する変更について、同じbuild / unit / lintを再実行。
+`BUILD SUCCESSFUL in 55s`、53 tasks（24 executed / 29 up-to-date）。unitは**11件、failure/error/skip 0**。
+既存の露出・能力4件に加え、バイト不変、JPEG/DNG MIMEとフォルダー、2件目insert失敗、stream open/write/close失敗、
+2件目公開失敗のrollback、cleanup失敗の報告、空出力拒否を7件のテストで確認した。
+
+lintはerror 0 / warning 4。内訳は既存Gradle更新案内1件と、標準`Uri.parse`をKTXへ置き換える任意提案3件。
+警告を消すだけの依存追加やbaseline/suppressionは行っていない。manifestの権限はCAMERAのみ。
+
+保存処理・callback/Stop/close・stream/pending/row cleanupの独立した1巡レビューでは、具体的不具合は見つからなかった。
+Fake storeによるunit testは実MediaStore providerやGoogleフォトでの表示を証明しない。実機AC8は未確認。
+
+ローカル候補APK（versionName `0.0.2-p0`）のSHA-256:
+
+```text
+b9f981c24c4514f5c89959b1f0288ecbdb71b0f7fb7b49d48feacfea336a52ac
+```
+
+候補の証明書SHA-256は`f644dbac318452cfbae4a0a70d3a59fd3e42ad9f43649b1b89b05c6eb08cc146`、
+旧`v0.0.1-dev.1`は`6bfb144c67497aa10d26f36f8590e975d71efc4812b7b09eee8e6d899330122e`で、**署名不一致**。
+この候補はそのまま上書き更新できない。今回の旧内部テスト写真の消失は利用者が許可したが、端末の削除や
+インストールはこちらから行わない。CI候補はrun別のhash/署名になるため、配布時にその実体を別途検証する。
+固定署名秘密の新規生成・Secrets登録・既存鍵のコピーは行っていない。

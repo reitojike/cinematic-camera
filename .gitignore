@@ -9,6 +9,11 @@ local.properties
 **/build/
 *.iml
 .idea/
+.agents/*
+!.agents/skills/
+.codex/
+.env
+.env.*
 captures/
 device-evidence/
 *.dng
