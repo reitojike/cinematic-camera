@@ -60,6 +60,11 @@ APIの合焦結果は画質合格ではなく、SEVERE以上のOS熱状態では
 保存先と内容は利用者が確認し、公開Issueへ完全な未確認レポートを自動投稿しません。実機SAF動作は未検証です。
 LibRaw / NDK、独自現像、GPU / LUT、21:9出力、共有、ギャラリー、バックエンドは未実装です。
 
+## UI比較候補
+
+撮影画面/アイコンの比較候補は[UI比較](designs/README.md)を参照してください。自己完結HTMLで3案を操作できます。
+カメラ・音声・ルック処理を行わないsimulationで、アプリUIの正式採用/本人の最終選択は未決定です。
+
 ## CIとAPK配布
 
 think-canvasの運用をP0向けに絞った[運用・配布手順](docs/OPERATIONS.md)を参照してください。main初期化後は作業branch / Draft PRを使います。最小CIはbuild / unit / lint、配布は7日間のActions artifactとmainから作る明示tagのpre-releaseです。P0 APKは一時debug署名で、継続更新用の固定署名は未導入です。

@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<title>Cinematic Camera — 撮影UI 3案</title>
+<style>
+:root{color-scheme:dark;--paper:#101214;--surface:#191c1f;--line:#3c4147;--text:#edf0f2;--muted:#b3bac2;--accent:#eda460;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--text)}main{max-width:1260px;margin:auto;padding:44px 28px 60px}h1{font-size:clamp(27px,4vw,42px);font-weight:600;letter-spacing:-.04em;margin:12px 0}h2{font-size:20px;font-weight:600;margin:12px 0 5px}p{line-height:1.8;margin:8px 0}button,select{font:inherit;color:inherit}button{cursor:pointer}button:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid #ffd28d;outline-offset:3px}button:disabled{opacity:.45;cursor:default}.eyebrow{font:12px ui-monospace,monospace;letter-spacing:.16em;color:var(--accent)}.intro{color:var(--muted);max-width:850px;font-size:14px}.toolbar{display:flex;flex-wrap:wrap;gap:9px;margin:22px 0}.tool,.choose{min-height:44px;border:1px solid var(--line);background:#23272b;border-radius:6px;padding:10px 16px}.tool:hover,.choose:hover{background:#333a40}.toolbar .note{align-self:center;color:var(--muted);font-size:12px}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:22px}.option{min-width:0}.lead{font-size:13px;color:var(--muted);min-height:48px}.phone{height:820px;max-width:352px;margin:16px auto;background:#101214;border:1px solid #62676c;border-radius:28px;padding:11px;box-shadow:0 15px 45px #0006,inset 0 0 0 5px #232629;overflow:hidden}.screen{height:100%;display:flex;flex-direction:column;background:#090b0d;border-radius:18px;overflow:hidden;position:relative}.systembar{height:29px;display:flex;justify-content:space-between;align-items:center;padding:0 13px;font:10px ui-monospace,monospace;color:#bfc5cb;letter-spacing:.08em}.appbar{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:10px 12px;border-bottom:1px solid #383d42}.brand{display:flex;align-items:center;gap:7px;font:11px ui-monospace,monospace;letter-spacing:.13em}.icon{width:30px;height:30px;display:block}.mode-switch{display:flex;background:#202428;padding:3px;border:1px solid #42484e;border-radius:5px}.mode-switch button{padding:7px 9px;min-height:44px;border:0;border-radius:2px;background:transparent;font:11px ui-monospace,monospace;letter-spacing:.08em}.mode-switch button[aria-pressed=true]{background:#d8dde1;color:#101214}.mode-switch button[aria-pressed=true][data-mode=CINE]{background:#f1ab6b}.meta{padding:9px 12px;display:flex;justify-content:space-between;gap:4px;font:10px ui-monospace,monospace;color:#bfc5cb}.preview-space{min-height:0;display:flex;align-items:center;background:#050607;position:relative}.preview{width:100%;position:relative;aspect-ratio:4/3;overflow:hidden}.stage{display:block;width:100%;height:100%}.reticle{position:absolute;width:50px;height:58px;left:calc(50% - 25px);top:calc(50% - 29px);border:1px solid #e4e8e9a0;border-radius:3px}.preview-mark{position:absolute;bottom:8px;left:10px;font:9px ui-monospace,monospace;color:#d2d5dc;text-shadow:0 1px 4px #000}.guide{position:absolute;inset:21.43% 0;border-top:1px dashed #fff9;border-bottom:1px dashed #fff9;display:none}.preview.guide-on .guide{display:block}.guide-label{position:absolute;top:7px;right:8px;background:#0009;padding:4px 6px;font:9px ui-monospace,monospace}.mode-readout{font:12px ui-monospace,monospace;letter-spacing:.06em;color:#d8dde1}.readouts{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:#363b40;border-top:1px solid #363b40;border-bottom:1px solid #363b40}.control{min-width:0;min-height:63px;border:0;background:#15191d;padding:9px 8px;text-align:left}.control small{display:block;color:#aeb7c1;font:9px ui-monospace,monospace;letter-spacing:.12em;margin-bottom:5px}.control strong{font:18px ui-monospace,monospace;font-weight:500;white-space:nowrap}.control .unit{font-size:9px;color:#c2c7ce}.control:hover{background:#272d33}.look-row{display:flex;align-items:center;gap:8px;padding:10px 12px;color:#c9cfd6;font:10px ui-monospace,monospace}.look-row label{flex:1;min-width:0}.look-row select{width:100%;min-height:44px;border:1px solid #454d55;background:#1b2025;border-radius:4px;font-size:11px;padding:6px;max-width:100%}.look-row .look-word{display:block;font-size:9px;margin-bottom:4px;letter-spacing:.08em}.guide-button{align-self:flex-end;min-height:44px;border:1px solid #454d55;background:#1b2025;border-radius:4px;padding:6px;font:9px ui-monospace,monospace}.guide-button[aria-pressed=true]{border-color:#eda460;color:#ffd3a7}.lower{margin-top:auto}.capture-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 22px 14px}.secondary{width:44px;min-height:44px;background:#1c2126;border:1px solid #444b53;border-radius:8px;color:#b9c2cb;font:10px ui-monospace,monospace}.shutter{width:72px;height:72px;border-radius:50%;background:#e0e4e7;border:4px solid #202428;outline:1px solid #b0b7bf;display:grid;place-items:center;padding:0}.shutter span{display:block;width:53px;height:53px;border:1px solid #abb1b6;border-radius:50%;background:#d8dde1}.cine .shutter span{width:29px;height:29px;border-radius:8px;background:#d56854;border:0}.recording .shutter span{width:23px;height:23px;border-radius:3px;background:#f07c65}.micro{padding:0 12px 11px;display:flex;justify-content:space-between;gap:4px;font:9px ui-monospace,monospace;color:#aeb7c1}.simulation{margin:0 12px 8px;min-height:26px;font-size:10px;line-height:1.4;color:#e3bc8e}.choose{width:100%;margin:4px 0 12px;font-size:13px}.comparison{margin-top:34px;border-top:1px solid var(--line);padding-top:22px}.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:590px;font-size:13px}th,td{text-align:left;padding:14px 12px;border-bottom:1px solid #353b41}th{color:#b9c1c9;font-weight:500}td:first-child{color:#b9c1c9}#selection{border:1px solid #4d565f;border-radius:8px;padding:16px;margin:20px 0;background:#1a1f24;font-size:14px}.foot{color:#abb4bd;font-size:12px}.badge{border:1px solid #56616b;border-radius:3px;font:9px ui-monospace,monospace;padding:3px 5px}.no-motion{animation:none!important}
+/* A: instrumentation. */
+.instrument .readouts{margin-top:0}.instrument .preview-space{padding:16px 0 9px}.instrument .mode-readout{padding:13px 12px 2px}.instrument .look-row{padding-top:14px}.instrument .control:first-child{box-shadow:inset 0 2px var(--accent)}
+/* B: quiet frame with controls over the unused letterbox, never over the source image. */
+.finder .appbar{border:0;padding-top:8px}.finder .brand{font-size:10px;letter-spacing:.07em}.finder .preview-space{flex:1}.finder .meta{padding-bottom:0}.finder .mode-readout{font-size:10px;padding:8px 12px;color:#aeb7c1}.finder .readouts{background:#15191d;border:0;margin:0 8px;border-radius:6px;overflow:hidden}.finder .control{min-height:55px;text-align:center;background:#111519}.finder .control strong{font-size:16px}.finder .look-row{padding-top:8px}.finder .capture-row{padding-top:5px}
+/* C: a bottom control deck, broad touch targets and a low mode switch. */
+.thumb .appbar{border:0}.thumb .preview-space{padding:0;flex:1}.thumb .readouts{margin:0 10px;border:1px solid #454e56;border-radius:10px;overflow:hidden;gap:0}.thumb .control{text-align:center;min-height:72px;background:#1a2026}.thumb .control+.control{border-left:1px solid #3e4750}.thumb .control strong{font-size:19px}.thumb .bottom-mode{display:flex;justify-content:center;padding:0 12px 12px}.thumb .mode-switch{width:100%;padding:4px;border-radius:8px}.thumb .mode-switch button{flex:1;min-height:42px}.thumb .mode-readout{padding:0 12px 6px;font-size:10px}.thumb .capture-row{padding-top:5px}.thumb .look-row{padding-top:7px}
+@media(max-width:1000px){main{max-width:780px}.grid{grid-template-columns:1fr}.option{display:grid;grid-template-columns:minmax(220px,1fr) minmax(300px,1fr);column-gap:22px;align-items:start}.option>header{grid-column:1;grid-row:1}.phone{grid-column:2;grid-row:1/4;width:100%;margin-top:0}.choose{grid-column:1;align-self:start}.option .lead{min-height:0}.option+.option{margin-top:25px}}
+@media(max-width:600px){main{padding:26px 16px 40px}.grid{display:block}.option{display:block}.phone{width:100%;margin-top:14px}.option+.option{margin-top:34px}.lead{min-height:0}.toolbar .note{width:100%}table{font-size:12px}}
+</style>
+</head>
+<body>
+<main>
+<div class="eyebrow">CINEMATIC CAMERA / INTERFACE STUDY 01</div>
+<h1>撮影画面、3つの方向性。</h1>
+<p class="intro">ライブの一瞬に、露出・フォーカス・STILL/CINEをどう配置するか。同じ合成ステージと操作条件で比較する、無機質メカ系のUI案です。各画面のボタンを操作できます。</p>
+<p class="intro"><strong>比較モックです。</strong>撮影・録音・保存・ルック処理は行いません。数値は例示で、実端末の4K60/HDR/AF対応を示しません。アプリへの正式採用・最終選択は未決定です。</p>
+<nav class="toolbar" aria-label="全案の比較条件">
+<button class="tool" data-global-mode="STILL">全案をSTILLに</button><button class="tool" data-global-mode="CINE">全案をCINEに</button><button class="tool" id="reset">比較条件をリセット</button><span class="note">全案とも原本画角を保持。21:9はガイドだけ。</span>
+</nav>
+<section class="grid" id="options" aria-label="撮影画面の3案"></section>
+<section class="comparison" aria-labelledby="compare-heading">
+<div class="eyebrow">DECISION NOTES</div><h2 id="compare-heading">選ぶ基準</h2>
+<div class="table-wrap"><table><thead><tr><th>観点</th><th>A / 計器型</th><th>B / ファインダー型</th><th>C / 下段操作型</th></tr></thead><tbody>
+<tr><td>視線の置き方</td><td>設定と構図を交互に確認</td><td>構図を中心に確認</td><td>構図と下段デッキを往復</td></tr>
+<tr><td>露出・focus</td><td>数値を常時、大きく表示</td><td>必要な情報を控えめに表示</td><td>下段の広い操作領域へ集約</td></tr>
+<tr><td>STILL/CINE</td><td>上段の機器スイッチ</td><td>上段でmodeを識別</td><td>親指に近い下段へ配置</td></tr>
+<tr><td>tradeoff</td><td>上段の情報密度と視線移動を要確認</td><td>暗所で小さい数値の視認性を要確認</td><td>下段が混雑しやすく、誤操作を要確認</td></tr>
+<tr><td>アイコン方向</td><td>角形フレーム＋絞りの抽象形</td><td>開いたファインダー＋中心点</td><td>レンズと機器パネルの二分</td></tr>
+</tbody></table></div>
+<div id="selection" role="status" aria-live="polite">候補は未選択です。選択ボタンは比較メモだけを変え、送信・正式採用はしません。</div>
+<p class="foot">確認したい点：ライブ中に読みたい数値、片手で届く位置、STILL/CINEの見間違い、明暗の強い場所での視認性。配色・数値密度・アイコンは別々の案を組み合わせても構いません。</p>
+<p class="foot">Stage Clear / Stage Dramatic / Cinema T&amp;Oは配置用の仮表示です。このHTMLには色処理エンジンがありません。合成ベクター画像は実写品質の評価素材ではありません。写真/動画の原本を保持し、固定の横長保存を強制しない方針を共通にしています。</p>
+<p class="foot">外部画像・フォント・通信・分析・localStorageなし。選択内容はこのページ内だけにあり、再読込でリセットされます。</p>
+</section>
+</main>
+<script>
+'use strict';
+const variants=[
+ {id:'A',style:'instrument',title:'計器型',sub:'数値と状態を、機器のように読む。',detail:'ISO・シャッター・focusを上段の計器列へ。いま何を設定しているかを確認しやすい方向です。'},
+ {id:'B',style:'finder',title:'ファインダー型',sub:'構図を中心に、情報を静かに添える。',detail:'プレビューの余白を優先。設定値は控えめにまとめ、被写体と照明へ視線を置く方向です。'},
+ {id:'C',style:'thumb',title:'下段操作型',sub:'片手の操作を、親指の近くへ。',detail:'設定とmode切替を下段へ集約。手を持ち替えずに操作する可能性を検討する方向です。'}
+];
+const defaults=()=>({mode:'STILL',look:'Stage Clear',guide:false,recording:false,settings:{STILL:{iso:800,shutter:'1/250',focus:'AF-C'},CINE:{iso:1600,shutter:'1/120',focus:'AF-C'}}});
+const state=Object.fromEntries(variants.map(v=>[v.id,defaults()]));
+const icons={
+ A:'<path d="M5 5h22v22H5zM10 9h12l4 8-7 7H9l-4-8zM10 9l3 10h10M5 16h8l6 8M22 9l-3 8"/>',
+ B:'<path d="M12 5H5v7m15-7h7v7M5 20v7h7m15-7v7h-7"/><circle cx="16" cy="16" r="4"/>',
+ C:'<rect x="4" y="6" width="24" height="20" rx="4"/><circle cx="13" cy="16" r="6"/><path d="M23 10v12M21 12h4m-4 8h4"/>'
+};
+function icon(id){return `<svg class="icon" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">${icons[id]}</svg>`;}
+function stage(id){return `<svg class="stage" viewBox="0 0 640 480" aria-label="同一条件の合成ステージ。実写ではありません" role="img"><defs><linearGradient id="back-${id}" x2="0" y2="1"><stop stop-color="#171325"/><stop offset="1" stop-color="#080e16"/></linearGradient><linearGradient id="beam-${id}" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#d3bdea" stop-opacity=".55"/><stop offset="1" stop-color="#9279d5" stop-opacity="0"/></linearGradient><radialGradient id="light-${id}"><stop stop-color="#7b538b" stop-opacity=".65"/><stop offset="1" stop-color="#302349" stop-opacity="0"/></radialGradient><linearGradient id="coat-${id}" x2="1" y2="1"><stop stop-color="#383641"/><stop offset=".5" stop-color="#171d2b"/><stop offset="1" stop-color="#524254"/></linearGradient></defs><path fill="url(#back-${id})" d="M0 0h640v480H0z"/><ellipse cx="335" cy="280" rx="310" ry="225" fill="url(#light-${id})"/><path d="M75 0h35l225 430H230zM520 0h30L410 440H300z" fill="url(#beam-${id})"/><path d="M8 130h624M8 155h624" stroke="#655f75" stroke-opacity=".3"/><g fill="#c9b3d7"><circle cx="93" cy="32" r="8"/><circle cx="540" cy="32" r="8"/></g><path d="M0 403q180-18 320 1t320-4v80H0" fill="#0a0d14"/><ellipse cx="326" cy="425" rx="76" ry="10" fill="#0c0e17"/><path d="M308 278l-17 79-14 64h22l25-57 12-51 10 54 15 52h23l-6-73-19-74" fill="#181b28"/><path d="M306 176q24-17 49 2l21 100-37 26-42-18-20-48z" fill="url(#coat-${id})"/><path d="M292 189l-31 49-24-18-9 13 34 35 47-49M354 185l34 19 21-38 14 8-22 57-30-11" fill="#282b38"/><path d="M305 132q-3-35 25-39 31 1 31 39l-7 39-43 2z" fill="#151725"/><ellipse cx="334" cy="138" rx="19" ry="27" fill="#aa939c"/><path d="M316 117q25-17 39 15l-2-23-32-9z" fill="#22202d"/><path d="M324 160v19l20-2v-17" fill="#958490"/><path d="M406 166l13-18 10 5-8 22" fill="#a18e9a"/><path d="M420 148l5-9" stroke="#d2c9d8" stroke-width="5"/><path d="M422 141l9 6" stroke="#383441" stroke-width="9"/><path d="M0 437q35-27 67 2 34-35 65 5 47-30 75 5 53-25 82 5 58-21 97-8 40-27 74-8 45-25 79-4 53-30 101 5v41H0" fill="#06090f"/></svg>`;}
+function modes(id){return `<div class="mode-switch" role="group" aria-label="案${id} 撮影mode"><button data-action="mode" data-mode="STILL" aria-pressed="true">STILL</button><button data-action="mode" data-mode="CINE" aria-pressed="false">CINE</button></div>`;}
+function readouts(){return `<div class="readouts"><button class="control" data-action="iso" aria-label="ISOを例の値へ切替"><small>ISO</small><strong data-value="iso">800</strong></button><button class="control" data-action="shutter" aria-label="シャッターを例の値へ切替"><small>SHUTTER</small><strong data-value="shutter">1/250</strong></button><button class="control" data-action="focus" aria-label="AFとMFの配置を比較"><small>FOCUS</small><strong data-value="focus">AF-C</strong></button></div>`;}
+function lookRow(id){return `<div class="look-row"><label><span class="look-word">LOOK / LABEL ONLY</span><select data-action="look" aria-label="案${id} ルックの配置"><option>Stage Clear</option><option>Stage Dramatic</option><option>Cinema T&amp;O</option></select></label><button class="guide-button" data-action="guide" aria-pressed="false">21:9 GUIDE</button></div>`;}
+function capture(){return `<div class="capture-row"><button class="secondary" data-action="lens" aria-label="レンズ操作の仮配置">1×</button><button class="shutter" data-action="capture" aria-label="撮影のsimulation"><span></span></button><button class="secondary" data-action="audio" aria-label="音声状態の仮配置">MIC</button></div>`;}
+for(const v of variants){
+ const top=`<div class="systembar"><span>UI STUDY / ${v.id}</span><span>NO CAMERA</span></div><div class="appbar"><div class="brand">${icon(v.id)}<span>CINEMATIC</span></div>${v.id==='C'?'<span class="badge">PROBE → PRODUCT</span>':modes(v.id)}</div>`;
+ const preview=`<div class="meta"><span data-value="format">DNG / ORIGINAL</span><span>ILLUSTRATION</span></div><div class="preview-space"><div class="preview">${stage(v.id)}<div class="reticle"></div><div class="guide"></div><span class="guide-label" data-value="guide">FULL FRAME</span><span class="preview-mark">SYNTHETIC STAGE / UI COMPARISON</span></div></div>`;
+ const info='<div class="mode-readout" data-value="mode-readout">STILL · 元画角を保持</div>';
+ const bottom=`<div class="lower">${v.id==='A'?'':readouts()}${lookRow(v.id)}${capture()}${v.id==='C'?`<div class="bottom-mode">${modes(v.id)}</div>`:''}<div class="micro"><span data-value="audio">AUDIO —</span><span>UNVERIFIED DEVICE</span></div></div>`;
+ const article=document.createElement('article');article.className='option';article.dataset.option=v.id;
+ article.innerHTML=`<header><div class="eyebrow">OPTION ${v.id}</div><h2>${v.id} / ${v.title}</h2><p>${v.sub}</p><p class="lead">${v.detail}</p></header><div class="phone ${v.style}"><div class="screen">${top}${v.id==='A'?readouts()+info:''}${preview}${v.id==='A'?'':info}${bottom}</div></div><p class="simulation" role="status">操作は例示です。保存は行いません。</p><button class="choose" data-action="choose">${v.id}案を比較メモの候補にする</button>`;
+ document.querySelector('#options').append(article);
+}
+function message(id,text){document.querySelector(`[data-option="${id}"] .simulation`).textContent=text;}
+function render(id){
+ const s=state[id],root=document.querySelector(`[data-option="${id}"]`),values=s.settings[s.mode];
+ root.querySelector('.screen').classList.toggle('cine',s.mode==='CINE');root.querySelector('.screen').classList.toggle('recording',s.recording);
+ root.querySelectorAll('[data-action=iso],[data-action=shutter],[data-action=focus],[data-action=look],[data-action=guide],[data-action=lens]').forEach(control=>{control.disabled=s.recording;});
+ root.querySelectorAll('[data-action="mode"]').forEach(b=>{b.setAttribute('aria-pressed',String(b.dataset.mode===s.mode));b.disabled=s.recording;});
+ for(const k of ['iso','shutter','focus'])root.querySelector(`[data-value="${k}"]`).textContent=values[k];
+ root.querySelector('[data-value="format"]').textContent=s.mode==='STILL'?'DNG / ORIGINAL':'UHD · 60fps 候補 / 例値';
+ root.querySelector('[data-value="mode-readout"]').textContent=s.mode==='STILL'?'STILL · 元画角を保持':'CINE · SDR候補 · 対応未検証';
+ root.querySelector('[data-value="audio"]').textContent=s.mode==='CINE'?'AUDIO ON / 仮表示':'AUDIO —';
+ root.querySelector('.preview').classList.toggle('guide-on',s.guide);root.querySelector('[data-value="guide"]').textContent=s.guide?'21:9 GUIDE / NO CROP':'FULL FRAME';
+ root.querySelector('[data-action="guide"]').setAttribute('aria-pressed',String(s.guide));root.querySelector('[data-action="look"]').value=s.look;
+ root.querySelector('[data-action="capture"]').setAttribute('aria-label',s.mode==='STILL'?'静止画撮影のsimulation':s.recording?'録画停止のsimulation':'録画開始のsimulation');
+}
+document.querySelector('#options').addEventListener('click',event=>{
+ const b=event.target.closest('button[data-action]');if(!b)return;const id=b.closest('[data-option]').dataset.option,s=state[id],value=s.settings[s.mode];
+ switch(b.dataset.action){
+ case'mode':if(s.recording)return;s.mode=b.dataset.mode;message(id,`${s.mode}へ切替。mode別の例示設定を復元しました。`);break;
+ case'iso':value.iso=({800:1600,1600:3200,3200:800})[value.iso];message(id,'ISO表示の配置比較。実際の露出変更はありません。');break;
+ case'shutter':{const times=s.mode==='STILL'?['1/250','1/500','1/125']:['1/120','1/60','1/240'];value.shutter=times[(times.indexOf(value.shutter)+1)%times.length];};message(id,'シャッター表示の配置比較。センサーは操作していません。');break;
+ case'focus':value.focus=value.focus==='AF-C'?'MF 3.0':'AF-C';message(id,'MFは未校正lens unitsの例値。距離メートルではありません。');break;
+ case'guide':s.guide=!s.guide;message(id,'21:9は構図ガイドだけ。原本の画角・解像度を保持します。');break;
+ case'capture':if(s.mode==='CINE'){s.recording=!s.recording;message(id,s.recording?'録画中のUI simulation。カメラ・マイクは作動していません。':'停止のUI simulation。ファイルは作られていません。');}else message(id,'シャッター操作のUI simulation。写真は保存していません。');break;
+ case'lens':message(id,'レンズ選択の仮配置。利用可能なレンズは実機能力で決めます。');break;
+ case'audio':message(id,'音声状態の仮配置。マイク許可・録音は行いません。');break;
+ case'choose':document.querySelector('#selection').textContent=`比較メモの候補：${id} / ${variants.find(v=>v.id===id).title}。未送信・未採用です。正式選択は会話で確認します。`;break;
+ }
+ render(id);
+});
+document.querySelector('#options').addEventListener('change',event=>{if(event.target.dataset.action!=='look')return;const id=event.target.closest('[data-option]').dataset.option;state[id].look=event.target.value;message(id,'ルック名の配置だけを変更しました。画像の色処理は行いません。');});
+document.querySelectorAll('[data-global-mode]').forEach(b=>b.addEventListener('click',()=>{for(const v of variants){state[v.id].recording=false;state[v.id].mode=b.dataset.globalMode;render(v.id);message(v.id,`${b.dataset.globalMode}の同条件比較。数値は例示です。`);}}));
+document.querySelector('#reset').addEventListener('click',()=>{for(const v of variants){state[v.id]=defaults();render(v.id);message(v.id,'操作は例示です。保存は行いません。');}document.querySelector('#selection').textContent='候補は未選択です。送信・正式採用はしません。';});
+variants.forEach(v=>render(v.id));
+</script>
+</body>
+</html>

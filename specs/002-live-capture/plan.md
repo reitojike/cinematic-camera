@@ -229,6 +229,15 @@ tailは最初の部分行/UTF-8断片を捨てて切断を示し、完全なsess
 自動送信や公開Issueコメントは実装しない。UTF-8上限・書込/close失敗のunit、build/lintと独立レビューを行い、
 端末のSAF許可/拒否/取消/読み戻しは実機未確認として残す。
 
+## UI比較候補（Issue #19）
+
+FR-012/SC-006へ、無機質メカ系の計器型・ファインダー型・下段操作型の3案を自己完結HTML/SVGで用意する。
+原本画角/解像度を保持する方針と21:9のguideのみを共通にし、同じ合成stage/例値で配置を比較する。
+STILL/CINE・mode別ISO/時間・focus・lookラベル・仮撮影を操作できるが、camera/mic/色処理は行わない。
+数値やUHD60表示は端末能力の証拠ではない。アイコン3方向も仮案で、ユーザー写真/外部asset/通信/保存を使わない。
+候補メモはページ内だけで送信しない。desktop/狭幅のrender・keyboard・overflow・simulation状態を確認し、
+本人の暗所視認性/到達性/最終選択は別に残す。正式選択後に別の限定IssueでAndroidへ実装する。
+
 ## 公式資料による採用判断
 
 - [SAF/文書Intent](https://developer.android.com/guide/components/intents-common#Storage)：
