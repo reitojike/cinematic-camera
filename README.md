@@ -47,6 +47,9 @@ camera-viewの推移依存にcamera-videoが含まれる場合も、現行P0は�
 
 think-canvasの運用をP0向けに絞った[運用・配布手順](docs/OPERATIONS.md)を参照してください。main初期化後は作業branch / Draft PRを使います。最小CIはbuild / unit / lint、配布は7日間のActions artifactとmainから作る明示tagのpre-releaseです。P0 APKは一時debug署名で、継続更新用の固定署名は未導入です。
 
+マージには最終headの必須CI、GitHub上のcanonical Codex review、独立レビューの明示的OK、未解決thread 0件と作業範囲の許可が必要です。
+Renovateの依存更新も同じ条件を適用し、無条件automergeは使いません。CodeRabbit自動レビューはrepo-local設定で停止します。
+
 ## 仕様とSpec Kit
 
 [GitHub Spec Kit 1.2.5](docs/SPEC_KIT.md)をCodex skillsで利用します。[P0 spec](specs/001-p0-camera-probe/spec.md)、

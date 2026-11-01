@@ -3,7 +3,9 @@
 このファイルは現在の判断材料への入口です。仕様や運用規則はここへ複製せず、対応する文書を参照します。
 think-canvasの適用可能な方針を本プロジェクトへ合わせ、製品固有の規則や過去のIssueは移植しません。
 
-- 変更目的と作業の完了境界は依頼内容と対象PRで確認します。古いbranchを現行要件の根拠にしません。
+- 開発タスクは原則Issue起点とします。既存Issueとの重複を確認し、目的/背景/範囲/対象外/AC/検証・停止条件を
+  Issueへ定め、branch/PRを関連付けます。着手後にIssueを整備した場合も時系列を偽りません。
+  変更目的と作業の完了境界は依頼内容とIssue/PRで確認します。古いbranchを現行要件の根拠にしません。
 - 要件の根拠は合意したP0ブリーフと[ライブ撮影の製品方針](specs/002-live-capture/spec.md)です。
   [Constitution](.specify/memory/constitution.md)が原則を、[P0 spec](specs/001-p0-camera-probe/spec.md)が既存基盤の
   振る舞い、planが設計、tasksがAC対応の完了状態を扱います。P0残件は[Issue #4](https://github.com/reitojike/cinematic-camera/issues/4)へ集約します。
@@ -21,7 +23,8 @@ think-canvasの適用可能な方針を本プロジェクトへ合わせ、製�
   と`git diff --check`を変更に応じて実行します。Windowsでは`./gradlew`を`.\gradlew.bat`に置き換えます。
   実際の[Android CI](.github/workflows/android.yml)を合否の根拠にし、未実行・環境失敗は明示します。
 - [branch/配布運用](docs/OPERATIONS.md)に従い、初回main初期化後は作業branchとDraft PRを使います。
-  現行headのCI・レビュー・未解決会話を確認し、merge許可がなければ停止します。APPROVE代行、admin merge、
+  最終headの必須CI、canonical `@codex review`、独立レビューの明示的OK、未解決会話0件をmergeの条件とします。
+  自己レビューを独立承認に数えず、merge許可がなければ停止します。APPROVE代行、admin merge、
   チェック免除、保護回避は行いません。実際の設定状態は[REPOSITORY_STATUS](docs/REPOSITORY_STATUS.md)を確認します。
 - [公開前検査](docs/PUBLICATION_REVIEW.md)に従い、秘密・認証情報・署名秘密・個人情報・個人用絶対パス・
   非公開サービス情報・会話ログ・写真実体をGit/ZIPへ入れません。サンプルには実ユーザー名や端末固有識別子を使いません。
