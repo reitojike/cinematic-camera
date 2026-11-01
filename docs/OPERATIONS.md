@@ -72,9 +72,9 @@ think-canvasのclassic branch-protection APIは接続機能の権限で403とな
 [Android checks](../.github/workflows/android.yml)はPR、main push、mainからの手動実行に対応する。JDK 25、SDK 37.0 / Build Tools 36.0.0、Gradle wrapper、lint / unit / assembleDebugを使う点をthink-canvasに揃える。
 
 - P0用の一時debug署名APKを`cinematic-camera-p0-debug-apk-ephemeral` artifactへ保存（7日）。SHA-256と署名証明書を記録する。
-- `CINEMATIC_VERSION_NAME=0.0.2-p0.ci.<run_number>`、`versionCode=run_number`（初版は0.0.1）。
+- `CINEMATIC_VERSION_NAME=<現在のprobe版>.ci.<run_number>`、`versionCode=run_number`。正確な版はworkflowとAPK metadataで確認する。
 - 権限は`contents: read`。外部リポジトリの秘密を使わない。
-- GMD、実機テスト、Room schema、隔離テスト、製品固有の公開境界スクリプトは移植しない。P0は11件のJVMテストと手動実機マトリクスが対象。
+- GMD、実機テスト、Room schema、隔離テスト、製品固有の公開境界スクリプトは移植しない。現行JVMテストの件数と保証範囲は[P05_REPORT](P05_REPORT.md)、P0は[P0_REPORT](P0_REPORT.md)を確認する。
 - CI greenをPixel 9aの実機合格へ読み替えない。
 
 ## P0 pre-release
@@ -139,7 +139,8 @@ local-onlyで既存当projectのdebug keyをfixtureとして使う場合も、�
 4. APKを手動インストールし、Camera permissionを許可する。P0の撮影は利用者の操作で行う。
 5. [P0_REPORT.md](P0_REPORT.md)の許可・lifecycle・AUTO・RAW5回・ISO2値・露光時間2値・AUTO復帰を実施する。DNGはPC viewerで全件開く。
 
-実機ACは全て未検証、P1は未判定のまま。配布URLと実測hashは、作成後にGitHubの実Release / runと照合して作業結果へ記録する。
+P0のユーザー報告と未取得証拠は[P0_REPORT](P0_REPORT.md)、P0.5の実機未確認条件は[P05_REPORT](P05_REPORT.md)を確認する。
+P0のP1判断案GO_WITH_LIMITATIONSは、P0.5の実機合格やP1実装完了を意味しない。配布URLとhashは実Release / runへ記録する。
 
 ## 読み取った参照元
 

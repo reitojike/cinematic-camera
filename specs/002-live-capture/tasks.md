@@ -85,3 +85,9 @@ P0証拠補完はIssue #4、運用設定はIssue #6。次のAF/WB/LED検証導�
 - [x] T043 `app/src/main/java/dev/cinematic/p0/CineRecorder.kt` へRecord/Stop/terminal/IO/UI時間、`Exposure.kt` へ周期換算を追加する。
 - [x] T044 `app/src/test/java/dev/cinematic/p0/ExposureTest.kt` の値変換unit、build/lint・公開前検査・独立レビューを完了し、`docs/P05_REPORT.md` へ自動検証を記録する。最終headのcanonical/CIはIssue/PRで証跡を管理する。
 - [ ] T045 ユーザーが条件別のapp応答・sensor周期・MP4/描画fps・熱の関係を実機確認し、最終結果を `docs/P05_REPORT.md` へ統合する。
+
+## 統合品質（Issue #29）
+
+- [x] T046 session/録画/保存/復元を横断し、`Exposure.kt` / `CapturePreferences.kt` / `CameraProbe.kt` で受付済み完全pairの一括保存・復元を実装する。不完全pairはdraftで補わず、希望を保持してブロックする。
+- [x] T047 `ExposureTest.kt` に完全/欠落/不正pairの回帰unitを追加し、`docs/P05_REPORT.md` にunitの保証境界とlint分類・優先実機条件を記録する。
+- [x] T048 build/unit/lintの自動検証と保証範囲の整理を完了する。最終headの独立/canonical/必須CIはIssue/PRの運用gateで管理し、実機成功に拡大しない。

@@ -635,16 +635,21 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                         overrideStatus = "Accepted=$extras; check actual result; anti-banding affects AUTO AE only"
                         desired = "$label ACCEPTED (check actual result)"; event(desired)
                         if (remember) {
-                            preferences.put("$key/manual", manual)
+                            preferences.saveExposure(key, if (manual) iso else null, if (manual) ms else null)
                             if (!manual) { saveOverrides(key, SensorOverrides()); preferences.put("$key/ev", "0") }
-                            if (manual) {
-                                preferences.put("$key/appliedIso", iso)
-                                preferences.put("$key/appliedMs", ms)
-                            }
                         }
                         if (manual) evStatus = "EV inactive while MANUAL exposure is requested"
-                        if (restoreSaved && preferences.flag("$key/manual")) setExposure(
-                            preferences.text("$key/appliedIso", requestedIso), preferences.text("$key/appliedMs", requestedMs), remember = false)
+                        if (restoreSaved && preferences.flag("$key/manual")) {
+                            try {
+                                val saved = Exposure.savedManual(preferences.text("$key/appliedIso"), preferences.text("$key/appliedMs"),
+                                    r?.isoRange, r?.exposureRange)
+                                setExposure(saved.iso, saved.milliseconds, remember = false)
+                            } catch (failure: Exception) {
+                                controlReady = false
+                                desired = "Saved MANUAL not applied; saved request retained; use AUTO reset or apply valid values"
+                                error("saved exposure restoration (input drafts are not applied)", failure)
+                            }
+                        }
                     }
                     if (manual) finish() else {
                         val ev = if (!restoreSaved || preferences.flag("$key/manual")) 0 else preferences.text("$key/ev", "0").toIntOrNull() ?: 0

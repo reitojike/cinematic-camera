@@ -4,6 +4,29 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ExposureTest {
+    @Test fun completeAcceptedPairIsRestoredWithoutReplacingItsValues() {
+        val accepted = Exposure.savedManual("200", "8.333333", 100..800, 1L..30_000_000L)
+        assertEquals(ManualExposureInput("200", "8.333333"), accepted)
+        assertEquals(ManualExposure(200, 8_333_333),
+            Exposure.parse(accepted.iso, accepted.milliseconds, 100..800, 1L..30_000_000L))
+    }
+
+    @Test fun partialOrMissingAcceptedPairCannotBeRestoredFromInputDrafts() {
+        listOf("" to "", "" to "10", "200" to "", " " to "10", "200" to " ").forEach { (iso, ms) ->
+            val failure = assertThrows(IllegalArgumentException::class.java) {
+                Exposure.savedManual(iso, ms, 100..800, 1L..30_000_000L)
+            }
+            assertTrue(failure.message!!.contains("incomplete"))
+        }
+    }
+
+    @Test fun invalidSavedPairIsBlockedWithoutClampingOrRewritingTheRequest() {
+        listOf("801" to "10", "200" to "31", "NaN" to "10", "200" to "NaN").forEach { (iso, ms) ->
+            assertTrue(runCatching { Exposure.savedManual(iso, ms, 100..800, 1L..30_000_000L) }.isFailure)
+        }
+        assertTrue(runCatching { Exposure.savedManual("200", "10", null, null) }.isFailure)
+    }
+
     @Test fun sensorPeriodConversionKeepsUnknownSeparateFromReportedRate() {
         assertEquals(60.0, Exposure.sensorPeriodFps(16_666_667L)!!, .00001)
         assertEquals(30.0, Exposure.sensorPeriodFps(33_333_333L)!!, .00001)

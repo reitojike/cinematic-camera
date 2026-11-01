@@ -21,8 +21,8 @@ android {
         applicationId = "dev.cinematic.p0"
         minSdk = 28
         targetSdk = 37
-        versionCode = providers.environmentVariable("CINEMATIC_VERSION_CODE").orNull?.toInt() ?: 9
-        versionName = providers.environmentVariable("CINEMATIC_VERSION_NAME").orNull ?: "0.0.9-p05"
+        versionCode = providers.environmentVariable("CINEMATIC_VERSION_CODE").orNull?.toInt() ?: 10
+        versionName = providers.environmentVariable("CINEMATIC_VERSION_NAME").orNull ?: "0.0.10-p05"
     }
     buildFeatures { compose = true; buildConfig = true }
     signingConfigs {
