@@ -90,7 +90,7 @@ jobs:
             printf -- '- workflow: https://github.com/%s/actions/runs/%s\n' "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
           } > RELEASE_NOTES.md
           cat SIGNING.txt >> RELEASE_NOTES.md
-      - name: 非公開repoのpre-releaseへ保存
+      - name: P0 pre-releaseへ保存
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
