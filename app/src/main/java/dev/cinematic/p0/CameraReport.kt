@@ -12,6 +12,7 @@ data class CameraReport(
     val isoRange: IntRange?,
     val exposureRange: LongRange?,
     val manualBlockReason: String?,
+    val autoFocusAvailable: Boolean = false,
 )
 
 object CameraReports {
@@ -24,6 +25,7 @@ object CameraReports {
                 val iso = c.get(C.SENSOR_INFO_SENSITIVITY_RANGE)?.let { it.lower..it.upper }
                 val ns = c.get(C.SENSOR_INFO_EXPOSURE_TIME_RANGE)?.let { it.lower..it.upper }
                 val keys = c.availableCaptureRequestKeys.orEmpty()
+                val afModes = c.get(C.CONTROL_AF_AVAILABLE_MODES) ?: intArrayOf()
                 val reason = Exposure.manualBlockReason(
                     C.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR in caps,
                     c.get(C.CONTROL_AE_AVAILABLE_MODES)?.contains(CaptureRequest.CONTROL_AE_MODE_OFF) == true,
@@ -50,9 +52,13 @@ object CameraReports {
                     apertures=${c.get(C.LENS_INFO_AVAILABLE_APERTURES)?.contentToString()} (display only)
                     RAW_SENSOR sizes=${c.get(C.SCALER_STREAM_CONFIGURATION_MAP)?.getOutputSizes(ImageFormat.RAW_SENSOR)?.joinToString() ?: "none/unknown"}
                     manualEligibility=${reason ?: "eligible; actual results NOT verified"}
+                    AF modes=${afModes.contentToString()} maxRegionsAF=${c.get(C.CONTROL_MAX_REGIONS_AF)} maxRegionsAE=${c.get(C.CONTROL_MAX_REGIONS_AE)}
+                    AWB modes=${c.get(C.CONTROL_AWB_AVAILABLE_MODES)?.contentToString()} antiBandingModes=${c.get(C.CONTROL_AE_AVAILABLE_ANTIBANDING_MODES)?.contentToString()}
+                    AE compensation range=${c.get(C.CONTROL_AE_COMPENSATION_RANGE)} step=${c.get(C.CONTROL_AE_COMPENSATION_STEP)}
                 """.trimIndent()
                 log(text)
-                CameraReport(id, text, iso, ns, reason)
+                CameraReport(id, text, iso, ns, reason,
+                    afModes.any { it != CaptureRequest.CONTROL_AF_MODE_OFF && it != CaptureRequest.CONTROL_AF_MODE_EDOF })
             } catch (e: Exception) {
                 log("ERROR Camera2 report id=$id ${e.javaClass.simpleName}: ${e.message}")
                 null

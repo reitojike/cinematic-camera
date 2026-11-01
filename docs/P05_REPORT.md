@@ -1,6 +1,6 @@
 # P0.5-A 検証レポート
 
-対象: `dev.cinematic.p0` / `0.0.3-p05` / CameraX **1.6.2**
+対象: `dev.cinematic.p0` / `0.0.4-p05` / CameraX **1.6.2**
 
 関連: [Issue #8](https://github.com/reitojike/cinematic-camera/issues/8) / [spec](../specs/002-live-capture/spec.md) / [plan](../specs/002-live-capture/plan.md)
 
@@ -47,8 +47,8 @@ JPEGはheader寸法、DNGはExif寸法を記録するが、DNG全体のdecode証
 ## 機械的検証
 
 - ローカル `:app:assembleDebug :app:testDebugUnitTest :app:lintDebug` を実行。
-- unit **23件、failure/error/skip 0**。既存11件に、能力候補選択・希望値fallback・録画状態/旧token隔離・
-  音声途中失敗/無音警告・出力close/検証/公開/cleanupの12件を追加。
+- unit **26件、failure/error/skip 0**。既存11件に、能力候補選択・希望値fallback・録画状態/旧token隔離・
+  音声途中失敗/無音警告・出力close/検証/公開/cleanupの12件、EV/thermalの3件を追加。
 - lint **error 0 / warning 9**。Gradle更新案内1、任意のKTX提案5、metadata記録に使う標準ExifInterfaceへの
   Jetpack推奨3。baselineや抑制は追加しない。Exif読み込みは素材の現像/有効性判定に使用しない。
 - API1.6.2の実artifactでcompileし、MediaStore/音声/SessionConfigの署名を確認。
@@ -71,3 +71,20 @@ unitは実カメラ・Android MediaStore provider・マイク・encoderの代用
 
 エラー時はState/Recent logの種類・選択候補・再現手順を控える。写真/音声本体・未編集ログをGitへ公開しない。
 実機未確認を理由に合意済みの次の限定開発を止めないが、重大欠陥・テスト失敗・権限判断・大幅scope変更時はHOLDする。
+
+## B1: 標準AF/AEと照明・熱テレメトリー
+
+[Issue #13](https://github.com/reitojike/cinematic-camera/issues/13)の範囲で、Camera2のAF/AWB/anti-banding mode、
+AF/AE領域、AE補正範囲/stepと、CaptureResultのAF/AWB状態・focus diopters・EV・anti-bandingを追加した。
+値が取得できなければnull/unknownとし、能力・要求・結果を別に扱う。
+
+- Center AF/AEはPreviewViewのmetering pointとCameraX標準APIを使用。対応照会後にユーザー操作で要求し、
+  Futureの合焦結果を動体追従や画像品質の合格にしない。MANUAL AEではAFだけを要求し、AF非対応なら理由を示す。
+- EVは受理済みAUTO・対応範囲内だけで操作。mode別希望を保持し、AUTO clear→EV受付→必要なら保存済みMANUALの
+  復元を直列化する。無効な保存値はneutral fallbackと理由を示し、希望値を黙って書き換えない。
+- focus/EVのFutureはepoch/closedで隔離し、bind/stop時は現在sessionの表示を初期化する。
+- PowerManager thermal statusを観測し、SEVERE以上で録画停止/Finalize、新規録画の抑止を行う。
+  listenerはcloseで解除する。OS severityを温度℃や安全温度へ変換しない。
+
+B1では新依存・新権限、WB/MF/anti-bandingの手動上書き、フリッカー解消アルゴリズムは追加していない。
+26件のunitとbuild/lintは成功したが、AF追従・LED・EV反映・熱応答の実機条件は未確認。

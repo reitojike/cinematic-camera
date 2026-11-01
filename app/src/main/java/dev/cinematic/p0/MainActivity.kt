@@ -123,6 +123,14 @@ class MainActivity : ComponentActivity() {
                                     enabled = probe.bound && !probe.busy && !probe.recordingBusy && probe.selectedReport != null && reason == null) { Text("Apply MANUAL") }
                             }
                             Text("Desired: ${probe.desired}")
+                            Text("EV: ${probe.evStatus}")
+                            Row {
+                                Button(onClick = { probe.compensateEv(-1) }, enabled = probe.bound && probe.controlReady && !probe.manualExposure && !probe.busy && !probe.recordingBusy) { Text("EV −") }
+                                Button(onClick = { probe.compensateEv(1) }, enabled = probe.bound && probe.controlReady && !probe.manualExposure && !probe.busy && !probe.recordingBusy) { Text("EV +") }
+                            }
+                            Button(onClick = probe::focusCenter, enabled = probe.bound && probe.controlReady && !probe.busy && !probe.recordingBusy) { Text("Center AF / AE") }
+                            Text("Focus: ${probe.focusStatus}")
+                            Text("Thermal: ${probe.thermalStatus}")
                             Text("CaptureResult: ${probe.measured}")
                             if (!probe.sharedSaveSupported) Text("Shared photo saving requires Android 10 or newer.")
                             if (probe.mode == CaptureMode.STILL) Button(onClick = probe::capture, enabled = probe.bound && probe.controlReady && probe.sharedSaveSupported && !probe.busy && !probe.recordingBusy) { Text("Capture ${CameraProbe.formatName(probe.format)}") }
