@@ -1,6 +1,6 @@
-# P0.5-A 検証レポート
+# P0.5 検証レポート
 
-対象: `dev.cinematic.p0` / `0.0.4-p05` / CameraX **1.6.2**
+対象: `dev.cinematic.p0` / `0.0.5-p05` / CameraX **1.6.2**
 
 関連: [Issue #8](https://github.com/reitojike/cinematic-camera/issues/8) / [spec](../specs/002-live-capture/spec.md) / [plan](../specs/002-live-capture/plan.md)
 
@@ -47,8 +47,8 @@ JPEGはheader寸法、DNGはExif寸法を記録するが、DNG全体のdecode証
 ## 機械的検証
 
 - ローカル `:app:assembleDebug :app:testDebugUnitTest :app:lintDebug` を実行。
-- unit **26件、failure/error/skip 0**。既存11件に、能力候補選択・希望値fallback・録画状態/旧token隔離・
-  音声途中失敗/無音警告・出力close/検証/公開/cleanupの12件、EV/thermalの3件を追加。
+- unit **30件、failure/error/skip 0**。既存11件に、能力候補選択・希望値fallback・録画状態/旧token隔離・
+  音声途中失敗/無音警告・出力close/検証/公開/cleanupの12件、EV/thermalの3件、override能力/範囲/fallback/保存保持の4件を追加。
 - lint **error 0 / warning 9**。Gradle更新案内1、任意のKTX提案5、metadata記録に使う標準ExifInterfaceへの
   Jetpack推奨3。baselineや抑制は追加しない。Exif読み込みは素材の現像/有効性判定に使用しない。
 - API1.6.2の実artifactでcompileし、MediaStore/音声/SessionConfigの署名を確認。
@@ -88,3 +88,24 @@ AF/AE領域、AE補正範囲/stepと、CaptureResultのAF/AWB状態・focus diop
 
 B1では新依存・新権限、WB/MF/anti-bandingの手動上書き、フリッカー解消アルゴリズムは追加していない。
 26件のunitとbuild/lintは成功したが、AF追従・LED・EV反映・熱応答の実機条件は未確認。
+
+## B2: WB preset・MF・AE anti-banding
+
+[Issue #15](https://github.com/reitojike/cinematic-camera/issues/15)の範囲で、available modes/request keysに対応する
+標準WB presetとAE anti-banding、MANUAL_SENSOR/AF OFF/focus key/有限rangeを満たすMFを追加した。
+WB OFF/gains/transform/Kelvin指定は含めない。MFはlens unitsで、未校正値からメートルを保証しない。
+
+露出・WB・MF・anti-bandingは一つのInterop snapshotを置換する。個別変更で他の受付済み制御を保持し、
+MF変更前はCameraX cancelFocusAndMetering完了を待つ。AF復帰時はAF_MODE/LENS_FOCUS_DISTANCEを除外する。
+MF中はCenterからAFを要求せず、AUTO AEが有効な場合だけAE測光する。
+明示的な`AUTO reset all`はfocus/Interop全解除とneutral EV。mode復帰はclear→対応する保存control→EV→
+必要なら保存MANUAL露出の順で受理を待つ。非対応の保存値は項目別fallbackと理由を示し、希望値を保持する。
+変更中/録画中/Finalize中は次のcontrol操作を抑止し、古いFutureはepoch/closedで隔離する。
+個別操作はその項目だけを保存し、他項目が非対応fallback中でも元の保存希望を消さない。
+
+要求WB/focusと実結果、scene flickerを観測する。scene flickerはLED/PWM除去の証拠ではなく、
+AE anti-bandingはMANUAL AEで効果を持たない。30件のunit/build/lint成功と実機品質を区別する。
+
+追加の手動検証は、STILL/CINEごとのWB/MF/anti-banding復元、WB変更後もmanual ISO/時間が残ること、
+MF/AF往復、AUTO全解除、色照明下のpreset比較、50/60Hzとmanual shutter比較。
+すべて実機未確認であり、原本/素材の自動撮影・公開はしていない。

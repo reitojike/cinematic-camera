@@ -118,7 +118,7 @@ class MainActivity : ComponentActivity() {
                             val reason = probe.selectedReport?.manualBlockReason
                             reason?.let { Text("MANUAL unavailable: $it") }
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = { probe.setExposure() }, enabled = probe.bound && !probe.busy && !probe.recordingBusy) { Text("AUTO") }
+                                Button(onClick = { probe.setExposure() }, enabled = probe.bound && !probe.busy && !probe.recordingBusy) { Text("AUTO reset all") }
                                 Button(onClick = { probe.setExposure(probe.requestedIso, probe.requestedMs) },
                                     enabled = probe.bound && !probe.busy && !probe.recordingBusy && probe.selectedReport != null && reason == null) { Text("Apply MANUAL") }
                             }
@@ -130,6 +130,22 @@ class MainActivity : ComponentActivity() {
                             }
                             Button(onClick = probe::focusCenter, enabled = probe.bound && probe.controlReady && !probe.busy && !probe.recordingBusy) { Text("Center AF / AE") }
                             Text("Focus: ${probe.focusStatus}")
+                            val overrideCaps = probe.selectedReport?.overrides ?: OverrideCapabilities()
+                            val controlsEnabled = probe.bound && probe.controlReady && !probe.busy && !probe.recordingBusy
+                            Text("WB preset (CameraX default / reported supported modes)")
+                            ControlMenu("WB", probe.overrides.whiteBalance, overrideCaps.whiteBalanceModes,
+                                controlsEnabled, SensorModeNames::whiteBalance, probe::selectWhiteBalance)
+                            Text("MF lens units: 0..${overrideCaps.manualFocusMaximum ?: "unavailable"}; calibration=${overrideCaps.focusCalibration}. Uncalibrated units do not guarantee meters.")
+                            OutlinedTextField(probe.requestedFocus, probe::editFocus, singleLine = true,
+                                label = { Text("Requested focus lens units") }, enabled = controlsEnabled && overrideCaps.manualFocusMaximum != null)
+                            Row {
+                                Button(onClick = probe::applyManualFocus, enabled = controlsEnabled && overrideCaps.manualFocusMaximum != null) { Text("Apply MF") }
+                                Button(onClick = probe::restoreAutofocus, enabled = controlsEnabled) { Text("AF / default") }
+                            }
+                            Text("AE anti-banding: affects AUTO AE only; cannot guarantee removal of LED/PWM bands")
+                            ControlMenu("Anti-banding", probe.overrides.antiBanding, overrideCaps.antiBandingModes,
+                                controlsEnabled, SensorModeNames::antiBanding, probe::selectAntiBanding)
+                            Text("Control snapshot: ${probe.overrideStatus}")
                             Text("Thermal: ${probe.thermalStatus}")
                             Text("CaptureResult: ${probe.measured}")
                             if (!probe.sharedSaveSupported) Text("Shared photo saving requires Android 10 or newer.")
@@ -167,5 +183,22 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         if (::probe.isInitialized) probe.close()
         super.onDestroy()
+    }
+}
+
+@Composable
+private fun ControlMenu(label: String, selected: Int?, modes: Set<Int>, enabled: Boolean,
+    name: (Int) -> String, choose: (Int?) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        TextButton(onClick = { expanded = true }, enabled = enabled) {
+            Text("$label: ${selected?.let(name) ?: "CameraX default"}")
+        }
+        DropdownMenu(expanded = expanded && enabled, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(text = { Text("CameraX default") }, onClick = { expanded = false; choose(null) })
+            modes.sorted().forEach { mode ->
+                DropdownMenuItem(text = { Text(name(mode)) }, onClick = { expanded = false; choose(mode) })
+            }
+        }
     }
 }
