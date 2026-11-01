@@ -14,6 +14,7 @@ data class CameraReport(
     val manualBlockReason: String?,
     val autoFocusAvailable: Boolean = false,
     val overrides: OverrideCapabilities = OverrideCapabilities(),
+    val locks: LockCapabilities = LockCapabilities(),
 )
 
 object CameraReports {
@@ -44,6 +45,10 @@ object CameraReports {
                         CaptureRequest.CONTROL_AF_MODE in keys && CaptureRequest.LENS_FOCUS_DISTANCE in keys },
                     calibration,
                 )
+                val lockCapabilities = LockCapabilities(
+                    c.get(C.CONTROL_AE_LOCK_AVAILABLE) == true && CaptureRequest.CONTROL_AE_LOCK in keys,
+                    c.get(C.CONTROL_AWB_LOCK_AVAILABLE) == true && CaptureRequest.CONTROL_AWB_LOCK in keys,
+                )
                 val reason = Exposure.manualBlockReason(
                     C.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR in caps,
                     c.get(C.CONTROL_AE_AVAILABLE_MODES)?.contains(CaptureRequest.CONTROL_AE_MODE_OFF) == true,
@@ -69,6 +74,7 @@ object CameraReports {
                     minimumFocusDistanceLensUnits=${c.get(C.LENS_INFO_MINIMUM_FOCUS_DISTANCE)}
                     focusCalibration=$calibration (UNCALIBRATED/UNKNOWN does not guarantee distance in meters)
                     overrideEligibility=$overrideCapabilities
+                    lockEligibility=$lockCapabilities (characteristics + request keys; actual CaptureResult unverified)
                     apertures=${c.get(C.LENS_INFO_AVAILABLE_APERTURES)?.contentToString()} (display only)
                     RAW_SENSOR sizes=${c.get(C.SCALER_STREAM_CONFIGURATION_MAP)?.getOutputSizes(ImageFormat.RAW_SENSOR)?.joinToString() ?: "none/unknown"}
                     manualEligibility=${reason ?: "eligible; actual results NOT verified"}
@@ -78,7 +84,7 @@ object CameraReports {
                 """.trimIndent()
                 log(text)
                 CameraReport(id, text, iso, ns, reason,
-                    afModes.any { it != CaptureRequest.CONTROL_AF_MODE_OFF && it != CaptureRequest.CONTROL_AF_MODE_EDOF }, overrideCapabilities)
+                    afModes.any { it != CaptureRequest.CONTROL_AF_MODE_OFF && it != CaptureRequest.CONTROL_AF_MODE_EDOF }, overrideCapabilities, lockCapabilities)
             } catch (e: Exception) {
                 log("ERROR Camera2 report id=$id ${e.javaClass.simpleName}: ${e.message}")
                 null

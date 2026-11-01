@@ -58,6 +58,9 @@ idle時は表示画像内のtapでも同じAF/AEを要求できます。invalid/
 スクロール/dragはtapと区別します。表示するview正規化座標はsensor座標ではなく、実AF/AE regionはCaptureResultで確認します。
 CameraXの対応判定は少なくとも一部の測光groupが有効という意味で、AF/AE両方の反映や動体追従品質を保証しません。
 FIT_CENTERの黒帯がsensor範囲内へ変換される場合は照会がtrueになるため、黒帯を避けてください。黒帯境界/配置精度は実機未確認です。
+対応するAE/AWB lockをAUTO時だけ一時要求できます。locksは保存せず、mode/camera/rebind/StopStart/AUTO全解除で解除します。
+MANUAL露出はAE lock、固定WB presetはAWB lockを解除します。同一bindingの背景復帰で要求が残る場合は実結果を確認してください。
+AE lock中もEV変更で露出が変化し得ます。受付はセンサーの実ロックや画質を保証しません。
 `Save verification report`はAndroid標準の文書保存画面から、現在の設定・能力・CaptureResultと最大128KiBの
 現在セッションlog tailをUTF-8で保存します。写真/動画/音声本体は含めません。録画/Finalize中は実行できません。
 省略された過去ログは切断表示し、保存/close失敗では選択文書が部分的な場合があることを示します。
