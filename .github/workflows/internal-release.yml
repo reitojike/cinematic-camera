@@ -1,0 +1,149 @@
+name: Internal APK release (approval pending)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '新規pre-release tag (vX.Y.Z-alpha.N / dev.N)'
+        required: true
+        type: string
+      commit:
+        description: '配布するmain commitの40桁SHA'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Shared with the existing ephemeral release workflow; do not race tag creation.
+concurrency:
+  group: p0-apk-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    environment: internal-release
+    permissions:
+      contents: write
+    env:
+      CINEMATIC_VERSION_NAME: ${{ inputs.tag }}
+      CINEMATIC_VERSION_CODE: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: main commitと未使用tagを確認
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_COMMIT: ${{ inputs.commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-(alpha|dev)\.[1-9][0-9]*$ ]]
+          [[ "$RELEASE_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]
+          git fetch --no-tags origin main
+          git cat-file -e "$RELEASE_COMMIT^{commit}"
+          git merge-base --is-ancestor "$RELEASE_COMMIT" origin/main
+          git fetch --tags origin
+          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            echo '指定tagは既に存在します' >&2
+            exit 1
+          fi
+          git checkout --detach "$RELEASE_COMMIT"
+          echo "CINEMATIC_RELEASE_COMMIT=$RELEASE_COMMIT" >> "$GITHUB_ENV"
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: android-actions/setup-android@v4
+        with:
+          log-accepted-android-sdk-licenses: false
+      - name: Android SDK 37
+        run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+      - name: lintと単体テスト（署名秘密を渡さない）
+        run: ./gradlew :app:lintDebug :app:testDebugUnitTest --no-daemon --no-configuration-cache
+      - name: 承認後の専用Environment入力を確認して鍵を復元
+        env:
+          KEYSTORE_BASE64: ${{ secrets.CINEMATIC_INTERNAL_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.CINEMATIC_INTERNAL_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.CINEMATIC_INTERNAL_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.CINEMATIC_INTERNAL_KEY_PASSWORD }}
+          EXPECTED_CERT_SHA256: ${{ vars.CINEMATIC_INTERNAL_CERT_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          for input in KEYSTORE_BASE64 STORE_PASSWORD KEY_ALIAS KEY_PASSWORD EXPECTED_CERT_SHA256; do
+            if [[ -z "${!input}" ]]; then
+              echo "internal-release input missing: $input" >&2
+              exit 1
+            fi
+          done
+          [[ "$EXPECTED_CERT_SHA256" =~ ^[0-9a-fA-F]{64}$ ]]
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/cinematic-camera-internal.p12"
+          test -s "$RUNNER_TEMP/cinematic-camera-internal.p12"
+      - name: 固定署名のrelease APKをbuild
+        env:
+          CINEMATIC_SIGNING_MODE: stable_internal
+          CINEMATIC_INTERNAL_KEYSTORE_FILE: ${{ runner.temp }}/cinematic-camera-internal.p12
+          CINEMATIC_INTERNAL_STORE_PASSWORD: ${{ secrets.CINEMATIC_INTERNAL_STORE_PASSWORD }}
+          CINEMATIC_INTERNAL_KEY_ALIAS: ${{ secrets.CINEMATIC_INTERNAL_KEY_ALIAS }}
+          CINEMATIC_INTERNAL_KEY_PASSWORD: ${{ secrets.CINEMATIC_INTERNAL_KEY_PASSWORD }}
+        run: ./gradlew :app:assembleRelease --no-daemon --no-configuration-cache
+      - name: 一時署名秘密を削除（失敗時も実行）
+        if: always()
+        shell: bash
+        run: rm -f -- "$RUNNER_TEMP/cinematic-camera-internal.p12"
+      - name: 公開pin・package・versionを照合して配布物を準備
+        env:
+          EXPECTED_CERT_SHA256: ${{ vars.CINEMATIC_INTERNAL_CERT_SHA256 }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_VERSION_CODE: ${{ github.run_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk=app/build/outputs/apk/release/app-release.apk
+          test -f "$apk"
+          mkdir -p "$RUNNER_TEMP/cinematic-internal-release"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$apk" > "$RUNNER_TEMP/cinematic-internal-release/SIGNING.txt"
+          grep -Fx 'Number of signers: 1' "$RUNNER_TEMP/cinematic-internal-release/SIGNING.txt"
+          actual_cert=$(awk -F ': ' '/^Signer #1 certificate SHA-256 digest: / { print toupper($2) }' "$RUNNER_TEMP/cinematic-internal-release/SIGNING.txt")
+          expected_cert=$(printf '%s' "$EXPECTED_CERT_SHA256" | tr '[:lower:]' '[:upper:]')
+          [[ -n "$actual_cert" && "$actual_cert" == "$expected_cert" ]]
+          badging=$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk")
+          printf '%s\n' "$badging" | grep -E "^package: name='dev\.cinematic\.p0' versionCode='${RELEASE_VERSION_CODE}'"
+          printf '%s\n' "$badging" | grep -F "versionName='$RELEASE_TAG'"
+          printf '%s\n' "$badging" | grep -E "^targetSdkVersion:'37'$"
+          if printf '%s\n' "$badging" | grep -q '^application-debuggable'; then
+            echo 'internal release must not be debuggable' >&2
+            exit 1
+          fi
+          cp "$apk" "$RUNNER_TEMP/cinematic-internal-release/cinematic-camera-internal.apk"
+          cd "$RUNNER_TEMP/cinematic-internal-release"
+          sha256sum cinematic-camera-internal.apk > SHA256SUMS.txt
+          {
+            printf '# Cinematic Camera internal probe\n\n'
+            printf -- '- source main: `%s`\n' "$CINEMATIC_RELEASE_COMMIT"
+            printf -- '- versionName: `%s`; versionCode: `%s`\n' "$RELEASE_TAG" "$RELEASE_VERSION_CODE"
+            printf -- '- applicationId: `dev.cinematic.p0`; fixed signer SHA-256: `%s`\n' "$actual_cert"
+            printf -- '- 最初の固定署名版は旧一時debug版と署名が異なるため上書き不可。必要データを先に退避してください。\n'
+            printf -- '- 実機結果/未確認条件はsource commitのdocs/P0_REPORT.mdとdocs/P05_REPORT.mdを参照してください。\n'
+            printf -- '- workflow: https://github.com/%s/actions/runs/%s\n' "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+          } > RELEASE_NOTES.md
+          cat SHA256SUMS.txt SIGNING.txt >> RELEASE_NOTES.md
+      - name: 検証用pre-releaseへ保存
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            "$RUNNER_TEMP/cinematic-internal-release/cinematic-camera-internal.apk" \
+            "$RUNNER_TEMP/cinematic-internal-release/SHA256SUMS.txt" \
+            "$RUNNER_TEMP/cinematic-internal-release/SIGNING.txt" \
+            --target "$CINEMATIC_RELEASE_COMMIT" --prerelease --title "$RELEASE_TAG" \
+            --notes-file "$RUNNER_TEMP/cinematic-internal-release/RELEASE_NOTES.md"

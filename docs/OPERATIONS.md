@@ -97,6 +97,40 @@ versionNameはtag、versionCodeはこのrelease workflowのrun_numberとする�
 旧アプリを削除・再インストールする。一般的なデータ消失の許可には広げず、こちらから端末を操作しない。
 固定鍵生成/継続利用の条件は変えない。新しいMediaStore保存画像はアプリ内ファイルとは別に扱う。
 
+## Draft提案: 専用固定署名（Issue #27、未承認・未適用）
+
+この節と `internal-release.yml` は承認前の提案。現行の `p0-release.yml` は一時debug署名のまま維持する。
+think-canvasの現行internal-releaseはEnvironment・専用4Secrets・証明書pin・main限定dispatch・一時鍵cleanupを使う。
+その構造だけを本repoへ適合し、既存projectの鍵/Secret値/Environment設定をコピーしない。
+
+承認対象は次の一式。mainへの本Draft取り込み、専用key生成/安全な保管、Environment設定と継続利用、初回stable配布を含む。
+
+| 対象 | 提案する具体値/条件 |
+|---|---|
+| repo / Environment | `reitojike/cinematic-camera` / `internal-release` |
+| deployment branch policy | selected branch `main` のみ。PR branchで署名秘密を使わない |
+| 専用key | 新しいPKCS12、RSA 3072 bit、仮alias `cinematic-internal`、証明書CN `Cinematic Camera Internal`。生成は承認後 |
+| Environment Secrets | `CINEMATIC_INTERNAL_KEYSTORE_BASE64` / `CINEMATIC_INTERNAL_STORE_PASSWORD` / `CINEMATIC_INTERNAL_KEY_ALIAS` / `CINEMATIC_INTERNAL_KEY_PASSWORD` |
+| Environment公開変数 | `CINEMATIC_INTERNAL_CERT_SHA256`。承認後に作った証明書の64桁hex。現時点では値を捏造/登録しない |
+| build | `CINEMATIC_SIGNING_MODE=stable_internal` を明示した `assembleRelease --no-configuration-cache`。packageは `dev.cinematic.p0`、debuggable false |
+| 配布物 | `cinematic-camera-internal.apk` / SHA256SUMS.txt / 公開証明書SIGNING.txt。既存tag上書き不可 |
+
+default debug buildでは署名入力を要求しない。stable modeは入力不足/未知mode/configuration cache要求/ファイル欠落で停止し、
+debugへ黙ってfallbackしない。署名前のlint/unitには秘密を渡さず、鍵をrunner tempへ復元してbuild後always削除する。
+単一署名とpin/package/version/targetSdkを確認してからReleaseへ保存し、秘密をartifact/ログへ含めない。
+
+新しい固定証明書のfingerprintは未作成で、GitHub上のEnvironment/Secrets/変数作成・固定署名workflow実行・安定更新の実機確認も未実施。
+local-onlyで既存当projectのdebug keyをfixtureとして使う場合も、それは新しい固定署名keyでも配布APKでもない。
+鍵の値をAPIで読み戻したり、他projectの鍵を流用したりしない。
+
+承認後はEnvironmentのmain限定policyを先に適用し、専用keyを安全にバックアップして4Secretsと公開pinを登録する。
+値をログ/コマンド引数へ出さず、正規CLIのstdin等で登録する。新しいtag/承認済みmain SHAで手動dispatchし、
+署名/ハッシュ/上書き更新を確認する。internal workflowのversionCodeはそのworkflow内のrun_numberで単調増加する。
+
+最初の固定署名版は現在の一時debug版と署名が異なるため、上書き更新できない。必要な写真/ログ/設定の退避と
+初回の手動移行は本人が判断する。以後も同じ鍵と増加versionCodeを維持する。端末の削除/インストールは自動実行しない。
+本Draftは夜間の通常機能merge許可だけでは取り込まず、上記の別途明示承認を待つ。
+
 ## Pixel 9aで受け取る
 
 1. Androidのブラウザーで該当pre-releaseを開く。現在はpublic。Actions artifactはGitHubのrun画面から取得する。
