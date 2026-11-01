@@ -2,9 +2,10 @@
 
 **Input**: [spec.md](spec.md)、[plan.md](plan.md)、既存実装とビルド/レビュー証拠。
 
-`[x]`はその実装・文書・機械的検証が完了した印であり、実機AC合格の印ではない。
-実機AC全体は未完了で、対応する作業を`[ ]`のまま残す。インストールとカメラ操作の成功は
-ユーザー報告があるが、使用APK/hash、端末/Android build、camera IDは未提示。P1採否は未判定。
+`[x]`はそのtaskの完了を示す。機能確認のユーザー報告と、個別測定資料の独立検証は区別する。
+必要な記録まで揃っていないtaskは`[ ]`を維持し、機能確認済み範囲を明示する。
+受入結果・制約・P1判断案は[最終レポート](../../docs/P0_REPORT.md)を参照する。
+この一覧にはAC対応の完了状態を記録し、日々の進捗や確認のやり取りはIssue等で管理する。
 
 ## Phase 1: Setup
 
@@ -24,7 +25,7 @@
 - [x] T005 [US1] PreviewView、権限、lifecycle、Start/Stopを `app/src/main/java/dev/cinematic/p0/MainActivity.kt` に実装する。
 - [x] T006 [US1] 各IDのCamera2能力とCameraX出力形式を `app/src/main/java/dev/cinematic/p0/CameraReport.kt` / `CameraProbe.kt` へ別々に記録する。
 - [x] T007 [US1] ID変更時に形式集合を初期化し、CameraX非対応を `app/src/main/java/dev/cinematic/p0/CameraProbe.kt` のUI/logへ明示する。
-- [ ] T008 [US1] Pixel 9aでAC1/2の許可・開始停止復帰・実測能力を確認し `docs/P0_REPORT.md` に端末/Android build/IDと結果を記録する。進捗: インストールとカメラ操作はユーザー報告あり、残る範囲と端末/版の同定は未確認。
+- [ ] T008 [US1] Pixel 9aでAC1/2の許可・開始停止復帰・実測能力を確認し `docs/P0_REPORT.md` に端末/Android build/IDと結果を記録する。確認済み範囲はインストール・カメラ操作・背景復帰のユーザー報告。許可フロー全体、明示Stop/Start、能力一覧、対象同定は未完了。
 
 ## Phase 4: US2 — RAW素材の保存と有効性 (Priority: P1)
 
@@ -33,7 +34,7 @@
 
 - [x] T009 [US2] 対応確認後にRAW ImageCaptureを構築し、DNGを保存する `app/src/main/java/dev/cinematic/p0/CameraProbe.kt` の導線を実装する。
 - [x] T010 [US2] RAW+JPEGの2出力callback、部分保存、停止後のLATE結果、token別の完了を `app/src/main/java/dev/cinematic/p0/CameraProbe.kt` に記録する。
-- [ ] T011 [US2] まずRAWを1枚保存できるかとエラー表示を確認し、その後対応IDでDNGを5回以上保存して、PC viewerで各ファイルを開いた結果/サイズ/ファイル名を `docs/P0_REPORT.md` に記録する（AC3）。
+- [ ] T011 [US2] 対応IDでDNGを5回以上保存しPC viewerで各ファイルを開いた結果/サイズ/ファイル名を `docs/P0_REPORT.md` に記録する（AC3）。機能確認はユーザー報告で成功。個別ファイル名/サイズ、camera ID、viewer名/版、RAW全体のdecode資料が未取得のため、記録を含むtask全体は未完了。
 - [ ] T012 [US2] AUTO JPEGとpreview、対応時のRAW+JPEG両出力、連続保存後/背景復帰後の撮影を `docs/P0_REPORT.md` のマトリクスで確認する。
 
 ## Phase 5: US3 — 手動露出とAUTO復帰 (Priority: P1)
@@ -44,15 +45,15 @@
 - [x] T013 [US3] AE_OFF / ISO / exposure timeと範囲拒否を `app/src/main/java/dev/cinematic/p0/CameraProbe.kt` / `Exposure.kt` に実装する。
 - [x] T014 [US3] AUTOと再bind時の明示clear、受付待ち/失敗時の撮影抑止を `app/src/main/java/dev/cinematic/p0/CameraProbe.kt` に実装する。
 - [x] T015 [US3] Preview/ImageCaptureのCaptureResult、request、desired、世代によるcallback抑止を `app/src/main/java/dev/cinematic/p0/CameraProbe.kt` に実装する。
-- [ ] T016 [US3] ISO/時間をそれぞれ2値以上で測り、指定との差・frame duration・制約を `docs/P0_REPORT.md` に記録する（AC4）。進捗: 操作できていそうとのユーザー報告はあるが、CaptureResult一致の証拠は未提示。
-- [ ] T017 [US3] AUTO→MANUAL→AUTO、MANUAL→出力変更、Stop/Start、背景復帰を試し、停止/クラッシュ/制御競合の有無を `docs/P0_REPORT.md` に記録する（AC5）。
+- [ ] T016 [US3] ISO/時間をそれぞれ2値以上で測り、指定との差・frame duration・制約を `docs/P0_REPORT.md` に記録する（AC4）。実測反映はユーザーが問題なしと確認。指定値/CaptureResult原本・誤差・frame durationが未取得のため、数値記録を含むtask全体は未完了。
+- [ ] T017 [US3] AUTO→MANUAL→AUTO、MANUAL→出力変更、Stop/Start、背景復帰を試し、停止/クラッシュ/制御競合の有無を `docs/P0_REPORT.md` に記録する（AC5）。AUTO/MANUAL切替・背景復帰はユーザー確認済み。MANUAL中の出力変更/明示Stop/Start等の追加条件と詳細ログは未確認。
 
 ## Phase 6: 検証証拠と採否（初期P0）
 
 - [x] T018 最小build/unit/lint CIとAPK配布を `.github/workflows/android.yml` / `p0-release.yml` に用意し、自然main CIと配布runを確認する。
 - [ ] T019 不正入力・非対応・取得/保存/制御エラーを実機で確認し、安全なUI/logと回復結果を `docs/P0_REPORT.md` に記録する（AC6）。
 - [x] T020 `docs/P0_REPORT.md` の結果記入欄・手順・制約と `docs/BUILD_VALIDATION.md` のビルド/レビュー証拠を作成する（AC7の文書部分のみ）。
-- [ ] T021 実機証拠を反映し、必要なら根拠付きBLOCKEDを記録して、P1のGO/GO_WITH_LIMITATIONS/NO_GOを `docs/P0_REPORT.md` で判断する（AC7完了）。
+- [ ] T021 実機証拠を反映し、必要なら根拠付きBLOCKEDを記録して、P1のGO/GO_WITH_LIMITATIONS/NO_GOを `docs/P0_REPORT.md` で判断する（AC7完了）。判断案はGO_WITH_LIMITATIONS。対象同定・証拠補完・残るACと採否承認が未完了で、P1実装は開始しない。
 
 ## Phase 7: US4 — 標準共有画像フォルダー（追加要件）
 
@@ -61,9 +62,9 @@
 - [x] T024 [US4] `app/src/main/java/dev/cinematic/p0/CameraProbe.kt` と `MainActivity.kt` を新撮影の共有保存・URI表示へ変更する。旧内部写真の移行/削除は実装しない。
 - [x] T025 [US4] `app/src/test/java/dev/cinematic/p0/PhotoPublisherTest.kt` でJPEG/DNGバイト不変、部分失敗のcleanup、公開失敗のrollbackを検証する。
 - [x] T026 [US4] build/unit/lintとレビューを実行し、`docs/BUILD_VALIDATION.md` に結果とAPKの署名差を残す。
-- [ ] T027 [US4] 新JPEGのGoogleフォト等での可視性とDNGの登録/閲覧対応を別々に実機確認し `docs/P0_REPORT.md` に記録する（AC8）。
+- [ ] T027 [US4] 新JPEGの標準ギャラリーでの可視性とDNGの登録/閲覧対応を別々に実機確認し `docs/P0_REPORT.md` に記録する（AC8）。JPEGのCinematic Cameraフォルダー保存とDNGのギャラリー表示はユーザー確認済み。Googleフォトでの確認とは断定せず、閲覧アプリ名/版・対象同定・ファイル/URIの資料は未取得。
 
-T022/T023 → T024 → T025/T026 → T027。実装/機械的検証5件は完了、T027の実機検証は未完了。
+T022/T023 → T024 → T025/T026 → T027。実装/機械的検証5件は完了。T027の機能確認報告と、残る対象同定・資料取得を区別する。
 
 
 ## Dependencies & Execution Order
