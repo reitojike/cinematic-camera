@@ -4,8 +4,9 @@
 think-canvasの適用可能な方針を本プロジェクトへ合わせ、製品固有の規則や過去のIssueは移植しません。
 
 - 変更目的と作業の完了境界は依頼内容と対象PRで確認します。古いbranchを現行要件の根拠にしません。
-- 要件の根拠は合意したP0ブリーフです。[Constitution](.specify/memory/constitution.md)が原則を、
-  [P0 spec](specs/001-p0-camera-probe/spec.md)が振る舞い、planが設計、tasksが作業と実機の残件を扱います。
+- 要件の根拠は合意したP0ブリーフと[ライブ撮影の製品方針](specs/002-live-capture/spec.md)です。
+  [Constitution](.specify/memory/constitution.md)が原則を、[P0 spec](specs/001-p0-camera-probe/spec.md)が既存基盤の
+  振る舞い、planが設計、tasksがAC対応の完了状態を扱います。P0残件は[Issue #4](https://github.com/reitojike/cinematic-camera/issues/4)へ集約します。
   Draft PR中の成果物は、mergeされるまで現行ブリーフやmainの契約を暗黙に置き換えません。
 - [Spec Kit導入・利用](docs/SPEC_KIT.md)を参照し、機能別にspecify → clarify（必要時）→ plan →
   checklist（必要時）→ tasks → analyze → implement → convergeを進めます。標準の生成skillsを直接改変せず、
@@ -27,3 +28,5 @@ think-canvasの適用可能な方針を本プロジェクトへ合わせ、製�
 - 実機撮影、固定署名秘密の新規生成や継続利用設定、他projectの鍵の流用を無断で行いません。
   AC3/4が非対応なら根拠を残し、独自回避やCamera2全面移行は勝手に進めません。
 - LibRaw/NDK、GPU/LUT、動画、SNS、21:9保存、バックエンド、製品UIはP0の対象外です。文書は原則日本語で書きます。
+- 後続の範囲・順序は[ライブ検証計画](specs/002-live-capture/plan.md)で確認します。Stage Clearを最優先とし、
+  原本保持・写真/動画の入力差を守ります。新計画の存在だけで未依頼の実装・素材撮影・公開・Releaseを開始しません。
