@@ -23,8 +23,9 @@ think-canvasと同じく、Constitutionと機能ごとのspec / plan / tasks、C
 公式CLIから生成し、生成skillsの本文は改変していない。上流のMITライセンスは`.specify/LICENSE`に保持した。
 
 今回の機能は[001-p0-camera-probe](../specs/001-p0-camera-probe/spec.md)。合意済みP0ブリーフを
-specへ整理し、planに採用APIと最小設計、tasksに実装済み14件と実機残件7件を分けて記録した。
-Constitutionは本プロジェクトの初版1.0.0であり、CLIの版1.2.5とは別である。
+specへ整理し、planに採用APIと最小設計、tasksに実装と実機残件を分けて記録した。
+初期21 tasksに共有保存の6件を追加し、現在は27件中19件が実装/機械的検証済み、8件が実機残件である。
+Constitutionは初版1.0.0、共有保存の追加要件を反映した現行1.1.0であり、CLIの版1.2.5とは別である。
 
 現在のfeatureのローカルpointerは標準どおり`.specify/feature.json`に置くが、machine-local stateとして
 Gitでは追跡しない。別checkoutでは対象featureを明示できる。

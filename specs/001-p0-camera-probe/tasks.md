@@ -47,12 +47,24 @@
 - [ ] T016 [US3] ISO/時間をそれぞれ2値以上で測り、指定との差・frame duration・制約を `docs/P0_REPORT.md` に記録する（AC4）。進捗: 操作できていそうとのユーザー報告はあるが、CaptureResult一致の証拠は未提示。
 - [ ] T017 [US3] AUTO→MANUAL→AUTO、MANUAL→出力変更、Stop/Start、背景復帰を試し、停止/クラッシュ/制御競合の有無を `docs/P0_REPORT.md` に記録する（AC5）。
 
-## Final Phase: 検証証拠と採否
+## Phase 6: 検証証拠と採否（初期P0）
 
 - [x] T018 最小build/unit/lint CIとAPK配布を `.github/workflows/android.yml` / `p0-release.yml` に用意し、自然main CIと配布runを確認する。
 - [ ] T019 不正入力・非対応・取得/保存/制御エラーを実機で確認し、安全なUI/logと回復結果を `docs/P0_REPORT.md` に記録する（AC6）。
 - [x] T020 `docs/P0_REPORT.md` の結果記入欄・手順・制約と `docs/BUILD_VALIDATION.md` のビルド/レビュー証拠を作成する（AC7の文書部分のみ）。
 - [ ] T021 実機証拠を反映し、必要なら根拠付きBLOCKEDを記録して、P1のGO/GO_WITH_LIMITATIONS/NO_GOを `docs/P0_REPORT.md` で判断する（AC7完了）。
+
+## Phase 7: US4 — 標準共有画像フォルダー（追加要件）
+
+- [x] T022 [US4] `app/src/main/java/dev/cinematic/p0/PhotoPublisher.kt` にバイトコピー、全出力公開、失敗時rollbackを実装する。
+- [x] T023 [US4] `app/src/main/java/dev/cinematic/p0/AndroidImageStore.kt` に正しいMIME/RELATIVE_PATH/IS_PENDINGとURI操作を実装する。
+- [x] T024 [US4] `app/src/main/java/dev/cinematic/p0/CameraProbe.kt` と `MainActivity.kt` を新撮影の共有保存・URI表示へ変更する。旧内部写真の移行/削除は実装しない。
+- [x] T025 [US4] `app/src/test/java/dev/cinematic/p0/PhotoPublisherTest.kt` でJPEG/DNGバイト不変、部分失敗のcleanup、公開失敗のrollbackを検証する。
+- [x] T026 [US4] build/unit/lintとレビューを実行し、`docs/BUILD_VALIDATION.md` に結果とAPKの署名差を残す。
+- [ ] T027 [US4] 新JPEGのGoogleフォト等での可視性とDNGの登録/閲覧対応を別々に実機確認し `docs/P0_REPORT.md` に記録する（AC8）。
+
+T022/T023 → T024 → T025/T026 → T027。実装/機械的検証5件は完了、T027の実機検証は未完了。
+
 
 ## Dependencies & Execution Order
 
@@ -69,5 +81,5 @@ US2とUS3はUS1のカメラ選択/能力を前提とするが、RAWのPC読み�
 ## Implementation Strategy
 
 最初はUS1の最小プレビュー/能力確認を行い、次にRAWとMANUALを個別に測る。現在は実装・機械的
-検証の14 tasksが完了し、実機を必要とする7 tasksが残る。P0全体のconvergenceは未達であり、
+検証の19 tasksが完了し、実機を必要とする8 tasksが残る。P0全体のconvergenceは未達であり、
 後続フェーズの実装へ自動で進まない。テスト先行で作り直したとの記録や、実機合格を捏造しない。

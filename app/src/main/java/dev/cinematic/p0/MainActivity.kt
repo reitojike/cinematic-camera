@@ -84,12 +84,13 @@ class MainActivity : ComponentActivity() {
                             }
                             Text("Desired: ${probe.desired}")
                             Text("CaptureResult: ${probe.measured}")
-                            Button(onClick = probe::capture, enabled = probe.bound && probe.controlReady && !probe.busy) { Text("Capture ${CameraProbe.formatName(probe.format)}") }
+                            if (!probe.sharedSaveSupported) Text("Shared photo saving requires Android 10 or newer.")
+                            Button(onClick = probe::capture, enabled = probe.bound && probe.controlReady && probe.sharedSaveSupported && !probe.busy) { Text("Capture ${CameraProbe.formatName(probe.format)}") }
                         }
                         SelectionContainer {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("State: ${probe.status}${if (probe.busy) " [operation pending]" else ""}")
-                                Text("Log: ${probe.log.file.absolutePath}\nImages: files/captures (private; not backed up)")
+                                Text("Log: ${probe.log.file.absolutePath}\nImages: ${PhotoPublisher.RELATIVE_PATH} (MediaStore)")
                                 Text("CameraX output capabilities (separate from Camera2)\n${probe.cameraXReports}")
                                 Text("Camera2 characteristics\n${probe.reports.joinToString("\n\n") { it.text }}")
                                 Text("Recent log (full session saved privately)\n${probe.lines}")

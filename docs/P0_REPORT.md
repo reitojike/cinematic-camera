@@ -1,6 +1,6 @@
 # P0 技術検証レポート
 
-作成日: 2026-11-01 / アプリ: `0.0.1-p0` (`dev.cinematic.p0`) / CameraX: **1.6.2固定**
+作成日: 2026-11-01 / 初版`0.0.1-p0`・共有保存候補`0.0.2-p0` (`dev.cinematic.p0`) / CameraX: **1.6.2固定**
 
 **状態: 実装・ビルド・ユニットテスト・lint完了 / インストールとカメラ操作の成功はユーザー報告あり。
 実機AC全体は未完了、端末・使用APKの同定は未確認。P1判定は未判定（NOT_EVALUATED）。**
@@ -19,6 +19,9 @@ GO / GO_WITH_LIMITATIONS / NO_GOは実機証拠を得てから選ぶ。実機が
 - 再bind時にもInterop設定を明示解除し、受付完了までは撮影を抑止。解除失敗時は撮影不可のまま理由を表示する。選択するIDごとにCameraX形式集合を初期化し、別IDの能力を流用しない。
 - Preview / ImageCaptureに観測用session capture callback。CameraDevice / CameraCaptureSessionを操作しない。通常結果は最大約1回/秒、still intentはその都度ログ。request側とresult側のAE/ISO/ns、frame number、sensor timestamp、frame durationを記録。
 - logcat `CinematicP0`とprivate `files/reports/`にセッションログ。画面は最近の16,000文字、privateファイルは全記録。DNG / JPEGはprivate `files/captures/`。UUIDで上書きを避け、出力形式・ファイル名・サイズ・未検証の読み込み状態を記録。
+
+上記のprivate撮影保存は初版の仕様。追加要件により、共有保存候補では新撮影を標準MediaStoreの
+`Pictures/Cinematic Camera/`へバイトコピーする。ログはprivateのまま。以下の共有保存追補を参照。
 
 ## 環境・ビルド結果
 
@@ -65,6 +68,7 @@ RAW判定・保存callback、AUTO解除、request/resultの区別、lifecycle / 
 | AC5 | 未検証 | AUTO→MANUAL→AUTOで無停止・無クラッシュ |
 | AC6 | 実装済み・実機未検証 | 非対応、範囲外入力、APIエラー時のUI / log / 非クラッシュ |
 | AC7 | 文書作成済み・部分完了 | ビルド結果を記録し、実機ログとP1判断を追記する |
+| AC8（追加） | 実装/単体検証済み・実機未確認 | 新JPEGの共有フォルダー/Googleフォト等での可視性。DNGの登録と閲覧アプリ対応を別に確認 |
 
 **実機ACの合格は0件。** 非対応が実測された場合は該当ACを`BLOCKED / 実機非対応`にし、camera ID・対応フラグ・CameraX形式・エラー・再現条件を残す。回避策の追加やCamera2全面移行は行わない。
 
@@ -133,7 +137,7 @@ adb shell run-as dev.cinematic.p0 ls -l files/captures
 # PowerShellでバイナリstdoutをテキストとしてリダイレクトしないこと。
 ```
 
-### 現配布版の保存先とPCへの取得
+### 旧配布版v0.0.1-dev.1の保存先とPCへの取得
 
 `v0.0.1-dev.1`のコードは`filesDir/captures/`を使用する。**internal**のアプリ専用領域であり、
 externalFilesDir、Downloads、DCIM、MediaStoreではない。applicationIdは`dev.cinematic.p0`、
@@ -147,9 +151,28 @@ externalFilesDir、Downloads、DCIM、MediaStoreではない。applicationIdは`
 のファイル/フォルダーをPCへ保存する。実端末でのファイル存在・取得成功はまだ確認されていない。
 [Android公式手順](https://developer.android.com/studio/debug/device-file-explorer)を参照。
 
-内部撮影物はアンインストール/データ消去で失われる。取り出すまではそれらを行わず、署名の違うAPKへの
-更新のために削除する経路も使わない。現配布版のrun固有debug鍵は継続用として保管していない。
-SAFによる取り出しボタンは相談中の別変更であり、現在の配布版に存在するとは案内しない。
+内部撮影物はアンインストール/データ消去で失われる。今回の既存内部テスト写真については、後から利用者が
+消失を許可した。この一回限りの指示を将来の一般的なデータ消失許可へ広げず、端末の削除操作はこちらで行わない。
+現配布版のrun固有debug鍵は継続用として保管していない。SAFの取り出しボタンと旧写真の移行機能は、
+最新指示で不要となり実装していない。
+
+### 共有保存候補の追補（実機未確認）
+
+- 新撮影を`cacheDir/capture-staging`へCameraX 1.6.2で出力した後、標準MediaStore Imagesへコピーする。
+- RELATIVE_PATHは`Pictures/Cinematic Camera/`、JPEGは`image/jpeg`、DNGは`image/x-adobe-dng`。
+  API29未満は理由を表示して保存を無効化し、広範囲のストレージ権限は追加しない。
+- IS_PENDING=1で作成し、RAW+JPEGは両callbackと全stream closeを待って公開する。変換/再エンコードはしない。
+  insert/open/copy/close/publish失敗時は今回作った全rowを削除する。削除自体が失敗した場合は件数をエラーへ残す。
+  公開はrowごとの順次updateであり、一括のDB transactionを保証するものではない。
+- 保存成功は各URI・名前・byte数・フォルダーをログ/UIへ記録する。Stop後の既撮影画像は保存を完遂するが、
+  古い結果で新しい操作状態を書き換えない。IOはprocess scopeで、Activity終了時にcallback用executorを閉じない。
+- 旧`files/captures`を読み出す移行や一括削除は実装しない。一時cacheだけを後処理する。
+- local build成功、unit 11件成功（露出/能力4 + 保存7）、lint error 0 / warning 4。
+  1巡の独立レビューで修正が必要な具体的不具合は見つからなかった。
+- **MediaStore上の実保存、Googleフォト等でのJPEG可視性、DNGの閲覧対応は未確認。** DNGのrow登録と
+  特定アプリで開けることを同じ合格にしない。JPEG1件→DNG1件→RAW+JPEG→5件viewer確認の順に試す。
+- 署名は旧配布版と異なる。今回の旧テスト写真が失われることを説明し、利用者自身が必要に応じて
+  手動再インストールする。正式pre-releaseにはmain取り込み許可が必要で、勝手にmergeしない。
 
 ## 失敗・制約・停止条件
 

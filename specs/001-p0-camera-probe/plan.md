@@ -18,8 +18,8 @@ Pixel 9aでCameraXのRAW静止画とCamera2Interopの手動ISO/露光時間が�
 | カメラ | CameraX core / camera2 / lifecycle / viewを全て1.6.2に固定 |
 | Android | compile/target 37、min 28。最初の実機対象はPixel 9a |
 | ビルド | AGP 9.4.1、Gradle 9.8.1、JDK 25、Build Tools 36.0.0 |
-| 保存 | private `files/captures/`と`files/reports/`。Room/MediaStoreは未導入 |
-| テスト | JUnit 4の能力判定/値変換4件、build / lint、実機手動マトリクス |
+| 保存 | 新撮影はMediaStoreの`Pictures/Cinematic Camera/`、ログはprivate `files/reports/`。Roomは未導入 |
+| テスト | JUnit 4で能力/値変換4件・共有保存7件、build / lint、実機手動マトリクス |
 | 種類/規模 | Android技術検証、1 module、最小の1画面、バックエンドなし |
 | 性能目標 | 定量最適化は対象外。DNG5回・露出各2値を検証し、fps/誤差/制約を記録 |
 
@@ -30,7 +30,7 @@ Pixel 9aでCameraXのRAW静止画とCamera2Interopの手動ISO/露光時間が�
 - I: specのFR/ACをtasksとP0_REPORTへ対応させ、実装より前に文書化したと偽らない。
 - II: PreviewViewとCameraX lifecycle、必要箇所だけのInteropを使用。Camera2のdevice/sessionを直接操作しない。
 - III: Future受付・CaptureRequest・CaptureResult・保存・viewer読み込みを分ける。実機合格の代用にCIを使わない。
-- IV: アプリ専用保存。写真・完全な実機ログ・秘密・個人用絶対パスを公開しない。
+- IV: 新撮影はユーザー指定の共有画像フォルダー、ログはprivate。写真・完全な実機ログ・秘密・個人用絶対パスをGitへ公開しない。
 - V: CameraX 1.6.2とP0範囲を維持し、NDK/GPU/動画/独自回避を導入しない。
 
 未解決の技術選定の曖昧さはない。RAW/手動制御の成立性は実機で測る事項であり、オンライン調査で埋めない。
@@ -44,7 +44,10 @@ app/src/main/java/dev/cinematic/p0/
   CameraProbe.kt    CameraX bind / 出力能力 / 撮影 / Interop / callback
   Exposure.kt       ISOとms→nsの範囲検証
   ProbeLog.kt       private sessionログ
+  PhotoPublisher.kt バイト不変の公開・失敗cleanup（JVM検証可能）
+  AndroidImageStore.kt 標準MediaStoreのpending/URI操作
 app/src/test/java/dev/cinematic/p0/ExposureTest.kt
+app/src/test/java/dev/cinematic/p0/PhotoPublisherTest.kt
 specs/001-p0-camera-probe/{spec.md,plan.md,tasks.md,checklists/requirements.md}
 docs/{P0_REPORT.md,BUILD_VALIDATION.md,OPERATIONS.md,REPOSITORY_STATUS.md}
 ```
@@ -73,6 +76,26 @@ docs/{P0_REPORT.md,BUILD_VALIDATION.md,OPERATIONS.md,REPOSITORY_STATUS.md}
 露出は`desired → pending → accepted / failed`と実測結果を分離する。設定受付の成功は値一致を保証しない。
 撮影はtoken別に`開始 → 各出力の保存 / error → complete`を記録する。部分保存・LATEは成功5回に数えない。
 DNG/JPEGを編集せず保持し、位置情報を要求しない。F値は表示のみ。
+
+### 共有画像保存の追加設計
+
+CameraX 1.6.2の実ソースではDNGも共通FileUtilでMediaStoreへ到達でき、MIMEのJPEG強制はない。
+ただしコピー失敗時にもpendingを解除し、作成rowの削除は行わない。そのためユーザー要求のcleanupを
+管理する最小方式として、CameraXは`cacheDir/capture-staging`へ出力し、標準MediaStoreへバイトコピーする。
+確認したsource JAR SHA-256: `9803a0c47248a567c99dbc1b95e07afb8ccc5a7e097ce3f76dd126be3a53ee44`。
+
+API29以上で`MediaStore.Images`のprimary external volumeを使い、RELATIVE_PATHは
+`Pictures/Cinematic Camera/`、MIMEはJPEGが`image/jpeg`、DNGが`image/x-adobe-dng`。
+IS_PENDING=1で作成→全ストリーム書込み完了→全行を0へ更新する。失敗時は今回の全行を削除する。
+RAW+JPEGはcallback順序に依存せず、両方の一時ファイルが揃ってからIO threadで公開する。
+一時cacheだけを後処理し、旧`files/captures`を読み出す移行処理や一括削除は作らない。
+
+minSdk28は維持し、API29未満では共有保存の非対応理由を示す。Pixel 9aが今回の対象であり、
+古い端末向けにWRITE/READ_EXTERNAL_STORAGEやREAD_MEDIA_IMAGESを追加しない。
+JPEGの標準ギャラリー可視性と、DNGの閲覧アプリ対応は別々に実機確認する。
+
+既存版と署名が異なる更新は自動適用しない。今回の旧テスト写真は消失許可があるが、利用者へ署名差と
+手動再インストールの影響を説明する。固定鍵生成/継続利用は別の承認なしに行わない。
 
 ### 検証と停止条件
 
