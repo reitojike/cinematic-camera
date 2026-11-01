@@ -1,16 +1,15 @@
 # Feature Specification: P0 RAW・マニュアル露出の成立性検証
 
-**Feature Branch**: `chore/p0-repository-status`（初期整備のDraft PR）
-
 **Created**: 2026-11-01
 
-**Status**: Draft（合意済みブリーフの整理）/ 実装済み / 実機受け入れ未検証
+**Status**: 合意済みP0仕様（共有保存要件を含む）
 
-インストールとカメラ操作の成功はユーザー報告あり。端末/使用APKの同定と実機AC全体は未確認で、
-下記の合格条件を満たしたとは扱わない。
+この文書は確定した振る舞いと受入条件を定義する。最終検証結果と採否根拠は
+[P0_REPORT.md](../../docs/P0_REPORT.md)、AC対応の完了状態は[tasks.md](tasks.md)を参照する。
+日々の進捗・確認のやり取りはIssue等で管理し、検証の進捗に合わせて仕様本文を変更しない。
 
 **Input**: 2026-11-01に合意したCinematic Camera P0ブリーフ。既存の技術検証アプリを
-作り直さず、合意した振る舞いと未検証の受け入れ条件を記録する。
+作り直さず、合意した振る舞いと受け入れ条件を記録する。
 
 ## User Scenarios & Testing
 
