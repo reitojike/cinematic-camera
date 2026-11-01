@@ -66,9 +66,11 @@ class MainActivity : ComponentActivity() {
                                 PreviewView(context).also {
                                     it.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                                     it.scaleType = PreviewView.ScaleType.FIT_CENTER
+                                    it.installFocusTap { x, y -> probe.focusAt(x, y) }
                                     probe.initialize(it)
                                 }
                             }, modifier = Modifier.fillMaxWidth().height(240.dp))
+                            Text("When idle, tap the visible camera image for AF/AE; avoid black bars. Invalid/unsupported points are rejected, but placement needs device verification. Center AF/AE button is also available.")
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Button(onClick = probe::bind, enabled = !probe.busy && !probe.recordingBusy && !probe.bound) { Text("Start") }
                                 Button(onClick = probe::stop, enabled = probe.bound) { Text("Stop") }

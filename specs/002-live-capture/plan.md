@@ -238,8 +238,28 @@ STILL/CINE・mode別ISO/時間・focus・lookラベル・仮撮影を操作で�
 候補メモはページ内だけで送信しない。desktop/狭幅のrender・keyboard・overflow・simulation状態を確認し、
 本人の暗所視認性/到達性/最終選択は別に残す。正式選択後に別の限定IssueでAndroidへ実装する。
 
+## P0.5-B4: 標準tap AF/AE（Issue #21）
+
+中央ボタンとpreview内tapを同じFocusMetering処理へ統合する。標準GestureDetectorでtapを認識し、
+scroll/drag/long pressをfocus操作へ変換しない。中央ボタンはaccessibility用にも維持する。
+view内のfinite座標/寸法を検証し、COMPATIBLE previewのSTREAMINGを待ってから
+PreviewView.meteringPointFactoryで作った単一測光点をCameraInfo.isFocusMeteringSupportedで照会する。
+MeteringPointの座標getterは1.6.2でRestrictedApiのため使用せず、独自のsensor変換も実装しない。
+
+CameraXの照会はAF/AE等のいずれか有効部分があればtrueであり、全group適用の保証ではない。
+またfull sensor上でvalidな点が表示crop外/黒帯へ対応する可能性があり、全黒帯の拒否は保証しない。
+UIで表示画像内へのtapを案内し、実機の境界/mapping比較を残す。独自のcrop/matrix回避策は追加しない。
+要求はview座標/要求flags、実側はAF/AE regionsとAF state/resultを分離して示す。
+MFではAFを要求せず、MANUAL AEかつMFなら理由を出す。busy/録画/Finalizeでは新要求を抑止し、
+5秒autoCancel・epoch/closedを維持する。新依存/権限/use-case/独自追従は追加しない。
+実機では中央/四隅、FIT_CENTER黒帯、回転/異なるlens/mode、drag、MF/AUTO制約と実regionを確認する。
+view座標のunitを実カメラのsensor mappingや動体合焦の証拠にしない。
+
 ## 公式資料による採用判断
 
+- [PreviewViewの測光点](https://developer.android.com/reference/androidx/camera/view/PreviewView#getMeteringPointFactory())：
+  ScaleType/layoutに従う標準変換を使い、未準備のinvalid点を安全に扱う。1.6.2実artifactでは
+  full sensor範囲の判定と表示crop境界が別であることも確認し、全黒帯拒否を保証しない。
 - [SAF/文書Intent](https://developer.android.com/guide/components/intents-common#Storage)：
   ACTION_CREATE_DOCUMENTでユーザーが選んだDocumentProviderのcontent URIへ一度だけ書く。
   写真の取得/送信Intentやバックエンド、継続grantの取得へ広げない。

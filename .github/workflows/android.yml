@@ -19,7 +19,7 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-26.04
     env:
-      CINEMATIC_VERSION_NAME: 0.0.6-p05.ci.${{ github.run_number }}
+      CINEMATIC_VERSION_NAME: 0.0.7-p05.ci.${{ github.run_number }}
       CINEMATIC_VERSION_CODE: ${{ github.run_number }}
     steps:
       - uses: actions/checkout@v7
