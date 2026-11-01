@@ -255,6 +255,21 @@ MFではAFを要求せず、MANUAL AEかつMFなら理由を出す。busy/録画
 実機では中央/四隅、FIT_CENTER黒帯、回転/異なるlens/mode、drag、MF/AUTO制約と実regionを確認する。
 view座標のunitを実カメラのsensor mappingや動体合焦の証拠にしない。
 
+## P0.5-B5: 一時的AE/AWB lock（Issue #23）
+
+照明変化に対するAUTOの変動を比較するため、available特性とrequest keyの双方で対応したlockだけを操作する。
+ロックは現在のbindingの一時要求でpreferencesへ保存しない。camera/mode/rebind/StopStart/アプリ再生成、
+AUTO全解除ではemptyへ戻し、次のbindingへ古いlockを暗黙復元しない。
+同一bindingの背景復帰では要求が残る場合があるため、実CaptureResult確認を残す。
+
+AE lockはAUTO露出のみ、AWB lockはAUTO WBのみ。MANUAL露出へ変更時はAEを、固定WBへ変更時はAWBを解除し、
+他のeligible lock・override・保存希望は保持する。単一request snapshotへtrueのlock keyを合成し、falseは上書きを除外する。
+処理中/録画/Finalizeでは変更不可。Futureはepoch/closedを維持し、失敗は状態unknownとAUTO resetへの導線を示す。
+
+requested/ACCEPTEDとactual AE/AWB lock・AE/AWB stateを別に記録する。AE lock中もEV補正は露出を変え得る。
+AE OFFでのAWBの挙動には端末差があり、色の安定やちらつきのない移行を保証しない。実機の照明/EV/手動/preset/
+再bind/背景/動画の組合せは未検証として残す。新権限/use-case/AF lock/色gain/持続設定は追加しない。
+
 ## 公式資料による採用判断
 
 - [PreviewViewの測光点](https://developer.android.com/reference/androidx/camera/view/PreviewView#getMeteringPointFactory())：

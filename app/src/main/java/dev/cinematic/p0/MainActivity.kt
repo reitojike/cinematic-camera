@@ -161,6 +161,20 @@ class MainActivity : ComponentActivity() {
                             ControlMenu("Anti-banding", probe.overrides.antiBanding, overrideCaps.antiBandingModes,
                                 controlsEnabled, SensorModeNames::antiBanding, probe::selectAntiBanding)
                             Text("Control snapshot: ${probe.overrideStatus}")
+                            val lockCaps = probe.selectedReport?.locks ?: LockCapabilities()
+                            val autoWb = probe.overrides.whiteBalance == null || probe.overrides.whiteBalance == 1
+                            Row {
+                                Button(onClick = probe::toggleExposureLock, enabled = controlsEnabled &&
+                                    (probe.autoLocks.exposure || lockCaps.exposure && !probe.manualExposure)) {
+                                    Text(if (probe.autoLocks.exposure) "Release AE lock" else "AE lock")
+                                }
+                                Button(onClick = probe::toggleWhiteBalanceLock, enabled = controlsEnabled &&
+                                    (probe.autoLocks.whiteBalance || lockCaps.whiteBalance && autoWb)) {
+                                    Text(if (probe.autoLocks.whiteBalance) "Release AWB lock" else "AWB lock")
+                                }
+                            }
+                            Text("Locks: ${probe.lockStatus}")
+                            Text("Available AE=${lockCaps.exposure} / AWB=${lockCaps.whiteBalance}. AUTO algorithms only. Locks are not saved and clear on rebind/reset. EV may still adjust exposure while AE is locked.")
                             Text("Thermal: ${probe.thermalStatus}")
                             Text("CaptureResult: ${probe.measured}")
                             if (!probe.sharedSaveSupported) Text("Shared photo saving requires Android 10 or newer.")

@@ -71,3 +71,10 @@ P0証拠補完はIssue #4、運用設定はIssue #6。次のAF/WB/LED検証導�
 - [x] T035 `app/src/main/java/dev/cinematic/p0/ProbeControls.kt` / `app/src/test/java/dev/cinematic/p0/ProbeControlsTest.kt` でview座標変換/範囲/非finite/未準備を検証する。
 - [x] T036 build/unit/lint・公開前検査・独立レビューを完了し、`docs/P05_REPORT.md` へ自動検証を記録する。最終headのcanonical/CIはIssue/PRで証跡を管理する。
 - [ ] T037 ユーザーが中央/四隅/黒帯/drag・MF/AE・lens/mode/回転のmappingと実regionを確認し、最終結果を `docs/P05_REPORT.md` へ統合する。
+
+## B5: 一時AE/AWB lock（Issue #23）
+
+- [x] T038 能力/keyとAUTO条件・不適用時解除を `app/src/main/java/dev/cinematic/p0/AutoLocks.kt` / `CameraReport.kt` へ定義する。
+- [x] T039 `app/src/main/java/dev/cinematic/p0/CameraProbe.kt` / `MainActivity.kt` へ一時要求・単一snapshot・実lock観測と最小UIを追加する。
+- [x] T040 `app/src/test/java/dev/cinematic/p0/AutoLocksTest.kt` のgate/移行unit、build/lint・公開前検査・独立レビューを完了し、`docs/P05_REPORT.md` へ自動検証を記録する。最終headのcanonical/CIはIssue/PRで証跡を管理する。
+- [ ] T041 ユーザーが照明変化・EV/手動/preset・mode/rebind・背景・動画での実lock/stateを確認し、最終結果を `docs/P05_REPORT.md` へ統合する。

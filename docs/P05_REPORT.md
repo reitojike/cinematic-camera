@@ -1,6 +1,6 @@
 # P0.5 検証レポート
 
-対象: `dev.cinematic.p0` / `0.0.7-p05` / CameraX **1.6.2**
+対象: `dev.cinematic.p0` / `0.0.8-p05` / CameraX **1.6.2**
 
 関連: [Issue #8](https://github.com/reitojike/cinematic-camera/issues/8) / [spec](../specs/002-live-capture/spec.md) / [plan](../specs/002-live-capture/plan.md)
 
@@ -47,9 +47,10 @@ JPEGはheader寸法、DNGはExif寸法を記録するが、DNG全体のdecode証
 ## 機械的検証
 
 - ローカル `:app:assembleDebug :app:testDebugUnitTest :app:lintDebug` を実行。
-- unit **34件、failure/error/skip 0**。既存11件に、能力候補選択・希望値fallback・録画状態/旧token隔離・
+- unit **36件、failure/error/skip 0**。既存11件に、能力候補選択・希望値fallback・録画状態/旧token隔離・
   音声途中失敗/無音警告・出力close/検証/公開/cleanupの12件、EV/thermalの3件、override能力/範囲/fallback/保存保持の4件、
-  report UTF-8/tail境界とopen/write/flush/close失敗の3件、view座標変換/非finite/範囲/未準備の1件を追加。
+  report UTF-8/tail境界とopen/write/flush/close失敗の3件、view座標変換/非finite/範囲/未準備の1件、
+  AE/AWB lockの能力/AUTO条件と不適用時解除の2件を追加。
 - lint **error 0 / warning 9**。Gradle更新案内1、任意のKTX提案5、metadata記録に使う標準ExifInterfaceへの
   Jetpack推奨3。baselineや抑制は追加しない。Exif読み込みは素材の現像/有効性判定に使用しない。
 - API1.6.2の実artifactでcompileし、MediaStore/音声/SessionConfigの署名を確認。
@@ -144,3 +145,17 @@ Futureはepoch/closedで隔離し、5秒autoCancelを維持する。
 view座標のunitとbuild/lintは成功したが、中央/四隅/黒帯・lens/mode/回転ごとのmapping、
 スクロールとのgesture競合、実region、動体合焦品質は実機未確認。
 回転時はActivity再生成により録画を停止する設計で、継続録画を保証しない。回転→保存完了→再録画をV08へ含める。
+
+## B5: 現在bindingの一時AE/AWB lock
+
+[Issue #23](https://github.com/reitojike/cinematic-camera/issues/23)で、Camera2 available特性とrequest keyを
+照合したAE/AWB lockをAUTO条件でだけ操作する。既存snapshotへlock keyを合成し、他のcontrol/保存希望を維持する。
+MANUAL露出へ変更時はAE lock、固定WB presetへ変更時はAWB lockだけを解除する。
+
+preferencesへ保存せず、camera/mode/rebind/StopStart/アプリ再生成とAUTO全解除で両lockを解除する。
+同一bindingの背景復帰では要求が残り得るため、状態と実結果を再確認する。録画/Finalize/処理中には変更しない。
+Futureはepoch/closedで隔離し、同期/非同期失敗は状態unknownとAUTO resetへの導線を示す。
+
+requested/ACCEPTEDとactual AE/AWB lock・AE/AWB stateを別に観測し、記録開始時のlock希望もログに残す。
+AE lock中もEVは露出を変え得る。AE OFF時のAWBは端末依存で、色安定・フリッカーなしの移行を保証しない。
+36件のunit/build/lint成功と、照明変化・EV/手動/preset・mode/rebind・背景・動画の実機結果は別であり、後者は未確認。
