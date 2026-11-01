@@ -17,6 +17,11 @@ import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
+import androidx.camera.core.AspectRatio
+import android.hardware.camera2.CameraCharacteristics
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.runtime.getValue
@@ -32,6 +37,7 @@ import java.util.concurrent.Executors
 @androidx.annotation.OptIn(markerClass = [androidx.camera.camera2.interop.ExperimentalCamera2Interop::class])
 class CameraProbe(private val context: Context, private val owner: LifecycleOwner) {
     private val main = ContextCompat.getMainExecutor(context)
+    private val preferences = CapturePreferences(context)
     val log = ProbeLog(context)
     var lines by mutableStateOf(""); private set
     var reports by mutableStateOf(emptyList<CameraReport>()); private set
@@ -45,12 +51,28 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     var bound by mutableStateOf(false); private set
     var busy by mutableStateOf(false); private set
     var controlReady by mutableStateOf(false); private set
+    var mode by mutableStateOf(preferences.mode()); private set
+    var requestedIso by mutableStateOf("100"); private set
+    var requestedMs by mutableStateOf("10"); private set
+    var audioWanted by mutableStateOf(preferences.flag("audio", true)); private set
+    var highResolution by mutableStateOf(preferences.flag("highResolution", true)); private set
+    var videoChoices by mutableStateOf(emptyList<VideoChoice>()); private set
+    var videoSelection by mutableStateOf("Not selected; capabilities not queried"); private set
+    var stillResolution by mutableStateOf("Highest available requested; actual resolution pending"); private set
     private var provider: ProcessCameraProvider? = null
     private var camera: Camera? = null
     private var imageCapture: ImageCapture? = null
     private var view: PreviewView? = null
     private var epoch = 0
     private var closed = false
+    private var cineSession: PreparedCine? = null
+    private var pendingStop = false
+    private val cine = CineRecorder(context, { message ->
+        if (!closed) event(message) else log.write("LATE $message")
+    }, ::onCineChanged)
+    val recordingBusy get() = cine.busy
+    val recordingStage get() = cine.stage
+    val recordingStats get() = cine.stats
     private var activeCaptureToken: String? = null
     val sharedSaveSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
     val selectedReport get() = reports.find { it.id == selectedId }
@@ -83,30 +105,76 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                     reports.filter { it.id !in ids }.forEach {
                         log.write("CameraX id=${it.id} unavailable for selection; Camera2 report only")
                     }
-                    selectedId = available.firstOrNull { it.lensFacing == CameraSelector.LENS_FACING_BACK }
+                    val savedId = preferences.text("camera")
+                    selectedId = savedId.takeIf { it in ids } ?: available.firstOrNull { it.lensFacing == CameraSelector.LENS_FACING_BACK }
                         ?.let { Camera2CameraInfo.from(it).cameraId } ?: ids.firstOrNull()
+                    if (savedId.isNotEmpty() && savedId != selectedId) log.write("CAMERA_FALLBACK requested=$savedId unavailable; applied=$selectedId; saved request retained")
+                    format = preferences.text("format/$selectedId", ImageCapture.OUTPUT_FORMAT_JPEG.toString()).toIntOrNull() ?: ImageCapture.OUTPUT_FORMAT_JPEG
                     bind()
                 } catch (e: Exception) { error("initialize", e) }
             }, main)
         } catch (e: Exception) { error("capability enumeration", e) }
     }
 
-    fun selectCamera(id: String) { if (!busy) { selectedId = id; format = ImageCapture.OUTPUT_FORMAT_JPEG; bind() } }
+    fun selectCamera(id: String) {
+        if (!busy && !recordingBusy) {
+            selectedId = id; preferences.put("camera", id)
+            format = preferences.text("format/$id", ImageCapture.OUTPUT_FORMAT_JPEG.toString()).toIntOrNull() ?: ImageCapture.OUTPUT_FORMAT_JPEG
+            bind()
+        }
+    }
+    private fun exposureKey() = "exposure/$selectedId/${mode.name}"
+    fun editIso(value: String) { requestedIso = value; preferences.put(exposureKey() + "/iso", value) }
+    fun editMs(value: String) { requestedMs = value; preferences.put(exposureKey() + "/ms", value) }
+    fun selectMode(value: CaptureMode) {
+        if (busy || recordingBusy || mode == value) return
+        mode = value; preferences.put("mode", value.name); bind()
+    }
+    fun selectVideo(key: String) {
+        if (busy || recordingBusy || mode != CaptureMode.CINE || videoChoices.none { it.key == key }) return
+        preferences.put("video/$selectedId", key); bind()
+    }
+    fun setAudio(value: Boolean) { if (!recordingBusy) { audioWanted = value; preferences.put("audio", value) } }
+    fun chooseHighResolution(value: Boolean) {
+        if (busy || recordingBusy) return
+        highResolution = value; preferences.put("highResolution", value); if (mode == CaptureMode.STILL) bind()
+    }
+    fun startRecording() {
+        if (mode != CaptureMode.CINE || !bound || !controlReady || busy || recordingBusy) return
+        val session = cineSession ?: return
+        if (!owner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
+            event("Recording requires a visible activity; retry Record after resume"); return
+        }
+        cine.start(session.recorder, audioWanted, "${session.choice.label} exposure=[$desired]")
+    }
+    fun stopRecording() { cine.stop("user") }
+    fun reportAudioPermission(granted: Boolean) {
+        event("MICROPHONE permission=$granted${if (granted) "" else "; recording not started; grant permission or explicitly select audio off"}")
+    }
+    fun onBackground() { cine.stop("activity background; no background recording") }
+    private fun onCineChanged() {
+        if (!closed && pendingStop && !recordingBusy) { pendingStop = false; stop() }
+    }
     fun selectFormat(value: Int) {
-        if (busy) return
+        if (busy || recordingBusy || mode != CaptureMode.STILL) return
         if (value !in formats) { event("UNSUPPORTED ${formatName(value)} by CameraX id=$selectedId"); return }
-        format = value; bind()
+        format = value; preferences.put("format/$selectedId", value.toString()); bind()
     }
 
     fun bind() {
-        if (busy || closed) return
+        if (busy || recordingBusy || closed) return
         val p = provider ?: return
         val id = selectedId ?: run { event("UNSUPPORTED no CameraX camera"); return }
         val previewView = view ?: return
         val generation = ++epoch
+        val settingsKey = exposureKey()
+        requestedIso = preferences.text("$settingsKey/iso", "100")
+        requestedMs = preferences.text("$settingsKey/ms", "10")
         camera?.cameraInfo?.cameraState?.removeObservers(owner)
         bound = false; controlReady = false; formats = emptySet()
-        camera = null; imageCapture = null
+        videoSelection = "No applied video profile for this session; requested preference retained"
+        stillResolution = "No applied image resolution for this session; requested preference retained"
+        camera = null; imageCapture = null; cineSession = null; videoChoices = emptyList()
         desired = "AUTO reset required"; measured = "Awaiting new session result"
         try {
             p.unbindAll()
@@ -114,7 +182,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                 ?: run { event("UNSUPPORTED CameraX unavailable id=$id; Camera2 report only"); return }
             formats = ImageCapture.getImageCaptureCapabilities(info).supportedOutputFormats
             // Never construct RAW ImageCapture until CameraX has advertised that exact output format.
-            require(format in formats) { "CameraX ${formatName(format)} unsupported id=$id" }
+            if (mode == CaptureMode.STILL) require(format in formats) { "CameraX ${formatName(format)} unsupported id=$id" }
             val selector = CameraSelector.Builder().addCameraFilter { list ->
                 list.filter { Camera2CameraInfo.from(it).cameraId == id }
             }.build()
@@ -138,39 +206,92 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             }
             Camera2Interop.Extender(builder).setSessionCaptureCallback(resultCallback)
             val preview = builder.build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
-            val captureBuilder = ImageCapture.Builder().setOutputFormat(format)
-                .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
-            Camera2Interop.Extender(captureBuilder).setSessionCaptureCallback(resultCallback)
-            val capture = captureBuilder.build()
-            camera = p.bindToLifecycle(owner, selector, preview, capture)
-            imageCapture = capture; bound = true
+            if (mode == CaptureMode.STILL) {
+                val captureBuilder = ImageCapture.Builder().setOutputFormat(format)
+                    .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                if (highResolution) {
+                    val active = Camera2CameraInfo.from(info).getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+                    val ratio = active?.let { it.width().toDouble() / it.height() }
+                    val preferredRatio = if (ratio != null && kotlin.math.abs(ratio - 16.0 / 9) < kotlin.math.abs(ratio - 4.0 / 3)) AspectRatio.RATIO_16_9 else AspectRatio.RATIO_4_3
+                    captureBuilder.setResolutionSelector(ResolutionSelector.Builder()
+                        .setAllowedResolutionMode(ResolutionSelector.PREFER_HIGHER_RESOLUTION_OVER_CAPTURE_RATE)
+                        .setAspectRatioStrategy(AspectRatioStrategy(preferredRatio, AspectRatioStrategy.FALLBACK_RULE_AUTO))
+                        .setResolutionStrategy(ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY).build())
+                }
+                Camera2Interop.Extender(captureBuilder).setSessionCaptureCallback(resultCallback)
+                var capture = captureBuilder.build()
+                var fallbackReason: String? = null
+                camera = try { p.bindToLifecycle(owner, selector, preview, capture) }
+                catch (failure: Exception) {
+                    if (!highResolution) throw failure
+                    fallbackReason = "Highest-resolution bind failed: ${failure.message}; CameraX default requested instead"
+                    log.write("STILL_RESOLUTION_FALLBACK $fallbackReason")
+                    p.unbindAll()
+                    val fallbackBuilder = ImageCapture.Builder().setOutputFormat(format)
+                        .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                    Camera2Interop.Extender(fallbackBuilder).setSessionCaptureCallback(resultCallback)
+                    capture = fallbackBuilder.build()
+                    p.bindToLifecycle(owner, selector, preview, capture)
+                }
+                imageCapture = capture
+                stillResolution = "Requested=${if (highResolution) "highest API available, sensor aspect preferred" else "CameraX default"}; bound=${capture.resolutionInfo?.resolution ?: "pending"}; 48MP not guaranteed. ${fallbackReason ?: "No explicit fallback"}"
+                log.write("STILL_RESOLUTION $stillResolution")
+            } else {
+                val prepared = CineSessions.query(info, preview, log::write)
+                videoChoices = prepared.map { it.choice }.distinctBy { it.key }
+                val requested = preferences.text("video/$id").ifBlank { null }
+                val ordered = VideoPolicy.ordered(videoChoices, requested)
+                var lastFailure: Exception? = null
+                val bindFailures = mutableListOf<String>()
+                for (choice in ordered) {
+                    val option = prepared.first { it.choice.key == choice.key }
+                    try {
+                        p.unbindAll()
+                        camera = p.bindToLifecycle(owner, selector, option.session)
+                        cineSession = option
+                        val hdr = if (videoChoices.any { it.dynamicRange != "SDR" }) "HDR choices listed; device validation pending" else "No usable HDR combination advertised by CameraX"
+                        videoSelection = "Requested=${requested ?: "highest supported SDR"}; applied=${choice.label}; bound=${option.video.resolutionInfo?.resolution ?: "pending"}. ${VideoPolicy.fallbackReason(requested, choice.key)}. $hdr. ${bindFailures.joinToString()} Device validation pending."
+                        log.write("VIDEO_SELECTION $videoSelection")
+                        break
+                    } catch (failure: Exception) {
+                        lastFailure = failure
+                        bindFailures += "${choice.label} failed: ${failure.message}"
+                        log.write("VIDEO_BIND_FALLBACK requested=$requested candidate=${choice.key} ${failure.message}")
+                    }
+                }
+                check(cineSession != null) { "No supported CINE combination: ${lastFailure?.message ?: "CameraX returned no combination-specific fps/session support"}" }
+            }
+            bound = true
             camera!!.cameraInfo.cameraState.observe(owner) { state ->
                 if (generation == epoch && !closed) {
                     log.write("CAMERA_STATE id=$id type=${state.type} error=${state.error?.code}")
                     state.error?.let { event("ERROR CameraX camera state code=${it.code}") }
                 }
             }
-            event("BOUND id=$id format=${formatName(format)}; clearing Interop before capture")
+            event("BOUND id=$id mode=$mode format=${formatName(format)}; clearing Interop before capture")
             // The provider may reuse a CameraControl whose Interop options survive unbind/rebind.
             // Explicitly clear them and wait for acceptance before enabling capture.
-            setExposure()
-        } catch (e: Exception) { error("bind id=$id format=${formatName(format)} (no fallback attempted)", e) }
+            setExposure(remember = false, restoreSaved = true)
+        } catch (e: Exception) { error("bind id=$id mode=$mode format=${formatName(format)} (see selection/fallback log)", e) }
     }
 
     fun stop() {
+        if (recordingBusy) { pendingStop = true; cine.stop("preview Stop"); return }
         ++epoch
         busy = false
         controlReady = false
         activeCaptureToken = null
+        videoSelection = "Unbound; no applied video profile"
+        stillResolution = "Unbound; no applied image resolution"
         try {
             camera?.cameraInfo?.cameraState?.removeObservers(owner)
-            provider?.unbindAll(); camera = null; imageCapture = null; bound = false
+            provider?.unbindAll(); camera = null; imageCapture = null; cineSession = null; bound = false
             desired = "AUTO (unbound)"; event("Preview stopped")
         } catch (e: Exception) { error("stop", e) }
     }
 
-    fun setExposure(iso: String? = null, ms: String? = null) {
-        if (busy) return
+    fun setExposure(iso: String? = null, ms: String? = null, remember: Boolean = true, restoreSaved: Boolean = false) {
+        if (busy || recordingBusy) return
         val c = camera ?: return
         val manual = iso != null && ms != null
         try {
@@ -178,12 +299,18 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             val value = if (manual) {
                 require(r != null) { "No Camera2 report" }
                 require(r.manualBlockReason == null) { r.manualBlockReason!! }
-                Exposure.parse(iso, ms, r.isoRange, r.exposureRange)
+                Exposure.parse(iso, ms, r.isoRange, r.exposureRange).also {
+                    if (mode == CaptureMode.CINE) {
+                        val maxFps = cineSession?.choice?.fpsUpper ?: error("Video fps unavailable")
+                        require(it.exposureNs <= 1_000_000_000L / maxFps) { "Exposure exceeds requested video frame period at $maxFps fps; lower fps or shorten exposure" }
+                    }
+                }
             } else null
             val label = value?.let { "MANUAL ISO=${it.iso} exposureNs=${it.exposureNs}" } ?: "AUTO (Interop cleared)"
             desired = "$label PENDING"; busy = true; controlReady = false
             log.write("DESIRED id=$selectedId $desired")
             val generation = epoch
+            val key = exposureKey()
             val control = Camera2CameraControl.from(c.cameraControl)
             val future = if (value == null) control.clearCaptureRequestOptions() else {
                 control.setCaptureRequestOptions(CaptureRequestOptions.Builder()
@@ -197,6 +324,15 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                 try {
                     future.get(); controlReady = true
                     desired = "$label ACCEPTED (check actual result)"; event(desired)
+                    if (remember) {
+                        preferences.put("$key/manual", manual)
+                        if (manual) {
+                            preferences.put("$key/appliedIso", iso)
+                            preferences.put("$key/appliedMs", ms)
+                        }
+                    }
+                    if (restoreSaved && preferences.flag("$key/manual")) setExposure(
+                        preferences.text("$key/appliedIso", requestedIso), preferences.text("$key/appliedMs", requestedMs), remember = false)
                 }
                 catch (e: Exception) {
                     desired = "$label FAILED; sensor state unknown; use AUTO or stop/restart"
@@ -204,13 +340,14 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                 }
             }, main)
         } catch (e: Exception) {
+            if (!remember && manual) { controlReady = false; desired = "Saved MANUAL not applied; use AUTO or valid values" }
             if (busy) desired = "Exposure control FAILED; sensor state unknown; use AUTO or stop/restart"
             busy = false; error("exposure validation/control", e)
         }
     }
 
     fun capture() {
-        if (busy) return
+        if (busy || recordingBusy || mode != CaptureMode.STILL) return
         if (!sharedSaveSupported) { event("UNSUPPORTED shared image saving requires Android 10+"); return }
         if (!controlReady) { event("Capture disabled: exposure control not accepted; use AUTO or stop/restart"); return }
         val capture = imageCapture ?: return
@@ -250,7 +387,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             var terminal = false
             var publishing = false
             busy = true; activeCaptureToken = token
-            log.write("CAPTURE_BEGIN token=$token id=$cameraId format=${formatName(captureFormat)} desired=[$desired] target=${PhotoPublisher.RELATIVE_PATH}")
+            log.write("CAPTURE_BEGIN token=$token id=$cameraId format=${formatName(captureFormat)} desired=[$desired] selectedResolution=${capture.resolutionInfo?.resolution} target=${PhotoPublisher.RELATIVE_PATH}")
             val callback = object : ImageCapture.OnImageSavedCallback {
                 private fun fail(e: Exception) {
                     if (terminal) { log.write("CAPTURE_LATE_CALLBACK_ERROR token=$token ${e.javaClass.simpleName}"); return }
@@ -270,6 +407,20 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                         // CameraX has finished every file. Publish together off the UI thread.
                         mediaIo.execute {
                             try {
+                                sources.forEach { source ->
+                                    try {
+                                        if (source.format == PhotoFormat.JPEG) {
+                                            val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                                            android.graphics.BitmapFactory.decodeFile(source.file.absolutePath, bounds)
+                                            log.write("IMAGE_METADATA token=$token mime=image/jpeg encodedSize=${bounds.outWidth}x${bounds.outHeight}; viewerValidation=UNVERIFIED")
+                                        } else {
+                                            val exif = android.media.ExifInterface(source.file)
+                                            log.write("IMAGE_METADATA token=$token mime=image/x-adobe-dng exifWidth=${exif.getAttribute(android.media.ExifInterface.TAG_IMAGE_WIDTH)} exifHeight=${exif.getAttribute(android.media.ExifInterface.TAG_IMAGE_LENGTH)}; notFullRawDecodeProof")
+                                        }
+                                    } catch (metadataFailure: Exception) {
+                                        log.write("IMAGE_METADATA_UNAVAILABLE token=$token ${metadataFailure.message}; source retained for publication")
+                                    }
+                                }
                                 val photos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                                     PhotoPublisher(AndroidImageStore(context.applicationContext.contentResolver)).publish(sources)
                                 } else throw IllegalStateException("MediaStore saving requires Android 10+")
@@ -303,6 +454,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
 
     fun close() {
         closed = true; controlReady = false; activeCaptureToken = null; ++epoch
+        cine.stop("activity destroyed")
         try { camera?.cameraInfo?.cameraState?.removeObservers(owner); provider?.unbindAll() }
         catch (e: Exception) { log.write("ERROR close ${e.javaClass.simpleName}: ${e.message}") }
     }
