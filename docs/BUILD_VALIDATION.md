@@ -205,3 +205,5 @@ STILLの明示opt-in固定pair、Builder単発設定とruntime preview補償、�
 - 8 focused testsで1秒境界、1ns超過、旧長秒のISO保持移行、現在device upperが旧設定より短い場合、合法標準候補なし、冪等を検証。移行設定は新API受付後だけ保存し、旧実測を移行要求の証拠へ流用しない。AUTOのAE実露光を1秒以内と保証しない。
 - 最新mainとの競合は移行noticeを既存共通noticeへ接続し、policy詳細をCapturePanels診断へ置く形で解消。独立レビューの最終head明示OK。最終remote gateはIssue/PRコメントへ残す。
 - 実機移行/全format撮影/復帰の応答は未確認。1秒制限を数秒撮影の停止原因解消と扱わない。既存撮影経路は撮影pair受付→単発撮影/file callback→保存IO→preview設定受付/新frameの直列区間があり、主な遅延区間は実測ログで別途切り分ける。
+- 独立追加レビューで、camera切替後に旧移行受付の診断文字列を現sessionと混同するP2を補正。移行開始時のcamera ID/mode/epochを捕捉し、要求notice・受付履歴の両方へ履歴scopeを明示する（新状態や撮影動作変更なし）。
+- 上記履歴scope表示の補正後、Kotlin compile成功21秒（7tasks、1executed/6up-to-date）。最終headの自然CIで全unit/build/lintを再確認する。

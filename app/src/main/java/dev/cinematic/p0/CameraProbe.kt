@@ -1131,8 +1131,9 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                 }
             }
             val migration = restoration?.takeIf { it.migrated }
+            val migrationScope = "移行履歴 camera ID=${selectedId ?: "—"} mode=$mode epoch=$epoch: "
             migration?.let {
-                exposurePolicyStatus = "旧保存/復帰target ${ExposureStops.label(it.original.exposureNs)} → ${ExposureStops.label(it.target.exposureNs)}へ移行要求（ISO ${it.target.iso}保持）。API受付・実測は未確認"
+                exposurePolicyStatus = migrationScope + "旧保存/復帰target ${ExposureStops.label(it.original.exposureNs)} → ${ExposureStops.label(it.target.exposureNs)}へ移行要求（ISO ${it.target.iso}保持）。API受付・実測は未確認"
                 exposureMigrationNotice = exposurePolicyStatus
                 event(exposurePolicyStatus)
             }
@@ -1172,7 +1173,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                         migration?.let {
                             requestedIso = it.target.iso.toString(); requestedMs = it.input.milliseconds
                             preferences.put("$key/iso", requestedIso); preferences.put("$key/ms", requestedMs)
-                            exposurePolicyStatus = "旧target ${ExposureStops.label(it.original.exposureNs)} → ${ExposureStops.label(it.target.exposureNs)}へ移行・preview API受付済み。撮影API受付/実測は別確認"
+                            exposurePolicyStatus = migrationScope + "旧target ${ExposureStops.label(it.original.exposureNs)} → ${ExposureStops.label(it.target.exposureNs)}へ移行・preview API受付済み。撮影API受付/実測は別確認"
                             event(exposurePolicyStatus)
                         }
                         bindResume?.let { stillResumeIntent.accepted(key, it) }
