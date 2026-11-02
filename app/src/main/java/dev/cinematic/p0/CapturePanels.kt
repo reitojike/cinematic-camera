@@ -30,7 +30,6 @@ private val PanelFailure = Color(0xFFEF8A74)
 @Composable internal fun CaptureSettingsPanel(probe: CameraProbe, enabled: Boolean, diagnostics: () -> Unit, reset: () -> Unit) {
     val editable = enabled && probe.stillExposure?.ownsCapture != true
     if (!editable) Text("撮影・録画・設定処理中です。設定変更は完了後に行えます。", color = PanelWarning, fontSize = 12.sp)
-    CaptureExposureSummary(probe)
     PanelSection(if (probe.mode == CaptureMode.STILL) "STILL / 保存" else "CINE / 動画組合せ") {
         if (probe.mode == CaptureMode.STILL) {
             Text("原画角を保持 · 比率クロップ保存は未実装", color = PanelMuted, fontSize = 12.sp)

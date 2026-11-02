@@ -9,14 +9,14 @@ class CaptureChromeModelTest {
 
     @Test fun idleShapesMatchStillAndCineWithoutMovingCaptionFootprint() {
         val still = captureShutterModel(ready(CaptureMode.STILL))
-        assertEquals(58, still.innerDp)
+        assertEquals(68, still.innerDp)
         assertEquals(ShutterColor.CONTROL, still.inner)
         assertFalse(still.square)
         assertEquals("", still.caption)
         val cine = captureShutterModel(ready(CaptureMode.CINE))
-        assertEquals(28, cine.innerDp)
+        assertEquals(58, cine.innerDp)
         assertEquals(ShutterColor.CONTROL, cine.ring)
-        assertEquals(ShutterColor.RECORDING, cine.inner)
+        assertEquals(ShutterColor.CONTROL, cine.inner)
         assertTrue(cine.enabled)
     }
 
@@ -25,7 +25,15 @@ class CaptureChromeModelTest {
             val model = captureShutterModel(ready(CaptureMode.CINE).copy(recordingStage = stage))
             when (stage) {
                 RecordingStage.IDLE -> assertFalse(model.square)
-                RecordingStage.STARTING, RecordingStage.RECORDING -> {
+                RecordingStage.STARTING -> {
+                    assertTrue(model.enabled)
+                    assertFalse(model.square)
+                    assertEquals(58, model.innerDp)
+                    assertEquals("開始中", model.caption)
+                    assertEquals(ShutterColor.CONTROL, model.ring)
+                    assertEquals(ShutterColor.CONTROL, model.inner)
+                }
+                RecordingStage.RECORDING -> {
                     assertTrue(model.enabled)
                     assertTrue(model.square)
                     assertEquals(26, model.innerDp)
@@ -58,8 +66,8 @@ class CaptureChromeModelTest {
     @Test fun stillCaptureSaveFailureAndExclusiveRecoveryRemainDistinct() {
         val still = ready(CaptureMode.STILL)
         val capturing = captureShutterModel(still.copy(photoStage = PhotoStage.CAPTURING))
-        assertEquals(48, capturing.innerDp)
-        assertEquals(ShutterColor.EXPOSING, capturing.inner)
+        assertEquals(68, capturing.innerDp)
+        assertEquals(ShutterColor.CONTROL, capturing.inner)
         assertFalse(capturing.enabled)
         val saving = captureShutterModel(still.copy(photoStage = PhotoStage.SAVING))
         assertEquals("保存中", saving.caption)
@@ -133,9 +141,10 @@ class CaptureChromeModelTest {
             recordingSaveSucceeded = false, thermalSeverity = 4)
         val chips = captureStatusChips(input)
         assertEquals(CaptureChromeTone.RECORDING, chips.first { it.id == "operation" }.tone)
-        for (id in listOf("audio", "failure", "save", "thermal")) {
+        for (id in listOf("audio", "thermal")) {
             assertEquals(CaptureChromeTone.FAILURE, chips.first { it.id == id }.tone)
         }
+        assertFalse(chips.any { it.id in setOf("failure", "save") })
         assertTrue(captureShutterModel(input).enabled)
     }
 
@@ -143,7 +152,47 @@ class CaptureChromeModelTest {
         val chips = captureStatusChips(ready(CaptureMode.STILL).copy(ownsStill = true,
             stillPhase = StillExposurePhase.RESTORING, stillFilesTerminal = true, stillFilesSaved = true))
         assertEquals("プレビュー復帰中", chips.first { it.id == "operation" }.text)
-        assertEquals("保存済", chips.first { it.id == "save" }.text)
-        assertEquals(CaptureChromeTone.ACCEPTED, chips.first { it.id == "save" }.tone)
+        assertFalse(chips.any { it.id == "save" || it.text.contains("保存済") })
+    }
+
+    @Test fun exposureModeAppearsOnlyOnceAndCaptureModeHasNoDuplicateChip() {
+        for (mode in CaptureMode.entries) for (manual in listOf(true, false, null)) {
+            val chips = captureStatusChips(ready(mode).copy(manualExposure = manual))
+            assertEquals(1, chips.count { it.mode })
+            assertEquals("exposure", chips.single { it.mode }.id)
+            assertEquals(when (manual) { true -> "MANUAL"; false -> "AUTO"; null -> "—" }, chips.single { it.mode }.text)
+            assertFalse(chips.any { it.text in setOf("STILL", "CINE", "保存済") })
+        }
+    }
+
+    @Test fun failedStartNeverUsesSuccessfulRecordingRedAndSavedHistoryIsNotProgress() {
+        val failed = captureShutterModel(ready(CaptureMode.CINE).copy(recordingFailure = "start failed"))
+        assertEquals(ShutterColor.CONTROL, failed.inner)
+        assertEquals(ShutterColor.CONTROL, failed.ring)
+        assertTrue(failed.actionDescription.contains("録画失敗"))
+        for (mode in CaptureMode.entries) {
+            val chips = captureStatusChips(ready(mode).copy(photoStage = PhotoStage.SAVED, recordingSaveSucceeded = true))
+            assertFalse(chips.any { it.id in setOf("operation", "save", "failure") })
+        }
+        assertEquals(CaptureChromeTone.WARNING, captureStatusChips(ready(CaptureMode.CINE).copy(recordingStage = RecordingStage.STARTING)).first { it.id == "operation" }.tone)
+    }
+
+    @Test fun pendingExposureModePreservesTheRequestAndUnknownIsNeverConfirmed() {
+        for (manual in listOf(false, true)) {
+            val request = if (manual) "MANUAL" else "AUTO"
+            val input = ready(CaptureMode.STILL).copy(manualExposure = manual)
+            val pending = captureStatusChips(input.copy(exposureModePhase = ControlPhase.PENDING)).single { it.mode }
+            assertEquals(request, pending.text)
+            assertEquals(CaptureChromeTone.WARNING, pending.tone)
+            assertTrue(pending.detail.contains("受付待ち"))
+            assertFalse(pending.text.contains("送信中")) // One shared visible send notice is owned by the screen.
+            for (phase in listOf(ControlPhase.UNKNOWN, ControlPhase.REJECTED)) {
+                val unknown = captureStatusChips(input.copy(exposureModePhase = phase)).single { it.mode }
+                assertEquals("$request?", unknown.text)
+                assertEquals(CaptureChromeTone.FAILURE, unknown.tone)
+                assertTrue(unknown.detail.contains("未確認"))
+            }
+            assertEquals("—", captureStatusChips(input.copy(exposureModePhase = ControlPhase.UNBOUND)).single { it.mode }.text)
+        }
     }
 }

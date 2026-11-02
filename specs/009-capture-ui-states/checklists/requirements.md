@@ -26,4 +26,4 @@
 
 ## Notes
 
-Issue #47と#45の参照監査を確認。追加clarify質問は不要。実装済み/実機PASSの判定ではない。
+Issue #47と#45の参照監査、追加PO comments 6583372005/6583452413を確認。最新の表示一か所/近似実測/項目別pending/detent/haptic/白待機/caption非描画を採用。追加clarify質問は不要。実装済み/実機PASSの判定ではない。

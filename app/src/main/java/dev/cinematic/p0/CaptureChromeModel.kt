@@ -9,6 +9,7 @@ data class CaptureChromeInput(
     val bound: Boolean = false,
     val cameraId: String? = null,
     val manualExposure: Boolean? = null,
+    val exposureModePhase: ControlPhase? = null,
     val photoFormat: String? = null,
     val boundVideoChoice: VideoChoice? = null,
     val recordingStage: RecordingStage = RecordingStage.IDLE,
@@ -41,6 +42,7 @@ data class CaptureShutterModel(
     val inner: ShutterColor,
     val alpha: Float,
     val enabled: Boolean,
+    /** State label retained for accessibility/tests; no caption is drawn below the shutter. */
     val caption: String,
     val captionTone: CaptureChromeTone,
     val actionDescription: String,
@@ -49,8 +51,11 @@ data class CaptureShutterModel(
 fun captureShutterModel(input: CaptureChromeInput): CaptureShutterModel {
     val cine = input.mode == CaptureMode.CINE
     val stop = cine && input.recordingStage in setOf(RecordingStage.STARTING, RecordingStage.RECORDING)
-    if (stop) return CaptureShutterModel(26, true, ShutterColor.RECORDING, ShutterColor.RECORDING,
-        1f, input.interactable, "停止", CaptureChromeTone.WARNING,
+    if (stop) return CaptureShutterModel(if (input.recordingStage == RecordingStage.RECORDING) 26 else 58,
+        input.recordingStage == RecordingStage.RECORDING,
+        if (input.recordingStage == RecordingStage.RECORDING) ShutterColor.RECORDING else ShutterColor.CONTROL,
+        if (input.recordingStage == RecordingStage.RECORDING) ShutterColor.RECORDING else ShutterColor.CONTROL,
+        1f, input.interactable, if (input.recordingStage == RecordingStage.RECORDING) "停止" else "開始中", CaptureChromeTone.WARNING,
         if (input.recordingStage == RecordingStage.STARTING) "録画開始中・録画停止" else "録画停止")
     if (cine && input.recordingStage in setOf(RecordingStage.STOPPING, RecordingStage.FINALIZING)) {
         val caption = if (input.recordingStage == RecordingStage.STOPPING) "停止処理中" else "保存処理中"
@@ -89,14 +94,14 @@ fun captureShutterModel(input: CaptureChromeInput): CaptureShutterModel {
         caption == "保存済" -> CaptureChromeTone.ACCEPTED
         else -> CaptureChromeTone.WARNING
     }
-    val exposing = !cine && input.photoStage == PhotoStage.CAPTURING &&
+    val exposing = !cine && input.photoStage in setOf(PhotoStage.CAPTURING, PhotoStage.SAVING) &&
         (!input.ownsStill || input.stillPhase == StillExposurePhase.CAPTURING)
     val action = if (cine) "録画開始" else "静止画撮影"
     val reason = input.blockedReason ?: caption.takeIf { it.isNotEmpty() } ?: "撮影条件の確認待ち"
-    return CaptureShutterModel(if (cine) 28 else if (exposing) 48 else 58, false,
-        ShutterColor.CONTROL, if (cine) ShutterColor.RECORDING else if (exposing) ShutterColor.EXPOSING else ShutterColor.CONTROL,
+    return CaptureShutterModel(if (cine) 58 else 68, false,
+        ShutterColor.CONTROL, ShutterColor.CONTROL,
         if (severe) .35f else if (!enabled && !exposing && input.photoStage != PhotoStage.SAVING) .4f else 1f,
-        enabled, caption, tone, if (enabled) action else "$action・操作不可: $reason")
+        enabled, caption, tone, if (enabled) "$action${if (caption.isNotEmpty()) "・$caption" else ""}" else "$action・操作不可: $reason")
 }
 
 data class CaptureStatusChip(
@@ -113,8 +118,28 @@ private fun elapsedText(durationMs: Long?): String = durationMs?.takeIf { it >= 
 } ?: "—"
 
 fun captureStatusChips(input: CaptureChromeInput): List<CaptureStatusChip> = buildList {
-    add(CaptureStatusChip("mode", input.mode.name, mode = true))
-    add(CaptureStatusChip("exposure", when (input.manualExposure) { true -> "MAN"; false -> "AUTO"; null -> "—" }, detail = "露出設定の受付状態（実測一致とは別）"))
+    val mode = when {
+        input.exposureModePhase == ControlPhase.UNBOUND -> "—"
+        input.manualExposure == true -> "MANUAL"
+        input.manualExposure == false -> "AUTO"
+        else -> "—"
+    }
+    val modeUncertain = input.exposureModePhase in setOf(ControlPhase.UNKNOWN, ControlPhase.REJECTED)
+    val modeLabel = if (modeUncertain && mode != "—") "$mode?" else mode
+    val compactMode = when (modeLabel) { "MANUAL" -> "MAN"; "MANUAL?" -> "MAN?"; "AUTO?" -> "AUTO\n?"; else -> modeLabel }
+    val modeDetail = when (input.exposureModePhase) {
+        ControlPhase.PENDING -> "露出mode要求: $mode。API受付待ち・実測一致は別です"
+        ControlPhase.UNKNOWN, ControlPhase.REJECTED -> "露出mode不明。論理要求: $mode。API受付は未確認です"
+        ControlPhase.UNBOUND -> "露出mode: 未接続・未確認"
+        ControlPhase.ACCEPTED -> "露出mode: $mode。API受付・実測一致は別です"
+        null -> "論理露出mode: $mode。API受付状態・実測一致は別です"
+    }
+    add(CaptureStatusChip("exposure", modeLabel, compactMode, modeDetail,
+        tone = when {
+            modeUncertain -> CaptureChromeTone.FAILURE
+            input.exposureModePhase == ControlPhase.PENDING -> CaptureChromeTone.WARNING
+            else -> CaptureChromeTone.NORMAL
+        }, mode = true))
     val camera = input.cameraId?.takeIf { input.bound && it.isNotBlank() } ?: "—"
     add(CaptureStatusChip("camera", "CAM $camera", "C$camera", "接続中camera ID: $camera"))
     if (input.mode == CaptureMode.STILL) {
@@ -134,7 +159,7 @@ fun captureStatusChips(input: CaptureChromeInput): List<CaptureStatusChip> = bui
         add(CaptureStatusChip("video_range", range, range, detail))
     }
     when (input.recordingStage) {
-        RecordingStage.STARTING -> add(CaptureStatusChip("operation", "録画開始中", "開始", "録画開始中・停止操作可能", CaptureChromeTone.RECORDING))
+        RecordingStage.STARTING -> add(CaptureStatusChip("operation", "録画開始中", "開始", "録画開始中・停止操作可能", CaptureChromeTone.WARNING))
         RecordingStage.RECORDING -> add(CaptureStatusChip("operation", "● REC ${elapsedText(input.recordingDurationMs)}", "●${elapsedText(input.recordingDurationMs)}",
             "録画中・経過 ${elapsedText(input.recordingDurationMs)}", CaptureChromeTone.RECORDING))
         RecordingStage.STOPPING -> add(CaptureStatusChip("operation", "停止処理中", "停止", tone = CaptureChromeTone.WARNING))
@@ -143,26 +168,11 @@ fun captureStatusChips(input: CaptureChromeInput): List<CaptureStatusChip> = bui
             val waiting = if (input.ownsStill) when (input.stillPhase) {
                 StillExposurePhase.CAPTURE_APPLYING -> "撮影準備中"
                 StillExposurePhase.CAPTURING -> if (input.photoStage == PhotoStage.SAVING) "保存中" else "撮影中"
-                StillExposurePhase.UNKNOWN -> "復旧が必要"
+                StillExposurePhase.UNKNOWN -> null // Failure/recovery information belongs to the notice area.
                 else -> "プレビュー復帰中"
             } else when (input.photoStage) { PhotoStage.CAPTURING -> "撮影中"; PhotoStage.SAVING -> "保存中"; else -> null }
             waiting?.let { add(CaptureStatusChip("operation", it, if (it == "プレビュー復帰中") "復帰" else it,
                 tone = if (input.stillPhase == StillExposurePhase.UNKNOWN) CaptureChromeTone.FAILURE else CaptureChromeTone.WARNING)) }
-        }
-    }
-    if (input.mode == CaptureMode.STILL) {
-        when {
-            input.photoStage == PhotoStage.FAILED || input.stillFilesTerminal && input.stillFilesSaved == false ->
-                add(CaptureStatusChip("save", if (input.stillFilesTerminal && input.stillFilesSaved == false && input.stillCapturePhase == ControlPhase.UNKNOWN) "撮影未開始" else "撮影/保存失敗", "失敗", tone = CaptureChromeTone.FAILURE))
-            input.photoStage == PhotoStage.SAVED || input.stillFilesTerminal && input.stillFilesSaved == true ->
-                add(CaptureStatusChip("save", "保存済", tone = CaptureChromeTone.ACCEPTED))
-        }
-    } else {
-        if (input.recordingFailure != null) add(CaptureStatusChip("failure", "録画失敗", "失敗", input.recordingFailure, CaptureChromeTone.FAILURE))
-        when (input.recordingSaveSucceeded) {
-            false -> add(CaptureStatusChip("save", "保存失敗", "失敗", tone = CaptureChromeTone.FAILURE))
-            true -> add(CaptureStatusChip("save", "保存済", tone = CaptureChromeTone.ACCEPTED))
-            null -> Unit
         }
     }
     val thermal = input.thermalSeverity?.takeIf { it in 0..6 }
@@ -201,4 +211,4 @@ fun captureStatusChips(input: CaptureChromeInput): List<CaptureStatusChip> = bui
             add(CaptureStatusChip("audio_amplitude", "AMP $amplitude", amplitude, "AudioStats振幅: $amplitude。クリッピング判定ではありません"))
         }
     }
-}.sortedBy { when (it.id) { "mode" -> 0; "operation" -> 1; else -> if (it.tone == CaptureChromeTone.FAILURE) 1 else 2 } }
+}.sortedBy { when (it.id) { "exposure" -> 0; "operation" -> 1; else -> 2 } }

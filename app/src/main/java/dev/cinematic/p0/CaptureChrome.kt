@@ -28,7 +28,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -47,11 +46,10 @@ private fun ShutterColor.color(): Color = when (this) {
     ShutterColor.EXPOSING -> Color(0xFF8D9397)
 }
 
-/** Fixed rail and button centre. Caption is a non-interactive, bounded overlay with a scrim. */
+/** Fixed rail and button centre. Progress is shown in the status bar, never below the button. */
 @Composable
 fun CaptureShutter(input: CaptureChromeInput, onClick: () -> Unit, modifier: Modifier = Modifier, rotation: Float = 0f) {
     val model = captureShutterModel(input)
-    val horizontal = kotlin.math.abs(kotlin.math.sin(Math.toRadians(rotation.toDouble()))) > .5
     Box(modifier.width(76.dp).height(96.dp).clipToBounds(), contentAlignment = Alignment.Center) {
         Box(Modifier.size(76.dp).clip(CircleShape).alpha(model.alpha)
             .border(3.dp, model.ring.color(), CircleShape)
@@ -59,22 +57,8 @@ fun CaptureShutter(input: CaptureChromeInput, onClick: () -> Unit, modifier: Mod
             .semantics { contentDescription = model.actionDescription }, contentAlignment = Alignment.Center) {
             Box(Modifier.size(model.innerDp.dp).background(model.inner.color(), if (model.square) RoundedCornerShape(4.dp) else CircleShape))
         }
-        if (model.caption.isNotEmpty()) Text(model.caption,
-            Modifier.semantics { contentDescription = model.caption }
-                .layout { measurable, constraints ->
-                    val width = constraints.maxWidth
-                    val height = constraints.maxHeight
-                    val text = measurable.measure(Constraints(maxWidth = if (horizontal) height else width,
-                        maxHeight = if (horizontal) width else height))
-                    val placement = shutterCaptionPlacement(width, height, text.width, text.height,
-                        horizontal, kotlin.math.sin(Math.toRadians(rotation.toDouble())) >= 0)
-                    layout(width, height) { text.place(placement.childX, placement.childY) }
-                }.graphicsLayer { rotationZ = rotation }.background(Color(0xFF0A0B0C).copy(alpha = .9f)),
-            color = model.captionTone.color(), fontSize = 11.sp, fontFamily = FontFamily.Monospace,
-            maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
     }
 }
-
 /** Scrollable chip content leaves the existing 44dp settings action permanently reachable. */
 @Composable
 fun CaptureStatusBar(
@@ -102,31 +86,31 @@ fun CaptureStatusBar(
 
 @Composable
 private fun StatusChip(chip: CaptureStatusChip, rotation: Float, horizontal: Boolean) {
-    val color = if (chip.mode) ChromeText else chip.tone.color()
+    val color = if (chip.mode && chip.tone == CaptureChromeTone.NORMAL) ChromeText else chip.tone.color()
     val background = when (chip.tone) {
         CaptureChromeTone.RECORDING -> Color(0xFFE5483B).copy(alpha = .16f)
         CaptureChromeTone.FAILURE -> color.copy(alpha = .12f)
         else -> Color.Transparent
     }
     val border = when {
-        chip.mode -> ChromeText
+        chip.mode -> color
         chip.tone == CaptureChromeTone.RECORDING -> Color(0xFFE5483B)
         chip.tone == CaptureChromeTone.NORMAL -> Color(0xFF2C3034)
         else -> color
     }
-    Text(if (horizontal) chip.compact else chip.text,
-        Modifier.semantics { contentDescription = chip.detail }
-            .background(background).border(1.dp, border).padding(horizontal = 6.dp, vertical = 3.dp)
-            .layout { measurable, constraints ->
-                val measured = measurable.measure(if (!horizontal) constraints else Constraints(
-                    minWidth = constraints.minHeight, maxWidth = constraints.maxHeight,
-                    minHeight = constraints.minWidth, maxHeight = constraints.maxWidth))
-                val width = if (horizontal) measured.height else measured.width
-                val height = if (horizontal) measured.width else measured.height
-                layout(width, height) { measured.place((width - measured.width) / 2, (height - measured.height) / 2) }
-            }.graphicsLayer { rotationZ = rotation },
-        color = color, fontSize = (if (horizontal) 11 else if (chip.mode) 14 else 12).sp,
-        fontFamily = FontFamily.Monospace, fontWeight = if (chip.mode) FontWeight.SemiBold else FontWeight.Medium,
-        maxLines = if (horizontal && chip.compact.contains('\n')) 2 else 1,
-        softWrap = false, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+    // Measure and rotate the complete badge, including its border and padding, around one centre.
+    Box(Modifier.semantics { contentDescription = chip.detail }
+        .layout { measurable, constraints ->
+            val badge = measurable.measure(controlScaleTextConstraints(constraints, horizontal))
+            val placement = controlScaleTextPlacement(androidx.compose.ui.unit.IntSize(badge.width, badge.height), horizontal)
+            layout(placement.size.width, placement.size.height) { badge.place(placement.offset.x, placement.offset.y) }
+        }.graphicsLayer { rotationZ = rotation }
+        .background(background).border(1.dp, border).padding(horizontal = 6.dp, vertical = 3.dp),
+        contentAlignment = Alignment.Center) {
+        Text(if (horizontal) chip.compact else chip.text,
+            color = color, fontSize = (if (horizontal) 11 else if (chip.mode) 14 else 12).sp,
+            fontFamily = FontFamily.Monospace, fontWeight = if (chip.mode) FontWeight.SemiBold else FontWeight.Medium,
+            maxLines = if (horizontal && chip.compact.contains('\n')) 2 else 1,
+            softWrap = false, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+    }
 }

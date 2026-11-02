@@ -49,7 +49,7 @@ fun controlDiagnosticTable(receipt: ControlReceipt, sample: CaptureSample?, epoc
     val current = receipt.takeIf { it.epoch == epoch }
     val requested = current?.requested
     val accepted = current?.accepted
-    val observation = sample?.takeIf { it.epoch == epoch }
+    val observation = sample?.takeIf { it.epoch == epoch && it.intent in setOf(CaptureSampleIntent.PREVIEW, CaptureSampleIntent.VIDEO_RECORD) }
     val actual = observation?.actual
     fun exposure(snapshot: ControlSnapshot?, iso: Boolean): String = if (snapshot == null) "—"
         else snapshot.exposure?.let { if (iso) it.iso.toString() else ExposureStops.label(it.exposureNs) } ?: "AUTO"

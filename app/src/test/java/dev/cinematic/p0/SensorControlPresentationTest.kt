@@ -59,4 +59,33 @@ class SensorControlPresentationTest {
         val incomplete = whiteBalancePresentation(null, ControlReceipt(phase = ControlPhase.ACCEPTED))
         assertEquals("未確認", incomplete.stateTag); assertEquals("—", incomplete.acceptedLabel)
     }
+
+    @Test fun unrelatedExposureChangesDoNotMarkWhiteBalanceOrFocusPendingOrUnknown() {
+        val before = snapshot(wb = 5, focus = 2f).copy(exposure = ManualExposure(100, 8_000_000))
+        val after = before.copy(exposure = ManualExposure(3200, 468_750_000))
+        for (phase in listOf(ControlPhase.PENDING, ControlPhase.UNKNOWN, ControlPhase.REJECTED)) {
+            val receipt = ControlReceipt(phase = phase, requested = after, accepted = before)
+            val wb = whiteBalancePresentation(5, receipt)
+            assertFalse(wb.affected); assertEquals("履歴", wb.stateTag)
+            assertEquals(SensorControlTone.MUTED, wb.tone)
+            val focus = focusPresentation(2f, null, receipt)
+            assertFalse(focus.affected); assertEquals("2", focus.value)
+            assertEquals("履歴", focus.stateTag); assertEquals(SensorControlTone.MUTED, focus.tone)
+            assertEquals("編集中", focusPresentation(2f, "3", receipt).stateTag)
+        }
+    }
+
+    @Test fun unrelatedWhiteBalanceRequestDoesNotConsumeOrSendManualFocusDraft() {
+        val receipt = ControlReceipt(phase = ControlPhase.PENDING,
+            requested = snapshot(wb = 5, focus = 2f), accepted = snapshot(wb = 1, focus = 2f))
+        assertTrue(whiteBalancePresentation(1, receipt).affected)
+        val draft = focusPresentation(2f, "4.2", receipt)
+        assertEquals("編集中", draft.stateTag); assertFalse(draft.affected)
+        assertEquals(SensorControlTone.EDITING, draft.tone)
+        val noHistory = receipt.copy(accepted = null)
+        assertEquals("未確認", whiteBalancePresentation(1, noHistory).stateTag)
+        assertEquals("—", focusPresentation(null, null, noHistory).value)
+        val accepted = receipt.copy(phase = ControlPhase.ACCEPTED, accepted = receipt.requested)
+        assertEquals("履歴", whiteBalancePresentation(5, accepted).stateTag)
+    }
 }

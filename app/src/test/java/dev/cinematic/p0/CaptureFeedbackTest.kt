@@ -55,4 +55,12 @@ class CaptureFeedbackTest {
         assertFalse(table.receiptCurrent)
         assertTrue(table.rows.all { it.requested == "—" && it.acceptedHistory == "—" && it.observed == "—" })
     }
+
+    @Test fun stillCaptureMetadataCannotMasqueradeAsTheCurrentPreviewMeasurement() {
+        val sample = CaptureSample(2, 6, 11, SensorValues(iso = 200), SensorValues(iso = 190),
+            intent = CaptureSampleIntent.STILL_CAPTURE)
+        val receipt = ControlReceipt(epoch = 2)
+        assertFalse(controlDiagnosticTable(receipt, sample, 2).sampleCurrent)
+        assertTrue(controlDiagnosticTable(receipt, sample.copy(intent = CaptureSampleIntent.VIDEO_RECORD), 2).sampleCurrent)
+    }
 }

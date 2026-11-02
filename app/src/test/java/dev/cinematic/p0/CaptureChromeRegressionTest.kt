@@ -40,22 +40,18 @@ class CaptureChromeRegressionTest {
                 stillFilesTerminal = restored.filesTerminal, stillFilesSaved = restored.filesSaved,
                 stillCapturePhase = restored.captureReceipt.phase)
             assertEquals(expected, captureShutterModel(input).caption)
-            assertEquals(expected, captureStatusChips(input).first { it.id == "save" }.text)
+            assertFalse(captureStatusChips(input).any { it.id == "save" || it.id == "failure" })
         }
     }
 
-    @Test fun captionBoundsStayInsideTheRailForPortraitAndBothLandscapeDirections() {
-        val labels = listOf("停止", "保存処理中", "撮影未開始", "復旧が必要", "設定反映中", "撮影/保存失敗")
-        for (density in 1..3) for (horizontal in listOf(false, true)) for (left in listOf(false, true)) {
-            val width = 76 * density; val height = 96 * density
-            for (label in labels) {
-                val textWidth = (label.length * 11 * density).coerceAtMost(if (horizontal) height else width)
-                val textHeight = 16 * density
-                val value = shutterCaptionPlacement(width, height, textWidth, textHeight, horizontal, left)
-                assertTrue(value.x >= 0 && value.y >= 0)
-                assertTrue(value.x + value.width <= width && value.y + value.height <= height)
-            }
-        }
+    @Test fun stillSavingKeepsTheNewWhiteShapeAndDoesNotBecomeInteractive() {
+        val input = CaptureChromeInput(CaptureMode.STILL, bound = true, photoStage = PhotoStage.SAVING,
+            ownsStill = true, stillPhase = StillExposurePhase.CAPTURING)
+        val shown = captureShutterModel(input)
+        assertEquals(68, shown.innerDp)
+        assertEquals(ShutterColor.CONTROL, shown.inner)
+        assertFalse(shown.enabled)
+        assertEquals("保存中", shown.caption)
     }
 
     @Test fun activeOperationPrecedesScrollableConfigurationAndUnknownExposureIsNotAuto() {

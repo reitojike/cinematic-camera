@@ -94,15 +94,11 @@ fun WhiteBalanceControlEditor(
                         Column(horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             SensorLabel(option.shortLabel, if (current) sensorControlColor(presentation.tone) else SensorText)
-                            if (current) SensorLabel(presentation.stateTag, sensorControlColor(presentation.tone))
                         }
                     }
                 }
             }
         }
-        Text("選択 ${if (presentation.hasSelection) presentation.selectedLabel else "—"} · 要求 ${presentation.requestedLabel} · 受付履歴 ${presentation.acceptedLabel} · ${presentation.stateTag}",
-            fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = sensorControlColor(presentation.tone))
-        Text("プリセットは選択時に送信・受付と実測のWB/色は別確認", fontSize = 11.sp, color = SensorMuted)
     }
 }
 
