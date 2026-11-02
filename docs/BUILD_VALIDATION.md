@@ -138,3 +138,9 @@ lint 0 errors、11 warnings（既存9＋採用portrait固定に対するLockedOr
 向き固定の警告はユーザー採用仕様に対応し、検査は無効化しない。大画面/OEMの回転制御、実機上の継続は保証しない。
 4方向の符号/境界hysteresis/最短アニメーション/全撮影・録画gateの出力固定を自動検証。
 CameraX 1.6.2公開targetRotation APIのみ使用し、Previewと測光座標は回転しない。実機のJPEG/DNG/MP4向き、回転中録音、タッチ配置、可読性は未確認。
+
+## 即時露出・有限応答待ち（Issue #37）
+
+統合候補のassembleDebug/testDebugUnitTest/lintDebug成功（53秒）。単体66件、failure/error/skip 0。lint 0 errors / 14 warnings / 2 hints（既存11＋Handler利用のUseKtx提案3）。
+標準段階/範囲/reciprocal、最新1件queue、操作期限/古い応答/長→短budget/背景破棄を自動・静的検証した。
+端末の極端値で停止する正確な条件は未再現。新操作の実応答/改善とセンサー実測は実機未確認。

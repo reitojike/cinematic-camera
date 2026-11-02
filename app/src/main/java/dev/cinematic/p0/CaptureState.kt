@@ -31,7 +31,7 @@ data class SensorValues(
 )
 data class CaptureSample(
     val epoch: Int, val frame: Long, val receivedAtMs: Long,
-    val request: SensorValues, val actual: SensorValues,
+    val request: SensorValues, val actual: SensorValues, val frameDurationNs: Long? = null,
 ) {
     /** Correspondence is deliberately conservative; missing request keys cannot prove it. */
     fun corresponds(receipt: ControlReceipt): Boolean {

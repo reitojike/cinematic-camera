@@ -1,0 +1,5 @@
+# Data model
+ShutterStop(label, exposureNs)、ISO候補はISO/ns範囲と最大frame期間に交差する。CINEは希望fps上限から導くframe期間以下。端の不正clampなし。
+ControlToken(epoch, sequence)はOperationWatchdogの現在1件に対応。begin→complete/expire/invalidate。期限後のlistener/nextは一致しない。
+LatestExposureQueueはactive Entryとqueued Entryの最大2件。offerはqueuedを置換、completeは同Entryだけ、cancelは両方破棄。latestPairはqueued→active。
+長露光budgetは新pairだけでなく直前送信/受付/実測frame期間を使う。timeoutはUnknownでありセンサー停止の断定ではない。
