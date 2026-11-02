@@ -58,6 +58,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     var mode by mutableStateOf(preferences.mode()); private set
     var requestedIso by mutableStateOf("100"); private set
     var requestedMs by mutableStateOf("10"); private set
+    var audioPermissionDenied by mutableStateOf(false); private set
     var audioWanted by mutableStateOf(preferences.flag("audio", true)); private set
     var highResolution by mutableStateOf(preferences.flag("highResolution", true)); private set
     var videoChoices by mutableStateOf(emptyList<VideoChoice>()); private set
@@ -65,6 +66,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     var stillResolution by mutableStateOf("Highest available requested; actual resolution pending"); private set
     var manualExposure by mutableStateOf(false); private set
     var evStatus by mutableStateOf("No EV request"); private set
+    var focusFeedback by mutableStateOf<FocusFeedback?>(null); private set
     var focusStatus by mutableStateOf("No focus/metering request"); private set
     var thermalStatus by mutableStateOf("OS thermal status unknown; not a temperature measurement"); private set
     var overrides by mutableStateOf(SensorOverrides()); private set
@@ -102,6 +104,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     val recordingBusy get() = cine.busy
     val recordingStage get() = cine.stage
     val recordingStats get() = cine.stats
+    val recordingFailure get() = cine.failure
+    val recordingSaveSucceeded get() = cine.saveSucceeded
     val recordingStartSequence get() = cine.startSequence
     val recordingDurationMs get() = cine.durationMs
     val recordingAudioAmplitude get() = cine.audioAmplitude
@@ -246,7 +250,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         if (busy || recordingBusy || mode != CaptureMode.CINE || videoChoices.none { it.key == key }) return
         preferences.put("video/$selectedId", key); bind()
     }
-    fun setAudio(value: Boolean) { if (!recordingBusy) { audioWanted = value; preferences.put("audio", value) } }
+    fun setAudio(value: Boolean) { if (!recordingBusy) { audioWanted = value; if (!value) audioPermissionDenied = false; preferences.put("audio", value) } }
     fun chooseHighResolution(value: Boolean) {
         if (busy || recordingBusy) return
         highResolution = value; preferences.put("highResolution", value); if (mode == CaptureMode.STILL) bind()
@@ -265,6 +269,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     }
     fun stopRecording() { cine.stop("user") }
     fun reportAudioPermission(granted: Boolean) {
+        audioPermissionDenied = !granted
         event("MICROPHONE permission=$granted${if (granted) "" else "; recording not started; grant permission or explicitly select audio off"}")
     }
     fun onBackground() { cine.stop("activity background; no background recording") }
@@ -296,6 +301,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             val kinds = if (includesAf) { if (flags and FocusMeteringAction.FLAG_AE != 0) "AF+AE" else "AF only" } else "AE only"
             val target = "$source requested=$kinds at viewNormalized=$requestedPoint (not sensor coordinates)"
             busy = true; focusStatus = "$target PENDING"
+            focusFeedback = FocusFeedback(requestedPoint, FocusPhase.PENDING)
             log.write("FOCUS_DESIRED $target flags=$flags; actual sensor mapping is observed separately in request/result regions")
             val future = c.cameraControl.startFocusAndMetering(action)
             future.addListener({
@@ -303,13 +309,14 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                 busy = false
                 try {
                     val result = future.get()
+                    focusFeedback = FocusFeedback(requestedPoint, FocusPhase.COMPLETED, if (includesAf) result.isFocusSuccessful else null)
                     focusStatus = if (includesAf) "$target AF API result=${result.isFocusSuccessful}; supported portions only, inspect actual regions/quality"
                         else "$target AE metering API completed; no AF requested; inspect actual region"
                     event("FOCUS $focusStatus")
-                } catch (failure: Exception) { focusStatus = "Focus request failed"; error("focus", failure) }
+                } catch (failure: Exception) { focusFeedback = FocusFeedback(requestedPoint, FocusPhase.FAILED); focusStatus = "Focus request failed"; error("focus", failure) }
             }, main)
         } catch (failure: Exception) {
-            busy = false; focusStatus = "Focus/metering request rejected: ${failure.message}"
+            busy = false; focusFeedback = null; focusStatus = "Focus/metering request rejected: ${failure.message}"
             error("focus validation", failure)
         }
     }
@@ -503,7 +510,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         val id = selectedId ?: run { event("UNSUPPORTED no CameraX camera"); return }
         val previewView = view ?: return
         val generation = ++epoch
-        sample = null; acceptedEv = null; photoStage = PhotoStage.IDLE
+        sample = null; acceptedEv = null; photoStage = PhotoStage.IDLE; focusFeedback = null
         controlReceipt = ControlReceipt(epoch = epoch, sequence = controlReceipt.sequence)
         val settingsKey = exposureKey()
         requestedIso = preferences.text("$settingsKey/iso", "100")
@@ -639,7 +646,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     fun stop() {
         if (recordingBusy) { pendingStop = true; cine.stop("preview Stop"); return }
         ++epoch
-        sample = null; acceptedEv = null; photoStage = PhotoStage.IDLE
+        sample = null; acceptedEv = null; photoStage = PhotoStage.IDLE; focusFeedback = null
         controlReceipt = ControlReceipt(epoch = epoch, sequence = controlReceipt.sequence)
         busy = false
         controlReady = false

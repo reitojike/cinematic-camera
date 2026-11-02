@@ -1,0 +1,30 @@
+package dev.cinematic.p0
+
+import org.junit.Assert.*
+import org.junit.Test
+
+class CaptureLayoutTest {
+    @Test fun backClosesOneLayerAndNeverExitsDuringRecordingOrPendingApply() {
+        assertEquals(CapturePanel.SETTINGS, captureBack(CapturePanel.DIAGNOSTICS, true, false, false, true).panel)
+        assertEquals(CapturePanel.NONE, captureBack(CapturePanel.SETTINGS, true, false, false, true).panel)
+        assertTrue(captureBack(CapturePanel.NONE, true, false, false, true).closeRuler)
+        assertFalse(captureBack(CapturePanel.NONE, true, true, false, true).closeRuler)
+        assertFalse(captureBack(CapturePanel.NONE, false, false, true, true).exit)
+        assertTrue(captureBack(CapturePanel.NONE, false, false, false, false).armExit)
+        assertTrue(captureBack(CapturePanel.NONE, false, false, false, true).exit)
+    }
+    @Test fun portraitAndCineFramesFitWithoutCrop() {
+        for ((w, h) in listOf(412f to 772f, 412f to 428f, 320f to 260f)) {
+            for ((iw, ih) in listOf(3f to 4f, 9f to 16f, 4f to 3f)) {
+                val fit = CaptureLayout.fit(w, h, iw, ih)
+                assertTrue(fit.first <= w + .01f && fit.second <= h + .01f)
+                assertEquals(iw / ih, fit.first / fit.second, .0001f)
+            }
+        }
+    }
+    @Test fun sheetLeavesPreviewAndCaptureSpaceOnSmallWindows() {
+        assertEquals(344f, CaptureLayout.sheetHeight(868f), 0f)
+        assertEquals(184f, CaptureLayout.sheetHeight(400f), 0f)
+        assertEquals(0f, CaptureLayout.sheetHeight(180f), 0f)
+    }
+}

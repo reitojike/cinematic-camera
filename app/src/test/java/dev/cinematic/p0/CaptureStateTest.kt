@@ -54,6 +54,23 @@ class CaptureStateTest {
         assertTrue(editor.recording(RecordingStage.IDLE).dirty)
         assertFalse(editor.recording(RecordingStage.STARTING).dirty)
     }
+    @Test fun failedRecorderPreparationNeverSignalsAcceptedStart() {
+        val gate = RecordingGate()
+        gate.begin("failed")
+        assertEquals(0L, gate.startSequence)
+        gate.finalize("failed"); gate.complete("failed")
+        assertEquals(0L, gate.startSequence)
+        gate.started("failed")
+        assertEquals(0L, gate.startSequence)
+        gate.begin("next"); gate.started("next"); gate.started("next")
+        assertEquals(1L, gate.startSequence)
+    }
+    @Test fun startNotificationAfterStopStillReportsOnceWithoutUndoingStop() {
+        val gate = RecordingGate()
+        gate.begin("t"); gate.stop(); gate.started("t")
+        assertEquals(RecordingStage.STOPPING, gate.stage)
+        assertEquals(1L, gate.startSequence)
+    }
     @Test fun lateCompletionAndRepeatedInputCannotAlterPendingEditor() {
         val editor = CaptureEditor(epoch = 2, selected = CaptureKey.FOCUS, focus = "1").sent(5)
         assertEquals(editor, editor.cancel()); assertEquals(editor, editor.close())

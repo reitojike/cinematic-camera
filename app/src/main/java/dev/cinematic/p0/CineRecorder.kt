@@ -25,13 +25,15 @@ class CineRecorder(context: Context, private val event: (String) -> Unit, privat
     private var stopRequestedAtMs: Long? = null
     var stage by mutableStateOf(RecordingStage.IDLE); private set
     var stats by mutableStateOf("No recording yet; quality/audio/device validation pending"); private set
+    var failure by mutableStateOf<String?>(null); private set
+    var saveSucceeded by mutableStateOf<Boolean?>(null); private set
     var startSequence by mutableStateOf(0L); private set
     var durationMs by mutableStateOf(0L); private set
     var audioAmplitude by mutableStateOf<Double?>(null); private set
     var audioState by mutableStateOf<Int?>(null); private set
     val busy get() = gate.busy
 
-    private fun refresh() { stage = gate.stage; changed() }
+    private fun refresh() { stage = gate.stage; startSequence = gate.startSequence; changed() }
 
     fun start(recorder: Recorder, audio: Boolean, requested: String) {
         if (busy) return
@@ -44,7 +46,7 @@ class CineRecorder(context: Context, private val event: (String) -> Unit, privat
         val appRecordStart = SystemClock.elapsedRealtime()
         val audioNotes = AudioQualityNotes(audio)
         stopRequestedAtMs = null
-        startSequence += 1
+        failure = null; saveSucceeded = null
         durationMs = 0; audioAmplitude = null; audioState = null
         gate.begin(token); refresh()
         var output: PendingVideoOutput? = null
@@ -62,6 +64,8 @@ class CineRecorder(context: Context, private val event: (String) -> Unit, privat
                 }
                 val ioFinishedAt = SystemClock.elapsedRealtime()
                 main.execute {
+                    saveSucceeded = result.isSuccess
+                    failure = result.exceptionOrNull()?.message
                     gate.complete(token); refresh()
                     event("VIDEO_TIMING token=$token terminalToIoFinishedMs=${ioFinishedAt - terminalAt} appRequestToIoFinishedMs=${ioFinishedAt - appRecordStart} ioFinishedToUiNotificationMs=${SystemClock.elapsedRealtime() - ioFinishedAt} outputSuccess=${result.isSuccess}; app stages only")
                     result.fold(onSuccess = { file ->
