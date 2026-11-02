@@ -16,6 +16,7 @@ data class CameraReport(
     val overrides: OverrideCapabilities = OverrideCapabilities(),
     val locks: LockCapabilities = LockCapabilities(),
     val maxFrameDurationNs: Long? = null,
+    val unityPostRawBoostSupported: Boolean = false,
 )
 
 object CameraReports {
@@ -28,6 +29,8 @@ object CameraReports {
                 val iso = c.get(C.SENSOR_INFO_SENSITIVITY_RANGE)?.let { it.lower..it.upper }
                 val ns = c.get(C.SENSOR_INFO_EXPOSURE_TIME_RANGE)?.let { it.lower..it.upper }
                 val keys = c.availableCaptureRequestKeys.orEmpty()
+                val boostRange = c.get(C.CONTROL_POST_RAW_SENSITIVITY_BOOST_RANGE)
+                val unityBoost = CaptureRequest.CONTROL_POST_RAW_SENSITIVITY_BOOST in keys && boostRange?.contains(100) == true
                 val afModes = c.get(C.CONTROL_AF_AVAILABLE_MODES) ?: intArrayOf()
                 val wbModes = c.get(C.CONTROL_AWB_AVAILABLE_MODES)?.toSet().orEmpty()
                 val antiBandingModes = c.get(C.CONTROL_AE_AVAILABLE_ANTIBANDING_MODES)?.toSet().orEmpty()
@@ -72,6 +75,7 @@ object CameraReports {
                     focalLengthsMm=${c.get(C.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.contentToString()}
                     RAW=${C.REQUEST_AVAILABLE_CAPABILITIES_RAW in caps} MANUAL_SENSOR=${C.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR in caps}
                     ISO=$iso exposureNs=$ns maxFrameDurationNs=${c.get(C.SENSOR_INFO_MAX_FRAME_DURATION)}
+                    postRAWBoostRange=$boostRange unity100Writable=$unityBoost (request/result must still be observed)
                     minimumFocusDistanceLensUnits=${c.get(C.LENS_INFO_MINIMUM_FOCUS_DISTANCE)}
                     focusCalibration=$calibration (UNCALIBRATED/UNKNOWN does not guarantee distance in meters)
                     overrideEligibility=$overrideCapabilities
@@ -85,7 +89,7 @@ object CameraReports {
                 """.trimIndent()
                 log(text)
                 CameraReport(id, text, iso, ns, reason,
-                    afModes.any { it != CaptureRequest.CONTROL_AF_MODE_OFF && it != CaptureRequest.CONTROL_AF_MODE_EDOF }, overrideCapabilities, lockCapabilities, c.get(C.SENSOR_INFO_MAX_FRAME_DURATION)?.takeIf { it > 0 })
+                    afModes.any { it != CaptureRequest.CONTROL_AF_MODE_OFF && it != CaptureRequest.CONTROL_AF_MODE_EDOF }, overrideCapabilities, lockCapabilities, c.get(C.SENSOR_INFO_MAX_FRAME_DURATION)?.takeIf { it > 0 }, unityBoost)
             } catch (e: Exception) {
                 log("ERROR Camera2 report id=$id ${e.javaClass.simpleName}: ${e.message}")
                 null

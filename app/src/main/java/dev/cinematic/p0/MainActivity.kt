@@ -71,6 +71,7 @@ class MainActivity : ComponentActivity() {
         val granted = checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
         if (permission && !granted && ::probe.isInitialized) probe.stop()
         permission = granted
+        if (granted && ::probe.isInitialized) probe.onForeground()
         if (::probe.isInitialized && probe.audioPermissionDenied && checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
             probe.reportAudioPermission(true)
         }

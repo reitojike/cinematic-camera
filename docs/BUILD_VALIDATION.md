@@ -161,3 +161,15 @@ assembleDebug/testDebugUnitTest/lintDebug成功（53秒）。単体73件、failu
 15s要求のtimeout後に旧受付pairへ戻す再送、旧epoch/UNKNOWN/受付時刻なしの重複判定、queued重複抑止、camera別の長秒期限hintとAUTO clear/短露光受付後の更新を自動検証した。
 期限hintはメモリ内の保守的な待ち予算のみで、現在センサー状態や実測の証拠ではない。既知の長秒をstop/rebindで失わず、別cameraへ混用しない。
 添付の正規転送は再準備後1回再試行しても失敗し、実画像/動画/ログは未確認。実機の15s非反映の直接原因と修正効果は未検証。repeating request自体の長秒によるpreview低fpsや撮影/preview露出分離はこの修正で解決したと扱わない。実機T009は未完了。
+
+## 固定pair二段階露出simulation（Issue #42）
+
+CameraX1.6.2公開APIでassembleDebug/testDebugUnitTest/lintDebug成功（最終候補70秒）。単体100件、failure/error/skip 0。追加27件は二段階計算17件、専用receipt/intent/epoch/保存後復帰/退出/背景化/AE・gain欠落の状態10件。実カメラの代用ではない。
+
+lint errors 0 / warnings 15 / hints 2。warningはExifInterface 7、UseKtx 6、portrait固定のLockedOrientationActivity/DiscouragedApi各1。hintsは既存state boxing2。チェック無効化やbaseline追加なし。Framework Exifは既存と同じ標準読取で、ISO/露光metadataも実画像の輝度一致やfull RAW decodeの証拠にはしない。
+
+STILLの明示opt-in固定pair、Builder単発設定とruntime preview補償、対応時だけ共通postRAW boost100をcompile確認。通常preferences/receiptと専用preview receiptを分離し、STILL intentはpreview sampleへ混入させない。保存と新PREVIEW復帰を分離、旧epoch/不完全AE・gain/退出/背景をpure stateと静的確認で検証。
+
+検証範囲はspecs/006-exposure-simulationへ追跡。Spec Kitのspec/plan/tasks/read-only整合分析を行い、FR9件/SC3件に対応。実機T009は未完了。初回bind長秒混入、動的pair変更時の再bind、輝度/階調/noise/clippingの近似、実sensor周期/描画fps、単発設定・保存metadata、RAW/動画回帰は未実機。
+
+コンパイル成功/同じISO×時間/READY表示を、露出分離や画質の実機成立としない。機能は通常OFF、pair変更は検証終了後、終了は保存済み通常設定へ再bind。第3描画mode/露出計/GPU/NDK/依存/新権限/署名変更なし。

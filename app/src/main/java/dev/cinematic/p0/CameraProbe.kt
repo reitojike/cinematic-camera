@@ -44,6 +44,15 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     private val controlHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val controlOperation = ControlOperation()
     private val exposureQueue = LatestExposureQueue()
+    var simulation by mutableStateOf<ExposureSimulationRun?>(null); private set
+    private var simulationOwnsControl = false
+    private var simulationWait: Runnable? = null
+    private var lastPreviewMinFrameNs: Long? = null
+    val simulationActive get() = simulation != null
+    private val operationReceipt get() = if (simulationOwnsControl) simulation?.previewReceipt ?: controlReceipt else controlReceipt
+    private fun operationReceipt(value: ControlReceipt) {
+        if (simulationOwnsControl) simulation = simulation?.receipt(value) else controlReceipt = value
+    }
     private var controlTimeout: Runnable? = null
     private var exposureFlush: Runnable? = null
     private val exposureDurations = ExposureDurations()
@@ -53,7 +62,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     var liveExposureTarget by mutableStateOf<ManualExposure?>(null); private set
     val exposureChoices get() = ExposureStops.choices(selectedReport?.isoRange, selectedReport?.exposureRange,
         selectedReport?.maxFrameDurationNs, if (mode == CaptureMode.CINE) activeVideoChoice?.fpsUpper else null)
-    val canSelectExposure get() = !closed && bound && !recordingBusy && activeCaptureToken == null && (!busy || exposureOperationPending)
+    val canSelectExposure get() = !closed && !simulationActive && bound && !recordingBusy && activeCaptureToken == null && (!busy || exposureOperationPending)
 
     private val preferences = CapturePreferences(context)
     val log = ProbeLog(context)
@@ -189,9 +198,10 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         if (!controlOperation.expire(token, SystemClock.elapsedRealtime())) return
         clearControlDeadline(); clearLiveExposure(keepTarget = true)
         busy = false; controlReady = false
-        controlReceipt = controlReceipt.copy(phase = ControlPhase.UNKNOWN, acceptedAtMs = null,
-            detail = "応答期限を超過・適用状態不明。AUTOまたはPreview再接続で復旧してください")
-        lastFailure = controlReceipt.detail
+        operationReceipt(operationReceipt.copy(phase = ControlPhase.UNKNOWN, acceptedAtMs = null,
+            detail = if (simulationOwnsControl) "preview応答期限を超過・適用状態不明。固定pair検証を終了して復旧してください"
+                else "応答期限を超過・適用状態不明。AUTOまたはPreview再接続で復旧してください"))
+        lastFailure = operationReceipt.detail
         desired = "CONTROL_TIMEOUT; sensor state unknown"
         event("CONTROL_TIMEOUT token=$token lastAccepted=[$acceptedControls]; API response unconfirmed, not proof of sensor freeze")
     }
@@ -200,15 +210,16 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         if (SystemClock.elapsedRealtime() >= controlOperation.deadlineMs) { expireControl(token); return false }
         return true
     }
-    private fun beginControl(target: ControlSnapshot) {
+    private fun beginControl(target: ControlSnapshot, simulationPreview: Boolean = false) {
         invalidateControl()
+        simulationOwnsControl = simulationPreview
         val previous = listOfNotNull(exposureDurations.previous(selectedId), appliedExposure?.exposureNs).maxOrNull()
         val budget = controlBudgetMs(target.exposure?.exposureNs, previous, sample?.frameDurationNs)
         val token = controlOperation.begin(epoch, SystemClock.elapsedRealtime(), budget)
         exposureDurations.submitted(selectedId, target.exposure?.exposureNs)
-        controlReceipt = controlReceipt.copy(epoch = epoch, sequence = controlReceipt.sequence + 1,
+        operationReceipt(operationReceipt.copy(epoch = epoch, sequence = operationReceipt.sequence + 1,
             phase = ControlPhase.PENDING, requested = target, acceptedAtMs = null,
-            detail = "送信中・応答期限${budget}ms（前後露光/実測frame周期を考慮）")
+            detail = "送信中・応答期限${budget}ms（前後露光/実測frame周期を考慮）"))
         controlTimeout = Runnable { expireControl(token) }.also { controlHandler.postDelayed(it, budget) }
         lastFailure = null
         sampleBurstUntilMs = SystemClock.elapsedRealtime() + 2500
@@ -260,9 +271,9 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     }
     private fun error(operation: String, e: Exception) {
         lastFailure = "$operation: ${e.message}"
-        controlReceipt = controlReceipt.failure(e.message ?: operation,
-            operation.contains("validation") || operation.contains("input"))
-        if (controlReceipt.phase == ControlPhase.UNKNOWN) {
+        operationReceipt(operationReceipt.failure(e.message ?: operation,
+            operation.contains("validation") || operation.contains("input")))
+        if (operationReceipt.phase == ControlPhase.UNKNOWN) {
             controlReady = false; busy = false; invalidateControl(); clearLiveExposure(keepTarget = true)
         }
         event("ERROR $operation ${e.javaClass.simpleName}: ${e.message}")
@@ -287,6 +298,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             focus=$focusStatus EV=$evStatus thermal=$thermalStatus
             outputOrientation=$outputOrientation
             observedCaptureResult=$measured
+            fixedPairSimulation=$simulation
             still=$stillResolution
             video=$videoSelection
             recordingStage=$recordingStage recordingStats=$recordingStats
@@ -347,7 +359,114 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         } catch (e: Exception) { error("capability enumeration", e) }
     }
 
+    private fun simulationBlocksControl(): Boolean {
+        if (!simulationActive) return false
+        event("固定pair検証中: 設定変更は検証を終了してから行ってください")
+        return true
+    }
+    fun startSimulation() {
+        if (closed || mode != CaptureMode.STILL || busy || recordingBusy || !bound || !controlReady || simulationActive) return
+        val capture = appliedExposure ?: run { event("MANUAL ISO/SSを受付させてから検証を開始してください"); return }
+        val report = selectedReport ?: return
+        if (report.manualBlockReason != null) { event(report.manualBlockReason); return }
+        val planning = ExposureSimulationPolicy.plan(capture, report.isoRange, report.exposureRange,
+            report.maxFrameDurationNs, maxOf(33_333_333L, lastPreviewMinFrameNs ?: 0L))
+        if (planning is SimulationPlanning.Blocked) { event("Simulation blocked: ${planning.reason}"); return }
+        val plan = (planning as SimulationPlanning.Ready).plan
+        val boost = if (report.unityPostRawBoostSupported) 100 else null
+        simulation = ExposureSimulationRun(SimulationFixedSettings(plan, acceptedControls, boost), epoch)
+        log.write("SIM_BEGIN capture=$capture preview=${plan.preview} stage=${plan.stage} nominalErrorEv=${plan.nominalErrorEv} commonBoost=$boost; brightness/noise/tone UNVERIFIED; first bind may contain long exposure")
+        bind()
+    }
+    private fun cancelSimulationWait() {
+        simulationWait?.let(controlHandler::removeCallbacks); simulationWait = null
+    }
+    private fun clearSimulation() {
+        cancelSimulationWait()
+        if (simulationOwnsControl) invalidateControl()
+        simulation = null; simulationOwnsControl = false
+    }
+    fun exitSimulation() {
+        val run = simulation ?: return
+        simulation = run.requestExit()
+        controlReady = false
+        if (activeCaptureToken != null) { event("撮影/保存完了後に固定pair検証を終了します"); return }
+        if (!owner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
+            simulation = simulation?.suspend(); return
+        }
+        log.write("SIM_EXIT restoring normal preferences; preview compensation was not persisted")
+        clearSimulation(); busy = false; bind()
+    }
+    fun onForeground() {
+        if (!closed && simulation?.phase == SimulationPhase.SUSPENDED && activeCaptureToken == null) exitSimulation()
+    }
+    private fun configureSimulationCapture(builder: ImageCapture.Builder) {
+        val run = simulation ?: return
+        val pair = run.settings.plan.capture
+        exposureDurations.submitted(selectedId, pair.exposureNs)
+        val interop = Camera2Interop.Extender(builder)
+        interop.setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+            .setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, pair.iso)
+            .setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, pair.exposureNs)
+        run.settings.boostPercent?.let { interop.setCaptureRequestOption(CaptureRequest.CONTROL_POST_RAW_SENSITIVITY_BOOST, it) }
+        log.write("SIM_BIND fixedStill=$pair commonBoost=${run.settings.boostPercent}; initial repeating may inherit still options before runtime override; device proof pending")
+    }
+    private fun submitSimulationPreview() {
+        val c = camera ?: return
+        val run = simulation ?: return
+        val pair = run.settings.plan.preview
+        val target = run.settings.normalSnapshot.copy(exposure = pair,
+            locks = run.settings.normalSnapshot.locks.forControls(true, run.settings.normalSnapshot.overrides.whiteBalance))
+        beginControl(target, simulationPreview = true)
+        busy = true; controlReady = false; manualExposure = true
+        desired = "SIM preview=$pair capture=${run.settings.plan.capture} PENDING; distinct targets"
+        requestSnapshot(c, epoch, pair, target.overrides, target.locks, clearFirst = false, cancelFocus = true,
+            boostPercent = run.settings.boostPercent,
+            accepted = {
+                val token = controlOperation.token
+                if (token != null) { clearControlDeadline(); controlOperation.finish(token) }
+                val receipt = operationReceipt.copy(phase = ControlPhase.ACCEPTED, accepted = target,
+                    acceptedAtMs = SystemClock.elapsedRealtime(), detail = "preview API受付・intent実測待ち、明るさ一致未検証")
+                operationReceipt(receipt)
+                exposureDurations.accepted(selectedId, pair.exposureNs)
+                busy = false; controlReady = simulation?.canCapture == true
+                desired = "SIM preview API accepted; still target=${run.settings.plan.capture}; brightness UNVERIFIED"
+                event(desired); armSimulationWait()
+            }, failed = { e -> busy = false; controlReady = false; error("simulation preview", e); simulation = simulation?.unknown("preview request failed: ${e.message}") })
+    }
+    private fun armSimulationWait() {
+        val run = simulation ?: return
+        if (run.canCapture) { cancelSimulationWait(); return }
+        if (run.phase !in setOf(SimulationPhase.ENTERING, SimulationPhase.RESTORING) || simulationWait != null) return
+        val generation = run.epoch
+        val budget = controlBudgetMs(run.settings.plan.capture.exposureNs, run.settings.plan.preview.exposureNs, run.previewFrame?.frameDurationNs)
+        simulationWait = Runnable {
+            simulationWait = null
+            val current = simulation
+            if (!closed && current?.epoch == generation && current.phase in setOf(SimulationPhase.ENTERING, SimulationPhase.RESTORING)) {
+                simulation = current.unknown("preview intent結果の確認期限を超過。保存結果とは別・検証を終了してください")
+                controlReady = false; lastFailure = simulation?.detail; event("SIM_OBSERVATION_TIMEOUT epoch=$generation; not proof of sensor freeze or save failure")
+            }
+        }.also { controlHandler.postDelayed(it, budget) }
+    }
+    private fun observeSimulation(frame: SimulationFrame) {
+        val run = simulation ?: return
+        val next = run.observe(frame)
+        simulation = next
+        if (next.phase != SimulationPhase.CAPTURING) controlReady = next.canCapture
+        armSimulationWait()
+        if (frame.intent == SimulationIntent.STILL || next.phase != run.phase)
+            log.write("SIM_RESULT intent=${frame.intent} frame=${frame.frame} requested=${frame.requested} actual=${frame.actual} boostRequest=${frame.requestedBoost} boostActual=${frame.actualBoost} frameNs=${frame.frameDurationNs} phase=${next.phase}; no per-file correspondence or brightness proof")
+    }
+    private fun finishSimulationPhoto(saved: Boolean) {
+        val run = simulation ?: return
+        simulation = run.filesFinished(saved)
+        controlReady = false
+        if (run.exitPending) exitSimulation() else armSimulationWait()
+    }
+
     fun selectCamera(id: String) {
+        if (simulationBlocksControl()) return
         if (!busy && !recordingBusy) {
             selectedId = id; preferences.put("camera", id)
             format = preferences.text("format/$id", ImageCapture.OUTPUT_FORMAT_JPEG.toString()).toIntOrNull() ?: ImageCapture.OUTPUT_FORMAT_JPEG
@@ -355,18 +474,19 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         }
     }
     private fun exposureKey() = "exposure/$selectedId/${mode.name}"
-    fun editIso(value: String) { requestedIso = value; preferences.put(exposureKey() + "/iso", value) }
-    fun editMs(value: String) { requestedMs = value; preferences.put(exposureKey() + "/ms", value) }
+    fun editIso(value: String) { if (simulationBlocksControl()) return; requestedIso = value; preferences.put(exposureKey() + "/iso", value) }
+    fun editMs(value: String) { if (simulationBlocksControl()) return; requestedMs = value; preferences.put(exposureKey() + "/ms", value) }
     fun selectMode(value: CaptureMode) {
         if (busy || recordingBusy || mode == value) return
-        mode = value; preferences.put("mode", value.name); bind()
+        clearSimulation(); mode = value; preferences.put("mode", value.name); bind()
     }
     fun selectVideo(key: String) {
         if (busy || recordingBusy || mode != CaptureMode.CINE || videoChoices.none { it.key == key }) return
         preferences.put("video/$selectedId", key); bind()
     }
-    fun setAudio(value: Boolean) { if (!recordingBusy) { audioWanted = value; if (!value) audioPermissionDenied = false; preferences.put("audio", value) } }
+    fun setAudio(value: Boolean) { if (!simulationActive && !recordingBusy) { audioWanted = value; if (!value) audioPermissionDenied = false; preferences.put("audio", value) } }
     fun chooseHighResolution(value: Boolean) {
+        if (simulationBlocksControl()) return
         if (busy || recordingBusy) return
         highResolution = value; preferences.put("highResolution", value); if (mode == CaptureMode.STILL) bind()
     }
@@ -391,6 +511,13 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     }
     fun onBackground() {
         cine.stop("activity background; no background recording")
+        if (simulationActive) {
+            cancelSimulationWait(); invalidateControl(); clearLiveExposure()
+            simulation = simulation?.suspend(); controlReady = false
+            if (activeCaptureToken == null) busy = false
+            log.write("SIM_SUSPEND normal rebind deferred until foreground/file completion")
+            return
+        }
         if (controlOperation.token != null || exposureOperationPending) {
             val sent = controlOperation.token != null
             invalidateControl(); clearLiveExposure(); busy = false
@@ -411,6 +538,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     }
 
     fun focusAt(x: Float, y: Float, source: String = "tap") {
+        if (simulationBlocksControl()) return
         if (busy || recordingBusy || !bound || !controlReady) return
         val c = camera ?: return
         val previewView = view ?: return
@@ -450,6 +578,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     }
 
     fun compensateEv(delta: Int) {
+        if (simulationBlocksControl()) return
         if (busy || recordingBusy || !bound || !controlReady) return
         val c = camera ?: return
         try {
@@ -501,16 +630,18 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         }
     }
     fun selectFormat(value: Int) {
+        if (simulationBlocksControl()) return
         if (busy || recordingBusy || mode != CaptureMode.STILL) return
         if (value !in formats) { event("UNSUPPORTED ${formatName(value)} by CameraX id=$selectedId"); return }
         format = value; preferences.put("format/$selectedId", value.toString()); bind()
     }
 
-    fun editFocus(value: String) { requestedFocus = value; preferences.put(exposureKey() + "/focusDraft", value) }
+    fun editFocus(value: String) { if (simulationBlocksControl()) return; requestedFocus = value; preferences.put(exposureKey() + "/focusDraft", value) }
     fun selectWhiteBalance(value: Int?) = changeOverrides(overrides.copy(whiteBalance = value), OverrideField.WHITE_BALANCE)
     fun selectAntiBanding(value: Int?) = changeOverrides(overrides.copy(antiBanding = value), OverrideField.ANTI_BANDING)
     fun restoreAutofocus() = changeOverrides(overrides.copy(focusDistance = null), OverrideField.FOCUS)
     fun applyManualFocus() {
+        if (simulationBlocksControl()) return
         try { changeOverrides(overrides.copy(focusDistance = requestedFocus.trim().toFloat()), OverrideField.FOCUS) }
         catch (failure: Exception) { error("manual focus input", failure) }
     }
@@ -534,6 +665,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     }
 
     private fun changeOverrides(candidate: SensorOverrides, edited: OverrideField) {
+        if (simulationBlocksControl()) return
         if (busy || recordingBusy || !bound || !controlReady) return
         val c = camera ?: return
         var started = false
@@ -577,6 +709,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     }
 
     private fun setLocks(candidate: AutoLocks) {
+        if (simulationBlocksControl()) return
         if (busy || recordingBusy || !bound || !controlReady) return
         val c = camera ?: return
         var started = false
@@ -601,7 +734,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
 
     /** One replacement snapshot prevents independent controls from silently erasing each other. */
     private fun requestSnapshot(c: Camera, generation: Int, exposure: ManualExposure?, extras: SensorOverrides,
-        locks: AutoLocks, clearFirst: Boolean, cancelFocus: Boolean, accepted: () -> Unit, failed: (Exception) -> Unit) {
+        locks: AutoLocks, clearFirst: Boolean, cancelFocus: Boolean, accepted: () -> Unit, failed: (Exception) -> Unit, boostPercent: Int? = null) {
         val token = controlOperation.token ?: return
         if (!controlCurrent(token)) return
         val control = Camera2CameraControl.from(c.cameraControl)
@@ -611,6 +744,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                 .setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, it.iso)
                 .setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, it.exposureNs)
         }
+        boostPercent?.let { builder.setCaptureRequestOption(CaptureRequest.CONTROL_POST_RAW_SENSITIVITY_BOOST, it) }
         extras.whiteBalance?.let { builder.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, it) }
         if (locks.exposure) builder.setCaptureRequestOption(CaptureRequest.CONTROL_AE_LOCK, true)
         if (locks.whiteBalance) builder.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_LOCK, true)
@@ -643,8 +777,9 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         val p = provider ?: return
         val id = selectedId ?: run { event("UNSUPPORTED no CameraX camera"); return }
         val previewView = view ?: return
-        invalidateControl(); clearLiveExposure()
+        cancelSimulationWait(); invalidateControl(); clearLiveExposure()
         val generation = ++epoch
+        simulation = simulation?.rebound(generation)
         sample = null; acceptedEv = null; photoStage = PhotoStage.IDLE; focusFeedback = null
         outputOrientation = outputOrientation.copy(applied = null)
         controlReceipt = ControlReceipt(epoch = epoch, sequence = controlReceipt.sequence)
@@ -681,7 +816,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                     // Observe only: never operate CameraX's CameraDevice / session.
                     val still = request.get(CaptureRequest.CONTROL_CAPTURE_INTENT) == CaptureRequest.CONTROL_CAPTURE_INTENT_STILL_CAPTURE
                     val now = SystemClock.elapsedRealtime()
-                    val sampleIntervalMs = if (now < sampleBurstUntilMs) 200L else 1000L
+                    val sampleIntervalMs = if (now < sampleBurstUntilMs || simulationActive) 200L else 1000L
                     if (!still && now - lastSample < sampleIntervalMs) return
                     lastSample = now
                     val periodRate = Exposure.sensorPeriodFps(result.get(CaptureResult.SENSOR_FRAME_DURATION))
@@ -690,7 +825,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                     val regions = "requestAFRegions=${request.get(CaptureRequest.CONTROL_AF_REGIONS)?.contentToString()} actualAFRegions=${result.get(CaptureResult.CONTROL_AF_REGIONS)?.contentToString()} requestAERegions=${request.get(CaptureRequest.CONTROL_AE_REGIONS)?.contentToString()} actualAERegions=${result.get(CaptureResult.CONTROL_AE_REGIONS)?.contentToString()}"
                     val actual = "sensorPeriodFps=$periodRate (period sample; not preview/encoded FPS) $locks $regions frame=${result.frameNumber} sensorTimestamp=${result.get(CaptureResult.SENSOR_TIMESTAMP)} intent=${request.get(CaptureRequest.CONTROL_CAPTURE_INTENT)} requestAE=${request.get(CaptureRequest.CONTROL_AE_MODE)} requestISO=${request.get(CaptureRequest.SENSOR_SENSITIVITY)} requestNs=${request.get(CaptureRequest.SENSOR_EXPOSURE_TIME)} actualAE=${result.get(CaptureResult.CONTROL_AE_MODE)} actualISO=${result.get(CaptureResult.SENSOR_SENSITIVITY)} actualNs=${result.get(CaptureResult.SENSOR_EXPOSURE_TIME)} frameDurationNs=${result.get(CaptureResult.SENSOR_FRAME_DURATION)} requestAF=${request.get(CaptureRequest.CONTROL_AF_MODE)} actualAF=${result.get(CaptureResult.CONTROL_AF_MODE)} afState=${result.get(CaptureResult.CONTROL_AF_STATE)} requestFocusLensUnits=${request.get(CaptureRequest.LENS_FOCUS_DISTANCE)} actualFocusLensUnits=${result.get(CaptureResult.LENS_FOCUS_DISTANCE)} requestAWB=${request.get(CaptureRequest.CONTROL_AWB_MODE)} actualAWB=${result.get(CaptureResult.CONTROL_AWB_MODE)} awbState=${result.get(CaptureResult.CONTROL_AWB_STATE)} requestEV=${request.get(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION)} actualEV=${result.get(CaptureResult.CONTROL_AE_EXPOSURE_COMPENSATION)} requestAntiBanding=${request.get(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE)} actualAntiBanding=${result.get(CaptureResult.CONTROL_AE_ANTIBANDING_MODE)} sceneFlicker=${result.get(CaptureResult.STATISTICS_SCENE_FLICKER)}"
                     main.execute {
-                        if (generation == epoch && !closed) {
+                        if (generation == epoch && !closed && simulation?.phase != SimulationPhase.SUSPENDED) {
                             measured = actual
                             val observation = CaptureSample(generation, result.frameNumber, now,
                                 SensorValues(request.get(CaptureRequest.SENSOR_SENSITIVITY), request.get(CaptureRequest.SENSOR_EXPOSURE_TIME), request.get(CaptureRequest.CONTROL_AE_MODE),
@@ -702,7 +837,17 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                                     result.get(CaptureResult.CONTROL_AE_EXPOSURE_COMPENSATION), result.get(CaptureResult.CONTROL_AE_ANTIBANDING_MODE),
                                     result.get(CaptureResult.CONTROL_AE_LOCK), result.get(CaptureResult.CONTROL_AWB_LOCK)),
                                 frameDurationNs = result.get(CaptureResult.SENSOR_FRAME_DURATION))
-                            sample = newerSample(sample, observation, epoch)
+                            if (simulationActive) {
+                                val kind = when (request.get(CaptureRequest.CONTROL_CAPTURE_INTENT)) {
+                                    CaptureRequest.CONTROL_CAPTURE_INTENT_PREVIEW -> SimulationIntent.PREVIEW
+                                    CaptureRequest.CONTROL_CAPTURE_INTENT_STILL_CAPTURE -> SimulationIntent.STILL
+                                    else -> SimulationIntent.OTHER
+                                }
+                                observeSimulation(SimulationFrame(generation, result.frameNumber, now, kind, observation.request, observation.actual,
+                                    observation.frameDurationNs, result.get(CaptureResult.SENSOR_TIMESTAMP),
+                                    request.get(CaptureRequest.CONTROL_POST_RAW_SENSITIVITY_BOOST), result.get(CaptureResult.CONTROL_POST_RAW_SENSITIVITY_BOOST)))
+                                if (kind == SimulationIntent.PREVIEW) sample = newerSample(sample, observation, epoch)
+                            } else sample = newerSample(sample, observation, epoch)
                             if (still || now - lastResultLog >= 1000) {
                                 lastResultLog = now
                                 log.write("RESULT id=$id desired=[$desired] $actual")
@@ -725,8 +870,9 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                         .setAspectRatioStrategy(AspectRatioStrategy(preferredRatio, AspectRatioStrategy.FALLBACK_RULE_AUTO))
                         .setResolutionStrategy(ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY).build())
                 }
+                configureSimulationCapture(captureBuilder)
                 Camera2Interop.Extender(captureBuilder).setSessionCaptureCallback(resultCallback)
-                var capture = captureBuilder.build()
+                var capture = captureBuilder.build().also { if (simulationActive) it.flashMode = ImageCapture.FLASH_MODE_OFF }
                 var fallbackReason: String? = null
                 camera = try { p.bindToLifecycle(owner, selector, preview, capture) }
                 catch (failure: Exception) {
@@ -736,8 +882,9 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                     p.unbindAll()
                     val fallbackBuilder = ImageCapture.Builder().setOutputFormat(format)
                         .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                    configureSimulationCapture(fallbackBuilder)
                     Camera2Interop.Extender(fallbackBuilder).setSessionCaptureCallback(resultCallback)
-                    capture = fallbackBuilder.build()
+                    capture = fallbackBuilder.build().also { if (simulationActive) it.flashMode = ImageCapture.FLASH_MODE_OFF }
                     p.bindToLifecycle(owner, selector, preview, capture)
                 }
                 imageCapture = capture
@@ -779,6 +926,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                 val configurations = Camera2CameraInfo.from(info).getCameraCharacteristic(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
                 previewSize?.let { configurations?.getOutputMinFrameDuration(android.graphics.SurfaceTexture::class.java, it) }
             }.getOrNull()
+            lastPreviewMinFrameNs = minimumPreviewFrameNs?.takeIf { it > 0 }
             log.write("FRAME_TIMING previewSize=$previewSize minimumPreviewFrameNs=$minimumPreviewFrameNs maxSensorFrameNs=${selectedReport?.maxFrameDurationNs} selectedVideo=${cineSession?.choice}; minimum stream period is not maximum exposure; inspect actual SENSOR_FRAME_DURATION separately")
             bound = true
             camera!!.cameraInfo.cameraState.observe(owner) { state ->
@@ -789,8 +937,9 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                             invalidateControl(); clearLiveExposure(keepTarget = true); busy = false
                         }
                         controlReady = false
-                        controlReceipt = controlReceipt.copy(phase = ControlPhase.UNKNOWN, acceptedAtMs = null, detail = "CameraX camera error ${it.code}")
-                        lastFailure = controlReceipt.detail
+                        operationReceipt(operationReceipt.copy(phase = ControlPhase.UNKNOWN, acceptedAtMs = null, detail = "CameraX camera error ${it.code}"))
+                        simulation = simulation?.unknown("CameraX camera error ${it.code}")
+                        lastFailure = "CameraX camera error ${it.code}"
                         event("ERROR CameraX camera state code=${it.code}")
                     }
                 }
@@ -798,11 +947,12 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             event("BOUND id=$id mode=$mode format=${formatName(format)}; clearing Interop before capture")
             // The provider may reuse a CameraControl whose Interop options survive unbind/rebind.
             // Explicitly clear them and wait for acceptance before enabling capture.
-            setExposure(remember = false, restoreSaved = true)
-        } catch (e: Exception) { error("bind id=$id mode=$mode format=${formatName(format)} (see selection/fallback log)", e) }
+            if (simulationActive) submitSimulationPreview() else setExposure(remember = false, restoreSaved = true)
+        } catch (e: Exception) { simulation = simulation?.unknown("bind failed: ${e.message}"); error("bind id=$id mode=$mode format=${formatName(format)} (see selection/fallback log)", e) }
     }
 
     fun stop() {
+        clearSimulation()
         if (recordingBusy) { pendingStop = true; cine.stop("preview Stop"); return }
         invalidateControl(); clearLiveExposure()
         ++epoch
@@ -825,11 +975,13 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     }
 
     fun setExposureAuto() {
+        if (simulationBlocksControl()) return
         if (exposureOperationPending) { invalidateControl(); clearLiveExposure(); busy = false }
         setExposure()
     }
     fun resetAllControls() = setExposure(reset = true)
     fun setExposure(iso: String? = null, ms: String? = null, remember: Boolean = true, restoreSaved: Boolean = false, reset: Boolean = false, live: ExposureEntry? = null) {
+        if (simulationBlocksControl()) return
         if ((busy && live == null) || recordingBusy) return
         if (live != null && (live.epoch != epoch || exposureQueue.active != live)) return
         val c = camera ?: return
@@ -905,6 +1057,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
 
     fun capture() {
         if (busy || recordingBusy || mode != CaptureMode.STILL) return
+        if (simulationActive && simulation?.canCapture != true) { event("Simulation preview not ready; inspect or exit"); return }
         if (!sharedSaveSupported) { event("UNSUPPORTED shared image saving requires Android 10+"); return }
         if (!controlReady) { event("Capture disabled: exposure control not accepted; use AUTO or stop/restart"); return }
         val capture = imageCapture ?: return
@@ -915,6 +1068,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         val generation = epoch
         val cameraId = selectedId
         val captureFormat = format
+        val simulationSettings = simulation?.settings
+        simulation = simulation?.captureStarted()
         busy = true; activeCaptureToken = token; photoStage = PhotoStage.CAPTURING
         lastFailure = null
         var staging = emptyList<File>()
@@ -932,6 +1087,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                 busy = false; activeCaptureToken = null; photoStage = PhotoStage.FAILED
                 applyOutputOrientation()
                 error("capture/shared save token=$token", e)
+                finishSimulationPhoto(false)
             } else log.write("CAPTURE_LATE_ERROR token=$token ${e.javaClass.simpleName}: ${e.message}")
         }
         try {
@@ -950,6 +1106,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             var terminal = false
             var publishing = false
             busy = true; activeCaptureToken = token
+            log.write("SIM_CAPTURE_TARGET token=$token fixed=${simulation?.settings?.plan?.capture} previewTarget=${simulation?.settings?.plan?.preview}; no per-file sensor correspondence assumed")
             log.write("CAPTURE_BEGIN token=$token id=$cameraId format=${formatName(captureFormat)} targetRotation=$captureRotation desired=[$desired] selectedResolution=${capture.resolutionInfo?.resolution} target=${PhotoPublisher.RELATIVE_PATH}")
             val callback = object : ImageCapture.OnImageSavedCallback {
                 private fun fail(e: Exception) {
@@ -980,6 +1137,10 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                                     try {
                                         val orientationExif = android.media.ExifInterface(source.file)
                                         log.write("IMAGE_ORIENTATION token=$token requestedTargetRotation=$captureRotation actualExifOrientation=${orientationExif.getAttributeInt(android.media.ExifInterface.TAG_ORIENTATION, android.media.ExifInterface.ORIENTATION_UNDEFINED)}; viewerValidation=UNVERIFIED")
+                                        if (simulationSettings != null) {
+                                            val storedIso = orientationExif.getAttribute("PhotographicSensitivity") ?: orientationExif.getAttribute("ISOSpeedRatings")
+                                            log.write("SIM_STORED_METADATA token=$token mime=${source.format.mimeType} fixedTarget=${simulationSettings.plan.capture} storedIso=$storedIso storedExposureSeconds=${orientationExif.getAttribute(android.media.ExifInterface.TAG_EXPOSURE_TIME)}; metadata only, not full RAW decode or pixel brightness proof")
+                                        }
                                         if (source.format == PhotoFormat.JPEG) {
                                             val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
                                             android.graphics.BitmapFactory.decodeFile(source.file.absolutePath, bounds)
@@ -1005,6 +1166,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                                         if (current) event(message) else log.write(message)
                                     }
                                     log.write("CAPTURE_COMPLETE token=$token files=${photos.joinToString { it.name }}")
+                                    if (current) finishSimulationPhoto(true)
                                 }
                             } catch (e: Exception) { main.execute { failed(e) } }
                             finally { clean(staging) }
@@ -1026,6 +1188,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     }
 
     fun close() {
+        clearSimulation()
         invalidateControl(); clearLiveExposure()
         closed = true; controlReady = false; activeCaptureToken = null; ++epoch
         cine.stop("activity destroyed")
