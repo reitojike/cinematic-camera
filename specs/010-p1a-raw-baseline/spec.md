@@ -59,6 +59,6 @@
 - **SC-004**: 実素材がある場合だけcamera別にdecode結果を記録し、未説明の色転び／clipがあれば画作りへ進まない。
 
 ## Assumptions
-- 本人が許可したlivepicture/noteditedのRAWを基準比較に使う。editedは本人の連絡後だけ好みの参照として確認し、対応JPEG/settingsを推測しない。
+- 本人が許可したlivepicture/noteditedのRAWを基準比較に使い、adopted/originalのRAWとadopted/editedのユーザー編集JPEGを好みの参照として使う。ファイル名・撮影metadataで対応を確認し、crop/回転/サイズ/色空間差を区別する。画素単位一致や編集設定を推測せず、基準現像をJPEGへ自動fittingしない。
 - Android、NDK/GPU、動画、顔AI、multi-frame、大型独自NR、grain/halationは対象外。
 - merge・Android移植・Releaseは別承認。独立レビューは実装者以外が行う。後続のアプリ内選択現像UXは[002計画](../002-live-capture/plan.md)を参照し、本PoCへ先行実装しない。

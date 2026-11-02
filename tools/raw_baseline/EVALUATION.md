@@ -8,6 +8,10 @@
 
 照明は002 planのS01中立光、S02赤、S03青、S04紫/マゼンタ、S05スポット/逆光、S06暗所高ISO/動体。元から飽和したchannelの完全復元を約束せず、舞台照明を肌色の均一化で消さない。写真・生metadata・私的評価メモをGit/公開Issueへ置かない。
 
+## ユーザー編集参照
+
+許可済みadopted/original（RAW）とadopted/edited（編集JPEG）はunique basenameとcamera・撮影時刻・ISO/露光等で対応を検証する。サイズやorientationだけでcropを断定せず、回転焼込・編集crop・ICC色空間を確認して同じ表示条件で比べる。肌・明るさ・階調の好みの参考として扱い、編集JPEGをdecodeの正解画像や画素単位ground truthとしない。基準処理を自動fittingせず、技術成立と嗜好を分けて記録する。代表少数から始め、原本を変更せず私的比較は入力外に保存する。
+
 ## 同一入力の比較
 
 | 版 | 変えるもの | 状態 |
