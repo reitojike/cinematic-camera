@@ -42,4 +42,3 @@ US1とUS2 policy/testsは別ファイルで独立作業可能。MVPはUS1、今�
 
 - [ ] T012 [US1] specs/005-cine-framing/quickstart.mdに従い、別途許可後にSDR/対応HDR・各quality/fps・4方向のpreview/MP4四辺一致とSTILL原本保持を確認する（SC-002）。
 - [ ] T013 [US2] specs/005-cine-framing/quickstart.mdに従い、別途許可後に設定開閉・pointer/Back/TalkBack・録画中回転・background停止を確認する（SC-002）。
-
