@@ -56,13 +56,17 @@ class RecordingGate {
     var stage = RecordingStage.IDLE; private set
     var token: String? = null; private set
     val busy get() = stage != RecordingStage.IDLE
+    var startSequence: Long = 0; private set
+    private var startReported = false
 
     fun begin(value: String) {
         check(!busy) { "Previous recording has not finalized" }
-        token = value; stage = RecordingStage.STARTING
+        token = value; stage = RecordingStage.STARTING; startReported = false
     }
     fun started(value: String) {
-        if (token == value && stage == RecordingStage.STARTING) stage = RecordingStage.RECORDING
+        if (token != value || stage !in setOf(RecordingStage.STARTING, RecordingStage.STOPPING) || startReported) return
+        startReported = true; startSequence += 1
+        if (stage == RecordingStage.STARTING) stage = RecordingStage.RECORDING
     }
     fun stop(): Boolean {
         if (stage != RecordingStage.STARTING && stage != RecordingStage.RECORDING) return false

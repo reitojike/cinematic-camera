@@ -23,7 +23,7 @@
 **Independent Test**: レイアウト/Back/編集テストとSTILL/CINE操作。
 **Acceptance Scenarios**:
 1. **Given** STILL/CINE、**When** 設定を開く、**Then** 全フレームを残り領域へFITし、設定本文のみスクロールする。
-2. **Given** draft、**When** STILL撮影、**Then** 受付値で撮りdraftを保持。CINEが実際に開始受付された時点で破棄。権限拒否では保持。
+2. **Given** draft、**When** STILL撮影、**Then** 受付値で撮りdraftを保持。CINEのRecorder Start通知を受けた時点で破棄。権限拒否では保持。
 3. **Given** 録画/保存中、**When** 設定等を操作、**Then** 無効理由と状態を表示。停止と最終保存を分ける。
 4. **Given** LOOK/比率出力/最新写真、**When** 入口を確認、**Then** 未実装と明示し効果や閲覧を偽装しない。
 

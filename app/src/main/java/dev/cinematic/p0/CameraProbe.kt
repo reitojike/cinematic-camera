@@ -194,6 +194,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             controlSnapshot=$overrideStatus
             autoLocks=$lockStatus
             focus=$focusStatus EV=$evStatus thermal=$thermalStatus
+            outputOrientation=$outputOrientation
             observedCaptureResult=$measured
             still=$stillResolution
             video=$videoSelection
@@ -769,6 +770,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         if (!controlReady) { event("Capture disabled: exposure control not accepted; use AUTO or stop/restart"); return }
         val capture = imageCapture ?: return
         if (!applyOutputOrientation()) return
+        val captureRotation = outputOrientation.applied
         val token = UUID.randomUUID().toString()
         val appCaptureStart = SystemClock.elapsedRealtime()
         val generation = epoch
@@ -809,7 +811,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             var terminal = false
             var publishing = false
             busy = true; activeCaptureToken = token
-            log.write("CAPTURE_BEGIN token=$token id=$cameraId format=${formatName(captureFormat)} targetRotation=${outputOrientation.applied} desired=[$desired] selectedResolution=${capture.resolutionInfo?.resolution} target=${PhotoPublisher.RELATIVE_PATH}")
+            log.write("CAPTURE_BEGIN token=$token id=$cameraId format=${formatName(captureFormat)} targetRotation=$captureRotation desired=[$desired] selectedResolution=${capture.resolutionInfo?.resolution} target=${PhotoPublisher.RELATIVE_PATH}")
             val callback = object : ImageCapture.OnImageSavedCallback {
                 private fun fail(e: Exception) {
                     if (terminal) { log.write("CAPTURE_LATE_CALLBACK_ERROR token=$token afterAppRequestMs=${SystemClock.elapsedRealtime() - appCaptureStart} ${e.javaClass.simpleName}"); return }
@@ -837,6 +839,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                                 val mediaWorkStart = SystemClock.elapsedRealtime()
                                 sources.forEach { source ->
                                     try {
+                                        val orientationExif = android.media.ExifInterface(source.file)
+                                        log.write("IMAGE_ORIENTATION token=$token requestedTargetRotation=$captureRotation actualExifOrientation=${orientationExif.getAttributeInt(android.media.ExifInterface.TAG_ORIENTATION, android.media.ExifInterface.ORIENTATION_UNDEFINED)}; viewerValidation=UNVERIFIED")
                                         if (source.format == PhotoFormat.JPEG) {
                                             val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
                                             android.graphics.BitmapFactory.decodeFile(source.file.absolutePath, bounds)

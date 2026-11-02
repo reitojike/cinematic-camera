@@ -33,7 +33,7 @@ class CineRecorder(context: Context, private val event: (String) -> Unit, privat
     var audioState by mutableStateOf<Int?>(null); private set
     val busy get() = gate.busy
 
-    private fun refresh() { stage = gate.stage; changed() }
+    private fun refresh() { stage = gate.stage; startSequence = gate.startSequence; changed() }
 
     fun start(recorder: Recorder, audio: Boolean, requested: String) {
         if (busy) return
@@ -47,7 +47,6 @@ class CineRecorder(context: Context, private val event: (String) -> Unit, privat
         val audioNotes = AudioQualityNotes(audio)
         stopRequestedAtMs = null
         failure = null; saveSucceeded = null
-        startSequence += 1
         durationMs = 0; audioAmplitude = null; audioState = null
         gate.begin(token); refresh()
         var output: PendingVideoOutput? = null
