@@ -90,3 +90,19 @@ fun autoControlSnapshot(previous: ControlSnapshot, savedEv: Int, reset: Boolean)
         locks = previous.locks.forControls(false, previous.overrides.whiteBalance))
 
 enum class PhotoStage { IDLE, CAPTURING, SAVING, SAVED, FAILED }
+
+enum class FocusPhase { PENDING, COMPLETED, FAILED }
+data class FocusFeedback(val point: Pair<Float, Float>, val phase: FocusPhase, val afSucceeded: Boolean? = null)
+
+enum class CapturePanel { NONE, SETTINGS, DIAGNOSTICS }
+data class CaptureBack(val panel: CapturePanel, val closeRuler: Boolean = false, val exit: Boolean = false,
+    val armExit: Boolean = false, val note: String? = null)
+fun captureBack(panel: CapturePanel, ruler: Boolean, pending: Boolean, recording: Boolean, armed: Boolean): CaptureBack = when {
+    recording -> CaptureBack(panel, note = "録画を停止し、保存完了を待ってください")
+    pending -> CaptureBack(panel, note = "設定の送信完了を待ってください")
+    panel == CapturePanel.DIAGNOSTICS -> CaptureBack(CapturePanel.SETTINGS)
+    panel == CapturePanel.SETTINGS -> CaptureBack(CapturePanel.NONE)
+    ruler -> CaptureBack(panel, closeRuler = true)
+    armed -> CaptureBack(panel, exit = true)
+    else -> CaptureBack(panel, armExit = true, note = "もう一度戻ると終了")
+}

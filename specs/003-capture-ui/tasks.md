@@ -8,8 +8,8 @@
 - [x] T003 [US1] app/src/main/java/dev/cinematic/p0/CameraProbe.kt で受付と実測を接続し露出AUTOと全resetを分離（FR-001/002）。
 - [x] T004 [US1] app/src/test/java/dev/cinematic/p0/CaptureStateTest.kt で旧応答/不一致/draft/保持を検証（SC-001）。
 ## Phase 4: US2 — 撮影UI
-- [ ] T005 [US2] app/src/main/java/dev/cinematic/p0/CaptureScreen.kt と MainActivity.kt にレール/ルーラー/設定/診断/Backを実装（FR-003/004/005/006）。
-- [ ] T006 [US2] app/src/test/java/dev/cinematic/p0/CaptureLayoutTest.kt にFITと狭い画面/insets検証を追加（SC-002）。
+- [x] T005 [US2] app/src/main/java/dev/cinematic/p0/CaptureScreen.kt と MainActivity.kt にレール/ルーラー/設定/診断/Backを実装（FR-003/004/005/006）。
+- [x] T006 [US2] app/src/test/java/dev/cinematic/p0/CaptureLayoutTest.kt にFITと狭い画面/insets検証を追加（SC-002）。
 ## Phase 5: US3 — 回転
 - [ ] T007 [US3] app/src/main/java/dev/cinematic/p0/CaptureOrientation.kt と AndroidManifest.xml で物理向きと固定配置/撮影方向を実装（FR-007）。
 - [ ] T008 [US3] app/src/test/java/dev/cinematic/p0/CaptureOrientationTest.kt で境界/短経路/録画固定を検証（SC-003自動部分）。
