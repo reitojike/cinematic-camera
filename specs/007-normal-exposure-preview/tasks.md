@@ -36,14 +36,14 @@
 **Goal**: target/受付/実測と待ち理由を区別し、背景/CINEへ古い設定を持ち込まない。
 **Independent Test**: intent/epoch別の表示と長秒→短秒/AUTO、背景復帰、旧完了を確認する。
 
-- [x] T010 [US3] 長秒→短秒/AUTO、背景化/復帰、旧epoch/旧request完了、撮影intent実測の純粋境界をunitで検証し、AUTO/背景復帰の標準API callsiteを静的照合する（app/src/test/java/dev/cinematic/p0/StillExposureStateTest.kt、app/src/test/java/dev/cinematic/p0/ControlOperationTest.kt、app/src/test/java/dev/cinematic/p0/PendingBindControlsTest.kt、app/src/main/java/dev/cinematic/p0/CameraProbe.kt）。FR-003/007/008、SC-001。
+- [x] T010 [US3] 長秒→短秒/AUTO、背景化/復帰、旧epoch/旧request完了、撮影intent実測の純粋境界をunitで検証し、AUTO/背景復帰の標準API callsiteを静的照合する（app/src/test/java/dev/cinematic/p0/StillExposureStateTest.kt、app/src/test/java/dev/cinematic/p0/ControlOperationTest.kt、app/src/test/java/dev/cinematic/p0/PendingBindControlsTest.kt、app/src/test/java/dev/cinematic/p0/StillResumeIntentTest.kt、app/src/main/java/dev/cinematic/p0/CameraProbe.kt）。FR-003/007/008、SC-001。
 - [x] T011 [US3] 撮影target/preview要求/受付/実測を区別し、準備/撮影/復帰のセンサー物理待ちとACK/queue/rebind待ちを混同しない診断を追加する（app/src/main/java/dev/cinematic/p0/CameraProbe.kt、app/src/main/java/dev/cinematic/p0/CaptureScreen.kt）。FR-003/007/009。
 - [x] T012 [US3] 背景化で先にepochを無効化し、foreground最新targetから復帰、CINE/RAW/MediaStore契約を維持する（app/src/main/java/dev/cinematic/p0/CameraProbe.kt）。FR-007/008/010。
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
 - [x] T013 build/unit/lint、git diff --checkと公開前scanを実行し、ImageCapture static長秒混入なし・編集ごとの全rebindなしを確認する（app/src/main/java/dev/cinematic/p0/CameraProbe.kt、.github/workflows/android.yml、docs/PUBLICATION_REVIEW.md）。SC-001/002/004。
-- [x] T014 修正版限定実機手順と未確認制約を最終実装と照合し、Draft PRの最終head独立/canonicalレビュー・必須CI・未解決thread 0件を確認する（specs/007-normal-exposure-preview/plan.md、docs/OPERATIONS.md）。FR-010、SC-003/004。
+- [ ] T014 修正版限定実機手順と未確認制約を最終実装と照合し、Draft PRの最終head独立/canonicalレビュー・必須CI・未解決thread 0件を確認する（specs/007-normal-exposure-preview/plan.md、docs/OPERATIONS.md）。FR-010、SC-003/004。
 - [ ] T015 ユーザー確認後に二段階の見え方、長秒→短秒/AUTO、撮影後復帰、RAW/CINE回帰の実機ACを記録する（docs/P0_REPORT.md）。SC-003。v13追加確認を要求せず、証拠なしに完了/改善保証/#37包括解決へ変更しない。
 
 ## Dependencies & Execution Order
@@ -61,4 +61,4 @@ US1を最小の追従機能として先に検証し、US2の撮影専有、US3�
 ## Phase 7: Convergence
 
 - [x] T016 [US2] partial: T007の残るRAW+JPEG全formatの順不同/重複/片方だけ完了・エラーのterminal集約について、撮影専有を早期解放しないことを直接テストする（app/src/main/java/dev/cinematic/p0/CameraProbe.kt、app/src/main/java/dev/cinematic/p0/PhotoCallbackGate.kt、app/src/test/java/dev/cinematic/p0/PhotoCallbackGateTest.kt、app/src/test/java/dev/cinematic/p0/StillExposureStateTest.kt）。FR-005/006、US2/AC2、SC-001。集約済みfilesFinished入力の状態テストだけを全format集約の証明にしない。
-- [x] T017 [US3] partial: AUTO seedなし再bind・background stop→foreground bindの標準API callsiteを静的検証し、autoControlSnapshot、PendingBindControlsのkey/epoch/one-shot、StillExposureStateのsuspend/epochとlatest-winsの純粋境界回帰を照合する（app/src/main/java/dev/cinematic/p0/CameraProbe.kt、app/src/main/java/dev/cinematic/p0/CaptureState.kt、app/src/test/java/dev/cinematic/p0/PendingBindControlsTest.kt、app/src/test/java/dev/cinematic/p0/StillExposureStateTest.kt、app/src/test/java/dev/cinematic/p0/ControlOperationTest.kt）。FR-004/007、US1/AC4、US3/AC3、SC-001。新Android mock基盤や実装を写すだけのテストを増やさず、CameraXの実呼出順・実復帰はT015の実機ACへ分離する。
+- [x] T017 [US3] partial: AUTO seedなし再bind・background stop→foreground bindの標準API callsiteを静的検証し、autoControlSnapshot、PendingBindControlsのkey/epoch/one-shot、StillResumeIntentの同scope再試行/要求identity/ACK解除、StillExposureStateのsuspend/epochとlatest-winsの純粋境界回帰を照合する（app/src/main/java/dev/cinematic/p0/CameraProbe.kt、app/src/main/java/dev/cinematic/p0/CaptureState.kt、app/src/test/java/dev/cinematic/p0/PendingBindControlsTest.kt、app/src/test/java/dev/cinematic/p0/StillResumeIntentTest.kt、app/src/test/java/dev/cinematic/p0/StillExposureStateTest.kt、app/src/test/java/dev/cinematic/p0/ControlOperationTest.kt）。FR-004/007、US1/AC4、US3/AC3、SC-001。新Android mock基盤や実装を写すだけのテストを増やさず、CameraXの実呼出順・実復帰はT015の実機ACへ分離する。

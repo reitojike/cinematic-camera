@@ -36,7 +36,7 @@ research/data model/validationを以下へ統合し、外部APIを追加しな�
 - `app/src/main/java/dev/cinematic/p0/StillExposureState.kt`: 通常要求/受付/実測/撮影snapshotと状態遷移。既存PoCのExposureSimulationRunとは独立する。
 - `app/src/main/java/dev/cinematic/p0/CameraProbe.kt`: builder/runtime設定、latest-wins、撮影専有phase、世代破棄。`PhotoCallbackGate.kt`の純粋format集約を本番callbackで使い、partial/duplicateは保存・復帰を開始しない。terminalかつ非publishing時だけ遅延callback由来のstaging cleanupを行い、publish中のIO所有を壊さない。
 - `app/src/main/java/dev/cinematic/p0/CaptureScreen.kt`: 通常自動適用、busy、待ち理由と区別表示。
-- `app/src/test/java/dev/cinematic/p0/ExposureSimulationPolicyTest.kt` / `StillExposureStateTest.kt` / `ControlOperationTest.kt`: 境界/世代/競合/最新要求置換のunit。`StillExposurePresentation.kt` / `StillExposurePresentationTest.kt`は表示の意味を分離する。`PhotoCallbackGateTest.kt`はformat順不同/重複/部分完了/失敗とpublication所有を、`PendingBindControlsTest.kt`はAUTO引継ぎのkey/epoch/one-shotと明示stopの破棄を検証する。
+- `app/src/test/java/dev/cinematic/p0/ExposureSimulationPolicyTest.kt` / `StillExposureStateTest.kt` / `ControlOperationTest.kt`: 境界/世代/競合/最新要求置換のunit。`StillExposurePresentation.kt` / `StillExposurePresentationTest.kt`は表示の意味を分離する。`PhotoCallbackGateTest.kt`はformat順不同/重複/部分完了/失敗とpublication所有を、`PendingBindControlsTest.kt`はAUTO引継ぎのkey/epoch/one-shotと明示stopの破棄を検証する。`StillResumeIntent.kt` / `StillResumeIntentTest.kt`は未受付の最新論理targetを背景復帰の同scope再試行まで保持し、要求identity一致の新ACKだけで解除する境界を検証する。
 
 **Structure Decision**: 既存の単一appと責務を再利用し、汎用camera abstractionや別moduleを追加しない。
 
@@ -74,12 +74,12 @@ research/data model/validationを以下へ統合し、外部APIを追加しな�
 1. current epoch/revision/requestに合わないcallbackは表示/次の撮影/保存成功へ採用しない。
 2. CAPTURE_PREPARING/CAPTURING/UNKNOWNでは専有を保持し、既存busy UIで競合編集/連打を止める。takePicture発行後はterminalまたは明示stopの世代切断まで保持する。発行前の受付失敗は撮影未開始として、旧control tokenを無効化してpreview ACK/新実測を得てから解放できる。
 3. 全format terminalを一度だけ消費し、preview復帰失敗を撮影保存失敗と混同しない。復帰先は保持済みの最新通常targetから再計算する。
-4. 通常manualの背景化は明示stopでepochを無効化し、保持したInterop optionsをclearしてunbindする。foregroundで保存した最新通常targetから安全にbindする。bind前も旧held optionsを同期clearし、旧Futureの成功を新sessionの証拠にしない。CINEへ固定撮影/補償settingsを持ち込まない。
+4. 通常manualの背景化は明示stopでepochを無効化し、保持したInterop optionsをclearしてunbindする。foregroundでは受付済みpreferencesとは別に保持した最新の論理targetから安全にbindする。32ms集約待ち/未受付の最新値も対象とし、camera/modeキー付きmemory-only要求を新sessionのACKまで保持し、同scopeのbind/受付失敗後の再試行でも同じ最新要求を使う。ACK時は要求identityを照合して解除し、旧ACKで新しい要求を消さない。未受付値を受付済みとして保存せず、新sessionのACK後にのみ撮影設定へ保存する。明示Stop/close/AUTO/resetでは背景復帰要求を破棄し、locksは新sessionへ継承しない。bind前も旧held optionsを同期clearし、旧Futureの成功を新sessionの証拠にしない。CINEへ固定撮影/補償settingsを持ち込まない。
 5. 無効/未知rangeは送信しない。第2段階の正当な長めpreviewと撮影long pair混入を診断上区別する。
 
 ## Validation / 修正版の限定手順
 
-機械検証は `./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug --no-daemon`（Windowsは `.\gradlew.bat`）と `git diff --check`。初期/再bind builderの露出options、通常編集の再bind呼出し、takePicture後timeoutの専有保持も静的確認する。AUTO/背景復帰はautoControlSnapshot、PendingBindControlsのkey/epoch/one-shot、StillExposureStateのsuspend/epoch、latest-winsの純粋境界unitと、CameraX 1.6.2のseed/clear/stop/foreground標準API callsiteの静的照合で機械側を確認する。新Android mock基盤や実装を写すだけのテストは導入せず、CameraXの実呼出順・実復帰は実機ACへ分離する。
+機械検証は `./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug --no-daemon`（Windowsは `.\gradlew.bat`）と `git diff --check`。初期/再bind builderの露出options、通常編集の再bind呼出し、takePicture後timeoutの専有保持も静的確認する。AUTO/背景復帰はautoControlSnapshot、PendingBindControlsのkey/epoch/one-shot、StillResumeIntentの未受付/再試行/identity/ACK解除、StillExposureStateのsuspend/epoch、latest-winsの純粋境界unitと、CameraX 1.6.2のseed/clear/stop/foreground標準API callsiteの静的照合で機械側を確認する。新Android mock基盤や実装を写すだけのテストは導入せず、CameraXの実呼出順・実復帰は実機ACへ分離する。
 
 実機操作はユーザー実施。v13の追加確認を前提にせず修正版だけで以下を確認する。現時点は全項目未確認。
 
@@ -87,7 +87,7 @@ research/data model/validationを以下へ統合し、外部APIを追加しな�
 |---|---|---|
 | 通常MANUALでISO/SSを即時連続変更 | 明示PoCなしで二段階へ自動追従し最新値で落ち着く | target / preview要求 / ACK / 実測 / 見え方 |
 | ISO余裕内と上限到達の長秒 | 短露光から明るさ優先の長めpreviewへ移る | 固定1sで切らない。noise/tone差は残り得る |
-| 長秒の保存設定で起動/背景復帰 | 撮影専用long pairが待機previewへ混入しない | 正当なstage2長めpreviewと区別 |
+| 長秒の保存設定で起動、ISO/SS変更直後・受付待ちの背景復帰 | 撮影専用long pairが待機previewへ混入しない | 正当なstage2長めpreviewと区別 |
 | 長秒→短秒/AUTO | 最新設定へ復帰し旧補償/seedを残さない | センサー待ち、ACK待ち、queue/rebind待ちを別記 |
 | JPEGおよび対応するRAW+JPEGを単発撮影 | snapshot露出で撮影、全format後に最新previewへ戻る | 保存成功とpreview復帰、DNG有効性は別 |
 | 撮影中背景化/失敗/timeout | 旧callbackを除外し不明状態を成功としない | 不可避待ちを隠さない |
