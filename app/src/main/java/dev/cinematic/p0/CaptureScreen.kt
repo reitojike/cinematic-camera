@@ -62,6 +62,9 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
     var panel by remember { mutableStateOf(CapturePanel.NONE) }
     var confirmReset by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(probe.exposureMigrationNotice) {
+        probe.consumeExposureMigrationNotice()?.let { notice = it }
+    }
     var backAt by remember { mutableLongStateOf(0L) }
     val stillExposure = probe.stillExposure
     val stillPresentation = stillExposure?.presentation()
@@ -502,6 +505,7 @@ private fun keyValue(key: CaptureKey, editor: CaptureEditor, probe: CameraProbe)
 }
 
 @Composable private fun Diagnostics(probe: CameraProbe, enabled: Boolean, export: () -> Unit) {
+    Text(probe.exposurePolicyStatus, color = Muted, fontSize = 12.sp)
     StillExposureStatus(probe)
     Row {
         TextButton(onClick = probe::bind, enabled = enabled && !probe.bound) { Text("Preview開始") }
