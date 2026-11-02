@@ -38,7 +38,7 @@
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T010 pure表示policy・既存unit・build/lint・diffcheck・公開scanを実行し、参照構造/CSS照合と未実施の実描画/実機を分離して記録する（app/src/test/java/dev/cinematic/p0/CaptureChromeModelTest.kt、app/src/test/java/dev/cinematic/p0/CaptureFeedbackTest.kt、app/src/test/java/dev/cinematic/p0/SensorControlPresentationTest.kt、docs/BUILD_VALIDATION.md、docs/PUBLICATION_REVIEW.md）。FR-008/009、SC-001/002/003/004。
+- [x] T010 pure表示policy・既存unit・build/lint・diffcheck・公開scanを実行し、参照構造/CSS照合と未実施の実描画/実機を分離して記録する（app/src/test/java/dev/cinematic/p0/CaptureChromeModelTest.kt、app/src/test/java/dev/cinematic/p0/CaptureFeedbackTest.kt、app/src/test/java/dev/cinematic/p0/SensorControlPresentationTest.kt、docs/BUILD_VALIDATION.md、docs/PUBLICATION_REVIEW.md）。FR-008/009、SC-001/002/003/004。
 - [ ] T011 Draft PRの最終headに情報配置/不要重複の独立点検・独立/canonicalレビュー・必須CI成功・未解決thread 0を確認し、merge/配布前で停止する（docs/OPERATIONS.md、specs/009-capture-ui-states/tasks.md）。SC-004。
 - [ ] T012 縦/左右横持ちの可読性/重なり、停止・保存・失敗・復旧/Back、MF/WB、近似previewとtargetの区別、2000ms失効、detent/haptic設定尊重、overlay、回転録画継続、RAW保存をユーザー確認後に記録する（docs/P0_REPORT.md）。FR-006/008、SC-003。browser拒否の迂回・再試行を行わず、HTML実描画と実機未確認を合格にしない。
 
