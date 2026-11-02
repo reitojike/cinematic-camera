@@ -6,6 +6,47 @@ import org.junit.Test
 class CaptureFeedbackTest {
     private val ready = CaptureAccess(true, false, false, false, true, false, false, evSupported = true, focusSupported = true)
 
+    @Test fun backendGuardDoesNotAdoptThePreviousAcceptanceOrDiscardTheDraft() {
+        val editor = CaptureEditor(epoch = 2).select(CaptureKey.FOCUS).copy(focus = "1.5")
+        val history = ControlReceipt(epoch = 2, sequence = 7, phase = ControlPhase.ACCEPTED)
+        val unchanged = beginEditorReceipt(editor, history, history)
+        assertEquals(editor, unchanged.editor)
+        assertNull(unchanged.editor.submitting)
+        assertFalse(unchanged.notice!!.contains("受付完了"))
+        assertEquals(editor, beginEditorReceipt(editor, history, history.copy(epoch = 3, sequence = 8)).editor)
+    }
+
+    @Test fun onlyANewSameSessionReceiptCanStartAndImmediatelyCompleteSubmission() {
+        val editor = CaptureEditor(epoch = 2).select(CaptureKey.FOCUS).copy(focus = "1.5")
+        val history = ControlReceipt(epoch = 2, sequence = 7, phase = ControlPhase.ACCEPTED)
+        val result = beginEditorReceipt(editor, history, history.copy(sequence = 8))
+        assertNull(result.editor.focus)
+        assertNull(result.editor.submitting)
+        assertNotNull(result.notice)
+        assertTrue(result.notice!!.contains("API受付"))
+    }
+
+    @Test fun mfAcceptanceAnnouncesCompletionOnceWithoutClaimingMeasurement() {
+        val editor = CaptureEditor(epoch = 2).select(CaptureKey.FOCUS).copy(focus = "1").sent(7)
+        val receipt = ControlReceipt(epoch = 2, sequence = 7, phase = ControlPhase.ACCEPTED)
+        val completed = completeEditorReceipt(editor, receipt)
+        assertNotNull(completed.notice)
+        assertTrue(completed.notice!!.contains("API受付"))
+        assertNull(completed.editor.submitting)
+        assertNull(completed.editor.note)
+        assertNull(completeEditorReceipt(completed.editor, receipt).notice)
+    }
+
+    @Test fun pendingAndStaleReceiptsCannotAnnounceMfCompletion() {
+        val editor = CaptureEditor(epoch = 2).select(CaptureKey.FOCUS).sent(7)
+        for (receipt in listOf(ControlReceipt(epoch = 2, sequence = 7, phase = ControlPhase.PENDING),
+            ControlReceipt(epoch = 1, sequence = 7, phase = ControlPhase.ACCEPTED),
+            ControlReceipt(epoch = 2, sequence = 6, phase = ControlPhase.ACCEPTED))) {
+            assertNull(completeEditorReceipt(editor, receipt).notice)
+            assertNotNull(completeEditorReceipt(editor, receipt).editor.submitting)
+        }
+    }
+
     @Test fun recordingFailureHasFailureToneWithoutAnotherProbeFailure() {
         assertEquals(FeedbackTone.FAILURE, captureMessage(true, null, null, null, "録音・保存に失敗", null, null)!!.tone)
     }

@@ -103,7 +103,11 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
         if (changingKeys.isEmpty()) "設定変更中" else "${changingKeys.joinToString("・")}変更中" else null
     val focusAllowed by rememberUpdatedState(panel == CapturePanel.NONE && editor.submitting == null && !ownsCapture && !probe.busy)
     LaunchedEffect(probe.currentEpoch) { editor = editor.session(probe.currentEpoch) }
-    LaunchedEffect(receipt) { editor = editor.complete(receipt) }
+    LaunchedEffect(receipt) {
+        val feedback = completeEditorReceipt(editor, receipt)
+        editor = feedback.editor
+        feedback.notice?.let { notice = it }
+    }
     LaunchedEffect(panel, probe.recordingStage) { panel = recordingPanel(panel, probe.recordingStage) }
     var seenRecording by remember { mutableLongStateOf(probe.recordingStartSequence) }
     LaunchedEffect(probe.recordingStartSequence) {
@@ -119,8 +123,8 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
             seenOrientation = orientation.sensorQuarter
         }
     }
-    LaunchedEffect(editor.note) {
-        editor.note?.takeUnless { it == "送信中" || it.startsWith("受付済") }?.let { notice = it }
+    LaunchedEffect(editor.note, editor.submitting) {
+        if (editor.submitting == null) editor.note?.let { notice = it }
     }
     var seenSave by remember { mutableStateOf(probe.photoStage to probe.recordingSaveSucceeded) }
     LaunchedEffect(probe.photoStage, probe.recordingSaveSucceeded) {
@@ -148,8 +152,11 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
     fun submit(action: () -> Unit) {
         if (editor.epoch != probe.currentEpoch) { editor = editor.session(probe.currentEpoch); return }
         if (!editable) return
+        val before = probe.controlReceipt
         action()
-        editor = editor.sent(probe.controlReceipt.sequence).complete(probe.controlReceipt)
+        val feedback = beginEditorReceipt(editor, before, probe.controlReceipt)
+        editor = feedback.editor
+        feedback.notice?.let { notice = it }
     }
     if (confirmReset) AlertDialog(onDismissRequest = { confirmReset = false }, title = { Text("撮影制御をリセット") },
         text = { Text("露出・WB・MF・照明対策・ロック・EVを標準に戻します。露出だけAUTOとは別の操作です。") },

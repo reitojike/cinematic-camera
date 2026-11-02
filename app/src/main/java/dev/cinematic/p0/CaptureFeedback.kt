@@ -3,6 +3,24 @@ package dev.cinematic.p0
 enum class FeedbackTone { INFORMATION, WARNING, FAILURE }
 data class CaptureMessage(val text: String, val tone: FeedbackTone)
 
+data class EditorReceiptFeedback(val editor: CaptureEditor, val notice: String?)
+
+/** A guard/no-op must not turn the last successful request into this edit's receipt. */
+fun beginEditorReceipt(editor: CaptureEditor, before: ControlReceipt, after: ControlReceipt): EditorReceiptFeedback {
+    if (before.epoch != after.epoch || editor.epoch != after.epoch || after.sequence <= before.sequence)
+        return EditorReceiptFeedback(editor, "新しい設定要求は未送信です・編集は保持しています")
+    return completeEditorReceipt(editor.sent(after.sequence), after)
+}
+
+/** One matched MF submission may announce API completion; duplicate or old receipts cannot. */
+fun completeEditorReceipt(editor: CaptureEditor, receipt: ControlReceipt): EditorReceiptFeedback {
+    val accepted = editor.submitting != null && editor.epoch == receipt.epoch &&
+        editor.submitting == receipt.sequence && receipt.phase == ControlPhase.ACCEPTED
+    val completed = editor.complete(receipt)
+    return if (accepted) EditorReceiptFeedback(completed.copy(note = null), "設定API受付完了・実測は診断で確認")
+        else EditorReceiptFeedback(completed, null)
+}
+
 /** The tone belongs to the displayed message, never to an unrelated retained failure. */
 fun captureMessage(sharedSaveSupported: Boolean, thermalWarning: String?, microphoneWarning: String?,
     failure: String?, recordingFailure: String?, notice: String?, phase: String?): CaptureMessage? = when {

@@ -58,7 +58,6 @@ private val PanelFailure = Color(0xFFEF8A74)
                 Checkbox(probe.audioWanted, probe::setAudio, enabled = editable)
                 Text("音声収録 · 開始時にマイク許可", fontSize = 13.sp)
             }
-            Text(captureStatusChips(chromeInput(probe)).firstOrNull { it.id == "audio" }?.text ?: "MIC —", fontSize = 11.sp, color = PanelMuted)
         }
     }
     PanelSection("CAMERA") {
