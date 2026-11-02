@@ -931,7 +931,13 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                                     result.get(CaptureResult.LENS_FOCUS_DISTANCE), result.get(CaptureResult.CONTROL_AF_MODE), result.get(CaptureResult.CONTROL_AWB_MODE),
                                     result.get(CaptureResult.CONTROL_AE_EXPOSURE_COMPENSATION), result.get(CaptureResult.CONTROL_AE_ANTIBANDING_MODE),
                                     result.get(CaptureResult.CONTROL_AE_LOCK), result.get(CaptureResult.CONTROL_AWB_LOCK)),
-                                frameDurationNs = result.get(CaptureResult.SENSOR_FRAME_DURATION))
+                                frameDurationNs = result.get(CaptureResult.SENSOR_FRAME_DURATION),
+                                intent = when (request.get(CaptureRequest.CONTROL_CAPTURE_INTENT)) {
+                                    CaptureRequest.CONTROL_CAPTURE_INTENT_PREVIEW -> CaptureSampleIntent.PREVIEW
+                                    CaptureRequest.CONTROL_CAPTURE_INTENT_VIDEO_RECORD -> CaptureSampleIntent.VIDEO_RECORD
+                                    CaptureRequest.CONTROL_CAPTURE_INTENT_STILL_CAPTURE -> CaptureSampleIntent.STILL_CAPTURE
+                                    else -> CaptureSampleIntent.UNKNOWN
+                                })
                             if (stillExposure != null) {
                                 val kind = when (request.get(CaptureRequest.CONTROL_CAPTURE_INTENT)) {
                                     CaptureRequest.CONTROL_CAPTURE_INTENT_PREVIEW -> SimulationIntent.PREVIEW
