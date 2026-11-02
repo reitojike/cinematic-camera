@@ -20,10 +20,10 @@
 
 ## Phase 4: User Story 2 - 操作状態を読む (P2)
 
-**Independent Test**: 6キーと選択・無効状態、縦/左右横持ち、撮影中/録画中/エラーとBack/AF遮断を確認。
+**Independent Test**: ISO/SSの2キーと選択・無効状態、縦/左右横持ち、撮影中/録画中/エラーとBack/AF遮断を確認。他キーは既存表示/挙動を維持。
 
-- [x] T006 [US2] 72dpキーのラベル/値/単位/タグ・選択背景/3dp線を app/src/main/java/dev/cinematic/p0/ExposureControls.kt に実装する。(FR-004/005)
-- [ ] T007 [US2] app/src/main/java/dev/cinematic/p0/CaptureScreen.kt へ接続しLOOK無効、状態区別、回転、既存tap遮断を維持する。(FR-004/005/006)
+- [x] T006 [US2] ISO/SSの72dpキー用ラベル/値/単位/タグ・選択背景/3dp線を app/src/main/java/dev/cinematic/p0/ExposureControls.kt に実装する。(FR-004/005)
+- [ ] T007 [US2] app/src/main/java/dev/cinematic/p0/CaptureScreen.kt のISO/SSへ接続し他キーの現行動作、状態区別、回転、既存tap遮断を維持する。(FR-004/005/006)
 
 ## Phase 5: Polish
 

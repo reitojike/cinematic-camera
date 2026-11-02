@@ -4,7 +4,7 @@
 
 ## Summary
 
-ISO/SSのSliderを現在値中央の選択スケールに置換し、既存selectExposureへ即時委譲する。撮影キーを採用稿の文字階層・タグ・背景に合わせる。
+ISO/SSのSliderを現在値中央の選択スケールに置換し、既存selectExposureへ即時委譲する。ISO/SHUTTERの2キーだけ採用稿の文字階層・タグ・背景に合わせ、他キーとルーラーは現行を維持する。
 
 ## Technical Context
 
