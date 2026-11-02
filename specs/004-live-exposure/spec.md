@@ -32,6 +32,7 @@
 - **FR-003**: 片方編集時は最新待機→送信→受付→AUTO実測の順でpairを作る。AUTO起点は最寄り合法候補へ量子化、実測不明なら値を創作しない。
 - **FR-004**: 操作tokenはbinding epochとは独立。期限/失敗後の古いclear→set→EVや受付/保存を拒否する。
 - **FR-005**: 受付と実測を分ける。ハードウェア量子化による差を許容し、要求ns完全一致を完了条件にしない。
+- **FR-007**: UNKNOWN/旧epoch/受付時刻不明では旧受付と同値でも再送する。既知の要求露光はcamera ID別のメモリ内期限hintとして再bindを越えて保持し、同cameraのclear/新露光受付後のみ短縮する。hintを実測/現在設定/保存設定として扱わない。
 - **FR-006**: 露出AUTOによるWB/MF保持、全reset、録画中操作禁止、RAW原本/保存を維持する。
 ### Key Entities
 標準段階、合法range、完全pair、送信中/最新待機、操作token/deadline、receiptとCaptureResult。

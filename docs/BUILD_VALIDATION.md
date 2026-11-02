@@ -154,3 +154,10 @@ CameraX 1.6.2公開SessionConfig.setViewPort/Recorder.setAspectRatio/Preview Res
 設定/診断の背景touch shieldはcontrols/scrollの背後に配置し、Previewのcallback guardとaccessibility非表示を併用。通常/設定ともFIT_CENTERへ固定し、過去のFIT_START水平整列制約と設定縮小はこの候補で置換する。
 Spec Kit 005のspec/plan/research/data-model/contracts/quickstart/tasks、setup-plan/setup-tasks/check-prerequisitesとread-only整合分析を実施。FR6件/SC2件はtasksに対応、未解決の仕様矛盾なし。実機ACはtasks T012/T013として未完了。
 実機撮影/録音/インストールなし。Preview/MP4四辺の一致、HDR/quality/fps全候補、4方向の画角・出力、設定scroll/touch/Back/TalkBack、STILL原本の端末上の保持は未検証。bound geometryと実MP4 metadataを区別し、今回の機械検証を実機合格としない。
+
+## 長秒からの復旧（Issue #37 follow-up）
+
+assembleDebug/testDebugUnitTest/lintDebug成功（53秒）。単体73件、failure/error/skip 0。lint errors 0 / warnings 14 / hints 2、既存件数から増加なし。
+15s要求のtimeout後に旧受付pairへ戻す再送、旧epoch/UNKNOWN/受付時刻なしの重複判定、queued重複抑止、camera別の長秒期限hintとAUTO clear/短露光受付後の更新を自動検証した。
+期限hintはメモリ内の保守的な待ち予算のみで、現在センサー状態や実測の証拠ではない。既知の長秒をstop/rebindで失わず、別cameraへ混用しない。
+添付の正規転送は再準備後1回再試行しても失敗し、実画像/動画/ログは未確認。実機の15s非反映の直接原因と修正効果は未検証。repeating request自体の長秒によるpreview低fpsや撮影/preview露出分離はこの修正で解決したと扱わない。実機T009は未完了。

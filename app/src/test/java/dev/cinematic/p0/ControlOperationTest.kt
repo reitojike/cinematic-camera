@@ -59,4 +59,52 @@ class ControlOperationTest {
         assertTrue(controlBudgetMs(30_000_000_000, 8_000_000, 33_333_333) >= 92_000)
         assertTrue(controlBudgetMs(null, null, null) >= 3000)
     }
+    @Test fun timeoutThenReturningToOldAcceptedPairSubmitsAgain() {
+        val old = ManualExposure(100, 8_000_000)
+        val long = ManualExposure(100, 15_000_000_000)
+        val queue = LatestExposureQueue()
+        val receipt = ControlReceipt(epoch = 2, phase = ControlPhase.ACCEPTED,
+            accepted = ControlSnapshot(exposure = old), acceptedAtMs = 1)
+        assertTrue(queue.redundant(old, receipt, 2, true))
+        queue.offer(2, long); val active = queue.take()!!
+        assertTrue(queue.redundant(long, receipt, 2, false))
+        val gate = ControlOperation()
+        val token = gate.begin(2, 0, controlBudgetMs(long.exposureNs, old.exposureNs, null))
+        assertTrue(gate.expire(token, 47_000)); queue.cancel()
+        val unknown = receipt.copy(phase = ControlPhase.UNKNOWN, acceptedAtMs = null)
+        assertFalse(queue.redundant(old, unknown, 2, false))
+        queue.offer(2, old); val retry = queue.take()!!
+        assertEquals(old, retry.pair)
+        assertNull(queue.complete(active)); assertEquals(retry, queue.active)
+    }
+    @Test fun onlyCurrentKnownReceiptCanSuppressIdleRetryAndQueuedDuplicatesStayBounded() {
+        val pair = ManualExposure(100, 8_000_000)
+        val receipt = ControlReceipt(epoch = 2, phase = ControlPhase.ACCEPTED,
+            accepted = ControlSnapshot(exposure = pair), acceptedAtMs = 1)
+        val queue = LatestExposureQueue()
+        assertFalse(queue.redundant(pair, receipt, 3, true))
+        assertFalse(queue.redundant(pair, receipt, 2, false))
+        assertFalse(queue.redundant(pair, receipt.copy(acceptedAtMs = null), 2, true))
+        assertTrue(queue.redundant(pair, receipt.copy(phase = ControlPhase.REJECTED), 2, true))
+        for (phase in listOf(ControlPhase.UNKNOWN, ControlPhase.UNBOUND, ControlPhase.PENDING))
+            assertFalse(queue.redundant(pair, receipt.copy(phase = phase), 2, true))
+        queue.offer(2, pair); val queued = queue.queued
+        assertTrue(queue.redundant(pair, receipt, 2, false))
+        assertEquals(queued, queue.queued)
+    }
+    @Test fun sameCameraRebindRetainsLongDeadlineUntilClearIsAccepted() {
+        val history = ExposureDurations()
+        history.submitted("wide", 15_000_000_000)
+        // No deletion on stop/rebind: the provider may reuse the same CameraControl.
+        assertEquals(47_000L, controlBudgetMs(null, history.previous("wide"), null))
+        assertNull(history.previous("ultrawide"))
+        history.submitted("wide", 8_000_000) // Short submission alone does not prove old long options are gone.
+        assertEquals(15_000_000_000, history.previous("wide"))
+        history.accepted("wide", null)
+        assertNull(history.previous("wide"))
+        assertEquals(3_002L, controlBudgetMs(null, history.previous("wide"), null))
+        history.submitted("wide", 15_000_000_000)
+        history.accepted("wide", 8_000_000)
+        assertEquals(8_000_000L, history.previous("wide"))
+    }
 }
