@@ -1,6 +1,6 @@
 package dev.cinematic.p0
 
-/** Accepted API settings are history, never proof of sensor output. */
+/** A desired or runtime snapshot. Only a receipt explicitly records API acceptance, not output proof. */
 data class ControlSnapshot(
     val exposure: ManualExposure? = null,
     val evIndex: Int? = null,
