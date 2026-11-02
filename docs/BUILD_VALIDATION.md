@@ -130,3 +130,11 @@ PreviewViewをパネル切替で維持する構造を静的確認。実機での
 canonicalレビューによるUI追加確認: Android9の共有保存非対応時はシャッター無効＋理由表示。Recorder準備/開始失敗時はdraftを保持し、実Start通知後だけ破棄する回帰を追加した。
 通常時のCINE状態バー・選択操作帯のscrim重ね合わせは採用仕様であり、設定シートと画像を重ねない規則とは別である。
 通常FIT_STARTは十分な高さのPixel9a基準で採用位置へ配置するが、狭いウィンドウで画像が横幅を満たさない場合の水平中央整列は未確認・既知の表示制約とする。
+
+## 撮影UI US3: 配置固定と要素/出力回転（2026-11-02）
+
+`feat/005-capture-orientation`の候補でassembleDebug/testDebugUnitTest/lintDebug成功（統合候補56秒）。単体57件、失敗/エラー/skip 0。
+lint 0 errors、11 warnings（既存9＋採用portrait固定に対するLockedOrientationActivity/DiscouragedApi）、boxing hint 2。
+向き固定の警告はユーザー採用仕様に対応し、検査は無効化しない。大画面/OEMの回転制御、実機上の継続は保証しない。
+4方向の符号/境界hysteresis/最短アニメーション/全撮影・録画gateの出力固定を自動検証。
+CameraX 1.6.2公開targetRotation APIのみ使用し、Previewと測光座標は回転しない。実機のJPEG/DNG/MP4向き、回転中録音、タッチ配置、可読性は未確認。

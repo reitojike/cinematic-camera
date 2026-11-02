@@ -11,10 +11,10 @@
 - [x] T005 [US2] app/src/main/java/dev/cinematic/p0/CaptureScreen.kt と MainActivity.kt にレール/ルーラー/設定/診断/Backを実装（FR-003/004/005/006）。
 - [x] T006 [US2] app/src/test/java/dev/cinematic/p0/CaptureLayoutTest.kt にFITと狭い画面/insets検証を追加（SC-002）。
 ## Phase 5: US3 — 回転
-- [ ] T007 [US3] app/src/main/java/dev/cinematic/p0/CaptureOrientation.kt と AndroidManifest.xml で物理向きと固定配置/撮影方向を実装（FR-007）。
-- [ ] T008 [US3] app/src/test/java/dev/cinematic/p0/CaptureOrientationTest.kt で境界/短経路/録画固定を検証（SC-003自動部分）。
+- [x] T007 [US3] app/src/main/java/dev/cinematic/p0/CaptureOrientation.kt と AndroidManifest.xml で物理向きと固定配置/撮影方向を実装（FR-007）。
+- [x] T008 [US3] app/src/test/java/dev/cinematic/p0/CaptureOrientationTest.kt で境界/短経路/録画固定を検証（SC-003自動部分）。
 ## Phase 6: Validation
-- [ ] T009 docs/BUILD_VALIDATION.md にbuild/unit/lint結果と未実機項目を記録、最終head独立/canonical/CIをPRに確認（SC-004）。
+- [x] T009 docs/BUILD_VALIDATION.md にbuild/unit/lint結果と未実機項目を記録（最終head独立/canonical/CIは各PR上で管理、SC-004）。
 ## Dependencies / parallel examples
 US1→US2→US3。各USの純粋モデルテストと既存API調査は並行可能。共有CameraProbeへの編集は直列。
 ## Implementation strategy

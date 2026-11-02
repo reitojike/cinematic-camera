@@ -82,6 +82,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     var photoStage by mutableStateOf(PhotoStage.IDLE); private set
     var lastFailure by mutableStateOf<String?>(null); private set
     var thermalSeverity by mutableIntStateOf(-1); private set
+    var outputOrientation by mutableStateOf(OutputOrientation()); private set
     val currentEpoch get() = epoch
     val acceptedControls get() = ControlSnapshot(appliedExposure, acceptedEv, overrides, autoLocks)
     val activeVideoChoice get() = cineSession?.choice
@@ -116,6 +117,28 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     init {
         log.onLine = { line -> main.execute { if (!closed) lines = (lines + "\n" + line).takeLast(16000) } }
         observeThermals()
+    }
+
+    fun setDeviceRotation(rotation: Int) {
+        if (closed) return
+        outputOrientation = outputOrientation.observe(rotation)
+        applyOutputOrientation()
+    }
+    private fun applyOutputOrientation(): Boolean {
+        if (closed) return false
+        val target = outputOrientation.target(activeCaptureToken != null, recordingBusy) ?: return true
+        if (imageCapture == null && cineSession == null) return false
+        return try {
+            // PreviewView owns preview orientation and metering coordinates. Rotate only output use cases.
+            imageCapture?.targetRotation = target
+            cineSession?.video?.targetRotation = target
+            outputOrientation = outputOrientation.copy(applied = target)
+            true
+        } catch (failure: Exception) {
+            lastFailure = "撮影の向きを適用できません: ${failure.message}"
+            event("ERROR output rotation ${failure.javaClass.simpleName}: ${failure.message}")
+            false
+        }
     }
 
     private fun observeThermals() {
@@ -171,6 +194,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             controlSnapshot=$overrideStatus
             autoLocks=$lockStatus
             focus=$focusStatus EV=$evStatus thermal=$thermalStatus
+            outputOrientation=$outputOrientation
             observedCaptureResult=$measured
             still=$stillResolution
             video=$videoSelection
@@ -265,6 +289,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         if (!owner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
             event("Recording requires a visible activity; retry Record after resume"); return
         }
+        if (!applyOutputOrientation()) return
+        log.write("VIDEO_ORIENTATION startRotation=${outputOrientation.applied}; fixed until completion")
         cine.start(session.recorder, audioWanted, "${session.choice.label} exposure=[$desired] overrides=[$overrides] requestedLocks=[$autoLocks]")
     }
     fun stopRecording() { cine.stop("user") }
@@ -275,6 +301,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     fun onBackground() { cine.stop("activity background; no background recording") }
     private fun onCineChanged() {
         if (!closed && pendingStop && !recordingBusy) { pendingStop = false; stop() }
+        else if (!closed && !recordingBusy) applyOutputOrientation()
     }
 
     fun focusCenter() {
@@ -511,6 +538,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         val previewView = view ?: return
         val generation = ++epoch
         sample = null; acceptedEv = null; photoStage = PhotoStage.IDLE; focusFeedback = null
+        outputOrientation = outputOrientation.copy(applied = null)
         controlReceipt = ControlReceipt(epoch = epoch, sequence = controlReceipt.sequence)
         val settingsKey = exposureKey()
         requestedIso = preferences.text("$settingsKey/iso", "100")
@@ -624,6 +652,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                 }
                 check(cineSession != null) { "No supported CINE combination: ${lastFailure?.message ?: "CameraX returned no combination-specific fps/session support"}" }
             }
+            check(applyOutputOrientation()) { "Output orientation unavailable" }
             bound = true
             camera!!.cameraInfo.cameraState.observe(owner) { state ->
                 if (generation == epoch && !closed) {
@@ -647,6 +676,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         if (recordingBusy) { pendingStop = true; cine.stop("preview Stop"); return }
         ++epoch
         sample = null; acceptedEv = null; photoStage = PhotoStage.IDLE; focusFeedback = null
+        outputOrientation = outputOrientation.copy(applied = null)
         controlReceipt = ControlReceipt(epoch = epoch, sequence = controlReceipt.sequence)
         busy = false
         controlReady = false
@@ -739,6 +769,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         if (!sharedSaveSupported) { event("UNSUPPORTED shared image saving requires Android 10+"); return }
         if (!controlReady) { event("Capture disabled: exposure control not accepted; use AUTO or stop/restart"); return }
         val capture = imageCapture ?: return
+        if (!applyOutputOrientation()) return
+        val captureRotation = outputOrientation.applied
         val token = UUID.randomUUID().toString()
         val appCaptureStart = SystemClock.elapsedRealtime()
         val generation = epoch
@@ -759,6 +791,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             log.write("CAPTURE_TIMING token=$token failureAfterAppRequestMs=${SystemClock.elapsedRealtime() - appCaptureStart}; not sensor shutter lag")
             if (isCurrent()) {
                 busy = false; activeCaptureToken = null; photoStage = PhotoStage.FAILED
+                applyOutputOrientation()
                 error("capture/shared save token=$token", e)
             } else log.write("CAPTURE_LATE_ERROR token=$token ${e.javaClass.simpleName}: ${e.message}")
         }
@@ -778,7 +811,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             var terminal = false
             var publishing = false
             busy = true; activeCaptureToken = token
-            log.write("CAPTURE_BEGIN token=$token id=$cameraId format=${formatName(captureFormat)} desired=[$desired] selectedResolution=${capture.resolutionInfo?.resolution} target=${PhotoPublisher.RELATIVE_PATH}")
+            log.write("CAPTURE_BEGIN token=$token id=$cameraId format=${formatName(captureFormat)} targetRotation=$captureRotation desired=[$desired] selectedResolution=${capture.resolutionInfo?.resolution} target=${PhotoPublisher.RELATIVE_PATH}")
             val callback = object : ImageCapture.OnImageSavedCallback {
                 private fun fail(e: Exception) {
                     if (terminal) { log.write("CAPTURE_LATE_CALLBACK_ERROR token=$token afterAppRequestMs=${SystemClock.elapsedRealtime() - appCaptureStart} ${e.javaClass.simpleName}"); return }
@@ -806,6 +839,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                                 val mediaWorkStart = SystemClock.elapsedRealtime()
                                 sources.forEach { source ->
                                     try {
+                                        val orientationExif = android.media.ExifInterface(source.file)
+                                        log.write("IMAGE_ORIENTATION token=$token requestedTargetRotation=$captureRotation actualExifOrientation=${orientationExif.getAttributeInt(android.media.ExifInterface.TAG_ORIENTATION, android.media.ExifInterface.ORIENTATION_UNDEFINED)}; viewerValidation=UNVERIFIED")
                                         if (source.format == PhotoFormat.JPEG) {
                                             val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
                                             android.graphics.BitmapFactory.decodeFile(source.file.absolutePath, bounds)
@@ -825,7 +860,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                                 main.execute {
                                     log.write("CAPTURE_TIMING token=$token allFileCallbacksAfterAppRequestMs=${allCallbacksAt - appCaptureStart} ioQueueMs=${mediaWorkStart - allCallbacksAt} metadataAndPublishWorkMs=${publishedAt - mediaWorkStart} appRequestToPublishedMs=${publishedAt - appCaptureStart} publishToUiNotificationMs=${SystemClock.elapsedRealtime() - publishedAt}; app stages only, not sensor shutter lag")
                                     val current = isCurrent()
-                                    if (current) { busy = false; activeCaptureToken = null; photoStage = PhotoStage.SAVED }
+                                    if (current) { busy = false; activeCaptureToken = null; photoStage = PhotoStage.SAVED; applyOutputOrientation() }
                                     photos.forEach { photo ->
                                         val message = "${if (current) "SAVED" else "CAPTURE_LATE_SAVED"} token=$token mime=${photo.format.mimeType} uri=${photo.uri} name=${photo.name} bytes=${photo.bytes} folder=${PhotoPublisher.RELATIVE_PATH} viewerValidity=UNVERIFIED"
                                         if (current) event(message) else log.write(message)
