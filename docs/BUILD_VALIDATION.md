@@ -126,3 +126,11 @@ lintは0 errors、既存warning 9 / boxing hint 2。FIT・狭い画面の設定�
 独立レビューでCamera権限の復帰時再確認、露出AUTOの復旧ガード、マイク拒否説明・端末設定で許可した後の拒否表示解除を修正。
 PreviewViewをパネル切替で維持する構造を静的確認。実機での配置・タッチ・文字の視認性・センサー反映は未確認。
 レイアウト単体テストは幾何と状態遷移を保証し、実描画や機種ごとのinsetsを保証するものではない。
+
+## 撮影UI US3: 配置固定と要素/出力回転（2026-11-02）
+
+`feat/005-capture-orientation`の候補でassembleDebug/testDebugUnitTest/lintDebug成功（55秒）。単体55件、失敗/エラー/skip 0。
+lint 0 errors、11 warnings（既存9＋採用portrait固定に対するLockedOrientationActivity/DiscouragedApi）、boxing hint 2。
+向き固定の警告はユーザー採用仕様に対応し、検査は無効化しない。大画面/OEMの回転制御、実機上の継続は保証しない。
+4方向の符号/境界hysteresis/最短アニメーション/全撮影・録画gateの出力固定を自動検証。
+CameraX 1.6.2公開targetRotation APIのみ使用し、Previewと測光座標は回転しない。実機のJPEG/DNG/MP4向き、回転中録音、タッチ配置、可読性は未確認。
