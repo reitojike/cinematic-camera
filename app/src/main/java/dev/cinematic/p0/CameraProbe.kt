@@ -54,7 +54,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     private var photoDeadline: Runnable? = null
     private var previewSeeded = false
     private var pendingForegroundBind = false
-    private var pendingBindControls: ControlSnapshot? = null
+    private val pendingBindControls = PendingBindControls()
     private var lastPreviewMinFrameNs: Long? = null
     private val operationReceipt get() = if (runtimeTarget == RuntimeTarget.CAPTURE) stillExposure?.captureReceipt ?: controlReceipt else controlReceipt
     private fun operationReceipt(value: ControlReceipt) {
@@ -845,6 +845,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         outputOrientation = outputOrientation.copy(applied = null)
         controlReceipt = ControlReceipt(epoch = epoch, sequence = controlReceipt.sequence)
         val settingsKey = exposureKey()
+        val restoreForThisBind = pendingBindControls.take(settingsKey, generation)
         requestedIso = preferences.text("$settingsKey/iso", "100")
         requestedMs = preferences.text("$settingsKey/ms", "10")
         requestedFocus = preferences.text("$settingsKey/focusDraft", "0")
@@ -1020,11 +1021,12 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             event("BOUND id=$id mode=$mode format=${formatName(format)}; clearing Interop before capture")
             // The provider may reuse a CameraControl whose Interop options survive unbind/rebind.
             // Explicitly clear them and wait for acceptance before enabling capture.
-            setExposure(remember = false, restoreSaved = true)
+            setExposure(remember = false, restoreSaved = true, bindRestore = restoreForThisBind)
         } catch (e: Exception) { stillExposure = stillExposure?.unknown("bind failed: ${e.message}"); error("bind id=$id mode=$mode format=${formatName(format)} (see selection/fallback log)", e) }
     }
 
     fun stop() {
+        pendingBindControls.clear()
         clearStillExposure()
         if (recordingBusy) { pendingStop = true; cine.stop("preview Stop"); return }
         invalidateControl(); clearLiveExposure()
@@ -1057,13 +1059,14 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         // A static manual Preview seed would reappear after clear; replace that use case once.
         if (mode == CaptureMode.STILL && (previewSeeded || camera == null)) {
             val key = exposureKey()
-            pendingBindControls = autoControlSnapshot(selectedControls, preferences.text("$key/ev", "0").toIntOrNull() ?: 0, reset)
+            pendingBindControls.offer(key, epoch + 1,
+                autoControlSnapshot(selectedControls, preferences.text("$key/ev", "0").toIntOrNull() ?: 0, reset))
             preferences.saveExposure(key, null, null)
             if (reset) { saveOverrides(key, SensorOverrides()); preferences.put("$key/ev", "0") }
             clearStillExposure(); bind()
         } else setExposure(reset = reset)
     }
-    fun setExposure(iso: String? = null, ms: String? = null, remember: Boolean = true, restoreSaved: Boolean = false, reset: Boolean = false, live: ExposureEntry? = null) {
+    fun setExposure(iso: String? = null, ms: String? = null, remember: Boolean = true, restoreSaved: Boolean = false, reset: Boolean = false, live: ExposureEntry? = null, bindRestore: ControlSnapshot? = null) {
         if (captureBlocksControl() || (busy && live == null) || recordingBusy) return
         if (live != null && (live.epoch != epoch || exposureQueue.active != live)) return
         val c = camera ?: return
@@ -1085,17 +1088,17 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                 }
             }
             val manual = value != null
-            val restored = if (restoreSaved) pendingBindControls.also { pendingBindControls = null } else null
+            val restored = if (restoreSaved) bindRestore else null
             val auto = autoControlSnapshot(selectedControls, preferences.text("$key/ev", "0").toIntOrNull() ?: 0, reset)
             val extras = restored?.overrides ?: if (restoreSaved) savedOverrides(key) else if (manual) overrides else auto.overrides
             val targetLocks = restored?.locks ?: if (restoreSaved) AutoLocks() else if (manual)
                 autoLocks.forControls(true, extras.whiteBalance) else auto.locks
             cancelPreviewWait()
-            val request = if (manual && mode == CaptureMode.STILL) selectStillTarget(value!!, extras, targetLocks)
+            val request = if (manual && mode == CaptureMode.STILL) selectStillTarget(value, extras, targetLocks)
                 else ControlSnapshot(value, if (manual) acceptedEv else auto.evIndex, extras, targetLocks).also { stillExposure = null }
             val kind = if (manual && mode == CaptureMode.STILL) RuntimeTarget.PREVIEW else RuntimeTarget.GENERAL
             val generation = epoch
-            val label = if (manual) "撮影target ISO=" + value!!.iso + " ns=" + value.exposureNs
+            val label = if (manual) "撮影target ISO=" + value.iso + " ns=" + value.exposureNs
                 else if (reset) "AUTO reset: 全制御解除" else "AUTO露出: 独立制御を保持"
             desired = label + "; runtime=" + request.exposure + " PENDING"
             beginControl(request, kind)
@@ -1216,31 +1219,27 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             }
             staging = sources.map { it.file }
             val expectedFormats = sources.map { if (it.format == PhotoFormat.DNG) ImageFormat.RAW_SENSOR else ImageFormat.JPEG }.toSet()
-            val received = mutableSetOf<Int>()
-            var terminal = false
-            var publishing = false
+            val callbacks = PhotoCallbackGate(expectedFormats)
             busy = true; activeCaptureToken = token
             log.write("STILL_CAPTURE_TARGET token=$token fixed=${captureSettings?.plan?.capture} previewTarget=${captureSettings?.plan?.preview}; no per-file sensor correspondence assumed")
             log.write("CAPTURE_BEGIN token=$token id=$cameraId format=${formatName(captureFormat)} targetRotation=$captureRotation desired=[$desired] selectedResolution=${capture.resolutionInfo?.resolution} target=${PhotoPublisher.RELATIVE_PATH}")
             val callback = object : ImageCapture.OnImageSavedCallback {
                 private fun fail(e: Exception) {
-                    if (terminal) { log.write("CAPTURE_LATE_CALLBACK_ERROR token=$token afterAppRequestMs=${SystemClock.elapsedRealtime() - appCaptureStart} ${e.javaClass.simpleName}"); return }
-                    terminal = true
+                    if (!callbacks.fail()) { log.write("CAPTURE_LATE_CALLBACK_ERROR token=$token afterAppRequestMs=${SystemClock.elapsedRealtime() - appCaptureStart} ${e.javaClass.simpleName}"); return }
                     mediaIo.execute { clean(staging) }
                     failed(e)
                 }
                 override fun onImageSaved(result: ImageCapture.OutputFileResults) {
                     try {
-                        if (terminal) {
-                            log.write("CAPTURE_IGNORED_FILE_CALLBACK token=$token imageFormat=${result.imageFormat} afterAppRequestMs=${SystemClock.elapsedRealtime() - appCaptureStart}; terminal already handled")
-                            if (!publishing) mediaIo.execute { clean(staging) }
+                        val outcome = callbacks.saved(result.imageFormat)
+                        if (outcome == PhotoCallbackOutcome.IGNORED) {
+                            log.write("CAPTURE_IGNORED_FILE_CALLBACK token=$token imageFormat=${result.imageFormat} terminal=${callbacks.terminal} publishing=${callbacks.publishing}")
+                            // A duplicate before the pair completes still shares the live staging files.
+                            if (callbacks.terminal && !callbacks.publishing) mediaIo.execute { clean(staging) }
                             return
                         }
-                        check(result.imageFormat in expectedFormats) { "Unexpected camera output format ${result.imageFormat}" }
-                        if (!received.add(result.imageFormat)) return
                         log.write("CAPTURE_FILE_CALLBACK token=$token imageFormat=${result.imageFormat} afterAppRequestMs=${SystemClock.elapsedRealtime() - appCaptureStart}; includes camera/file/callback delivery, not shutter lag")
-                        if (received != expectedFormats) return
-                        terminal = true; publishing = true
+                        if (outcome == PhotoCallbackOutcome.PARTIAL) return
                         if (isCurrent()) {
                             cancelPhotoDeadline()
                             photoStage = PhotoStage.SAVING
@@ -1313,6 +1312,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     }
 
     fun close() {
+        pendingBindControls.clear()
         clearStillExposure()
         invalidateControl(); clearLiveExposure()
         closed = true; controlReady = false; activeCaptureToken = null; ++epoch

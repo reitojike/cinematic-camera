@@ -8,6 +8,18 @@ data class ControlSnapshot(
     val locks: AutoLocks = AutoLocks(),
 )
 
+/** One binding attempt only; failed/cancelled AUTO rebinds cannot leak controls to another lens/mode. */
+class PendingBindControls {
+    private data class Pending(val key: String, val epoch: Int, val controls: ControlSnapshot)
+    private var pending: Pending? = null
+    fun offer(key: String, nextEpoch: Int, controls: ControlSnapshot) { pending = Pending(key, nextEpoch, controls) }
+    fun take(key: String, epoch: Int): ControlSnapshot? {
+        val value = pending; pending = null
+        return value?.takeIf { it.key == key && it.epoch == epoch }?.controls
+    }
+    fun clear() { pending = null }
+}
+
 enum class ControlPhase { UNBOUND, PENDING, ACCEPTED, REJECTED, UNKNOWN }
 data class ControlReceipt(
     val epoch: Int = 0, val sequence: Long = 0,

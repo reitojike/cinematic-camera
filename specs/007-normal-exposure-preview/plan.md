@@ -33,10 +33,10 @@ research/data model/validationを以下へ統合し、外部APIを追加しな�
 ### Source Code (repository root)
 
 - `app/src/main/java/dev/cinematic/p0/ExposureSimulationPolicy.kt`: 既存二段階計算。
-- `app/src/main/java/dev/cinematic/p0/ExposureSimulationRun.kt`: 要求/受付/実測/撮影snapshotと状態遷移。
+- `app/src/main/java/dev/cinematic/p0/StillExposureState.kt`: 通常要求/受付/実測/撮影snapshotと状態遷移。既存PoCのExposureSimulationRunとは独立する。
 - `app/src/main/java/dev/cinematic/p0/CameraProbe.kt`: builder/runtime設定、latest-wins、撮影専有phase、世代破棄。
 - `app/src/main/java/dev/cinematic/p0/CaptureScreen.kt`: 通常自動適用、busy、待ち理由と区別表示。
-- `app/src/test/java/dev/cinematic/p0/ExposureSimulationPolicyTest.kt` / `ExposureSimulationRunTest.kt`: 境界/世代/競合のunit。
+- `app/src/test/java/dev/cinematic/p0/ExposureSimulationPolicyTest.kt` / `StillExposureStateTest.kt` / `ControlOperationTest.kt`: 境界/世代/競合/最新要求置換のunit。`StillExposurePresentation.kt` / `StillExposurePresentationTest.kt`は表示の意味を分離する。
 
 **Structure Decision**: 既存の単一appと責務を再利用し、汎用camera abstractionや別moduleを追加しない。
 
@@ -63,7 +63,7 @@ research/data model/validationを以下へ統合し、外部APIを追加しな�
 ## Phase 1: Data Model / 状態設計
 
 - `capture target`: 通常のISO/SSとrevision。preview受付値と呼ばない。
-- `preview request`: capture revision、session epoch、preview request id、policy stageと補償pair。連続編集はpending最新1件に集約する。
+- `preview request`: capture revision、session epoch、preview request id、policy stageと補償pair。連続編集はpending最新1件に集約し、32msのdispatchで旧in-flight要求を置換する。旧FutureのACKを待って次要求を送るqueueにはしない。
 - `preview receipt`: 同一epoch/request idのAPI完了だけ。旧完了は最新receiptへ昇格しない。
 - `observation`: epoch/frame/intent、実測ISO/SS/frame duration/boost。撮影intentはpreview実測へ採用しない。値から一対一のファイル対応や一致を推定しない。
 - `capture snapshot`: shutter時のcapture revision/pair、処理epoch、formatごとのterminal。撮影開始後にpreview変更で更新しない。
@@ -72,14 +72,14 @@ research/data model/validationを以下へ統合し、外部APIを追加しな�
 ### Invariants
 
 1. current epoch/revision/requestに合わないcallbackは表示/次の撮影/保存成功へ採用しない。
-2. CAPTURE_PREPARING/CAPTURING/UNKNOWNでは専有を保持し、既存busy UIで競合編集/連打を止める。terminalまたは明示stopの世代切断で解放する。
+2. CAPTURE_PREPARING/CAPTURING/UNKNOWNでは専有を保持し、既存busy UIで競合編集/連打を止める。takePicture発行後はterminalまたは明示stopの世代切断まで保持する。発行前の受付失敗は撮影未開始として、旧control tokenを無効化してpreview ACK/新実測を得てから解放できる。
 3. 全format terminalを一度だけ消費し、preview復帰失敗を撮影保存失敗と混同しない。復帰先は保持済みの最新通常targetから再計算する。
-4. 背景化は旧epochを先に無効化し、foregroundで現targetから安全に構成する。CINEへ固定撮影/補償settingsを持ち込まない。
+4. 通常manualの背景化は明示stopでepochを無効化し、保持したInterop optionsをclearしてunbindする。foregroundで保存した最新通常targetから安全にbindする。bind前も旧held optionsを同期clearし、旧Futureの成功を新sessionの証拠にしない。CINEへ固定撮影/補償settingsを持ち込まない。
 5. 無効/未知rangeは送信しない。第2段階の正当な長めpreviewと撮影long pair混入を診断上区別する。
 
 ## Validation / 修正版の限定手順
 
-機械検証は `./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug --no-daemon`（Windowsは `.\gradlew.bat`）と `git diff --check`。初期/再bind builderの露出options、通常編集の再bind呼出し、takePicture後timeoutの専有保持も静的確認する。
+機械検証は `./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug --no-daemon`（Windowsは `.\gradlew.bat`）と `git diff --check`。初期/再bind builderの露出options、通常編集の再bind呼出し、takePicture後timeoutの専有保持も静的確認する。AUTO/背景復帰はautoControlSnapshot、PendingBindControlsのkey/epoch/one-shot、StillExposureStateのsuspend/epoch、latest-winsの純粋境界unitと、CameraX 1.6.2のseed/clear/stop/foreground標準API callsiteの静的照合で機械側を確認する。新Android mock基盤や実装を写すだけのテストは導入せず、CameraXの実呼出順・実復帰は実機ACへ分離する。
 
 実機操作はユーザー実施。v13の追加確認を前提にせず修正版だけで以下を確認する。現時点は全項目未確認。
 
