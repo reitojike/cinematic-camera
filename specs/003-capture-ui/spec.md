@@ -9,6 +9,9 @@
 
 ISO/SHUTTERのpair適用/取消式は[004即時露出](../004-live-exposure/spec.md)で上書きする。MFの適用式は維持。
 
+設定時にpreviewを縮小して残り領域へFITする規則は[005 CINE画角・固定Preview](../005-cine-framing/spec.md)で、
+寸法/画角/sessionを変えない設定overlayへ置換する。本書の旧規則は履歴として保持する。005はDraftでありmergeまでmainの契約を変更しない。
+
 ## User Scenarios & Testing
 
 ### User Story 1 - 安心して設定を編集する (Priority: P1)

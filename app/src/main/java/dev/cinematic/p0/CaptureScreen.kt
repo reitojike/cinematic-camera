@@ -21,6 +21,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -34,6 +35,9 @@ import java.util.Locale
 
 private val LocalCaptureAngle = staticCompositionLocalOf { 0f }
 private val LocalCaptureHorizontal = staticCompositionLocalOf { false }
+private fun Modifier.blockPanelBackground(): Modifier = pointerInput(Unit) {
+    awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } }
+}
 @Composable private fun Modifier.sensorRotation(): Modifier {
     val angle = LocalCaptureAngle.current
     return graphicsLayer { rotationZ = angle }
@@ -69,8 +73,10 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
     val animatedAngle by animateFloatAsState(orientation.uiAngle, tween(250), label = "capture-elements")
     val captureReady = editable && probe.sharedSaveSupported
     val receipt = probe.controlReceipt
+    val focusAllowed by rememberUpdatedState(panel == CapturePanel.NONE && editor.submitting == null)
     LaunchedEffect(probe.currentEpoch) { editor = editor.session(probe.currentEpoch) }
     LaunchedEffect(receipt) { editor = editor.complete(receipt) }
+    LaunchedEffect(panel, probe.recordingStage) { panel = recordingPanel(panel, probe.recordingStage) }
     var seenRecording by remember { mutableLongStateOf(probe.recordingStartSequence) }
     LaunchedEffect(probe.recordingStartSequence) {
         if (seenRecording != probe.recordingStartSequence) {
@@ -111,19 +117,24 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
 
     CompositionLocalProvider(LocalCaptureAngle provides animatedAngle, LocalCaptureHorizontal provides orientation.horizontal) {
     BoxWithConstraints(Modifier.fillMaxSize().background(Ink).safeDrawingPadding()) {
-        val settingsHeight = CaptureLayout.sheetHeight(maxHeight.value).dp
+        val dimensions = CaptureLayout.measure(maxHeight.value, panel)
         Column(Modifier.fillMaxSize()) {
-            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().background(Color.Black)) {
+            BoxWithConstraints(Modifier.height(dimensions.previewHeight.dp).fillMaxWidth().background(Color.Black)) {
                 // Keep the same PreviewView mounted while panels/rulers change: no UI-induced camera rebind.
-                val previewTop = if (probe.mode == CaptureMode.STILL || panel == CapturePanel.SETTINGS) 44.dp else 0.dp
+                val previewTop = CaptureLayout.previewTop(probe.mode).dp
                 if (permission) AndroidView(factory = { context ->
                     PreviewView(context).also {
                         it.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                        it.scaleType = PreviewView.ScaleType.FIT_START
-                        it.installFocusTap { x, y -> if (panel == CapturePanel.NONE && editor.submitting == null) probe.focusAt(x, y) }
+                        it.scaleType = PreviewView.ScaleType.FIT_CENTER
+                        it.installFocusTap(onCenter = { if (focusAllowed) probe.focusCenter() }) { x, y ->
+                            if (focusAllowed) probe.focusAt(x, y)
+                        }
                         probe.initialize(it)
                     }
-                }, update = { it.scaleType = if (panel == CapturePanel.SETTINGS) PreviewView.ScaleType.FIT_CENTER else PreviewView.ScaleType.FIT_START },
+                }, update = {
+                    it.importantForAccessibility = if (panel == CapturePanel.NONE) android.view.View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
+                        else android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                },
                     modifier = Modifier.fillMaxSize().padding(top = previewTop))
                 if (probe.recordingBusy) Box(Modifier.fillMaxSize().border(1.dp, Rec))
                 val feedback = probe.focusFeedback
@@ -194,25 +205,34 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                         }
                     }
                 }
-            }
-            if (panel == CapturePanel.SETTINGS) Column(Modifier.fillMaxWidth().height(settingsHeight).background(Sheet)) {
-                PanelHeader("撮影設定 · ${probe.mode}") { panel = CapturePanel.NONE; confirmReset = false }
-                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
-                    Settings(probe, unlocked, diagnostics = { panel = CapturePanel.DIAGNOSTICS }, reset = { confirmReset = true })
+                if (panel == CapturePanel.SETTINGS) Box(Modifier.align(Alignment.BottomCenter)
+                    .fillMaxWidth().height(dimensions.settingsHeight.dp).background(Sheet)) {
+                    // Sibling shield consumes blank space without cancelling child scroll gestures.
+                    Box(Modifier.matchParentSize().blockPanelBackground())
+                    Column(Modifier.fillMaxSize()) {
+                        PanelHeader("撮影設定 · ${probe.mode}") { panel = CapturePanel.NONE; confirmReset = false }
+                        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+                            Settings(probe, unlocked, diagnostics = { panel = CapturePanel.DIAGNOSTICS }, reset = { confirmReset = true })
+                        }
+                    }
                 }
             }
-            if (panel != CapturePanel.DIAGNOSTICS) CaptureBar(probe, captureReady,
-                shutter = {
+            CaptureBar(probe, captureReady, interactable = panel != CapturePanel.DIAGNOSTICS,
+                shutter = shutter@{
+                    if (panel == CapturePanel.DIAGNOSTICS) return@shutter
                     if (probe.recordingStage in setOf(RecordingStage.STARTING, RecordingStage.RECORDING)) probe.stopRecording()
                     else if (probe.mode == CaptureMode.STILL) { if (editor.dirty) notice = "受付値で撮影・未適用の編集は保持"; probe.capture() }
                     else record()
-                }, mode = { if (unlocked) { editor = editor.close(); probe.selectMode(if (probe.mode == CaptureMode.STILL) CaptureMode.CINE else CaptureMode.STILL) } },
-                placeholder = { notice = "最新写真ビューアは未実装です。端末のギャラリーで確認してください" })
+                }, mode = { if (panel != CapturePanel.DIAGNOSTICS && unlocked) { editor = editor.close(); probe.selectMode(if (probe.mode == CaptureMode.STILL) CaptureMode.CINE else CaptureMode.STILL) } },
+                placeholder = { if (panel != CapturePanel.DIAGNOSTICS) notice = "最新写真ビューアは未実装です。端末のギャラリーで確認してください" })
         }
-        if (panel == CapturePanel.DIAGNOSTICS) Column(Modifier.fillMaxSize().background(Ink)) {
-            PanelHeader("診断 · CameraX 1.6.2") { panel = CapturePanel.SETTINGS }
-            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Diagnostics(probe, unlocked && !reportPending, export)
+        if (panel == CapturePanel.DIAGNOSTICS) Box(Modifier.fillMaxSize().background(Ink)) {
+            Box(Modifier.matchParentSize().blockPanelBackground())
+            Column(Modifier.fillMaxSize()) {
+                PanelHeader("診断 · CameraX 1.6.2") { panel = CapturePanel.SETTINGS }
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Diagnostics(probe, unlocked && !reportPending, export)
+                }
             }
         }
     }
@@ -306,15 +326,15 @@ private fun keyValue(key: CaptureKey, editor: CaptureEditor, probe: CameraProbe)
     CaptureKey.LOOK -> "STD"
 }
 
-@Composable private fun CaptureBar(probe: CameraProbe, ready: Boolean, shutter: () -> Unit, mode: () -> Unit, placeholder: () -> Unit) {
-    Row(Modifier.fillMaxWidth().height(96.dp).background(Ink).padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+@Composable private fun CaptureBar(probe: CameraProbe, ready: Boolean, interactable: Boolean, shutter: () -> Unit, mode: () -> Unit, placeholder: () -> Unit) {
+    Row(Modifier.fillMaxWidth().height(CaptureLayout.CAPTURE_RAIL.dp).background(Ink).padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-            Box(Modifier.size(52.dp).border(1.dp, Muted, RoundedCornerShape(6.dp)).clickable(enabled = !probe.busy && !probe.recordingBusy, onClick = placeholder), contentAlignment = Alignment.Center) { Text("写真\n未実装", modifier = Modifier.sensorRotation(), fontSize = 11.sp, textAlign = TextAlign.Center, color = Muted) }
+            Box(Modifier.size(52.dp).border(1.dp, Muted, RoundedCornerShape(6.dp)).clickable(enabled = interactable && !probe.busy && !probe.recordingBusy, onClick = placeholder), contentAlignment = Alignment.Center) { Text("写真\n未実装", modifier = Modifier.sensorRotation(), fontSize = 11.sp, textAlign = TextAlign.Center, color = Muted) }
         }
         val stoppable = probe.recordingStage in setOf(RecordingStage.STARTING, RecordingStage.RECORDING)
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Box(Modifier.size(76.dp).clip(CircleShape).border(2.dp, if (probe.mode == CaptureMode.CINE) Rec else Foreground, CircleShape)
-                .clickable(enabled = ready || stoppable, onClick = shutter).padding(6.dp)
+                .clickable(enabled = interactable && (ready || stoppable), onClick = shutter).padding(6.dp)
                 .semantics { contentDescription = if (stoppable) "録画停止" else if (probe.mode == CaptureMode.STILL) "静止画撮影" else "録画開始" }, contentAlignment = Alignment.Center) {
                 Box(Modifier.size(if (stoppable) 24.dp else 48.dp).background(if (probe.mode == CaptureMode.CINE) Rec else Foreground.copy(alpha = if (ready) 1f else .3f), if (stoppable) RoundedCornerShape(4.dp) else CircleShape))
             }
@@ -332,7 +352,7 @@ private fun keyValue(key: CaptureKey, editor: CaptureEditor, probe: CameraProbe)
             }, Muted)
         }
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
-            TextButton(onClick = mode, enabled = !probe.busy && !probe.recordingBusy, modifier = Modifier.width(100.dp).height(48.dp), shape = RoundedCornerShape(24.dp), border = BorderStroke(1.dp, Muted)) {
+            TextButton(onClick = mode, enabled = interactable && !probe.busy && !probe.recordingBusy, modifier = Modifier.width(100.dp).height(48.dp), shape = RoundedCornerShape(24.dp), border = BorderStroke(1.dp, Muted)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Mono(if (probe.mode == CaptureMode.STILL) "●STILL" else "STILL", if (probe.mode == CaptureMode.STILL) Foreground else Muted, Modifier.weight(1f))
                     Mono(if (probe.mode == CaptureMode.CINE) "●CINE" else "CINE", if (probe.mode == CaptureMode.CINE) Foreground else Muted, Modifier.weight(1f))
@@ -343,7 +363,7 @@ private fun keyValue(key: CaptureKey, editor: CaptureEditor, probe: CameraProbe)
 }
 
 @Composable private fun Settings(probe: CameraProbe, enabled: Boolean, diagnostics: () -> Unit, reset: () -> Unit) {
-    Text("原画角を保持 · 比率クロップの保存は未実装", color = Muted, fontSize = 12.sp)
+    Text(if (probe.mode == CaptureMode.STILL) "原画角を保持 · 比率クロップの保存は未実装" else "16:9撮影領域をPreview/動画で共有 · 実機一致は要検証", color = Muted, fontSize = 12.sp)
     if (probe.mode == CaptureMode.STILL) {
         Row(Modifier.horizontalScroll(rememberScrollState())) {
             listOf(ImageCapture.OUTPUT_FORMAT_JPEG, ImageCapture.OUTPUT_FORMAT_RAW, ImageCapture.OUTPUT_FORMAT_RAW_JPEG).forEach { format ->
@@ -393,7 +413,7 @@ private fun keyValue(key: CaptureKey, editor: CaptureEditor, probe: CameraProbe)
 @Composable private fun PanelHeader(title: String, close: () -> Unit) {
     Row(Modifier.fillMaxWidth().height(44.dp).padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(title, Modifier.weight(1f), color = Foreground, fontSize = 14.sp)
-        TextButton(onClick = close, modifier = Modifier.size(44.dp), contentPadding = PaddingValues(0.dp)) { Text("×", fontSize = 22.sp) }
+        TextButton(onClick = close, modifier = Modifier.size(44.dp).semantics { contentDescription = "閉じる" }, contentPadding = PaddingValues(0.dp)) { Text("×", fontSize = 22.sp) }
     }
 }
 @Composable private fun Mono(text: String, color: Color, modifier: Modifier = Modifier, size: Int = 11, rotate: Boolean = true) {

@@ -674,6 +674,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             var lastSample = 0L
             var lastResultLog = 0L
             val builder = Preview.Builder()
+            if (mode == CaptureMode.CINE) builder.setResolutionSelector(ResolutionSelector.Builder()
+                .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY).build())
             val resultCallback = object : CameraCaptureSession.CaptureCallback() {
                 override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
                     // Observe only: never operate CameraX's CameraDevice / session.
@@ -767,6 +769,11 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                 check(cineSession != null) { "No supported CINE combination: ${lastFailure?.message ?: "CameraX returned no combination-specific fps/session support"}" }
             }
             check(applyOutputOrientation()) { "Output orientation unavailable" }
+            if (mode == CaptureMode.CINE) {
+                val previewInfo = preview.resolutionInfo
+                val videoInfo = cineSession?.video?.resolutionInfo
+                log.write("VIDEO_FRAMING viewport=9:16@ROTATION_0/FILL_CENTER recorderAspect=16:9 previewResolution=${previewInfo?.resolution} previewCropRect=${previewInfo?.cropRect} previewRotationDegrees=${previewInfo?.rotationDegrees} videoResolution=${videoInfo?.resolution} videoCropRect=${videoInfo?.cropRect} videoRotationDegrees=${videoInfo?.rotationDegrees}; bound session geometry, actual MP4 metadata logged separately; frameMatch=UNVERIFIED")
+            }
             val previewSize = preview.resolutionInfo?.resolution
             val minimumPreviewFrameNs = runCatching {
                 val configurations = Camera2CameraInfo.from(info).getCameraCharacteristic(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
