@@ -144,3 +144,13 @@ CameraX 1.6.2公開targetRotation APIのみ使用し、Previewと測光座標は
 統合候補のassembleDebug/testDebugUnitTest/lintDebug成功（53秒）。単体66件、failure/error/skip 0。lint 0 errors / 14 warnings / 2 hints（既存11＋Handler利用のUseKtx提案3）。
 標準段階/範囲/reciprocal、最新1件queue、操作期限/古い応答/長→短budget/背景破棄を自動・静的検証した。
 端末の極端値で停止する正確な条件は未再現。新操作の実応答/改善とセンサー実測は実機未確認。
+
+## CINE画角一致・設定overlay（Issue #38）
+
+`fix/007-cine-framing`候補でassembleDebug/testDebugUnitTest/lintDebug成功（最終sourceで55秒）。単体70件、failure/error/skip 0。lint 0 errors / 14 warnings / 2 hints（既存件数と同じ）。チェック無効化なし。git diff --check成功。
+CameraX 1.6.2公開SessionConfig.setViewPort/Recorder.setAspectRatio/Preview ResolutionSelectorをコンパイル・lint検証し、CINE query/対応判定/bindの同じViewPort共有を静的確認。STILL bindには適用しない。
+設定/診断を開閉してもpreview高さが一定、modeだけでtop insetが決まるpolicyと、touchのclick通知が中央AF/AEを追加せずaccessibility clickが中央動作へ進むpolicyを自動検証。既存の全録画stage出力回転固定/Back/recording回帰も成功。
+独立レビューで診断背面の撮影rail操作が残るP2を修正。診断中は全rail操作とcallbackを拒否し、非IDLEでは診断を閉じて停止操作を覆わないpolicyを全stageで追加検証した。draft破棄は実Start通知後のみ。
+設定/診断の背景touch shieldはcontrols/scrollの背後に配置し、Previewのcallback guardとaccessibility非表示を併用。通常/設定ともFIT_CENTERへ固定し、過去のFIT_START水平整列制約と設定縮小はこの候補で置換する。
+Spec Kit 005のspec/plan/research/data-model/contracts/quickstart/tasks、setup-plan/setup-tasks/check-prerequisitesとread-only整合分析を実施。FR6件/SC2件はtasksに対応、未解決の仕様矛盾なし。実機ACはtasks T012/T013として未完了。
+実機撮影/録音/インストールなし。Preview/MP4四辺の一致、HDR/quality/fps全候補、4方向の画角・出力、設定scroll/touch/Back/TalkBack、STILL原本の端末上の保持は未検証。bound geometryと実MP4 metadataを区別し、今回の機械検証を実機合格としない。

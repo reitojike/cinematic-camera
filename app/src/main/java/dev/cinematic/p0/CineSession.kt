@@ -1,9 +1,13 @@
 package dev.cinematic.p0
 
+import android.util.Rational
+import android.view.Surface
+import androidx.camera.core.AspectRatio
 import androidx.camera.core.CameraInfo
 import androidx.camera.core.DynamicRange
 import androidx.camera.core.Preview
 import androidx.camera.core.SessionConfig
+import androidx.camera.core.ViewPort
 import androidx.camera.video.Quality
 import androidx.camera.video.QualitySelector
 import androidx.camera.video.Recorder
@@ -18,6 +22,10 @@ data class PreparedCine(
 
 object CineSessions {
     fun query(info: CameraInfo, preview: Preview, log: (String) -> Unit): List<PreparedCine> {
+        // Portrait Activity coordinates: crop both use cases to the same sensor region.
+        // FIT would ignore this ratio. UI panels and physical orientation never rebuild it.
+        val viewPort = ViewPort.Builder(Rational(9, 16), Surface.ROTATION_0)
+            .setScaleType(ViewPort.FILL_CENTER).build()
         val capabilities = Recorder.getVideoCapabilities(info)
         val result = mutableListOf<PreparedCine>()
         for (range in capabilities.supportedDynamicRanges) {
@@ -39,15 +47,17 @@ object CineSessions {
                         else -> continue
                     }
                     val rank = when (quality) { Quality.UHD -> 4; Quality.FHD -> 3; Quality.HD -> 2; else -> 1 }
-                    val recorder = Recorder.Builder().setQualitySelector(QualitySelector.from(quality)).build()
+                    val recorder = Recorder.Builder().setQualitySelector(QualitySelector.from(quality))
+                        .setAspectRatio(AspectRatio.RATIO_16_9).build()
                     val video = VideoCapture.Builder(recorder).setDynamicRange(range).build()
-                    val probe = SessionConfig.Builder(preview, video).build()
+                    val probe = SessionConfig.Builder(preview, video).setViewPort(viewPort).build()
                     // Combination-specific query, not generic camera AE ranges. No per-UseCase target fps.
                     val frameRates = info.getSupportedFrameRateRanges(probe)
                     log("VIDEO_COMBINATION quality=$qualityName range=$rangeName fps=$frameRates")
                     for (fps in frameRates) {
                         if (fps.lower <= 0 || fps.upper <= 0) continue
-                        val session = SessionConfig.Builder(preview, video).setFrameRateRange(fps).build()
+                        val session = SessionConfig.Builder(preview, video).setViewPort(viewPort)
+                            .setFrameRateRange(fps).build()
                         if (!info.isSessionConfigSupported(session)) continue
                         val key = "$rangeName/$qualityName/${fps.lower}-${fps.upper}"
                         result += PreparedCine(VideoChoice(key, rank, rangeName, fps.lower, fps.upper,

@@ -1,0 +1,8 @@
+# UI / CameraX contract
+
+1. CINE PreviewとVideoCaptureは同じ16:9センサー領域を共有。queryとbindのViewPort相違は禁止。
+2. 設定/診断を開閉しても同じPreviewViewとgeometryを維持。設定はcapture railの上に重ね、背景pointerを消費する。
+3. Previewは画像全体をFIT_CENTERで表示。AF/AEはPreviewView標準meteringPointFactoryを使用する。
+4. 設定pointer/Back/accessibilityから下の測光へ伝播させない。Previewのaccessibility clickは中央AF/AE、物理tapはその位置へ1回のみ要求。
+5. 閉じるは44dp、contentDescription付き。録画停止の既存description/有効条件を維持する。診断中は背面railを無効化しcallbackも拒否、録画非IDLEでは診断を閉じ停止railを可視にする。
+6. bound resolution/crop/rotationはsession情報、VIDEO_SAVEDのactualSize/rotationは保存実体のmetadata。実機画角比較を省略して同一結果を保証しない。
