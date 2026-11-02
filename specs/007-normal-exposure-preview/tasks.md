@@ -43,7 +43,7 @@
 ## Phase 6: Polish & Cross-Cutting Concerns
 
 - [x] T013 build/unit/lint、git diff --checkと公開前scanを実行し、ImageCapture static長秒混入なし・編集ごとの全rebindなしを確認する（app/src/main/java/dev/cinematic/p0/CameraProbe.kt、.github/workflows/android.yml、docs/PUBLICATION_REVIEW.md）。SC-001/002/004。
-- [ ] T014 修正版限定実機手順と未確認制約を最終実装と照合し、Draft PRの最終head独立/canonicalレビュー・必須CI・未解決thread 0件を確認する（specs/007-normal-exposure-preview/plan.md、docs/OPERATIONS.md）。FR-010、SC-003/004。
+- [x] T014 修正版限定実機手順と未確認制約を最終実装と照合し、Draft PRの最終head独立/canonicalレビュー・必須CI・未解決thread 0件を確認する（specs/007-normal-exposure-preview/plan.md、docs/OPERATIONS.md）。FR-010、SC-003/004。
 - [ ] T015 ユーザー確認後に二段階の見え方、長秒→短秒/AUTO、撮影後復帰、RAW/CINE回帰の実機ACを記録する（docs/P0_REPORT.md）。SC-003。v13追加確認を要求せず、証拠なしに完了/改善保証/#37包括解決へ変更しない。
 
 ## Dependencies & Execution Order
