@@ -183,3 +183,17 @@ STILLの明示opt-in固定pair、Builder単発設定とruntime preview補償、�
 - 初期Preview seedは補償pairのみ、ImageCaptureに固定露出overrideなし。unbind前の保持Interop clear、AUTO例外再bind、背景停止とforeground復帰の呼出境界を静的に照合した。CameraXとの実際の相互作用をJVM test成功だけで保証しない。
 - 通常経路のPixel 9a実機、全formatの撮影metadata、初回/復帰、明るさ/階調/描画fpsは未確認。runtime撮影pairのACK自体がrepeating結果待ちなので、長秒では撮影開始前・実撮影・復帰にセンサー由来の待ちが生じ得る。
 - HTML参照は構造/CSSのみ確認。ブラウザがfileプロトコル表示を拒否したため、参照実描画との比較は未実施。縦横の測定モデルの機械検証と実機の見た目一致は別とする。ISO/SS以外の監査差分はPO判断待ちで実装していない。
+
+## 撮影UIの状態・MF/WB・設定診断（Issue #47、最新PO反映）
+
+- 検証source: `8d89db8ec3dfdd4bb4187981a1f46c6a9335d3be`。assembleDebug/testDebugUnitTest/lintDebug成功76秒、53 tasks（16 executed / 37 up-to-date）。27 suites / 189 tests、failure/error/skip 0。
+- lint error 0 / warnings 15 / hints 2。ExifInterface7、UseKtx6、縦固定2件、state boxing hints2。抑制・baseline・チェック無効化なし。変更ファイルの公開前scanとdiffcheck成功。
+- ISO/SS主値は現epochのPREVIEW/VIDEO_RECORD実測を最寄り標準候補へ≈表示する仕様を採用。各軸の値/候補/intent/2000ms鮮度を検査し、未知・旧値は—。500ms tickはlifecycle STARTEDだけで動作し、表示値を選択/設定へ書き戻す経路はない。撮影targetは目盛りで選択する。補償previewの実測を撮影ISO/SSと混同しない。
+- 論理capture pairとWB/MFのfield差分だけにpendingを帰属。modeは状態バー1回、主値はキー、targetは目盛り、送信・完了/失敗は共通notice、進行は状態バー、要求/受付/実測の詳細は診断へ集約する。無関係な項目を送信中/受付確定としない。
+- detent距離蓄積、端点/同値/無効、tap/矢印/accessibility共通action、実変更時だけCLOCK_TICK(flags0)をunitとcallsiteで検証。新VIBRATE権限や独自振動engineなし。端末の実触感・haptic無効の実機設定は未確認。
+- 最新POは旧HTMLより優先。STILL大白/CINE小白、STARTING白、実RECORDINGだけ赤（preview枠も含む）。下captionは非描画。保持AudioStats、実準備abortとsingle後失敗のREADY復帰、mode/鮮度/新旧epoch・表示source分離を回帰検証した。
+- camera callbackへCaptureSample intentを記録する観測情報だけを追加し、露出/録画/保存pipelineは変更しない。SS上限の短縮やRAW現像は本変更に含めない。
+- HTML実描画はfile URLの明示security policy拒否（HTTP/HTTPSのみ許可、認可elicitationなし、迂回禁止）のため未確認。構造/CSS確認と測定モデルを実描画合格へ読み替えない。端末font scale/insets/横持ち可読性/タッチ/触感/画質・実センサー反映は未実機。
+- Spec Kit 009はFR11/SC4に対応。最終headの独立/canonical/CI/thread証拠はPRへ記録し、実機AC・追加UIのmerge/配布は別承認待ち。
+- canonical指摘のMF受付完了notice欠落と設定内MIC重複を補正。送信前後の同epoch・新sequence発行を確認し、backend guard未開始なら旧ACCEPTEDを新成功として採用せずdraftを保持する。同期/非同期完了を同じtyped helperへ接続し、API受付noticeは一度だけ。新旧receipt/未開始/重複の回帰を追加した。
+- 最後の表示専用差分として、設定内の出力requested/applied・bind詳細を診断へ移動した。Kotlin再compile成功（11秒、全7tasks up-to-date）。上記189testsのfull検証とは分け、最終headの自然CIでbuild/unit/lintを再確認する。

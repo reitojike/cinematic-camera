@@ -21,6 +21,34 @@ fun controlScaleMove(count: Int, selectedIndex: Int, delta: Int): Int? =
     if (count <= 0 || selectedIndex !in 0 until count) null
     else (selectedIndex.toLong() + delta).coerceIn(0L, count.toLong() - 1).toInt()
 
+/** One action policy for pointer, button and accessibility selection; labels are never parsed. */
+internal fun controlScaleSelection(count: Int, current: Int, target: Int, enabled: Boolean): Int? =
+    target.takeIf { enabled && current in 0 until count && it in 0 until count && it != current }
+
+internal data class ControlDetentState(val index: Int, val remainderPx: Float = 0f)
+internal data class ControlDetentUpdate(val state: ControlDetentState, val selections: IntProgression = IntRange.EMPTY)
+
+/** Positive distance advances the canonical choice index. Outward distance at an endpoint is discarded. */
+internal fun controlDetentDrag(count: Int, state: ControlDetentState, distancePx: Float, stepPx: Float): ControlDetentUpdate {
+    if (state.index !in 0 until count || !distancePx.isFinite() || !state.remainderPx.isFinite() ||
+        !stepPx.isFinite() || stepPx <= 0f) return ControlDetentUpdate(state.copy(remainderPx = 0f))
+    val distance = state.remainderPx.toDouble() + distancePx
+    if (state.index == 0 && distance < 0 || state.index == count - 1 && distance > 0) {
+        return ControlDetentUpdate(state.copy(remainderPx = 0f))
+    }
+    val requestedSteps = (distance / stepPx).toLong()
+    val actualSteps = requestedSteps.coerceIn(-state.index.toLong(), (count - 1 - state.index).toLong()).toInt()
+    val next = state.index + actualSteps
+    val remaining = distance - actualSteps.toDouble() * stepPx
+    val remainder = if (next == 0 && remaining < 0 || next == count - 1 && remaining > 0) 0f else remaining.toFloat()
+    val changes = when {
+        next > state.index -> (state.index + 1)..next
+        next < state.index -> (state.index - 1) downTo next
+        else -> IntRange.EMPTY
+    }
+    return ControlDetentUpdate(ControlDetentState(next, remainder), changes)
+}
+
 /** Text is measured along the axis it occupies after a quarter turn, before ellipsis is decided. */
 internal fun controlScaleTextConstraints(cell: Constraints, quarterTurn: Boolean): Constraints =
     if (!quarterTurn) cell else Constraints(

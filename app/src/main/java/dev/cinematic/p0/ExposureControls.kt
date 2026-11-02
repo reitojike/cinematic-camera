@@ -1,5 +1,6 @@
 package dev.cinematic.p0
 
+import android.view.HapticFeedbackConstants
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -17,6 +18,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
@@ -46,8 +51,8 @@ fun CaptureRulerHeading(
             if (!horizontal) {
                 Text("$label $information", fontFamily = FontFamily.Monospace, fontSize = 11.sp,
                     color = informationColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(value, Modifier.weight(1f, fill = false), color = valueColor, fontFamily = FontFamily.Monospace,
+                if (value.isNotEmpty() || tag.isNotEmpty()) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (value.isNotEmpty()) Text(value, Modifier.weight(1f, fill = false), color = valueColor, fontFamily = FontFamily.Monospace,
                         fontSize = 22.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (tag.isNotEmpty()) Text(tag, Modifier.border(1.dp, informationColor).padding(horizontal = 4.dp),
                         color = informationColor, fontSize = 11.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
@@ -76,24 +81,44 @@ fun ExposureSelectionScale(
     val currentIndex by rememberUpdatedState(selectedIndex)
     val currentCount by rememberUpdatedState(labels.size)
     val currentSelect by rememberUpdatedState(onSelect)
+    val interactiveNow by rememberUpdatedState(interactive)
+    val view = LocalView.current
     val stepPx = with(LocalDensity.current) { 24.dp.toPx() }
-    var dragIndex by remember { mutableIntStateOf(selectedIndex) }
-    var remainder by remember { mutableFloatStateOf(0f) }
-    val drag = rememberDraggableState { delta ->
-        remainder -= delta
-        val steps = (remainder / stepPx).toInt()
-        if (steps != 0) {
-            remainder -= steps * stepPx
-            controlScaleMove(currentCount, dragIndex, steps)?.let { next ->
-                if (next != dragIndex) { dragIndex = next; currentSelect(next) }
-            }
+    var detent by remember(label, labels) { mutableStateOf(ControlDetentState(selectedIndex)) }
+    var dispatchedIndex by remember(label, labels) { mutableIntStateOf(selectedIndex) }
+    var dragging by remember(label, labels) { mutableStateOf(false) }
+    LaunchedEffect(selectedIndex, label, labels) {
+        if (!dragging) { dispatchedIndex = selectedIndex; detent = ControlDetentState(selectedIndex) }
+    }
+    fun dispatch(target: Int) {
+        controlScaleSelection(currentCount, dispatchedIndex, target, interactiveNow)?.let { next ->
+            dispatchedIndex = next
+            currentSelect(next)
+            // Flags 0 preserve both the View's and the user's haptic settings.
+            view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK, 0)
         }
+    }
+    val drag = rememberDraggableState { delta ->
+        val update = controlDetentDrag(currentCount, detent, -delta, stepPx)
+        detent = update.state
+        update.selections.forEach(::dispatch)
     }
     Row(modifier.fillMaxWidth().height(56.dp).alpha(if (interactive) 1f else .45f)
         .draggable(drag, Orientation.Horizontal, enabled = interactive,
-            onDragStarted = { dragIndex = currentIndex; remainder = 0f }),
+            onDragStarted = { dragging = true; dispatchedIndex = currentIndex; detent = ControlDetentState(currentIndex) },
+            onDragStopped = { dragging = false })
+        .semantics {
+            if (interactive && labels.size > 1) {
+                progressBarRangeInfo = ProgressBarRangeInfo(selectedIndex.toFloat(), 0f..(labels.size - 1).toFloat(), labels.size - 2)
+                setProgress { position ->
+                    if (!interactiveNow || currentCount <= 0 || !position.isFinite()) false else {
+                        dispatch(kotlin.math.round(position).toInt().coerceIn(0, currentCount - 1)); true
+                    }
+                }
+            }
+        },
         verticalAlignment = Alignment.CenterVertically) {
-        ScaleArrow("‹", "$label 前の値", window.previous, interactive, onSelect)
+        ScaleArrow("‹", "$label 前の値", window.previous, interactive, ::dispatch)
         Box(Modifier.weight(1f).fillMaxHeight()) {
             Canvas(Modifier.fillMaxSize()) {
                 val spacing = 9.dp.toPx()
@@ -110,7 +135,7 @@ fun ExposureSelectionScale(
                     Box(Modifier.weight(1f).fillMaxHeight()
                         .background(if (isCurrent) Color(0xFF1E2225) else Color.Transparent)
                         .clickable(enabled = interactive && index != null, role = Role.RadioButton,
-                            onClick = { index?.let(onSelect) })
+                            onClick = { index?.let(::dispatch) })
                         .semantics {
                             selected = isCurrent
                             if (index != null) contentDescription = "$label ${labels[index]}"
@@ -136,7 +161,7 @@ fun ExposureSelectionScale(
                 }
             }
         }
-        ScaleArrow("›", "$label 次の値", window.next, interactive, onSelect)
+        ScaleArrow("›", "$label 次の値", window.next, interactive, ::dispatch)
     }
 }
 
@@ -155,12 +180,13 @@ fun CaptureControlKey(
     label: String, value: String, tag: String, selected: Boolean, enabled: Boolean,
     onClick: () -> Unit, modifier: Modifier = Modifier, unit: String = "",
     rotation: Float = 0f, horizontal: Boolean = false, valueColor: Color = ScaleText,
-    tagColor: Color = ScaleMuted,
+    tagColor: Color = ScaleMuted, unavailableReason: String? = null, onUnavailable: (() -> Unit)? = null,
+    statusDescription: String = "",
 ) {
     Box(modifier.height(72.dp).background(if (selected) Color(0xFF1E2225) else Color.Transparent)
         .alpha(if (enabled) 1f else .45f)
-        .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-        .semantics { this.selected = selected; contentDescription = "$label $value $unit $tag" }) {
+        .clickable(enabled = enabled || onUnavailable != null, role = Role.Button) { if (enabled) onClick() else onUnavailable?.invoke() }
+        .semantics { this.selected = selected; contentDescription = "$label $value $unit $tag${if (statusDescription.isNotBlank()) " $statusDescription" else ""}${if (!enabled) " 無効: ${unavailableReason ?: "操作不可"}" else ""}" }) {
         if (selected) Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(3.dp).background(ScaleText))
         Box(Modifier.align(Alignment.CenterEnd).width(1.dp).fillMaxHeight().background(Color.White.copy(alpha = .1f)))
         Column(Modifier.align(Alignment.Center).graphicsLayer { rotationZ = rotation },
@@ -172,8 +198,9 @@ fun CaptureControlKey(
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (unit.isNotEmpty()) Text(unit, Modifier.padding(start = 2.dp), color = ScaleMuted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
             }
-            Text(tag, Modifier.border(1.dp, tagColor).padding(horizontal = 4.dp), color = tagColor,
-                fontSize = 11.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
+            if (tag.isNotEmpty()) Box(Modifier.border(1.dp, tagColor).padding(horizontal = 4.dp), contentAlignment = Alignment.Center) {
+                Text(tag, color = tagColor, fontSize = 11.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
+            }
         }
     }
 }

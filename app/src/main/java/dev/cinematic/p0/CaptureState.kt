@@ -41,9 +41,11 @@ data class SensorValues(
     val evIndex: Int? = null, val antiBanding: Int? = null,
     val aeLock: Boolean? = null, val wbLock: Boolean? = null,
 )
+enum class CaptureSampleIntent { PREVIEW, VIDEO_RECORD, STILL_CAPTURE, UNKNOWN }
 data class CaptureSample(
     val epoch: Int, val frame: Long, val receivedAtMs: Long,
     val request: SensorValues, val actual: SensorValues, val frameDurationNs: Long? = null,
+    val intent: CaptureSampleIntent = CaptureSampleIntent.UNKNOWN,
 ) {
     /** Correspondence is deliberately conservative; missing request keys cannot prove it. */
     fun corresponds(receipt: ControlReceipt): Boolean {
