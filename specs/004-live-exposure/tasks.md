@@ -15,3 +15,8 @@
 - [ ] T009 specs/004-live-exposure/quickstart.md の実機反応・端値・AUTO・回帰を確認（未実機）。
 ## Dependencies / strategy
 T002/T003は別fileで並行可能、T004/T006はCameraProbe共通なので直列。US1は合法段階、US2は有限待ちとして独立検証する。新機能を増やさずDraft PRまで。
+
+## Phase 2: Convergence
+- [x] T010 app/src/main/java/dev/cinematic/p0/ControlOperation.kt とCameraProbe.ktでUNKNOWN後の同値再送と同camera再bindの期限hint保持を修正（FR-007、partial）。
+- [x] T011 app/src/test/java/dev/cinematic/p0/ControlOperationTest.ktで15s timeout→旧pair、旧epoch/不明時刻/queued重複、camera別期限とclear受付を回帰検証（FR-007、SC-003）。
+- [x] T012 docs/BUILD_VALIDATION.mdに最終build/unit/lint結果を記録。実機T009は未完了のまま（SC-004）。

@@ -46,7 +46,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     private val exposureQueue = LatestExposureQueue()
     private var controlTimeout: Runnable? = null
     private var exposureFlush: Runnable? = null
-    private var previousSubmittedExposureNs: Long? = null
+    private val exposureDurations = ExposureDurations()
     @Volatile private var sampleBurstUntilMs = 0L
     var exposureOperationPending by mutableStateOf(false); private set
     var exposureQueued by mutableStateOf(false); private set
@@ -202,10 +202,10 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     }
     private fun beginControl(target: ControlSnapshot) {
         invalidateControl()
-        val previous = listOfNotNull(previousSubmittedExposureNs, appliedExposure?.exposureNs).maxOrNull()
+        val previous = listOfNotNull(exposureDurations.previous(selectedId), appliedExposure?.exposureNs).maxOrNull()
         val budget = controlBudgetMs(target.exposure?.exposureNs, previous, sample?.frameDurationNs)
         val token = controlOperation.begin(epoch, SystemClock.elapsedRealtime(), budget)
-        target.exposure?.let { previousSubmittedExposureNs = maxOf(previousSubmittedExposureNs ?: 0, it.exposureNs) }
+        exposureDurations.submitted(selectedId, target.exposure?.exposureNs)
         controlReceipt = controlReceipt.copy(epoch = epoch, sequence = controlReceipt.sequence + 1,
             phase = ControlPhase.PENDING, requested = target, acceptedAtMs = null,
             detail = "送信中・応答期限${budget}ms（前後露光/実測frame周期を考慮）")
@@ -219,7 +219,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         val token = controlOperation.token ?: return
         clearControlDeadline(); controlOperation.finish(token)
         sampleBurstUntilMs = SystemClock.elapsedRealtime() + 2500
-        previousSubmittedExposureNs = appliedExposure?.exposureNs
+        exposureDurations.accepted(selectedId, appliedExposure?.exposureNs)
         controlReceipt = controlReceipt.copy(epoch = epoch, phase = ControlPhase.ACCEPTED,
             accepted = acceptedControls, acceptedAtMs = SystemClock.elapsedRealtime(), detail = "受付済・実測待ち")
     }
@@ -235,7 +235,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             CaptureKey.SHUTTER -> choices.shutter.getOrNull(index)?.let { base.copy(exposureNs = it.exposureNs) }
             else -> null
         } ?: return
-        if (pair == exposureQueue.latest?.pair || (!exposureQueue.hasWork && pair == appliedExposure)) return
+        if (exposureQueue.redundant(pair, controlReceipt, epoch, controlReady)) return
         exposureQueue.offer(epoch, pair); liveExposureTarget = pair
         exposureOperationPending = true; exposureQueued = true
         busy = true // Also owns the bounded first-frame coalescing interval.
@@ -643,7 +643,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         val p = provider ?: return
         val id = selectedId ?: run { event("UNSUPPORTED no CameraX camera"); return }
         val previewView = view ?: return
-        invalidateControl(); clearLiveExposure(); previousSubmittedExposureNs = null
+        invalidateControl(); clearLiveExposure()
         val generation = ++epoch
         sample = null; acceptedEv = null; photoStage = PhotoStage.IDLE; focusFeedback = null
         outputOrientation = outputOrientation.copy(applied = null)
@@ -804,7 +804,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
 
     fun stop() {
         if (recordingBusy) { pendingStop = true; cine.stop("preview Stop"); return }
-        invalidateControl(); clearLiveExposure(); previousSubmittedExposureNs = null
+        invalidateControl(); clearLiveExposure()
         ++epoch
         sample = null; acceptedEv = null; photoStage = PhotoStage.IDLE; focusFeedback = null
         outputOrientation = outputOrientation.copy(applied = null)

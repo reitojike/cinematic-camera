@@ -8,3 +8,5 @@
 - 表示遅延の確認済み要因: 旧CaptureResult表示は1秒間隔だった。新要求/受付後の2.5秒だけ実sampleを200ms間隔で表示し、ログは従来1秒に抑える。センサー応答を創作せず、API期限/実際のpreview反映は独立に扱う。
 
 - 速い側の名目範囲は[ニコンZ9公式仕様](https://onlinemanual.nikonimglib.com/z9/en/specifications_329.html)の1/32000〜30秒/1・1/3EVも参照。これは候補列の根拠のみでPixelでの対応を意味しない。
+- 長秒復旧: 不明状態を旧受付履歴と同一視せず再送する。CameraX管理Controlのoptionsが再bindへ残り得るので、既知の長い要求時間を同cameraのclear受付まで期限hintとして保持する。別cameraへ流用しない。
+- 標準制約: [Camera2CameraControl](https://developer.android.com/reference/androidx/camera/camera2/interop/Camera2CameraControl#setCaptureRequestOptions(androidx.camera.camera2.interop.CaptureRequestOptions))のoptionsはrepeatingとsingleの双方へ適用される。長秒では[frame期間](https://developer.android.com/reference/android/hardware/camera2/CaptureRequest#SENSOR_FRAME_DURATION)も伸びる。待ち表示/timeout修正でpreview低fpsを解消できるとはしない。
