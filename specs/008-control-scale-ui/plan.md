@@ -34,6 +34,7 @@ ISO/SSのSliderを現在値中央の選択スケールに置換し、既存selec
 - UI contract: labels/index/enabled/rotation/onSelectのみを受け取り、要求・キュー・受付・実測を所有しない。端では空セルを保持して現在値中央を保つ。空/無効indexでは操作不可。
 - Model: ControlScaleWindowのprevious/current/nextは元候補indexまたはnull。候補を生成しない。
 - CaptureScreen接続はcore変更を通常mergeで受け入れてから実施。
+- Issue #44の正常化に伴う最小status adapterは`StillExposurePresentation.kt`。撮影target、preview target、両API受付、直近actual、保存結果を独立ラベルで表示し、UNKNOWNで撮影所有が残る場合だけ停止・復旧を案内する。非ISO/SSの装飾変更には使わない。
 
 ## Quickstart / Validation
 

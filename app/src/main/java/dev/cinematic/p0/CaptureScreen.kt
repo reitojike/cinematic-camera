@@ -63,13 +63,17 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
     var confirmReset by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
     var backAt by remember { mutableLongStateOf(0L) }
-    val unlocked = !probe.busy && !probe.recordingBusy
-    val editable = unlocked && probe.bound && probe.controlReady && !probe.simulationActive
+    val stillExposure = probe.stillExposure
+    val stillPresentation = stillExposure?.presentation()
+    val ownsCapture = stillExposure?.ownsCapture == true
+    val recoveryRequired = stillPresentation?.recoveryRequired == true
+    val unlocked = !probe.busy && !probe.recordingBusy && !ownsCapture
+    val editable = unlocked && probe.bound && probe.controlReady
     val exposureEditable = probe.canSelectExposure
     val animatedAngle by animateFloatAsState(orientation.uiAngle, tween(250), label = "capture-elements")
-    val captureReady = unlocked && probe.bound && probe.controlReady && probe.sharedSaveSupported && (!probe.simulationActive || probe.simulation?.canCapture == true)
+    val captureReady = unlocked && probe.bound && probe.controlReady && probe.sharedSaveSupported && (stillExposure == null || stillExposure.canCapture)
     val receipt = probe.controlReceipt
-    val focusAllowed by rememberUpdatedState(panel == CapturePanel.NONE && editor.submitting == null && !probe.simulationActive)
+    val focusAllowed by rememberUpdatedState(panel == CapturePanel.NONE && editor.submitting == null && !ownsCapture && !probe.busy)
     LaunchedEffect(probe.currentEpoch) { editor = editor.session(probe.currentEpoch) }
     LaunchedEffect(receipt) { editor = editor.complete(receipt) }
     LaunchedEffect(panel, probe.recordingStage) { panel = recordingPanel(panel, probe.recordingStage) }
@@ -90,6 +94,10 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
     LaunchedEffect(editor.note) { editor.note?.let { notice = it } }
     LaunchedEffect(notice) { if (notice != null) { kotlinx.coroutines.delay(4000); notice = null } }
     BackHandler {
+        if (ownsCapture) {
+            notice = if (recoveryRequired) "状態不明です。停止・復旧を選んでください" else "撮影・プレビュー復帰の完了を待ってください"
+            return@BackHandler
+        }
         val decision = captureBack(panel, editor.selected != null, editor.submitting != null, probe.recordingBusy,
             SystemClock.elapsedRealtime() - backAt < 2000)
         panel = decision.panel
@@ -155,8 +163,8 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                         Mono(chip, if (probe.recordingBusy) Rec else Foreground, Modifier.weight(1f))
                         Mono("OS ${probe.thermalSeverity.takeIf { it >= 0 } ?: "—"}", if (probe.thermalSeverity >= 2) Amber else Muted)
                         if (probe.mode == CaptureMode.CINE) Mono(if (probe.audioWanted) "${if (orientation.horizontal) "M" else "MIC "}${probe.recordingAudioAmplitude?.let { if (orientation.horizontal) "ON" else String.format(Locale.ROOT, "%.2f", it) } ?: "—"}" else "MIC OFF", Muted)
-                        TextButton(onClick = { if (unlocked || probe.simulationActive) { editor = editor.close(); panel = if (panel == CapturePanel.SETTINGS) CapturePanel.NONE else CapturePanel.SETTINGS } },
-                            enabled = unlocked || probe.simulationActive, modifier = Modifier.size(44.dp), contentPadding = PaddingValues(8.dp)) { Gear() }
+                        TextButton(onClick = { if (unlocked || recoveryRequired) { editor = editor.close(); panel = if (panel == CapturePanel.SETTINGS) CapturePanel.NONE else CapturePanel.SETTINGS } },
+                            enabled = unlocked || recoveryRequired, modifier = Modifier.size(44.dp), contentPadding = PaddingValues(8.dp)) { Gear() }
                     }
                     if (!probe.bound && permission) Text("接続待ち・プレビュー停止中", Modifier.align(Alignment.Center).sensorRotation().background(Ink.copy(alpha = .7f)).padding(12.dp), color = Foreground, fontSize = 13.sp)
                     if (probe.bound && !probe.controlReady && !probe.busy) Text("設定状態を確認・復旧してください", Modifier.align(Alignment.Center).sensorRotation().background(Ink.copy(alpha = .8f)).padding(12.dp), color = Failed, fontSize = 13.sp)
@@ -166,14 +174,19 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                         probe.audioPermissionDenied -> "マイク許可なし: 録画は未開始。権限を許可するか設定で音声OFFにしてください"
                         probe.lastFailure != null -> probe.lastFailure
                         probe.recordingFailure != null -> probe.recordingFailure
-                        probe.simulationActive -> "固定pair露出検証 ${if (probe.simulation?.settings?.plan?.stage == SimulationStage.COMPENSATED) 1 else 2} · ${probe.simulation?.phase} · 明るさ一致未検証（設定から終了）"
                         notice != null -> notice
+                        stillPresentation != null -> "${stillPresentation.stage} · ${stillPresentation.phase}"
                         !unlocked -> null
                         else -> null
                     }
-                    banner?.let { Text(it, Modifier.align(if (orientation.horizontal) Alignment.Center else Alignment.TopCenter).padding(top = if (orientation.horizontal) 0.dp else 48.dp).widthIn(max = if (orientation.horizontal) 220.dp else 380.dp).sensorRotation().background(Ink.copy(alpha = .8f)).padding(8.dp), color = if (probe.lastFailure != null) Failed else Amber, fontSize = 12.sp) }
-                    if (orientation.horizontal && editor.selected != null && panel == CapturePanel.NONE && banner == null) {
-                        Text("ISO ${probe.sample?.actual?.iso ?: "—"} · ${nsText(probe.sample?.actual?.exposureNs)} · ${probe.controlReceipt.phase}",
+                    if (recoveryRequired) Column(Modifier.align(Alignment.Center).widthIn(max = 300.dp).sensorRotation().background(Ink.copy(alpha = .9f)).padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("撮影状態が不明です。停止して接続をやり直してください", color = Failed, fontSize = 12.sp)
+                        TextButton(onClick = probe::stop) { Text("停止・復旧") }
+                    } else if (!(orientation.horizontal && editor.selected?.group == CaptureKey.ISO && panel == CapturePanel.NONE)) banner?.let { Text(it, Modifier.align(if (orientation.horizontal) Alignment.Center else Alignment.TopCenter).padding(top = if (orientation.horizontal) 0.dp else 48.dp).widthIn(max = if (orientation.horizontal) 220.dp else 380.dp).sensorRotation().background(Ink.copy(alpha = .8f)).padding(8.dp), color = if (probe.lastFailure != null) Failed else Amber, fontSize = 12.sp) }
+                    if (orientation.horizontal && editor.selected?.group == CaptureKey.ISO && panel == CapturePanel.NONE && !recoveryRequired) {
+                        val exposureInfo = stillPresentation?.let { "撮影target ${it.captureTarget}\npreview target ${it.previewTarget}\npreview API ${it.previewApi}\npreview実測 ${it.previewActual}" }
+                            ?: "撮影target ${probe.appliedExposure?.let { "ISO ${it.iso} · ${nsText(it.exposureNs)}" } ?: "AUTO"}\npreview実測 ISO ${probe.sample?.actual?.iso ?: "—"} · ${nsText(probe.sample?.actual?.exposureNs)}"
+                        Text(listOfNotNull(banner, exposureInfo).joinToString("\n"),
                             Modifier.align(Alignment.Center).widthIn(max = 180.dp).sensorRotation().background(Ink.copy(alpha = .7f)).padding(8.dp), color = Muted, fontSize = 11.sp)
                     }
                     if (panel == CapturePanel.NONE) Column(Modifier.align(Alignment.BottomCenter)) {
@@ -191,18 +204,18 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                                 if (key.group == CaptureKey.ISO) {
                                     val tag = keyTag(key, editor, probe)
                                     CaptureControlKey(key.name, value, tag, selected,
-                                        enabled = !probe.simulationActive && (unlocked || probe.exposureOperationPending),
+                                        enabled = !ownsCapture && (unlocked || probe.exposureOperationPending),
                                         onClick = { editor = editor.select(key) }, modifier = Modifier.weight(1f),
                                         unit = keyUnit(key, value), rotation = animatedAngle, horizontal = orientation.horizontal,
                                         valueColor = if (probe.exposureOperationPending) Amber else Foreground,
                                         tagColor = when (tag) { "送信中", "要求待機" -> Amber; "不明", "失敗" -> Failed; else -> Muted })
                                 } else Column(Modifier.weight(1f).fillMaxHeight().background(if (selected) Color(0xFF1E2225) else Color.Transparent)
-                                    .clickable(enabled = !probe.simulationActive && (unlocked || probe.exposureOperationPending)) { if (key == CaptureKey.LOOK) notice = "LOOKは未実装です・色処理なし" else editor = editor.select(key) }
+                                    .clickable(enabled = !ownsCapture && (unlocked || probe.exposureOperationPending)) { if (key == CaptureKey.LOOK) notice = "LOOKは未実装です・色処理なし" else editor = editor.select(key) }
                                     .padding(top = 4.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                                     Column(Modifier.sensorRotation(), horizontalAlignment = Alignment.CenterHorizontally) {
                                     Text(key.name, color = if (key == CaptureKey.LOOK) Muted else Foreground, fontSize = 11.sp)
                                     Mono(value, if (key.group == CaptureKey.ISO && editor.exposure != null || key == CaptureKey.FOCUS && editor.focus != null) Amber else Foreground, rotate = false, size = if (LocalCaptureHorizontal.current) 15 else 16)
-                                    Text(if (key == CaptureKey.LOOK) "未実装" else if (probe.simulationActive) "撮影固定" else if (key.group == CaptureKey.ISO && probe.exposureOperationPending) if (probe.exposureQueued) "要求待機" else "送信中" else if (selected && editor.dirty) "編集中" else if (probe.controlReceipt.phase == ControlPhase.UNKNOWN) "不明" else if (probe.controlReceipt.phase == ControlPhase.PENDING) "送信中" else if (key == CaptureKey.ISO || key == CaptureKey.SHUTTER) if (probe.manualExposure) "MAN" else "AUTO" else "", fontSize = 11.sp, color = Muted)
+                                    Text(if (key == CaptureKey.LOOK) "未実装" else if (key.group == CaptureKey.ISO && probe.exposureOperationPending) if (probe.exposureQueued) "要求待機" else "送信中" else if (selected && editor.dirty) "編集中" else if (probe.controlReceipt.phase == ControlPhase.UNKNOWN) "不明" else if (probe.controlReceipt.phase == ControlPhase.PENDING) "送信中" else if (key == CaptureKey.ISO || key == CaptureKey.SHUTTER) if (probe.manualExposure) "MAN" else "AUTO" else "", fontSize = 11.sp, color = Muted)
                                     }
                                     Spacer(Modifier.height(3.dp).fillMaxWidth().background(if (selected) Foreground else Color.Transparent))
                                 }
@@ -222,7 +235,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                     }
                 }
             }
-            CaptureBar(probe, captureReady, interactable = panel != CapturePanel.DIAGNOSTICS,
+            CaptureBar(probe, captureReady, interactable = panel != CapturePanel.DIAGNOSTICS && !ownsCapture,
                 shutter = shutter@{
                     if (panel == CapturePanel.DIAGNOSTICS) return@shutter
                     if (probe.recordingStage in setOf(RecordingStage.STARTING, RecordingStage.RECORDING)) probe.stopRecording()
@@ -259,79 +272,42 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
     val pair = source?.let { choices.pair(it.iso, it.exposureNs) }
     val tag = keyTag(key, editor, probe)
     val value = keyValue(key, editor, probe)
-    val information = when (key.group) {
-        CaptureKey.ISO -> "受付 ${if (key == CaptureKey.ISO) probe.appliedExposure?.iso ?: "AUTO" else nsText(probe.appliedExposure?.exposureNs)} · 実測 ${if (key == CaptureKey.ISO) actual?.iso ?: "—" else nsText(actual?.exposureNs)}"
-        CaptureKey.FOCUS -> "AFは即時 · MFは適用 · LU"
-        CaptureKey.EV -> if (probe.manualExposure) "MANUAL中は無効" else "選択時に即時送信"
-        CaptureKey.WB -> "プリセット · 即時送信"
-        else -> "未実装"
-    }
+    val information = if (probe.stillExposure != null) "${if (probe.exposureOperationPending) "最新要求" else "撮影target"} · preview実測 ${if (key == CaptureKey.ISO) actual?.iso ?: "—" else nsText(actual?.exposureNs)}"
+        else "受付 ${if (key == CaptureKey.ISO) probe.appliedExposure?.iso ?: "AUTO" else nsText(probe.appliedExposure?.exposureNs)} · 実測 ${if (key == CaptureKey.ISO) actual?.iso ?: "—" else nsText(actual?.exposureNs)}"
     Box(Modifier.fillMaxWidth().height(104.dp).background(Color(0xF00D0F10))) {
-        // A sibling shields blank cells/header space while children retain their own drag gestures.
+        // Shield only the ISO/SS ruler; children retain their drag gestures.
         Box(Modifier.matchParentSize().blockPanelBackground())
         Column(Modifier.fillMaxSize()) {
             CaptureRulerHeading(key.name, information, value + keyUnit(key, value).let { if (it.isEmpty()) "" else " $it" }, tag,
                 horizontal = LocalCaptureHorizontal.current,
                 valueColor = if (probe.exposureOperationPending || editor.dirty) Amber else Foreground,
                 informationColor = if (tag == "不明" || tag == "失敗") Failed else Muted) {
-                if (key.group == CaptureKey.ISO) TextButton(onClick = auto,
-                    enabled = probe.bound && (!probe.busy || probe.exposureOperationPending) && !probe.recordingBusy,
+                TextButton(onClick = auto,
+                    enabled = probe.bound && (!probe.busy || probe.exposureOperationPending) && !probe.recordingBusy && probe.stillExposure?.ownsCapture != true,
                     modifier = Modifier.height(44.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
                     Text("AUTO", Modifier.sensorRotation(), fontSize = 12.sp)
-                }
-                if (key == CaptureKey.FOCUS) {
-                    TextButton(onClick = { change(editor.cancel()) }, enabled = editor.submitting == null,
-                        modifier = Modifier.height(44.dp), contentPadding = PaddingValues(horizontal = 6.dp)) { Text("取消", Modifier.sensorRotation(), fontSize = 12.sp) }
-                    TextButton(onClick = apply, enabled = enabled && editor.dirty,
-                        modifier = Modifier.height(44.dp), contentPadding = PaddingValues(horizontal = 6.dp)) { Text("適用", Modifier.sensorRotation(), fontSize = 12.sp) }
                 }
                 TextButton(onClick = { change(editor.close()) }, enabled = editor.submitting == null,
                     modifier = Modifier.size(44.dp), contentPadding = PaddingValues(0.dp)) {
                     Text("×", Modifier.sensorRotation().semantics { contentDescription = "目盛りを閉じる" }, fontSize = 22.sp)
                 }
             }
-            Box(Modifier.fillMaxWidth().height(56.dp), contentAlignment = Alignment.Center) {
-                when (key.group) {
-                    CaptureKey.ISO -> {
-                        val count = if (key == CaptureKey.ISO) choices.iso.size else choices.shutter.size
-                        if (pair == null || count == 0 || probe.selectedReport?.manualBlockReason != null) {
-                            Text(probe.selectedReport?.manualBlockReason ?: if (count == 0) "端末/session範囲内に標準段階なし" else "AUTO実測待ち・値は未推定",
-                                Modifier.padding(horizontal = 14.dp).sensorRotation(), color = Muted, fontSize = 12.sp)
-                        } else {
-                            val index = if (key == CaptureKey.ISO) choices.iso.indexOf(pair.iso) else choices.shutter.indexOfFirst { it.exposureNs == pair.exposureNs }
-                            ExposureSelectionScale(key.name,
-                                if (key == CaptureKey.ISO) choices.iso.map(Int::toString) else choices.shutter.map { it.label.removeSuffix(" s") },
-                                index, exposureEnabled, { probe.selectExposure(key, it) }, rotation = LocalCaptureAngle.current,
-                                horizontal = LocalCaptureHorizontal.current, valueColor = if (probe.exposureOperationPending) Amber else Foreground)
-                        }
-                    }
-                    CaptureKey.FOCUS -> Row(verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = { change(editor.cancel()); probe.restoreAutofocus() }, enabled = enabled) { Text("AF", Modifier.sensorRotation()) }
-                        val maximum = probe.selectedReport?.overrides?.manualFocusMaximum
-                        val focus = editor.focus ?: probe.overrides.focusDistance?.toString() ?: actual?.focus?.toString()
-                        val number = focus?.toFloatOrNull()
-                        if (maximum != null && number != null) {
-                            Slider(number.coerceIn(0f, maximum), onValueChange = { change(editor.copy(focus = String.format(Locale.ROOT, "%.4f", it))) },
-                                valueRange = 0f..maximum, enabled = enabled, modifier = Modifier.weight(1f))
-                            Mono("$focus LU", Amber, Modifier.width(72.dp))
-                        } else Text("MF非対応 / 実測待ち", color = Muted, fontSize = 12.sp)
-                    }
-                    CaptureKey.EV -> Row(verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = { probe.compensateEv(-1) }, enabled = enabled && !probe.manualExposure && probe.exposureCompensationSupported) { Text("−") }
-                        Mono(if (probe.manualExposure) "MAN中は無効" else "EV ${evText(probe)}", Foreground)
-                        TextButton(onClick = { probe.compensateEv(1) }, enabled = enabled && !probe.manualExposure && probe.exposureCompensationSupported) { Text("＋") }
-                    }
-                    CaptureKey.WB -> Row(Modifier.horizontalScroll(rememberScrollState())) {
-                        TextButton(onClick = { probe.selectWhiteBalance(null) }, enabled = enabled) { Text("AUTO/default", Modifier.sensorRotation()) }
-                        probe.selectedReport?.overrides?.whiteBalanceModes?.sorted()?.forEach { mode -> TextButton(onClick = { probe.selectWhiteBalance(mode) }, enabled = enabled) { Text(SensorModeNames.whiteBalance(mode), Modifier.sensorRotation()) } }
-                    }
-                    else -> Unit
+            val count = if (key == CaptureKey.ISO) choices.iso.size else choices.shutter.size
+            if (pair == null || count == 0 || probe.selectedReport?.manualBlockReason != null) {
+                Box(Modifier.fillMaxWidth().height(56.dp), contentAlignment = Alignment.Center) {
+                    Text(probe.selectedReport?.manualBlockReason ?: if (count == 0) "端末/session範囲内に標準段階なし" else "AUTO実測待ち・値は未推定",
+                        Modifier.padding(horizontal = 14.dp).sensorRotation(), color = Muted, fontSize = 12.sp)
                 }
+            } else {
+                val index = if (key == CaptureKey.ISO) choices.iso.indexOf(pair.iso) else choices.shutter.indexOfFirst { it.exposureNs == pair.exposureNs }
+                ExposureSelectionScale(key.name,
+                    if (key == CaptureKey.ISO) choices.iso.map { it.toString() } else choices.shutter.map { it.label.removeSuffix(" s") },
+                    index, exposureEnabled, { probe.selectExposure(key, it) }, rotation = LocalCaptureAngle.current,
+                    horizontal = LocalCaptureHorizontal.current, valueColor = if (probe.exposureOperationPending) Amber else Foreground)
             }
         }
     }
 }
-
 @Composable private fun OtherControlRuler(probe: CameraProbe, editor: CaptureEditor, enabled: Boolean, exposureEnabled: Boolean,
     change: (CaptureEditor) -> Unit, apply: () -> Unit, auto: () -> Unit) {
     val key = editor.selected ?: return
@@ -419,6 +395,12 @@ private fun keyUnit(key: CaptureKey, value: String): String = when {
 private fun keyTag(key: CaptureKey, editor: CaptureEditor, probe: CameraProbe): String = when {
     key == CaptureKey.LOOK -> "未実装"
     key == CaptureKey.EV && probe.manualExposure -> "無効"
+    probe.stillExposure?.phase == StillExposurePhase.UNKNOWN -> "不明"
+    probe.stillExposure?.ownsCapture == true -> when (probe.stillExposure?.phase) {
+        StillExposurePhase.CAPTURE_APPLYING -> "準備中"
+        StillExposurePhase.CAPTURING -> "撮影中"
+        else -> "復帰中"
+    }
     key.group == CaptureKey.ISO && probe.exposureOperationPending -> if (probe.exposureQueued) "要求待機" else "送信中"
     editor.selected == key && editor.dirty -> "編集中"
     probe.controlReceipt.phase == ControlPhase.UNKNOWN -> "不明"
@@ -430,12 +412,7 @@ private fun keyTag(key: CaptureKey, editor: CaptureEditor, probe: CameraProbe): 
     else -> "AUTO"
 }
 private fun evText(probe: CameraProbe): String = probe.acceptedEv?.let { index -> probe.exposureCompensationStep?.let { String.format(Locale.ROOT, "%+.1f", index * it) } } ?: "—"
-private fun keyValue(key: CaptureKey, editor: CaptureEditor, probe: CameraProbe): String = if (probe.simulationActive) when (key) {
-    CaptureKey.ISO -> probe.simulation?.settings?.plan?.capture?.iso?.toString() ?: "—"
-    CaptureKey.SHUTTER -> nsText(probe.simulation?.settings?.plan?.capture?.exposureNs).removeSuffix(" s")
-    CaptureKey.LOOK -> "STD"
-    else -> "固定"
-} else if (probe.controlReceipt.phase == ControlPhase.UNKNOWN && !probe.exposureOperationPending) "—" else when (key) {
+private fun keyValue(key: CaptureKey, editor: CaptureEditor, probe: CameraProbe): String = if (probe.controlReceipt.phase == ControlPhase.UNKNOWN && !probe.exposureOperationPending) "—" else when (key) {
     CaptureKey.ISO -> probe.liveExposureTarget?.takeIf { probe.exposureOperationPending }?.iso?.toString() ?: if (!probe.manualExposure) "AUTO" else probe.appliedExposure?.iso?.toString() ?: "—"
     CaptureKey.SHUTTER -> if (probe.exposureOperationPending) ExposureStops.label(probe.liveExposureTarget?.exposureNs).removeSuffix(" s") else if (!probe.manualExposure) "AUTO" else ExposureStops.label(probe.appliedExposure?.exposureNs).removeSuffix(" s")
     CaptureKey.EV -> if (probe.manualExposure) "—" else evText(probe)
@@ -462,6 +439,7 @@ private fun keyValue(key: CaptureKey, editor: CaptureEditor, probe: CameraProbe)
                 probe.recordingBusy -> "REC · 停止"
                 probe.photoStage == PhotoStage.SAVING -> "保存中"
                 probe.photoStage == PhotoStage.CAPTURING -> "撮影中"
+                probe.stillExposure?.ownsCapture == true -> probe.stillExposure!!.presentation().phase
                 probe.busy -> "設定送信中"
                 probe.mode == CaptureMode.STILL && probe.photoStage == PhotoStage.SAVED -> "保存済"
                 probe.mode == CaptureMode.CINE && probe.recordingSaveSucceeded == true -> "保存済"
@@ -481,7 +459,8 @@ private fun keyValue(key: CaptureKey, editor: CaptureEditor, probe: CameraProbe)
 }
 
 @Composable private fun Settings(probe: CameraProbe, enabled: Boolean, diagnostics: () -> Unit, reset: () -> Unit) {
-    val normalEnabled = enabled && !probe.simulationActive
+    val normalEnabled = enabled && probe.stillExposure?.ownsCapture != true
+    StillExposureStatus(probe)
     Text(if (probe.mode == CaptureMode.STILL) "原画角を保持 · 比率クロップの保存は未実装" else "16:9撮影領域をPreview/動画で共有 · 実機一致は要検証", color = Muted, fontSize = 12.sp)
     if (probe.mode == CaptureMode.STILL) {
         Row(Modifier.horizontalScroll(rememberScrollState())) {
@@ -508,10 +487,22 @@ private fun keyValue(key: CaptureKey, editor: CaptureEditor, probe: CameraProbe)
         TextButton(onClick = probe::toggleWhiteBalanceLock, enabled = normalEnabled && probe.controlReady && probe.selectedReport?.locks?.whiteBalance == true && (probe.overrides.whiteBalance == null || probe.overrides.whiteBalance == 1)) { Text("WB LOCK ${probe.autoLocks.whiteBalance}") }
     }
     TextButton(onClick = reset, enabled = normalEnabled && probe.bound) { Text("撮影制御をリセット…", color = Amber) }
-    TextButton(onClick = diagnostics, enabled = enabled || probe.simulationActive) { Text("診断・能力・検証レポート ›") }
+    TextButton(onClick = diagnostics, enabled = enabled || probe.stillExposure?.presentation()?.recoveryRequired == true) { Text("診断・能力・検証レポート ›") }
+}
+
+@Composable private fun StillExposureStatus(probe: CameraProbe) {
+    val state = probe.stillExposure ?: return
+    val shown = state.presentation()
+    Text("${shown.stage} · ${shown.phase}", color = if (shown.recoveryRequired) Failed else Amber, fontSize = 12.sp)
+    Text("撮影target: ${shown.captureTarget}\nプレビューtarget: ${shown.previewTarget}", color = Foreground, fontSize = 12.sp)
+    Text("プレビューAPI受付: ${shown.previewApi}\n撮影API受付: ${shown.captureApi}", color = Muted, fontSize = 11.sp)
+    Text("直近プレビュー実測: ${shown.previewActual}\n直近撮影実測: ${shown.stillActual}\n保存結果: ${shown.files}", color = Muted, fontSize = 11.sp)
+    Text("${state.detail}。受付と実測・保存は別の結果です。明るさ一致は未検証。", color = Muted, fontSize = 11.sp)
+    if (shown.recoveryRequired) TextButton(onClick = probe::stop) { Text("停止・復旧", color = Failed) }
 }
 
 @Composable private fun Diagnostics(probe: CameraProbe, enabled: Boolean, export: () -> Unit) {
+    StillExposureStatus(probe)
     Row {
         TextButton(onClick = probe::bind, enabled = enabled && !probe.bound) { Text("Preview開始") }
         TextButton(onClick = probe::stop, enabled = enabled && probe.bound) { Text("Preview停止") }
