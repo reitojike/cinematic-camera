@@ -22,13 +22,14 @@ class ExposureStopsTest {
         assertTrue(ExposureStops.choices(13..24, 1L..10L, null, null).iso.isEmpty())
         assertTrue(ExposureStops.choices(null, null, null, null).shutter.isEmpty())
     }
-    @Test fun videoPolicyKeepsTheRequestedFpsAndStillAllowsAdvertisedLongSeconds() {
+    @Test fun videoPolicyKeepsTheRequestedFpsAndStillIsTemporarilyCappedAtOneSecond() {
         val video = ExposureStops.choices(100..800, 1..30_000_000_000, 30_000_000_000, 60)
         assertTrue(video.shutter.all { it.exposureNs <= 1_000_000_000 / 60 })
         assertTrue(video.shutter.any { it.label == "1/60 s" })
         assertFalse(video.shutter.any { it.label == "1/50 s" })
         val still = ExposureStops.choices(100..800, 1..30_000_000_000, 4_000_000_000, null)
-        assertTrue(still.shutter.any { it.label == "4 s" })
+        assertTrue(still.shutter.any { it.label == "1 s" })
+        assertFalse(still.shutter.any { it.label == "1.3 s" })
         assertFalse(still.shutter.any { it.label == "30 s" })
     }
     @Test fun seedQuantizesBothPartsToTheNearestLegalStandardPair() {

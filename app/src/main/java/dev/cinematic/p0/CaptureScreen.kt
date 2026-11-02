@@ -66,6 +66,9 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
     var panel by remember { mutableStateOf(CapturePanel.NONE) }
     var confirmReset by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(probe.exposureMigrationNotice) {
+        probe.consumeExposureMigrationNotice()?.let { notice = it }
+    }
     var backAt by remember { mutableLongStateOf(0L) }
     val lifecycleOwner = LocalLifecycleOwner.current
     var measurementTick by remember { mutableLongStateOf(0L) }

@@ -142,6 +142,7 @@ private val PanelFailure = Color(0xFFEF8A74)
                 }, color = PanelMuted, fontSize = 11.sp)
             }
             PanelSection("出力の設定 / bind情報") {
+                Text(probe.exposurePolicyStatus, fontSize = 11.sp, color = PanelMuted)
                 Text(if (probe.mode == CaptureMode.STILL) probe.stillResolution else probe.videoSelection,
                     fontSize = 11.sp, color = PanelMuted)
             }

@@ -87,6 +87,9 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     var format by mutableIntStateOf(ImageCapture.OUTPUT_FORMAT_JPEG); private set
     var status by mutableStateOf("Permission required"); private set
     var desired by mutableStateOf("AUTO"); private set
+    var exposurePolicyStatus by mutableStateOf(NormalExposurePolicy.DESCRIPTION); private set
+    var exposureMigrationNotice by mutableStateOf<String?>(null); private set
+    fun consumeExposureMigrationNotice(): String? = exposureMigrationNotice.also { exposureMigrationNotice = null }
     var measured by mutableStateOf("No CaptureResult yet"); private set
     var bound by mutableStateOf(false); private set
     var busy by mutableStateOf(false); private set
@@ -416,6 +419,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         } catch (failure: Exception) { log.write("INTEROP_HELD_OPTIONS_CLEAR_FAILED " + failure.message); throw failure }
     }
     private fun plannedStill(value: ManualExposure, extras: SensorOverrides, locks: AutoLocks): StillExposureTarget {
+        NormalExposurePolicy.validate(value)
         val report = selectedReport ?: error("No Camera2 capability report")
         require(report.manualBlockReason == null) { report.manualBlockReason!! }
         val planning = ExposureSimulationPolicy.plan(value, report.isoRange, report.exposureRange,
@@ -881,12 +885,15 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             var lastResultLog = 0L
             val builder = Preview.Builder()
             previewSeeded = false
-            val restoredCapture = if (restoreForThisBind != null) restoreForThisBind.exposure
+            val restoredCaptureBeforeLimit = if (restoreForThisBind != null) restoreForThisBind.exposure
                 else if (mode == CaptureMode.STILL && preferences.flag("$settingsKey/manual")) {
                 val report = selectedReport
-                val saved = Exposure.savedManual(preferences.text("$settingsKey/appliedIso"), preferences.text("$settingsKey/appliedMs"), report?.isoRange, report?.exposureRange)
-                Exposure.parse(saved.iso, saved.milliseconds, report?.isoRange, report?.exposureRange)
+                NormalExposurePolicy.restoreSaved(preferences.text("$settingsKey/appliedIso"), preferences.text("$settingsKey/appliedMs"),
+                    report?.isoRange, report?.exposureRange, exposureChoices).target
             } else null
+            val restoredCapture = restoredCaptureBeforeLimit?.let {
+                if (mode == CaptureMode.STILL) NormalExposurePolicy.restore(it, exposureChoices).target else it
+            }
             if (mode == CaptureMode.STILL && restoredCapture != null) {
                 val safe = plannedStill(restoredCapture, restoreForThisBind?.overrides ?: savedOverrides(settingsKey), AutoLocks())
                 Camera2Interop.Extender(builder)
@@ -1082,6 +1089,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         // AUTO supersedes retained failed/UNKNOWN manual input even after its pending flag cleared.
         clearLiveExposure()
         stillResumeIntent.clear(); pendingForegroundBind = false
+        exposurePolicyStatus = NormalExposurePolicy.DESCRIPTION + "; AUTOは手動露出解除・実測露光は別確認"
+        exposureMigrationNotice = null
         // A static manual Preview seed would reappear after clear; replace that use case once.
         if (mode == CaptureMode.STILL && (previewSeeded || camera == null)) {
             val key = exposureKey()
@@ -1102,18 +1111,31 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             val input = if (restoreSaved && bindRestore != null) bindRestore.exposure?.let {
                 ManualExposureInput(it.iso.toString(), java.math.BigDecimal.valueOf(it.exposureNs, 6).toPlainString())
             } else if (restoreSaved && preferences.flag("$key/manual"))
-                Exposure.savedManual(preferences.text("$key/appliedIso"), preferences.text("$key/appliedMs"), report?.isoRange, report?.exposureRange)
+                if (mode == CaptureMode.STILL) ManualExposureInput(preferences.text("$key/appliedIso"), preferences.text("$key/appliedMs"))
+                else Exposure.savedManual(preferences.text("$key/appliedIso"), preferences.text("$key/appliedMs"), report?.isoRange, report?.exposureRange)
                 else if (iso != null && ms != null) ManualExposureInput(iso, ms) else null
+            var restoration: NormalExposureRestoration? = null
             val value = input?.let {
                 require(report != null) { "No Camera2 report" }
                 require(report.manualBlockReason == null) { report.manualBlockReason!! }
-                Exposure.parse(it.iso, it.milliseconds, report.isoRange, report.exposureRange).also { pair ->
+                val normalized = if (restoreSaved && mode == CaptureMode.STILL) {
+                    NormalExposurePolicy.restoreSaved(it.iso, it.milliseconds, report.isoRange, report.exposureRange,
+                        exposureChoices).also { restoration = it }.target
+                } else NormalExposurePolicy.validate(Exposure.parse(it.iso, it.milliseconds, report.isoRange, report.exposureRange))
+                normalized.also { pair ->
                     require(report.maxFrameDurationNs == null || pair.exposureNs <= report.maxFrameDurationNs) { "Exposure exceeds device maximum frame duration" }
                     if (mode == CaptureMode.CINE) {
                         val maxFps = cineSession?.choice?.fpsUpper ?: error("Video fps unavailable")
                         require(pair.exposureNs <= 1_000_000_000L / maxFps) { "Exposure exceeds requested video frame period; lower fps or shorten exposure" }
                     }
                 }
+            }
+            val migration = restoration?.takeIf { it.migrated }
+            val migrationScope = "移行履歴 camera ID=${selectedId ?: "—"} mode=$mode epoch=$epoch: "
+            migration?.let {
+                exposurePolicyStatus = migrationScope + "旧保存/復帰target ${ExposureStops.label(it.original.exposureNs)} → ${ExposureStops.label(it.target.exposureNs)}へ移行要求（ISO ${it.target.iso}保持）。API受付・実測は未確認"
+                exposureMigrationNotice = exposurePolicyStatus
+                event(exposurePolicyStatus)
             }
             val manual = value != null
             val restored = if (restoreSaved) bindRestore else null
@@ -1143,9 +1165,16 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                         busy = false; controlReady = if (kind == RuntimeTarget.PREVIEW) stillExposure?.canCapture == true else true
                         desired = label + "; " + if (kind == RuntimeTarget.PREVIEW) "preview API受付・撮影API受付はシャッター時" else "API受付・実測は別確認"
                         event(desired)
-                        if (remember) {
-                            preferences.saveExposure(key, input?.iso, input?.milliseconds)
+                        if (remember || migration != null) {
+                            val persisted = restoration?.input ?: input
+                            preferences.saveExposure(key, persisted?.iso, persisted?.milliseconds)
                             if (!manual && reset) { saveOverrides(key, SensorOverrides()); preferences.put("$key/ev", "0") }
+                        }
+                        migration?.let {
+                            requestedIso = it.target.iso.toString(); requestedMs = it.input.milliseconds
+                            preferences.put("$key/iso", requestedIso); preferences.put("$key/ms", requestedMs)
+                            exposurePolicyStatus = migrationScope + "旧target ${ExposureStops.label(it.original.exposureNs)} → ${ExposureStops.label(it.target.exposureNs)}へ移行・preview API受付済み。撮影API受付/実測は別確認"
+                            event(exposurePolicyStatus)
                         }
                         bindResume?.let { stillResumeIntent.accepted(key, it) }
                         if (manual) evStatus = "EV inactive while MANUAL exposure is requested"

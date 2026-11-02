@@ -27,7 +27,7 @@ object ExposureStops {
     }.map { it.toInt() }.toList()
 
     fun choices(isoRange: IntRange?, exposureRange: LongRange?, maxFrameNs: Long?, fps: Int?): ExposureChoices {
-        val maximum = listOfNotNull(exposureRange?.last, maxFrameNs?.takeIf { it > 0 },
+        val maximum = listOfNotNull(NormalExposurePolicy.MAX_EXPOSURE_NS, exposureRange?.last, maxFrameNs?.takeIf { it > 0 },
             fps?.takeIf { it > 0 }?.let { 1_000_000_000L / it }).minOrNull()
         return ExposureChoices(sensitivities.filter { isoRange?.contains(it) == true }, shutters.filter {
             exposureRange?.contains(it.exposureNs) == true && maximum != null && it.exposureNs <= maximum
