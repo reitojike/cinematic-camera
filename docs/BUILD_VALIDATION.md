@@ -186,7 +186,7 @@ STILLの明示opt-in固定pair、Builder単発設定とruntime preview補償、�
 
 ## 撮影UIの状態・MF/WB・設定診断（Issue #47、最新PO反映）
 
-- 検証source: `058ece99bd9b149ca3d7efda651fc523f6215577`。assembleDebug/testDebugUnitTest/lintDebug成功75秒、53 tasks（15 executed / 38 up-to-date）。27 suites / 185 tests、failure/error/skip 0。
+- 検証source: `8d89db8ec3dfdd4bb4187981a1f46c6a9335d3be`。assembleDebug/testDebugUnitTest/lintDebug成功76秒、53 tasks（16 executed / 37 up-to-date）。27 suites / 189 tests、failure/error/skip 0。
 - lint error 0 / warnings 15 / hints 2。ExifInterface7、UseKtx6、縦固定2件、state boxing hints2。抑制・baseline・チェック無効化なし。変更ファイルの公開前scanとdiffcheck成功。
 - ISO/SS主値は現epochのPREVIEW/VIDEO_RECORD実測を最寄り標準候補へ≈表示する仕様を採用。各軸の値/候補/intent/2000ms鮮度を検査し、未知・旧値は—。500ms tickはlifecycle STARTEDだけで動作し、表示値を選択/設定へ書き戻す経路はない。撮影targetは目盛りで選択する。補償previewの実測を撮影ISO/SSと混同しない。
 - 論理capture pairとWB/MFのfield差分だけにpendingを帰属。modeは状態バー1回、主値はキー、targetは目盛り、送信・完了/失敗は共通notice、進行は状態バー、要求/受付/実測の詳細は診断へ集約する。無関係な項目を送信中/受付確定としない。
@@ -195,3 +195,4 @@ STILLの明示opt-in固定pair、Builder単発設定とruntime preview補償、�
 - camera callbackへCaptureSample intentを記録する観測情報だけを追加し、露出/録画/保存pipelineは変更しない。SS上限の短縮やRAW現像は本変更に含めない。
 - HTML実描画はfile URLの明示security policy拒否（HTTP/HTTPSのみ許可、認可elicitationなし、迂回禁止）のため未確認。構造/CSS確認と測定モデルを実描画合格へ読み替えない。端末font scale/insets/横持ち可読性/タッチ/触感/画質・実センサー反映は未実機。
 - Spec Kit 009はFR11/SC4に対応。最終headの独立/canonical/CI/thread証拠はPRへ記録し、実機AC・追加UIのmerge/配布は別承認待ち。
+- canonical指摘のMF受付完了notice欠落と設定内MIC重複を補正。送信前後の同epoch・新sequence発行を確認し、backend guard未開始なら旧ACCEPTEDを新成功として採用せずdraftを保持する。同期/非同期完了を同じtyped helperへ接続し、API受付noticeは一度だけ。新旧receipt/未開始/重複の回帰を追加した。
