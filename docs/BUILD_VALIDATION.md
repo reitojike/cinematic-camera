@@ -121,8 +121,12 @@ Pixel9a上のセンサー反映、画面、画質、録画は今回未確認。U
 
 ## 撮影UI US2: 撮影・設定・診断（2026-11-02）
 
-`feat/004-capture-screen`候補でassembleDebug/testDebugUnitTest/lintDebug成功（47秒）。単体50件、失敗/エラー/skip 0。
+`feat/004-capture-screen`候補でassembleDebug/testDebugUnitTest/lintDebug成功（最終候補で再確認）。単体52件、失敗/エラー/skip 0。
 lintは0 errors、既存warning 9 / boxing hint 2。FIT・狭い画面の設定領域・Back優先順位を追加検証。
 独立レビューでCamera権限の復帰時再確認、露出AUTOの復旧ガード、マイク拒否説明・端末設定で許可した後の拒否表示解除を修正。
 PreviewViewをパネル切替で維持する構造を静的確認。実機での配置・タッチ・文字の視認性・センサー反映は未確認。
 レイアウト単体テストは幾何と状態遷移を保証し、実描画や機種ごとのinsetsを保証するものではない。
+
+canonicalレビューによるUI追加確認: Android9の共有保存非対応時はシャッター無効＋理由表示。Recorder準備/開始失敗時はdraftを保持し、実Start通知後だけ破棄する回帰を追加した。
+通常時のCINE状態バー・選択操作帯のscrim重ね合わせは採用仕様であり、設定シートと画像を重ねない規則とは別である。
+通常FIT_STARTは十分な高さのPixel9a基準で採用位置へ配置するが、狭いウィンドウで画像が横幅を満たさない場合の水平中央整列は未確認・既知の表示制約とする。

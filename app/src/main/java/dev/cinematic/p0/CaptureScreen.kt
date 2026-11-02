@@ -57,6 +57,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, requestPermission: ()
     var backAt by remember { mutableLongStateOf(0L) }
     val unlocked = !probe.busy && !probe.recordingBusy
     val editable = unlocked && probe.bound && probe.controlReady
+    val captureReady = editable && probe.sharedSaveSupported
     val receipt = probe.controlReceipt
     LaunchedEffect(probe.currentEpoch) { editor = editor.session(probe.currentEpoch) }
     LaunchedEffect(receipt) { editor = editor.complete(receipt) }
@@ -96,20 +97,22 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, requestPermission: ()
         Column(Modifier.fillMaxSize()) {
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().background(Color.Black)) {
                 // Keep the same PreviewView mounted while panels/rulers change: no UI-induced camera rebind.
+                val previewTop = if (probe.mode == CaptureMode.STILL || panel == CapturePanel.SETTINGS) 44.dp else 0.dp
                 if (permission) AndroidView(factory = { context ->
                     PreviewView(context).also {
                         it.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                        it.scaleType = PreviewView.ScaleType.FIT_CENTER
+                        it.scaleType = PreviewView.ScaleType.FIT_START
                         it.installFocusTap { x, y -> if (panel == CapturePanel.NONE && editor.submitting == null) probe.focusAt(x, y) }
                         probe.initialize(it)
                     }
-                }, modifier = Modifier.fillMaxSize())
+                }, update = { it.scaleType = if (panel == CapturePanel.SETTINGS) PreviewView.ScaleType.FIT_CENTER else PreviewView.ScaleType.FIT_START },
+                    modifier = Modifier.fillMaxSize().padding(top = previewTop))
                 if (probe.recordingBusy) Box(Modifier.fillMaxSize().border(1.dp, Rec))
                 val feedback = probe.focusFeedback
                 if (feedback != null && panel == CapturePanel.NONE && !probe.recordingBusy) {
                     val focusColor = when (feedback.phase) { FocusPhase.PENDING -> Amber; FocusPhase.FAILED -> Failed; FocusPhase.COMPLETED -> if (feedback.afSucceeded == true) Accepted else Muted }
                     Column(Modifier.offset(x = (maxWidth * feedback.point.first - 24.dp).coerceIn(0.dp, (maxWidth - 48.dp).coerceAtLeast(0.dp)),
-                        y = (maxHeight * feedback.point.second - 24.dp).coerceIn(0.dp, (maxHeight - 48.dp).coerceAtLeast(0.dp))).size(48.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        y = (previewTop + (maxHeight - previewTop) * feedback.point.second - 24.dp).coerceIn(0.dp, (maxHeight - 48.dp).coerceAtLeast(0.dp))).size(48.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Box(Modifier.size(32.dp).border(1.dp, focusColor))
                         Mono(if (feedback.phase == FocusPhase.PENDING) "要求" else if (feedback.phase == FocusPhase.FAILED) "失敗" else "API完了", focusColor)
                     }
@@ -133,6 +136,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, requestPermission: ()
                     if (!probe.bound && permission) Text("接続待ち・プレビュー停止中", Modifier.align(Alignment.Center).background(Ink.copy(alpha = .7f)).padding(12.dp), color = Foreground, fontSize = 13.sp)
                     if (probe.bound && !probe.controlReady && !probe.busy) Text("設定状態を確認・復旧してください", Modifier.align(Alignment.Center).background(Ink.copy(alpha = .8f)).padding(12.dp), color = Failed, fontSize = 13.sp)
                     val banner = when {
+                        !probe.sharedSaveSupported -> "共有画像・動画の保存にはAndroid 10以降が必要です"
                         ProbeControls.shouldStopRecording(probe.thermalSeverity) -> "熱: OS ${ProbeControls.thermalName(probe.thermalSeverity)}・録画開始不可"
                         probe.audioPermissionDenied -> "マイク許可なし: 録画は未開始。権限を許可するか設定で音声OFFにしてください"
                         probe.lastFailure != null -> probe.lastFailure
@@ -159,7 +163,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, requestPermission: ()
                                     .clickable(enabled = unlocked) { if (key == CaptureKey.LOOK) notice = "LOOKは未実装です・色処理なし" else editor = editor.select(key) }
                                     .padding(top = 4.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                                     Text(key.name, color = if (key == CaptureKey.LOOK) Muted else Foreground, fontSize = 11.sp)
-                                    Mono(value, if (key.group == CaptureKey.ISO && editor.exposure != null || key == CaptureKey.FOCUS && editor.focus != null) Amber else Foreground)
+                                    Mono(value, if (key.group == CaptureKey.ISO && editor.exposure != null || key == CaptureKey.FOCUS && editor.focus != null) Amber else Foreground, size = 16)
                                     Text(if (key == CaptureKey.LOOK) "未実装" else if (selected && editor.dirty) "編集中" else if (probe.controlReceipt.phase == ControlPhase.UNKNOWN) "不明" else if (probe.controlReceipt.phase == ControlPhase.PENDING) "送信中" else if (key == CaptureKey.ISO || key == CaptureKey.SHUTTER) if (probe.manualExposure) "MAN" else "AUTO" else "", fontSize = 11.sp, color = Muted)
                                     Spacer(Modifier.height(3.dp).fillMaxWidth().background(if (selected) Foreground else Color.Transparent))
                                 }
@@ -174,7 +178,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, requestPermission: ()
                     Settings(probe, unlocked, diagnostics = { panel = CapturePanel.DIAGNOSTICS }, reset = { confirmReset = true })
                 }
             }
-            if (panel != CapturePanel.DIAGNOSTICS) CaptureBar(probe, editable,
+            if (panel != CapturePanel.DIAGNOSTICS) CaptureBar(probe, captureReady,
                 shutter = {
                     if (probe.recordingStage in setOf(RecordingStage.STARTING, RecordingStage.RECORDING)) probe.stopRecording()
                     else if (probe.mode == CaptureMode.STILL) { if (editor.dirty) notice = "受付値で撮影・未適用の編集は保持"; probe.capture() }
@@ -268,11 +272,11 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, requestPermission: ()
 }
 private fun evText(probe: CameraProbe): String = probe.acceptedEv?.let { index -> probe.exposureCompensationStep?.let { String.format(Locale.ROOT, "%+.1f", index * it) } } ?: "—"
 private fun keyValue(key: CaptureKey, editor: CaptureEditor, probe: CameraProbe): String = if (probe.controlReceipt.phase == ControlPhase.UNKNOWN) "—" else when (key) {
-    CaptureKey.ISO -> editor.exposure?.iso ?: probe.appliedExposure?.iso?.toString() ?: probe.sample?.actual?.iso?.toString() ?: "—"
-    CaptureKey.SHUTTER -> editor.exposure?.milliseconds?.let { "${it}ms" } ?: nsText(probe.appliedExposure?.exposureNs ?: probe.sample?.actual?.exposureNs)
+    CaptureKey.ISO -> editor.exposure?.iso ?: if (!probe.manualExposure) "AUTO" else probe.appliedExposure?.iso?.toString() ?: "—"
+    CaptureKey.SHUTTER -> editor.exposure?.milliseconds?.let { "${it}ms" } ?: if (!probe.manualExposure) "AUTO" else nsText(probe.appliedExposure?.exposureNs)
     CaptureKey.EV -> if (probe.manualExposure) "—" else evText(probe)
     CaptureKey.FOCUS -> editor.focus?.let { "$it LU" } ?: probe.overrides.focusDistance?.let { "$it LU" } ?: "AF"
-    CaptureKey.WB -> probe.overrides.whiteBalance?.let(SensorModeNames::whiteBalance) ?: "AUTO"
+    CaptureKey.WB -> probe.overrides.whiteBalance?.let { mapOf(1 to "AUTO", 2 to "INCAND", 3 to "FLUOR", 4 to "W.FLUOR", 5 to "DAYLT", 6 to "CLOUDY", 7 to "TWILT", 8 to "SHADE")[it] ?: it.toString() } ?: "AUTO"
     CaptureKey.LOOK -> "STD"
 }
 
@@ -361,8 +365,8 @@ private fun keyValue(key: CaptureKey, editor: CaptureEditor, probe: CameraProbe)
         TextButton(onClick = close, modifier = Modifier.size(44.dp), contentPadding = PaddingValues(0.dp)) { Text("×", fontSize = 22.sp) }
     }
 }
-@Composable private fun Mono(text: String, color: Color, modifier: Modifier = Modifier) {
-    Text(text, modifier, color = color, fontFamily = FontFamily.Monospace, fontSize = 11.sp, maxLines = 2, textAlign = TextAlign.Center)
+@Composable private fun Mono(text: String, color: Color, modifier: Modifier = Modifier, size: Int = 11) {
+    Text(text, modifier, color = color, fontFamily = FontFamily.Monospace, fontSize = size.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, textAlign = TextAlign.Center)
 }
 @Composable private fun Gear() {
     Icon(androidx.compose.ui.res.painterResource(android.R.drawable.ic_menu_preferences), contentDescription = "撮影設定", tint = Foreground, modifier = Modifier.size(24.dp))
