@@ -196,3 +196,4 @@ STILLの明示opt-in固定pair、Builder単発設定とruntime preview補償、�
 - HTML実描画はfile URLの明示security policy拒否（HTTP/HTTPSのみ許可、認可elicitationなし、迂回禁止）のため未確認。構造/CSS確認と測定モデルを実描画合格へ読み替えない。端末font scale/insets/横持ち可読性/タッチ/触感/画質・実センサー反映は未実機。
 - Spec Kit 009はFR11/SC4に対応。最終headの独立/canonical/CI/thread証拠はPRへ記録し、実機AC・追加UIのmerge/配布は別承認待ち。
 - canonical指摘のMF受付完了notice欠落と設定内MIC重複を補正。送信前後の同epoch・新sequence発行を確認し、backend guard未開始なら旧ACCEPTEDを新成功として採用せずdraftを保持する。同期/非同期完了を同じtyped helperへ接続し、API受付noticeは一度だけ。新旧receipt/未開始/重複の回帰を追加した。
+- 最後の表示専用差分として、設定内の出力requested/applied・bind詳細を診断へ移動した。Kotlin再compile成功（11秒、全7tasks up-to-date）。上記189testsのfull検証とは分け、最終headの自然CIでbuild/unit/lintを再確認する。

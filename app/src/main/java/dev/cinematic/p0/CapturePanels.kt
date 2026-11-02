@@ -45,7 +45,6 @@ private val PanelFailure = Color(0xFFEF8A74)
                 Checkbox(probe.highResolution, probe::chooseHighResolution, enabled = editable)
                 Text("API対応の高解像度を優先", fontSize = 13.sp)
             }
-            Text(probe.stillResolution, fontSize = 11.sp, color = PanelMuted)
         } else {
             Text("選択した組合せ / bind結果。実ファイルの解像度・fpsとは別です。", color = PanelMuted, fontSize = 11.sp)
             probe.videoChoices.forEach { option ->
@@ -53,7 +52,6 @@ private val PanelFailure = Color(0xFFEF8A74)
                     onClick = { probe.selectVideo(option.key) }, enabled = editable, label = { Text(option.label, fontSize = 12.sp) })
             }
             if (probe.videoChoices.isEmpty()) Text("対応組合せは未取得です", color = PanelMuted, fontSize = 12.sp)
-            Text(probe.videoSelection, fontSize = 11.sp, color = PanelMuted)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(probe.audioWanted, probe::setAudio, enabled = editable)
                 Text("音声収録 · 開始時にマイク許可", fontSize = 13.sp)
@@ -142,6 +140,10 @@ private val PanelFailure = Color(0xFFEF8A74)
                     table.corresponds -> "現受付に対応するframeです。実測値・画質の一致は別評価です。"
                     else -> "直近frameを表示中です。最新要求への対応・一致は未確認です。"
                 }, color = PanelMuted, fontSize = 11.sp)
+            }
+            PanelSection("出力の設定 / bind情報") {
+                Text(if (probe.mode == CaptureMode.STILL) probe.stillResolution else probe.videoSelection,
+                    fontSize = 11.sp, color = PanelMuted)
             }
             PanelSection("撮影 / 録画 / OS") {
                 Text("${BuildConfig.VERSION_NAME} · ${probe.mode} · ID ${probe.selectedId ?: "—"}\nbound=${probe.bound} ready=${probe.controlReady}\n${probe.outputOrientation}", fontSize = 12.sp)
