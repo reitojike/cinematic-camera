@@ -155,12 +155,12 @@ fun CaptureControlKey(
     label: String, value: String, tag: String, selected: Boolean, enabled: Boolean,
     onClick: () -> Unit, modifier: Modifier = Modifier, unit: String = "",
     rotation: Float = 0f, horizontal: Boolean = false, valueColor: Color = ScaleText,
-    tagColor: Color = ScaleMuted,
+    tagColor: Color = ScaleMuted, unavailableReason: String? = null, onUnavailable: (() -> Unit)? = null,
 ) {
     Box(modifier.height(72.dp).background(if (selected) Color(0xFF1E2225) else Color.Transparent)
         .alpha(if (enabled) 1f else .45f)
-        .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-        .semantics { this.selected = selected; contentDescription = "$label $value $unit $tag" }) {
+        .clickable(enabled = enabled || onUnavailable != null, role = Role.Button) { if (enabled) onClick() else onUnavailable?.invoke() }
+        .semantics { this.selected = selected; contentDescription = "$label $value $unit $tag${if (!enabled) " 無効: ${unavailableReason ?: "操作不可"}" else ""}" }) {
         if (selected) Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(3.dp).background(ScaleText))
         Box(Modifier.align(Alignment.CenterEnd).width(1.dp).fillMaxHeight().background(Color.White.copy(alpha = .1f)))
         Column(Modifier.align(Alignment.Center).graphicsLayer { rotationZ = rotation },
