@@ -4,6 +4,33 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ControlOperationTest {
+    @Test fun latestPreviewReplacesInflightWithoutWaitingForAnObsoleteSensorAck() {
+        val queue = LatestExposureQueue()
+        queue.offer(7, ManualExposure(100, 15_000_000_000)); val obsolete = queue.takeReplacingActive()!!
+        for (iso in 200..1000) queue.offer(7, ManualExposure(iso, 8_000_000))
+        val latest = queue.takeReplacingActive()!!
+        assertEquals(ManualExposure(1000, 8_000_000), latest.pair)
+        assertNull(queue.queued)
+        assertNull(queue.complete(obsolete))
+        assertEquals(latest, queue.active)
+        assertNull(queue.takeReplacingActive())
+        assertEquals(latest, queue.active)
+        queue.complete(latest)
+        assertFalse(queue.hasWork)
+    }
+    @Test fun replacementTokenInvalidatesOldAckAndOldDeadlineButRetainsPhysicalWaitHint() {
+        val queue = LatestExposureQueue()
+        val gate = ControlOperation()
+        val history = ExposureDurations()
+        queue.offer(1, ManualExposure(6400, 2_000_000_000)); queue.takeReplacingActive()
+        history.submitted("wide", 2_000_000_000)
+        val old = gate.begin(1, 0, 8000)
+        queue.offer(1, ManualExposure(100, 8_000_000)); val latest = queue.takeReplacingActive()!!
+        val current = gate.begin(1, 32, controlBudgetMs(latest.pair.exposureNs, history.previous("wide"), null))
+        assertFalse(gate.current(old)); assertFalse(gate.expire(old, 10_000))
+        assertTrue(gate.current(current))
+        assertEquals(8032L, gate.deadlineMs)
+    }
     @Test fun deadlineEndsOwnershipAndRejectsLateAckOrOldNextChain() {
         val gate = ControlOperation()
         val token = gate.begin(2, 100, 3000)

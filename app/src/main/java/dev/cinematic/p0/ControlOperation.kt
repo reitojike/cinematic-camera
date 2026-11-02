@@ -39,6 +39,12 @@ class LatestExposureQueue {
         active = queued; queued = null
         return active
     }
+    /** Replace an obsolete in-flight request; its eventual callback no longer owns this queue. */
+    fun takeReplacingActive(): ExposureEntry? {
+        val newest = queued ?: return null
+        active = newest; queued = null
+        return newest
+    }
     fun complete(value: ExposureEntry): ExposureEntry? {
         if (active != value) return null
         active = null
