@@ -183,3 +183,13 @@ STILLの明示opt-in固定pair、Builder単発設定とruntime preview補償、�
 - 初期Preview seedは補償pairのみ、ImageCaptureに固定露出overrideなし。unbind前の保持Interop clear、AUTO例外再bind、背景停止とforeground復帰の呼出境界を静的に照合した。CameraXとの実際の相互作用をJVM test成功だけで保証しない。
 - 通常経路のPixel 9a実機、全formatの撮影metadata、初回/復帰、明るさ/階調/描画fpsは未確認。runtime撮影pairのACK自体がrepeating結果待ちなので、長秒では撮影開始前・実撮影・復帰にセンサー由来の待ちが生じ得る。
 - HTML参照は構造/CSSのみ確認。ブラウザがfileプロトコル表示を拒否したため、参照実描画との比較は未実施。縦横の測定モデルの機械検証と実機の見た目一致は別とする。ISO/SS以外の監査差分はPO判断待ちで実装していない。
+
+## 撮影UIの状態・MF/WB・設定診断（Issue #47）
+
+- 検証source: `abcb6c814ed290544f250708b32283c3f104e45a`。assembleDebug/testDebugUnitTest/lintDebug成功74秒、53 tasks（15 executed / 38 up-to-date）。26 suites / 169 tests、failure/error/skip 0。
+- lint error 0 / warnings 15 / hints 2。既存ExifInterface7、UseKtx6、縦固定2件、state boxing hints2。抑制やbaseline追加なし。diffcheckと変更ファイルの公開前scanは問題なし。
+- シャッター/全録画stage/音声OFF・保持AudioStats、未知のcamera/動画組合せ、無効理由、diagnostic epoch/受付履歴、MF有限値・微小値・WB対応候補、caption quarter-turn境界をpure unitで検証。
+- 独立レビューで停止後音声を収録中とする表示、撮影準備失敗と保存失敗の混同、captionのrail外描画、非ISOキーの個別回転を修正。撮影準備abortとsingle発行後errorを実StillExposureStateでpreview READYまで通す回帰を追加し、一時singleIssuedを失敗履歴の根拠に使わない。
+- 76×96内のcaptionはscrim付きoverlayで、circleの中心は固定。ring完全非重複・途中角の見え方・font scale/OEM/insets/タッチ・WB色・MFの実センサー反映・録画音声は未実機。測定モデルは実描画一致を証明しない。
+- 決定稿HTMLのfile URL表示は明示security policy拒否（HTTP/HTTPSのみ許可、認可elicitationなし、迂回禁止）。構造/CSSは確認し、別経路再試行や実描画合格への読み替えは行っていない。
+- Spec Kit 009のspec/plan/tasks/checklistとFR9/SC4対応を確認。最終headの独立/canonical/CI/thread証拠はPRで記録。実機ACは未完、追加UIのmerge/配布は別承認待ち。
