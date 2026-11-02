@@ -95,4 +95,41 @@ class StillResumeIntentTest {
         intent.clear()
         assertNull(intent.peek("wide/STILL"))
     }
+
+    @Test fun unconfirmedAutoSurvivesFailureAndBackgroundRetryUntilOwnAck() {
+        for (phase in listOf(ControlPhase.PENDING, ControlPhase.UNKNOWN)) {
+            val auto = selected.copy(exposure = null, evIndex = 3)
+            val request = autoResumeTarget(ControlReceipt(phase = phase, requested = auto))
+            assertEquals(auto, request)
+            val intent = StillResumeIntent()
+            // AUTO's operation boundary has discarded the failed manual queue/live input.
+            intent.remember("wide/STILL", null, null, request, selected)
+            val resumed = intent.peek("wide/STILL")!!
+            assertNull(resumed.controls.exposure)
+            assertEquals(3, resumed.controls.evIndex)
+            assertSame(resumed, intent.peek("wide/STILL"))
+            assertTrue(intent.accepted("wide/STILL", resumed))
+            assertNull(intent.peek("wide/STILL"))
+        }
+    }
+
+    @Test fun newerManualSelectionWinsOverAnOlderUnconfirmedAuto() {
+        val auto = autoResumeTarget(ControlReceipt(phase = ControlPhase.UNKNOWN,
+            requested = selected.copy(exposure = null)))
+        val intent = StillResumeIntent()
+        intent.remember("wide/STILL", latest, sent, auto, selected)
+        assertEquals(latest, intent.peek("wide/STILL")!!.controls.exposure)
+        intent.remember("wide/STILL", null, sent, auto, selected)
+        assertEquals(sent, intent.peek("wide/STILL")!!.controls.exposure)
+    }
+
+    @Test fun autoResumeEligibilityExcludesHistoryAndManualOrAbsentRequests() {
+        val auto = selected.copy(exposure = null)
+        for (phase in ControlPhase.entries.filter { it != ControlPhase.PENDING && it != ControlPhase.UNKNOWN }) {
+            assertNull(autoResumeTarget(ControlReceipt(phase = phase, requested = auto)))
+        }
+        assertNull(autoResumeTarget(ControlReceipt(phase = ControlPhase.UNKNOWN)))
+        assertNull(autoResumeTarget(ControlReceipt(phase = ControlPhase.PENDING, requested = selected)))
+    }
+
 }

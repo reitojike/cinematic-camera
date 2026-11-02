@@ -566,9 +566,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     fun onBackground() {
         cine.stop("activity background; no background recording")
         if (mode == CaptureMode.STILL && (bound || stillExposure != null || exposureOperationPending)) {
-            val pendingAuto = operationReceipt.requested?.takeIf {
-                runtimeTarget == RuntimeTarget.GENERAL && operationReceipt.phase == ControlPhase.PENDING && it.exposure == null
-            }
+            val pendingAuto = if (runtimeTarget == RuntimeTarget.GENERAL) autoResumeTarget(operationReceipt) else null
             stillResumeIntent.remember(exposureKey(), exposureQueue.latest?.pair, liveExposureTarget,
                 pendingAuto, stillExposure?.target?.controls ?: selectedControls)
             // Invalidate the old session while keeping only its logical target for the next bind.
@@ -1073,8 +1071,10 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     fun resetAllControls() = switchToAuto(true)
     private fun switchToAuto(reset: Boolean) {
         if (closed || recordingBusy || captureBlocksControl()) return
-        if (exposureOperationPending) { invalidateControl(); clearLiveExposure(); busy = false }
+        if (exposureOperationPending) { invalidateControl(); busy = false }
         if (busy) return
+        // AUTO supersedes retained failed/UNKNOWN manual input even after its pending flag cleared.
+        clearLiveExposure()
         stillResumeIntent.clear(); pendingForegroundBind = false
         // A static manual Preview seed would reappear after clear; replace that use case once.
         if (mode == CaptureMode.STILL && (previewSeeded || camera == null)) {

@@ -1,5 +1,10 @@
 package dev.cinematic.p0
 
+/** An unconfirmed AUTO request remains the logical intent after an API failure. */
+fun autoResumeTarget(receipt: ControlReceipt): ControlSnapshot? = receipt.requested?.takeIf {
+    it.exposure == null && receipt.phase in setOf(ControlPhase.PENDING, ControlPhase.UNKNOWN)
+}
+
 data class StillResumeRequest(val key: String, val sequence: Long, val controls: ControlSnapshot)
 
 /** Logical target retained through failed binds; only its own new ACK can clear it. */
