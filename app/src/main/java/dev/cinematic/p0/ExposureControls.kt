@@ -114,13 +114,16 @@ fun ExposureSelectionScale(
                             if (index != null) contentDescription = "$label ${labels[index]}"
                         }, contentAlignment = Alignment.Center) {
                         if (isCurrent) Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(3.dp).background(valueColor))
-                        if (index != null) Text(labels[index],
-                            Modifier.padding(horizontal = 2.dp).graphicsLayer { rotationZ = rotation },
-                            color = if (isCurrent) valueColor else ScaleMuted,
-                            fontSize = (if (horizontal) if (isCurrent) 14 else 12 else if (isCurrent) 18 else 13).sp,
-                            fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
-                            fontFamily = FontFamily.Monospace, maxLines = 1,
-                            overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                        if (index != null) BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            val desiredSize = if (horizontal) if (isCurrent) 14f else 12f else if (isCurrent) 18f else 14f
+                            val space = if (horizontal) maxHeight.value - 4 else maxWidth.value - 4
+                            val readableSize = (space / (labels[index].length.coerceAtLeast(1) * .62f)).coerceIn(11f, desiredSize)
+                            Text(labels[index], Modifier.graphicsLayer { rotationZ = rotation },
+                                color = if (isCurrent) valueColor else ScaleMuted, fontSize = readableSize.sp,
+                                fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
+                                fontFamily = FontFamily.Monospace, maxLines = 1,
+                                overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+                        }
                     }
                 }
             }
