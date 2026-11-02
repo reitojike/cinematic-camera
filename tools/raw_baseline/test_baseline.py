@@ -33,7 +33,7 @@ def tiff_identity(make="Google", model="Pixel 9a", endian="<"):
 class BaselineTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
-        self.base = Path(self.temp.name)
+        self.base = Path(self.temp.name).resolve()
         self.root = self.base / "authorized"
         self.root.mkdir()
         self.private = patch.object(b, "PRIVATE", self.base / ".private")
@@ -82,6 +82,17 @@ class BaselineTests(unittest.TestCase):
         path.write_bytes(tiff_identity("SIGMA", "fp L"))
         with self.assertRaises(b.BaselineError):
             b.validate_profile(b.camera_identity(path), "sigmafp")
+
+    def test_sigma_fp_official_model_alias_and_fp_l_rejected(self):
+        path = self.root / "metadata.dng"
+        for model in ("fp", "SIGMA fp"):
+            path.write_bytes(tiff_identity("SIGMA", model))
+            b.validate_profile(b.camera_identity(path), "sigmafp")
+        for make, model in (("SIGMA", "fp L"), ("SIGMA", "SIGMA fp L"),
+                            ("Google", "SIGMA fp"), ("SIGMA", "fp2")):
+            path.write_bytes(tiff_identity(make, model))
+            with self.assertRaisesRegex(b.BaselineError, "CAMERA_PROFILE_MISMATCH"):
+                b.validate_profile(b.camera_identity(path), "sigmafp")
 
     def test_malformed_header_and_offset_are_rejected(self):
         path = self.root / "broken.dng"

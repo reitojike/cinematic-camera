@@ -163,8 +163,12 @@ def camera_identity(path: Path) -> tuple[str, str]:
 
 
 def validate_profile(identity: tuple[str, str], profile: str) -> None:
-    if profile not in PROFILES or identity != PROFILES[profile]:
-        raise BaselineError("CAMERA_PROFILE_MISMATCH")
+    if profile in PROFILES and identity == PROFILES[profile]:
+        return
+    # Actual fp DNG IFD0 uses Model="SIGMA fp"; retain the existing "fp" alias.
+    if profile == "sigmafp" and identity == ("sigma", "sigma fp"):
+        return
+    raise BaselineError("CAMERA_PROFILE_MISMATCH")
 
 
 def validate_wb(mode: str, multipliers: list[float] | None, camera: list[float] | None = None) -> None:

@@ -26,7 +26,7 @@
 
 - [x] T007 [US2] `tools/raw_baseline/baseline.py` と `test_baseline.py` にPixel9a/SIGMAfpの厳密admission・WB係数分離を実装する。
 - [x] T008 [US2] `tools/raw_baseline/README.md` と `EVALUATION.md` に公式根拠、license、階調限界、複数照明／等倍大cropSNS／技術対好みの評価枠を定義する（FR006）。
-- [ ] T009 [US2] 許可した実DNGが提供された場合だけ `tools/raw_baseline/.private/` のcamera別runでdecode／原本不変／WB／色転び／clipを確認し、公開安全な最終要約をIssue49へ渡す（SC004）。素材なしは未確認。
+- [ ] T009 [US2] 許可した実DNGが提供された場合だけ `tools/raw_baseline/.private/` のcamera別runでdecode／原本不変／WB／色転び／clipを確認し、公開安全な最終要約をIssue49へ渡す（SC004）。SIGMA fp代表のdecode/replayと原本不変は確認し、Pixel・色品質・照明別／高ISO／highlight受入は未確認のまま残す。
 
 ## Final Phase: Verification and review
 

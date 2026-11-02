@@ -59,6 +59,6 @@
 - **SC-004**: 実素材がある場合だけcamera別にdecode結果を記録し、未説明の色転び／clipがあれば画作りへ進まない。
 
 ## Assumptions
-- 現時点の許可rootにDNGなし。SIGMA fp追加folderは指定待ちで探索しない。
+- 本人が許可したlivepicture/noteditedのRAWを基準比較に使う。editedは本人の連絡後だけ好みの参照として確認し、対応JPEG/settingsを推測しない。
 - Android、NDK/GPU、動画、顔AI、multi-frame、大型独自NR、grain/halationは対象外。
-- merge・Android移植・Releaseは別承認。独立レビューは実装者以外が行う。
+- merge・Android移植・Releaseは別承認。独立レビューは実装者以外が行う。後続のアプリ内選択現像UXは[002計画](../002-live-capture/plan.md)を参照し、本PoCへ先行実装しない。
