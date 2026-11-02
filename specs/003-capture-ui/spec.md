@@ -5,6 +5,10 @@
 **Status**: 採用仕様・実装対象
 **Input**: ユーザー承認の撮影状態整理、Final v1案3・2a系レールUI、縦固定と要素回転。
 
+## 後続の仕様変更
+
+ISO/SHUTTERのpair適用/取消式は[004即時露出](../004-live-exposure/spec.md)で上書きする。MFの適用式は維持。
+
 ## User Scenarios & Testing
 
 ### User Story 1 - 安心して設定を編集する (Priority: P1)

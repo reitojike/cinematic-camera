@@ -15,6 +15,7 @@ data class CameraReport(
     val autoFocusAvailable: Boolean = false,
     val overrides: OverrideCapabilities = OverrideCapabilities(),
     val locks: LockCapabilities = LockCapabilities(),
+    val maxFrameDurationNs: Long? = null,
 )
 
 object CameraReports {
@@ -84,7 +85,7 @@ object CameraReports {
                 """.trimIndent()
                 log(text)
                 CameraReport(id, text, iso, ns, reason,
-                    afModes.any { it != CaptureRequest.CONTROL_AF_MODE_OFF && it != CaptureRequest.CONTROL_AF_MODE_EDOF }, overrideCapabilities, lockCapabilities)
+                    afModes.any { it != CaptureRequest.CONTROL_AF_MODE_OFF && it != CaptureRequest.CONTROL_AF_MODE_EDOF }, overrideCapabilities, lockCapabilities, c.get(C.SENSOR_INFO_MAX_FRAME_DURATION)?.takeIf { it > 0 })
             } catch (e: Exception) {
                 log("ERROR Camera2 report id=$id ${e.javaClass.simpleName}: ${e.message}")
                 null
