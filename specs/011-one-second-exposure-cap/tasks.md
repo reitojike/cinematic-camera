@@ -13,7 +13,7 @@
 
 ## Phase 3: User Story 2 - 旧保存の明示移行
 
-- [x] T004 [US2] 旧長秒を合法標準SSへISO保持で正規化し、bindseed/runtime/復帰で一致させ、新ACK後だけ保存、移行要求を共通noticeと診断へ明示する（app/src/main/java/dev/cinematic/p0/CameraProbe.kt、app/src/main/java/dev/cinematic/p0/CaptureScreen.kt）。FR-003/004。
+- [x] T004 [US2] 旧長秒を合法標準SSへISO保持で正規化し、bindseed/runtime/復帰で一致させ、新ACK後だけ保存、移行要求を共通noticeと診断へ明示する（app/src/main/java/dev/cinematic/p0/CameraProbe.kt、app/src/main/java/dev/cinematic/p0/CaptureScreen.kt、app/src/main/java/dev/cinematic/p0/CapturePanels.kt）。FR-003/004。
 - [x] T005 [US2] 候補なし/端末交差/ISO保持/移行冪等と既存AUTO/reset/resume/receiptのpure境界と呼出接続を検証する（app/src/test/java/dev/cinematic/p0/NormalExposurePolicyTest.kt、app/src/test/java/dev/cinematic/p0/StillResumeIntentTest.kt、app/src/test/java/dev/cinematic/p0/CaptureStateTest.kt）。FR-003/004/005、SC-001/002。
 
 ## Phase 4: Final Verification

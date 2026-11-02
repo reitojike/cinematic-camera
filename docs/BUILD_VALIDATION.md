@@ -197,3 +197,11 @@ STILLの明示opt-in固定pair、Builder単発設定とruntime preview補償、�
 - Spec Kit 009はFR11/SC4に対応。最終headの独立/canonical/CI/thread証拠はPRへ記録し、実機AC・追加UIのmerge/配布は別承認待ち。
 - canonical指摘のMF受付完了notice欠落と設定内MIC重複を補正。送信前後の同epoch・新sequence発行を確認し、backend guard未開始なら旧ACCEPTEDを新成功として採用せずdraftを保持する。同期/非同期完了を同じtyped helperへ接続し、API受付noticeは一度だけ。新旧receipt/未開始/重複の回帰を追加した。
 - 最後の表示専用差分として、設定内の出力requested/applied・bind詳細を診断へ移動した。Kotlin再compile成功（11秒、全7tasks up-to-date）。上記189testsのfull検証とは分け、最終headの自然CIでbuild/unit/lintを再確認する。
+
+## 通常MANUALの暫定1秒上限（Issue #37 / #44 follow-up）
+
+- 統合検証source `7c1eaf19947d61ead9d6321489f125dc9be8cb48`（UI/PC PoCを含むmainへ同期済み）。assembleDebug/testDebugUnitTest/lintDebug成功78秒、53 tasks（18 executed / 35 up-to-date）。28 suites / 197 tests、failure/error/skip 0。
+- lint 0 errors / 15 warnings / 2 hints、抑制・baseline・チェック無効化なし。端末実能力は不変、通常MANUAL候補/新入力/旧保存・復帰だけ暫定1秒と端末制約の交差を適用。最短SS・CINE fps制約を維持。
+- 8 focused testsで1秒境界、1ns超過、旧長秒のISO保持移行、現在device upperが旧設定より短い場合、合法標準候補なし、冪等を検証。移行設定は新API受付後だけ保存し、旧実測を移行要求の証拠へ流用しない。AUTOのAE実露光を1秒以内と保証しない。
+- 最新mainとの競合は移行noticeを既存共通noticeへ接続し、policy詳細をCapturePanels診断へ置く形で解消。独立レビューの最終head明示OK。最終remote gateはIssue/PRコメントへ残す。
+- 実機移行/全format撮影/復帰の応答は未確認。1秒制限を数秒撮影の停止原因解消と扱わない。既存撮影経路は撮影pair受付→単発撮影/file callback→保存IO→preview設定受付/新frameの直列区間があり、主な遅延区間は実測ログで別途切り分ける。
