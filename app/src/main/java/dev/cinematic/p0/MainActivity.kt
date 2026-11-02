@@ -31,6 +31,11 @@ class MainActivity : ComponentActivity() {
         permission = checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
         setContent {
             MaterialTheme {
+                var resetConfirm by remember { mutableStateOf(false) }
+                if (resetConfirm) AlertDialog(onDismissRequest = { resetConfirm = false }, title = { Text("Reset all capture controls?") },
+                    text = { Text("Exposure, WB, MF, anti-banding, locks and EV will return to defaults.") },
+                    confirmButton = { TextButton(onClick = { resetConfirm = false; probe.resetAllControls() }) { Text("Reset all") } },
+                    dismissButton = { TextButton(onClick = { resetConfirm = false }) { Text("Cancel") } })
                 var reportPickerPending by rememberSaveable { mutableStateOf(false) }
                 val reportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
                     reportPickerPending = false
@@ -133,7 +138,8 @@ class MainActivity : ComponentActivity() {
                             val reason = probe.selectedReport?.manualBlockReason
                             reason?.let { Text("MANUAL unavailable: $it") }
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = { probe.setExposure() }, enabled = probe.bound && !probe.busy && !probe.recordingBusy) { Text("AUTO reset all") }
+                                Button(onClick = probe::setExposureAuto, enabled = probe.bound && !probe.busy && !probe.recordingBusy) { Text("Exposure AUTO") }
+                                TextButton(onClick = { resetConfirm = true }, enabled = probe.bound && !probe.busy && !probe.recordingBusy) { Text("Reset all...") }
                                 Button(onClick = { probe.setExposure(probe.requestedIso, probe.requestedMs) },
                                     enabled = probe.bound && !probe.busy && !probe.recordingBusy && probe.selectedReport != null && reason == null) { Text("Apply MANUAL") }
                             }

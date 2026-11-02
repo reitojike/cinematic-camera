@@ -25,6 +25,10 @@ class CineRecorder(context: Context, private val event: (String) -> Unit, privat
     private var stopRequestedAtMs: Long? = null
     var stage by mutableStateOf(RecordingStage.IDLE); private set
     var stats by mutableStateOf("No recording yet; quality/audio/device validation pending"); private set
+    var startSequence by mutableStateOf(0L); private set
+    var durationMs by mutableStateOf(0L); private set
+    var audioAmplitude by mutableStateOf<Double?>(null); private set
+    var audioState by mutableStateOf<Int?>(null); private set
     val busy get() = gate.busy
 
     private fun refresh() { stage = gate.stage; changed() }
@@ -40,6 +44,8 @@ class CineRecorder(context: Context, private val event: (String) -> Unit, privat
         val appRecordStart = SystemClock.elapsedRealtime()
         val audioNotes = AudioQualityNotes(audio)
         stopRequestedAtMs = null
+        startSequence += 1
+        durationMs = 0; audioAmplitude = null; audioState = null
         gate.begin(token); refresh()
         var output: PendingVideoOutput? = null
         fun finalize(error: String?) {
@@ -89,6 +95,9 @@ class CineRecorder(context: Context, private val event: (String) -> Unit, privat
                     is VideoRecordEvent.Status -> {
                         if (gate.token != token) return@recordEvent
                         val stat = update.recordingStats
+                        durationMs = stat.recordedDurationNanos / 1_000_000
+                        audioAmplitude = stat.audioStats.audioAmplitude
+                        audioState = stat.audioStats.audioState
                         stats = "${stage.name}: ${stat.recordedDurationNanos / 1_000_000} ms, ${stat.numBytesRecorded} bytes; audioState=${stat.audioStats.audioState}, amplitude=${stat.audioStats.audioAmplitude} (not a clipping test)"
                     }
                     is VideoRecordEvent.Finalize -> {

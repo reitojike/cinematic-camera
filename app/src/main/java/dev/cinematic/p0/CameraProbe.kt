@@ -73,14 +73,26 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     var lockStatus by mutableStateOf("No requested locks; transient, not saved"); private set
     var requestedFocus by mutableStateOf("0"); private set
     var exportingReport by mutableStateOf(false); private set
-    private var appliedExposure: ManualExposure? = null
+    var appliedExposure by mutableStateOf<ManualExposure?>(null); private set
+    var acceptedEv by mutableStateOf<Int?>(null); private set
+    var controlReceipt by mutableStateOf(ControlReceipt()); private set
+    var sample by mutableStateOf<CaptureSample?>(null); private set
+    var photoStage by mutableStateOf(PhotoStage.IDLE); private set
+    var lastFailure by mutableStateOf<String?>(null); private set
+    var thermalSeverity by mutableIntStateOf(-1); private set
+    val currentEpoch get() = epoch
+    val acceptedControls get() = ControlSnapshot(appliedExposure, acceptedEv, overrides, autoLocks)
+    val activeVideoChoice get() = cineSession?.choice
+    val exposureCompensationStep get() = camera?.cameraInfo?.exposureState?.exposureCompensationStep?.toDouble()
+    val exposureCompensationRange get() = camera?.cameraInfo?.exposureState?.exposureCompensationRange?.let { it.lower..it.upper }
+    val exposureCompensationSupported get() = camera?.cameraInfo?.exposureState?.isExposureCompensationSupported == true
     private var thermalCode = -1
     private var removeThermalListener: (() -> Unit)? = null
     private var provider: ProcessCameraProvider? = null
     private var camera: Camera? = null
     private var imageCapture: ImageCapture? = null
     private var view: PreviewView? = null
-    private var epoch = 0
+    private var epoch by mutableIntStateOf(0)
     private var closed = false
     private var cineSession: PreparedCine? = null
     private var pendingStop = false
@@ -90,6 +102,10 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     val recordingBusy get() = cine.busy
     val recordingStage get() = cine.stage
     val recordingStats get() = cine.stats
+    val recordingStartSequence get() = cine.startSequence
+    val recordingDurationMs get() = cine.durationMs
+    val recordingAudioAmplitude get() = cine.audioAmplitude
+    val recordingAudioState get() = cine.audioState
     private var activeCaptureToken: String? = null
     val sharedSaveSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
     val selectedReport get() = reports.find { it.id == selectedId }
@@ -104,7 +120,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             val power = context.getSystemService(PowerManager::class.java)
             fun update(value: Int) {
                 if (closed) return
-                thermalCode = value
+                thermalCode = value; thermalSeverity = value
                 thermalStatus = "OS ${ProbeControls.thermalName(value)} ($value); not temperature °C or a quality test"
                 log.write("THERMAL $thermalStatus")
                 if (ProbeControls.shouldStopRecording(value) && recordingBusy) cine.stop("OS thermal ${ProbeControls.thermalName(value)}")
@@ -117,7 +133,20 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     }
 
     private fun event(message: String) { status = message; log.write(message) }
+    private fun beginControl(target: ControlSnapshot) {
+        controlReceipt = controlReceipt.copy(epoch = epoch, sequence = controlReceipt.sequence + 1,
+            phase = ControlPhase.PENDING, requested = target, acceptedAtMs = null, detail = "送信中")
+        lastFailure = null
+    }
+    private fun acceptedControl() {
+        controlReceipt = controlReceipt.copy(epoch = epoch, phase = ControlPhase.ACCEPTED,
+            accepted = acceptedControls, acceptedAtMs = SystemClock.elapsedRealtime(), detail = "受付済・実測待ち")
+    }
     private fun error(operation: String, e: Exception) {
+        lastFailure = "$operation: ${e.message}"
+        controlReceipt = controlReceipt.failure(e.message ?: operation,
+            operation.contains("validation") || operation.contains("input"))
+        if (controlReceipt.phase == ControlPhase.UNKNOWN) controlReady = false
         event("ERROR $operation ${e.javaClass.simpleName}: ${e.message}")
     }
 
@@ -294,7 +323,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             val target = ProbeControls.evTarget(state.exposureCompensationIndex, delta, range.lower..range.upper,
                 state.isExposureCompensationSupported, !manualExposure && controlReady)
             val generation = epoch
-            applyEv(c, generation, exposureKey(), target, persist = true) { busy = false; controlReady = true }
+            beginControl(acceptedControls.copy(evIndex = target))
+            applyEv(c, generation, exposureKey(), target, persist = true) { busy = false; controlReady = true; acceptedControl() }
         } catch (failure: Exception) { error("EV validation", failure) }
     }
 
@@ -302,6 +332,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         try {
             val state = c.cameraInfo.exposureState
             if (!state.isExposureCompensationSupported) {
+                acceptedEv = null
                 evStatus = "CameraX EV unsupported; requested index=$requested not applied"
                 log.write("EV_UNSUPPORTED $evStatus")
                 accepted(); return
@@ -317,6 +348,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                 if (generation != epoch || closed) return@addListener
                 try {
                     val value = future.get()
+                    acceptedEv = value
                     if (persist) preferences.put("$key/ev", requested.toString())
                     evStatus = "Requested index=$requested, CameraX accepted=$value step=${state.exposureCompensationStep}$fallback; check actual CaptureResult"
                     log.write("EV $evStatus")
@@ -373,6 +405,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             val targetLocks = autoLocks.forControls(manualExposure, candidate.whiteBalance)
             val generation = epoch
             val key = exposureKey()
+            beginControl(acceptedControls.copy(overrides = candidate, locks = targetLocks))
             busy = true; controlReady = false; started = true
             overrideStatus = "Requested=$candidate PENDING; no quality claim"
             requestSnapshot(c, generation, appliedExposure, candidate, targetLocks, clearFirst = false,
@@ -383,6 +416,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                     candidate.persistencePatch(edited).forEach { (name, saved) -> preferences.put("$key/$name", saved) }
                     busy = false; controlReady = true
                     overrideStatus = "Accepted=$candidate; inspect CaptureResult. AE anti-banding has no effect in MANUAL exposure."
+                    acceptedControl()
                     event("OVERRIDES $overrideStatus")
                 }, failed = { failure ->
                     busy = false; controlReady = false
@@ -412,11 +446,12 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         try {
             candidate.validate(selectedReport?.locks ?: LockCapabilities(), manualExposure, overrides.whiteBalance)
             val generation = epoch
+            beginControl(acceptedControls.copy(locks = candidate))
             busy = true; controlReady = false; started = true
             lockStatus = "Requested=$candidate PENDING; current binding only"
             log.write("AUTO_LOCKS $lockStatus")
             requestSnapshot(c, generation, appliedExposure, overrides, candidate, clearFirst = false, cancelFocus = false,
-                accepted = { acceptLocks(candidate, "User lock/unlock"); busy = false; controlReady = true },
+                accepted = { acceptLocks(candidate, "User lock/unlock"); busy = false; controlReady = true; acceptedControl() },
                 failed = { failure ->
                     busy = false; controlReady = false; lockStatus = "FAILED; sensor state unknown, use AUTO reset"
                     error("AE/AWB lock", failure)
@@ -468,6 +503,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         val id = selectedId ?: run { event("UNSUPPORTED no CameraX camera"); return }
         val previewView = view ?: return
         val generation = ++epoch
+        sample = null; acceptedEv = null; photoStage = PhotoStage.IDLE
+        controlReceipt = ControlReceipt(epoch = epoch, sequence = controlReceipt.sequence)
         val settingsKey = exposureKey()
         requestedIso = preferences.text("$settingsKey/iso", "100")
         requestedMs = preferences.text("$settingsKey/ms", "10")
@@ -508,6 +545,16 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                     main.execute {
                         if (generation == epoch && !closed) {
                             measured = actual
+                            val observation = CaptureSample(generation, result.frameNumber, now,
+                                SensorValues(request.get(CaptureRequest.SENSOR_SENSITIVITY), request.get(CaptureRequest.SENSOR_EXPOSURE_TIME), request.get(CaptureRequest.CONTROL_AE_MODE),
+                                    request.get(CaptureRequest.LENS_FOCUS_DISTANCE), request.get(CaptureRequest.CONTROL_AF_MODE), request.get(CaptureRequest.CONTROL_AWB_MODE),
+                                    request.get(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION), request.get(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE),
+                                    request.get(CaptureRequest.CONTROL_AE_LOCK), request.get(CaptureRequest.CONTROL_AWB_LOCK)),
+                                SensorValues(result.get(CaptureResult.SENSOR_SENSITIVITY), result.get(CaptureResult.SENSOR_EXPOSURE_TIME), result.get(CaptureResult.CONTROL_AE_MODE),
+                                    result.get(CaptureResult.LENS_FOCUS_DISTANCE), result.get(CaptureResult.CONTROL_AF_MODE), result.get(CaptureResult.CONTROL_AWB_MODE),
+                                    result.get(CaptureResult.CONTROL_AE_EXPOSURE_COMPENSATION), result.get(CaptureResult.CONTROL_AE_ANTIBANDING_MODE),
+                                    result.get(CaptureResult.CONTROL_AE_LOCK), result.get(CaptureResult.CONTROL_AWB_LOCK)))
+                            sample = newerSample(sample, observation, epoch)
                             log.write("RESULT id=$id desired=[$desired] $actual")
                         }
                     }
@@ -574,7 +621,12 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             camera!!.cameraInfo.cameraState.observe(owner) { state ->
                 if (generation == epoch && !closed) {
                     log.write("CAMERA_STATE id=$id type=${state.type} error=${state.error?.code}")
-                    state.error?.let { event("ERROR CameraX camera state code=${it.code}") }
+                    state.error?.let {
+                        controlReady = false
+                        controlReceipt = controlReceipt.copy(phase = ControlPhase.UNKNOWN, acceptedAtMs = null, detail = "CameraX camera error ${it.code}")
+                        lastFailure = controlReceipt.detail
+                        event("ERROR CameraX camera state code=${it.code}")
+                    }
                 }
             }
             event("BOUND id=$id mode=$mode format=${formatName(format)}; clearing Interop before capture")
@@ -587,6 +639,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     fun stop() {
         if (recordingBusy) { pendingStop = true; cine.stop("preview Stop"); return }
         ++epoch
+        sample = null; acceptedEv = null; photoStage = PhotoStage.IDLE
+        controlReceipt = ControlReceipt(epoch = epoch, sequence = controlReceipt.sequence)
         busy = false
         controlReady = false
         activeCaptureToken = null
@@ -602,7 +656,9 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         } catch (e: Exception) { error("stop", e) }
     }
 
-    fun setExposure(iso: String? = null, ms: String? = null, remember: Boolean = true, restoreSaved: Boolean = false) {
+    fun setExposureAuto() = setExposure()
+    fun resetAllControls() = setExposure(reset = true)
+    fun setExposure(iso: String? = null, ms: String? = null, remember: Boolean = true, restoreSaved: Boolean = false, reset: Boolean = false) {
         if (busy || recordingBusy) return
         val c = camera ?: return
         val manual = iso != null && ms != null
@@ -619,24 +675,27 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                 }
             } else null
             val label = value?.let { "MANUAL ISO=${it.iso} exposureNs=${it.exposureNs}" }
-                ?: if (restoreSaved) "AUTO exposure (clear then restore supported mode controls)" else "AUTO reset (all Interop controls cleared)"
-            desired = "$label PENDING"; busy = true; controlReady = false
+                ?: if (restoreSaved) "AUTO exposure (clear then restore supported mode controls)" else if (reset) "AUTO reset (all Interop controls cleared)" else "AUTO exposure only (independent controls retained)"
+            desired = "$label PENDING"
             log.write("DESIRED id=$selectedId $desired")
             val generation = epoch
             val key = exposureKey()
-            val extras = if (restoreSaved) savedOverrides(key) else if (manual) overrides else SensorOverrides()
-            val targetLocks = if (manual) autoLocks.forControls(true, extras.whiteBalance) else AutoLocks()
-            requestSnapshot(c, generation, value, extras, targetLocks, clearFirst = !manual, cancelFocus = !manual,
+            val auto = autoControlSnapshot(acceptedControls, preferences.text("$key/ev", "0").toIntOrNull() ?: 0, reset)
+            val extras = if (restoreSaved) savedOverrides(key) else if (manual) overrides else auto.overrides
+            val targetLocks = if (manual) autoLocks.forControls(true, extras.whiteBalance) else if (restoreSaved) AutoLocks() else auto.locks
+            beginControl(ControlSnapshot(value, if (manual) acceptedEv else auto.evIndex, extras, targetLocks))
+            busy = true; controlReady = false
+            requestSnapshot(c, generation, value, extras, targetLocks, clearFirst = reset || restoreSaved, cancelFocus = reset || restoreSaved,
                 accepted = {
                     val finish = {
                         busy = false; controlReady = true; manualExposure = manual
                         appliedExposure = value; overrides = extras
                         acceptLocks(targetLocks, if (manual) "MANUAL exposure releases AE lock" else "AUTO/reset/bind clears lock requests")
                         overrideStatus = "Accepted=$extras; check actual result; anti-banding affects AUTO AE only"
-                        desired = "$label ACCEPTED (check actual result)"; event(desired)
+                        desired = "$label ACCEPTED (check actual result)"; acceptedControl(); event(desired)
                         if (remember) {
                             preferences.saveExposure(key, if (manual) iso else null, if (manual) ms else null)
-                            if (!manual) { saveOverrides(key, SensorOverrides()); preferences.put("$key/ev", "0") }
+                            if (!manual && reset) { saveOverrides(key, SensorOverrides()); preferences.put("$key/ev", "0") }
                         }
                         if (manual) evStatus = "EV inactive while MANUAL exposure is requested"
                         if (restoreSaved && preferences.flag("$key/manual")) {
@@ -652,7 +711,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                         }
                     }
                     if (manual) finish() else {
-                        val ev = if (!restoreSaved || preferences.flag("$key/manual")) 0 else preferences.text("$key/ev", "0").toIntOrNull() ?: 0
+                        val ev = if (reset || (restoreSaved && preferences.flag("$key/manual"))) 0 else auto.evIndex ?: 0
                         applyEv(c, generation, key, ev, persist = false, accepted = finish)
                     }
                 }, failed = { e ->
@@ -678,7 +737,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         val generation = epoch
         val cameraId = selectedId
         val captureFormat = format
-        busy = true; activeCaptureToken = token
+        busy = true; activeCaptureToken = token; photoStage = PhotoStage.CAPTURING
+        lastFailure = null
         var staging = emptyList<File>()
         fun isCurrent() = !closed && generation == epoch && activeCaptureToken == token
         fun clean(files: List<File>) {
@@ -691,7 +751,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         fun failed(e: Exception) {
             log.write("CAPTURE_TIMING token=$token failureAfterAppRequestMs=${SystemClock.elapsedRealtime() - appCaptureStart}; not sensor shutter lag")
             if (isCurrent()) {
-                busy = false; activeCaptureToken = null
+                busy = false; activeCaptureToken = null; photoStage = PhotoStage.FAILED
                 error("capture/shared save token=$token", e)
             } else log.write("CAPTURE_LATE_ERROR token=$token ${e.javaClass.simpleName}: ${e.message}")
         }
@@ -731,6 +791,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                         log.write("CAPTURE_FILE_CALLBACK token=$token imageFormat=${result.imageFormat} afterAppRequestMs=${SystemClock.elapsedRealtime() - appCaptureStart}; includes camera/file/callback delivery, not shutter lag")
                         if (received != expectedFormats) return
                         terminal = true; publishing = true
+                        if (isCurrent()) photoStage = PhotoStage.SAVING
                         val allCallbacksAt = SystemClock.elapsedRealtime()
                         // CameraX has finished every file. Publish together off the UI thread.
                         mediaIo.execute {
@@ -757,7 +818,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                                 main.execute {
                                     log.write("CAPTURE_TIMING token=$token allFileCallbacksAfterAppRequestMs=${allCallbacksAt - appCaptureStart} ioQueueMs=${mediaWorkStart - allCallbacksAt} metadataAndPublishWorkMs=${publishedAt - mediaWorkStart} appRequestToPublishedMs=${publishedAt - appCaptureStart} publishToUiNotificationMs=${SystemClock.elapsedRealtime() - publishedAt}; app stages only, not sensor shutter lag")
                                     val current = isCurrent()
-                                    if (current) { busy = false; activeCaptureToken = null }
+                                    if (current) { busy = false; activeCaptureToken = null; photoStage = PhotoStage.SAVED }
                                     photos.forEach { photo ->
                                         val message = "${if (current) "SAVED" else "CAPTURE_LATE_SAVED"} token=$token mime=${photo.format.mimeType} uri=${photo.uri} name=${photo.name} bytes=${photo.bytes} folder=${PhotoPublisher.RELATIVE_PATH} viewerValidity=UNVERIFIED"
                                         if (current) event(message) else log.write(message)

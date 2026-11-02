@@ -110,3 +110,11 @@ b9f981c24c4514f5c89959b1f0288ecbdb71b0f7fb7b49d48feacfea336a52ac
 この候補はそのまま上書き更新できない。今回の旧内部テスト写真の消失は利用者が許可したが、端末の削除や
 インストールはこちらから行わない。CI候補はrun別のhash/署名になるため、配布時にその実体を別途検証する。
 固定署名秘密の新規生成・Secrets登録・既存鍵のコピーは行っていない。
+
+## 撮影UI US1: 状態APIと露出AUTO（2026-11-02）
+
+`feat/003-capture-state`の候補でassembleDebug/testDebugUnitTest/lintDebugが成功（50秒）。単体47件、失敗/エラー/skip 0。
+lintは0 errors、9 warnings（既存ExifInterface 3 / UseKtx 6）、状態boxingのhint 2。チェック無効化なし。
+初回lintはExperimentalDetector内部のFIR例外だったが、ソースを固定した再実行と最終修正後の実行で成功した。
+型付き受付/実測、旧epoch/frameの無視、入力拒否とUNKNOWN、draft、露出AUTO保持/全resetを自動検証した。
+Pixel9a上のセンサー反映、画面、画質、録画は今回未確認。US2/3はこの検証結果に含まない。
