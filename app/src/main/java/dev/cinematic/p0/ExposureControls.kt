@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -25,6 +26,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 
 private val ScaleText = Color(0xFFE4E6E8)
@@ -118,10 +120,16 @@ fun ExposureSelectionScale(
                             val desiredSize = if (horizontal) if (isCurrent) 14f else 12f else if (isCurrent) 18f else 14f
                             val space = if (horizontal) maxHeight.value - 4 else maxWidth.value - 4
                             val readableSize = (space / (labels[index].length.coerceAtLeast(1) * .62f)).coerceIn(11f, desiredSize)
-                            Text(labels[index], Modifier.graphicsLayer { rotationZ = rotation },
+                            Text(labels[index], Modifier.layout { measurable, constraints ->
+                                val text = measurable.measure(controlScaleTextConstraints(constraints, horizontal))
+                                val placement = controlScaleTextPlacement(IntSize(text.width, text.height), horizontal)
+                                layout(placement.size.width, placement.size.height) {
+                                    text.place(placement.offset.x, placement.offset.y)
+                                }
+                            }.graphicsLayer { rotationZ = rotation },
                                 color = if (isCurrent) valueColor else ScaleMuted, fontSize = readableSize.sp,
                                 fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
-                                fontFamily = FontFamily.Monospace, maxLines = 1,
+                                fontFamily = FontFamily.Monospace, maxLines = 1, softWrap = false,
                                 overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
                         }
                     }
