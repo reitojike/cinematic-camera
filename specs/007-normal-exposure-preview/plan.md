@@ -34,9 +34,9 @@ research/data model/validationを以下へ統合し、外部APIを追加しな�
 
 - `app/src/main/java/dev/cinematic/p0/ExposureSimulationPolicy.kt`: 既存二段階計算。
 - `app/src/main/java/dev/cinematic/p0/StillExposureState.kt`: 通常要求/受付/実測/撮影snapshotと状態遷移。既存PoCのExposureSimulationRunとは独立する。
-- `app/src/main/java/dev/cinematic/p0/CameraProbe.kt`: builder/runtime設定、latest-wins、撮影専有phase、世代破棄。
+- `app/src/main/java/dev/cinematic/p0/CameraProbe.kt`: builder/runtime設定、latest-wins、撮影専有phase、世代破棄。`PhotoCallbackGate.kt`の純粋format集約を本番callbackで使い、partial/duplicateは保存・復帰を開始しない。terminalかつ非publishing時だけ遅延callback由来のstaging cleanupを行い、publish中のIO所有を壊さない。
 - `app/src/main/java/dev/cinematic/p0/CaptureScreen.kt`: 通常自動適用、busy、待ち理由と区別表示。
-- `app/src/test/java/dev/cinematic/p0/ExposureSimulationPolicyTest.kt` / `StillExposureStateTest.kt` / `ControlOperationTest.kt`: 境界/世代/競合/最新要求置換のunit。`StillExposurePresentation.kt` / `StillExposurePresentationTest.kt`は表示の意味を分離する。
+- `app/src/test/java/dev/cinematic/p0/ExposureSimulationPolicyTest.kt` / `StillExposureStateTest.kt` / `ControlOperationTest.kt`: 境界/世代/競合/最新要求置換のunit。`StillExposurePresentation.kt` / `StillExposurePresentationTest.kt`は表示の意味を分離する。`PhotoCallbackGateTest.kt`はformat順不同/重複/部分完了/失敗とpublication所有を、`PendingBindControlsTest.kt`はAUTO引継ぎのkey/epoch/one-shotと明示stopの破棄を検証する。
 
 **Structure Decision**: 既存の単一appと責務を再利用し、汎用camera abstractionや別moduleを追加しない。
 

@@ -173,3 +173,13 @@ STILLの明示opt-in固定pair、Builder単発設定とruntime preview補償、�
 検証範囲はspecs/006-exposure-simulationへ追跡。Spec Kitのspec/plan/tasks/read-only整合分析を行い、FR9件/SC3件に対応。実機T009は未完了。初回bind長秒混入、動的pair変更時の再bind、輝度/階調/noise/clippingの近似、実sensor周期/描画fps、単発設定・保存metadata、RAW/動画回帰は未実機。
 
 コンパイル成功/同じISO×時間/READY表示を、露出分離や画質の実機成立としない。機能は通常OFF、pair変更は検証終了後、終了は保存済み通常設定へ再bind。第3描画mode/露出計/GPU/NDK/依存/新権限/署名変更なし。
+# 通常STILL二段階preview・ISO/SS操作部（Issue #44 / #45）
+
+- 検証source head: `89ec7a288d5f9422d80fd4bb0a3dd33dc1c24683`。CameraX 1.6.2の公開APIを維持。
+- `assembleDebug / testDebugUnitTest / lintDebug` 成功（88秒、53 tasks実行）。21 suites / 131 tests、failure・error・skip 0。
+- lintはerror 0 / warning 15 / hint 2。ExifInterface 7、UseKtx 6、縦固定に関する2件、state boxing hints 2。抑制・baseline・チェック無効化なし。
+- 新しい検証はpreview/capture/restore所有権、旧epoch/revision/receipt、準備失敗・timeout・保存と復帰、32ms最新要求置換、AUTO一時設定のkey/epoch/one-shot、RAW+JPEG callback順序/重複/失敗/IO所有権、狭幅/密度/横持ちText測定。
+- 独立レビューのAUTO一時設定持越しと横持ちSS省略の2件を修正し、source headのcore/UIそれぞれ明示OK。最終headのcanonical/CIはPRへ記録する。
+- 初期Preview seedは補償pairのみ、ImageCaptureに固定露出overrideなし。unbind前の保持Interop clear、AUTO例外再bind、背景停止とforeground復帰の呼出境界を静的に照合した。CameraXとの実際の相互作用をJVM test成功だけで保証しない。
+- 通常経路のPixel 9a実機、全formatの撮影metadata、初回/復帰、明るさ/階調/描画fpsは未確認。runtime撮影pairのACK自体がrepeating結果待ちなので、長秒では撮影開始前・実撮影・復帰にセンサー由来の待ちが生じ得る。
+- HTML参照は構造/CSSのみ確認。ブラウザがfileプロトコル表示を拒否したため、参照実描画との比較は未実施。縦横の測定モデルの機械検証と実機の見た目一致は別とする。ISO/SS以外の監査差分はPO判断待ちで実装していない。
