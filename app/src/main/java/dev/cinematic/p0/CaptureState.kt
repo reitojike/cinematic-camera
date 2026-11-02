@@ -1,12 +1,24 @@
 package dev.cinematic.p0
 
-/** Accepted API settings are history, never proof of sensor output. */
+/** A desired or runtime snapshot. Only a receipt explicitly records API acceptance, not output proof. */
 data class ControlSnapshot(
     val exposure: ManualExposure? = null,
     val evIndex: Int? = null,
     val overrides: SensorOverrides = SensorOverrides(),
     val locks: AutoLocks = AutoLocks(),
 )
+
+/** One binding attempt only; failed/cancelled AUTO rebinds cannot leak controls to another lens/mode. */
+class PendingBindControls {
+    private data class Pending(val key: String, val epoch: Int, val controls: ControlSnapshot)
+    private var pending: Pending? = null
+    fun offer(key: String, nextEpoch: Int, controls: ControlSnapshot) { pending = Pending(key, nextEpoch, controls) }
+    fun take(key: String, epoch: Int): ControlSnapshot? {
+        val value = pending; pending = null
+        return value?.takeIf { it.key == key && it.epoch == epoch }?.controls
+    }
+    fun clear() { pending = null }
+}
 
 enum class ControlPhase { UNBOUND, PENDING, ACCEPTED, REJECTED, UNKNOWN }
 data class ControlReceipt(
