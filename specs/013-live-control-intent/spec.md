@@ -1,11 +1,13 @@
 # Feature Specification: ライブ操作の最新意図と主値の可読性
 
-**Feature Branch**: `fix/019-control-shortcuts`
+**Feature Branch**: `fix/020-capture-feedback`
 **Created**: 2026-11-03
 **Status**: Draft
 **Input**: [Issue #47追加スコープ](https://github.com/reitojike/cinematic-camera/issues/47#issuecomment-6593446735)、関連[Issue #37](https://github.com/reitojike/cinematic-camera/issues/37)。本書は確定した振る舞いと受入条件を扱い、実機の原因確定・解消済み宣言は行わない。
 
 現行の追加ACは[Issue #47 横一列・ショートカット・歯車](https://github.com/reitojike/cinematic-camera/issues/47#issuecomment-6595243467)と[Issue #37 安全な手動再接続](https://github.com/reitojike/cinematic-camera/issues/37#issuecomment-6595251915)。6キーは等幅の横一列とし、旧横scroll/狭幅2段方針を置換する。AUTO観測の鮮度、EV/WB/MFの連続入力・最新intent・即時preview契約は維持する。
+
+表示と触覚の追加ACは[Issue #47 v19 UI](https://github.com/reitojike/cinematic-camera/issues/47#issuecomment-6595777813)。既存の一般的なユーザー報告をv19個別項目の実機合格に読み替えない。
 
 ## User Scenarios & Testing
 
@@ -21,6 +23,8 @@
 3. **Given** 最長/最短ISO・SS主値と近似説明、**When** 縦/左右横持ちとfontScale 1.0/1.3/2.0で見る、**Then** 近似説明を主数値から分離し、主数値・分母・単位の欠落、ellipsis、重なりを0件にする。ISO/SS/EV/WB/FOCUS/LOOKの6キーを等幅で横一列に同時表示し、SHUTTERの視覚ラベルはSS、読み上げは元の意味を保持する。横スクロールや2段化を使わず、LOOKと操作領域を切らない。プレビュー寸法を変更しない。設定入口は歯車アイコンで示す。
 4. **Given** AUTOで正常実測が連続更新しカメラの制御受付が可能、**When** ISO/SSをtapして目盛りを開き、実測更新をまたいでdrag/tap/矢印/読み上げで選択する、**Then** 表示更新で押下・gesture・選択状態を破棄せず、目盛りの開閉や段変更を成立させる。正常な実測更新だけを理由にキーを無効化しない。選択後は最新MANUAL targetを表示する。
 5. **Given** AUTO実測が真に古い/不正/非対応、またはsession/能力が変わる、**When** ISO/SSを操作する、**Then** 値の鮮度不足とカメラの操作不能を区別して理由を示す。旧値や丸めた表示から設定を捏造しない。session/能力変更時のgesture無効化は維持する。
+6. **Given** 撮影画面、**When** SS主値とSTILL/CINE切替を確認する、**Then** 見出しはSS、秒単位sは数値側（例1/125 s）へ示し、スイッチから現在の撮影modeを視覚と読み上げで区別できる。busy/録画/撮影専有中の既存切替制限を維持する。
+7. **Given** シャッターを押す、**When** アプリが静止画の新規撮影、CINE開始または停止を同期的に受け付けた、**Then** 標準の軽い触覚応答を1回だけ要求する。拒否・受付遷移のない連打・保存中・mode切替では要求しない。触覚はAPI受付/保存成功/実録画の証明ではなく、端末/ユーザーの触覚設定を尊重する。
 
 ### User Story 2 - EV/WBを待たずに連続選択する (Priority: P1)
 
@@ -32,7 +36,7 @@
 1. **Given** EVまたはWBがpending、**When** 次の段をdrag/tap/矢印/読み上げで選ぶ、**Then** 操作を受け付け最新intentを即表示する。pendingのみを理由にUIを無効化しない。EVは対応範囲の絶対選択とし、MANUALへ未対応EVを追加しない。
 2. **Given** 複数の新しい選択、**When** 遅い中間ACKが届く、**Then** 最新intentを巻き戻さず、最新値への要求を継続する。古い中間値を無制限に蓄積しない。指を離すまで送信を保留しない。
 3. **Given** EV/WBとISO/SSを同時に変更、**When** プレビュー補償・要求・受付が更新される、**Then** 最新の各項目を相互に上書きせず、撮影targetと補償値を区別する。失敗/timeoutは最新intentを保持して不明/失敗を示し、成功表示や無限再試行を行わない。明示reset/rebindで復旧する。
-4. **Given** EV対応のAUTOで0を含む合法範囲、**When** EV目盛りの0ショートカットを1回押す、**Then** EVを絶対index 0へ要求し、他の最新intentを保つ。pending中も使え、MANUAL/非対応/古いsession等では送信しない。
+4. **Given** EV対応のAUTOで0を含む合法範囲、**When** EV目盛りのRESETショートカットを1回押す、**Then** EVだけを絶対index 0へ要求し、他の最新intentを保つ。全制御resetとは区別する。pending中も使え、MANUAL/非対応/古いsession等では送信しない。
 5. **Given** 設定API応答またはpreview確認がUNKNOWNで、前面・接続中・待機かつ撮影専有なし、**When** 表示された手動再接続を押す、**Then** 現在のcamera/modeで安全に再bindする。押下時もepochと安全条件を再検査し、古い応答を新sessionの成功にしない。撮影中/撮影専有/録画中/送信中にはこの操作を許さず、撮影中の既存停止・復旧を維持する。自動retryやモード切替を要求せず、再接続をセンサー停止原因の解消証明にしない。
 
 ### User Story 3 - MFを動かしながら合焦を探す (Priority: P1)
@@ -45,7 +49,7 @@
 1. **Given** MF対応端末、**When** MFをdragし続ける、**Then** drag中も最新値への要求を継続しプレビューへ反映する。適用/取消UIを置かず、指離しだけをcommit条件にしない。pending中も次段を選択できる。
 2. **Given** 正確な既存MF値、**When** 目盛りを開閉・往復・AF/MF/∞切替、**Then** 表示丸めを送信値に使わず、報告最大値の100等分をUI候補として扱う。開いた時のexact anchorは同じsession/能力範囲内で安定させる。非対応/不正値は送信しない。
 3. **Given** 送信中の背景化・session変更・能力変更・失敗、**When** 復帰し古いACKが到着、**Then** 旧要求が現在値を変更せず、最新の論理設定を対応能力の範囲で復旧する。ISO/SS/EV/WBの新しい意図と矛盾せず、操作不能なlockを残さない。
-4. **Given** MF選択中（近距離/∞を含む）、**When** 独立したAFショートカットを1回押す、**Then** MF overrideを解除してAFを要求する。目盛りを端まで移動する必要はなく、他の最新intentを保つ。押下時の能力/epoch/readinessを再検査し、API受付を合焦確認にしない。
+4. **Given** MF選択中（近距離/∞を含む）、**When** FOCUS目盛りのAUTOショートカットを1回押す、**Then** MF overrideだけを解除してAFを要求する。露出AUTOとは区別し、目盛りを端まで移動する必要はなく、他の最新intentを保つ。押下時の能力/epoch/readinessを再検査し、API受付を合焦確認にしない。
 
 ### Edge Cases
 
@@ -63,8 +67,9 @@ ISO/SS片軸欠落、観測時刻の逆転/未来、不正値、PREVIEW/VIDEO_RE
 - **FR-006**: ISO/SS/EV/WB/MFの最新論理設定を相互に保持し、撮影target/プレビュー補償/要求受付/実測を混同しない。失敗/timeoutは最新intentを保持してUNKNOWN等で明示し、無限再試行しない。reset/rebindと背景復帰で能力・世代を再検査し、旧応答と残留lockを無効化する。
 - **FR-007**: RAW比較、他repo、鍵/Secrets、依存、回転実装を変更しない。原画像・個人パス・会話転載を含めない。Draft/review/CIまでとしmerge/配布は別承認とする。機械確認と実機ACを分ける。
 - **FR-008**: ISO/SSの操作readinessと実測の鮮度を分離する。正常実測の表示更新でキー/目盛り/gestureの同一性を変えず、更新中の入力を受け付ける。鮮度不足やsession/能力変更は既存の安全境界で拒否し、正常更新そのものを操作不能の理由にしない。表示丸めを送信せず、有効な元実測からMANUAL targetを選ぶ。
-- **FR-009**: EVの0とMF解除のAFへ各1回で要求できる独立ショートカットを設ける。最新全体intentへ変更項目だけを反映し、pending連続入力・能力/epoch/readiness検査を共用する。EVの0は対応範囲/正のstepでのみ有効とし、MANUALへEVを追加しない。
+- **FR-009**: EVはRESETで0、FOCUSはAUTOでMF解除/AFへ各1回で要求できる独立ショートカットを設ける。全制御reset/露出AUTOと区別し、最新全体intentへ変更項目だけを反映する。pending連続入力・能力/epoch/readiness検査を共用し、EVの0は対応範囲/正のstepでのみ有効とする。MANUALへEVを追加しない。
 - **FR-010**: 設定応答/preview確認UNKNOWNで、現epoch・前面・接続中・待機・撮影専有なしの場合に限り同camera/modeの手動再接続を可能にする。表示時と押下時の両方で検査し、背景化/epoch変更/送信中/録画中/撮影中を拒否する。最新intentの既存復旧scopeと旧token無効化を維持する。撮影中の停止/復旧と、API受付/preview実測/保存結果の分離を変更しない。
+- **FR-011**: SS見出しから秒単位を分離して数値側へ示す。STILL/CINEは現在値を示すスイッチとし既存の切替制限を維持する。シャッターの新規撮影/録画開始/停止をアプリが同期受付した時だけ軽い標準hapticを1回要求し、拒否/受付遷移のない連打/保存/mode切替では要求しない。触覚設定を尊重し、API受付や保存/録画成功と混同しない。
 
 ### Key Entities
 
@@ -80,6 +85,7 @@ ISO/SS片軸欠落、観測時刻の逆転/未来、不正値、PREVIEW/VIDEO_RE
 - **SC-004**: 最新headのunit/lint/build・公開情報検査・必須CIと独立/canonical review・未解決会話0件を確認する。実描画の可読性と実機AUTO/連続操作/合焦探索は別ACとし未実施を合格にしない。
 - **SC-005**: AUTO正常更新中にISO/SSの押下・目盛り表示・連続段変更が成立し、更新だけに起因するgesture破棄/入力不能0件。縦/左右横持ちと指定文字倍率で6キーの欠落/スクロールを要する隠れ0件。検証したviewport/文字倍率と実描画結果を明示し、未検証の画面幅や倍率へ保証を広げない。
 - **SC-006**: EV遠端→0、近距離MF/∞→AFが各1回の操作で要求され、古いACKでの巻戻り・他項目intent消失・無効時送信0件。6キーは常に等幅横一列、SS略記/歯車/読み上げを維持する。手動再接続の許可/拒否行列と旧epoch拒否が一致し、撮影専有中の再bind0件とする。純粋テスト・callsite確認・独立レビューを実機原因確定や復旧成功の代用にしない。
+- **SC-007**: SS数値のs、STILL/CINEの現在値、RESET=EV0/AUTO=AFの表示と操作が一致する。静止画新規受付・CINE開始/停止だけで触覚要求1回、それ以外0回とする。純粋状態テスト/接続確認と、v19の実描画・触覚体感・実機受入を分ける。
 
 ## Assumptions
 

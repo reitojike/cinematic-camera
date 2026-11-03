@@ -3,12 +3,14 @@ package dev.cinematic.p0
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -36,6 +38,20 @@ internal fun dispatchSensorShortcut(enabled: Boolean, canSelect: () -> Boolean, 
     return true
 }
 
+/** A rotated word occupies the header's height; fit measured glyphs without changing the tap target. */
+@Composable
+private fun SensorShortcutText(label: String, modifier: Modifier, horizontal: Boolean) {
+    val measurer = rememberTextMeasurer()
+    val style = LocalTextStyle.current
+    BoxWithConstraints {
+        val size = if (horizontal) controlValueFontSize(12f) { candidate ->
+            val measured = measurer.measure(label, style.copy(fontSize = candidate.sp), softWrap = false, maxLines = 1).size
+            measured.width <= constraints.maxHeight && measured.height <= constraints.maxWidth
+        } else 12f
+        Text(label, modifier, style = style.copy(fontSize = size.sp), maxLines = 1, softWrap = false)
+    }
+}
+
 /** Direct index 0 request through the same live path as the ruler; no detent iteration. */
 @Composable
 fun ExposureZeroAction(
@@ -49,7 +65,7 @@ fun ExposureZeroAction(
         enabled = available, modifier = modifier.heightIn(min = 44.dp).semantics {
             contentDescription = if (supported) "EVを0に戻す。実測は診断で確認" else "EV 0への復帰非対応"
         }, contentPadding = PaddingValues(horizontal = 8.dp)) {
-        Text(if (horizontal) "0" else if (supported) "0に戻す" else "EV非対応", textModifier, fontSize = 12.sp)
+        SensorShortcutText(if (supported) "RESET" else "EV非対応", textModifier, horizontal)
     }
 }
 
@@ -65,7 +81,7 @@ fun FocusAutofocusAction(
         enabled = available, modifier = modifier.heightIn(min = 44.dp).semantics {
             contentDescription = if (autofocusSupported) "AFに戻す。合焦の実測結果とは別" else "AF非対応"
         }, contentPadding = PaddingValues(horizontal = 8.dp)) {
-        Text(if (horizontal) "AF" else if (autofocusSupported) "AFに戻す" else "AF非対応", textModifier, fontSize = 12.sp)
+        SensorShortcutText(if (autofocusSupported) "AUTO" else "AF非対応", textModifier, horizontal)
     }
 }
 
