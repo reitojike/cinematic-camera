@@ -25,8 +25,11 @@ r.WORK_LONG = 1400
 
 
 def capture_time(jpeg: Path) -> str:
+    """DateTimeOriginal with SubSecTimeOriginal when present ("" if the time is missing)."""
     with Image.open(jpeg) as image:
-        return str(image.getexif().get_ifd(0x8769).get(0x9003) or "")
+        exif = image.getexif().get_ifd(0x8769)
+    seconds, subsec = str(exif.get(0x9003) or "").strip(), str(exif.get(0x9291) or "").strip()
+    return f"{seconds}.{subsec}" if seconds and subsec else seconds
 
 
 def dominant_hue(linear: np.ndarray) -> float | None:
@@ -60,6 +63,13 @@ def paired_shots(app: Path, google: Path) -> tuple[list[tuple[Path, Path]], list
     """Pairing is by capture order, so refuse any input that would shift or drop a pair."""
     (app_shots, app_left), (google_shots, google_left) = shots(app), shots(google)
     problems = [f"unmatched file: {f.name}" for f in app_left + google_left]
+    for _, jpg in app_shots + google_shots:  # the order must be unambiguous in both folders
+        if not capture_time(jpg):
+            problems.append(f"missing capture time: {jpg.name}")
+    for folder_shots in (app_shots, google_shots):
+        times = [capture_time(jpg) for _, jpg in folder_shots]
+        problems += [f"same capture time {t}: " + ", ".join(jpg.name for _, jpg in folder_shots if capture_time(jpg) == t)
+                     for t in sorted({t for t in times if t and times.count(t) > 1})]
     if not app_shots or not google_shots:
         problems.append("no DNG+JPEG pairs in one of the folders")
     if len(app_shots) != len(google_shots):

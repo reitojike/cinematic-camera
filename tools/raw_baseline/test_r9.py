@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 import numpy as np
+from PIL import Image
 
 import r6_diagnose as r
 import r9_app as app
@@ -116,6 +117,28 @@ class PairingTests(unittest.TestCase):
         with self.assertRaises(SystemExit) as caught:
             app.paired_shots(a, g)
         self.assertIn("unmatched file: A2.dng", str(caught.exception))
+
+    def test_same_capture_time_is_rejected(self):
+        a, g = self.folders(["A1.dng", "A1.jpg", "A2.dng", "A2.jpg"], ["G1.dng", "G1.jpg", "G2.dng", "G2.jpg"])
+        times = {"A1": "2026:11:03 20:00:00", "A2": "2026:11:03 20:00:00", "G1": "1", "G2": "2"}
+        with patch.object(app, "capture_time", side_effect=lambda jpeg: times[jpeg.stem]):
+            with self.assertRaises(SystemExit) as caught:
+                app.paired_shots(a, g)
+        self.assertIn("same capture time 2026:11:03 20:00:00: A1.jpg, A2.jpg", str(caught.exception))
+
+    def test_missing_capture_time_is_rejected(self):
+        a, g = self.folders(["A1.dng", "A1.jpg"], ["G1.dng", "G1.jpg"])
+        with patch.object(app, "capture_time", side_effect=lambda jpeg: "" if jpeg.stem == "G1" else "1"):
+            with self.assertRaises(SystemExit) as caught:
+                app.paired_shots(a, g)
+        self.assertIn("missing capture time: G1.jpg", str(caught.exception))
+
+    def test_subseconds_break_ties(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        exif = Image.Exif()
+        exif.get_ifd(0x8769).update({0x9003: "2026:11:03 20:00:00", 0x9291: "042"})
+        Image.new("RGB", (4, 4)).save(root / "a.jpg", exif=exif)
+        self.assertEqual(app.capture_time(root / "a.jpg"), "2026:11:03 20:00:00.042")
 
     def test_empty_folder_is_rejected(self):
         a, g = self.folders([], [])
