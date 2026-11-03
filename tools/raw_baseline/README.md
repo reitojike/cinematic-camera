@@ -4,17 +4,25 @@
 
 ## 専用環境
 
-検証対象はWindows x86-64 / CPython 3.12。既存global Pythonを変更しない。repo rootから、専用venvを作る。
+新しい処理の検証対象はWindows x86-64 / CPython 3.15.2の通常GIL版。3.15.2を別途用意し、`py -3.15 --version`が3.15.2であることを確認する。既存global Pythonや旧venvを更新せず、repo rootから別の専用venvを作る。
 
 ```powershell
-python -m venv tools/raw_baseline/.venv
-$rawPython = 'tools/raw_baseline/.venv/Scripts/python.exe'
-& $rawPython -m pip --isolated install --index-url https://pypi.org/simple --only-binary=:all: --require-hashes -r tools/raw_baseline/requirements-win-py312.txt
+py -3.15 -m venv tools/raw_baseline/.venv-py315
+$rawPython = 'tools/raw_baseline/.venv-py315/Scripts/python.exe'
+& $rawPython -m pip --isolated install --index-url https://pypi.org/simple --only-binary=:all: --require-hashes -r tools/raw_baseline/requirements-win-py315.txt
 & $rawPython -m pip check
 & $rawPython -m unittest discover -s tools/raw_baseline -p 'test_*.py' -v
 ```
 
-rawpy 0.28.0 / NumPy 2.5.4 / Pillow 13.0.0を公式PyPIのCPython3.12 Windows wheel SHA-256で固定。rawpyに同梱されたruntime LibRaw版と機能flagsはmanifestへ記録する。別OS/Pythonのwheelはこのlockの対象外。TLS検証は無効化しない。
+rawpy 0.28.0 / NumPy 2.5.4 / Pillow 13.0.0を公式PyPIの通常版CPython3.15 Windows wheel SHA-256で固定。依存の版は旧環境と同じでも、cp312とcp315のwheel/hashは異なる。free-threaded版（cp315t）は対象外で、rawpy 0.28.0には対応wheelがない。rawpyに同梱されたruntime LibRaw版と機能flagsはmanifestへ記録する。別OS/Pythonのwheelはこのlockの対象外。TLS検証は無効化しない。
+
+3.15のvenvに同梱された対応pipを使い、旧環境のpipをコピーしない。pip 26.2.2 / 26.3で検証しており、旧pip 25.0.1はPython 3.15では起動できない。Windows用の公式Pythonは[Python.org](https://www.python.org/downloads/release/python-3152/)から取得する。
+
+### 旧3.12 runの再現
+
+`requirements-win-py312.txt`と旧3.12.10の専用環境は、既存manifestの再現用に保持する。旧venvや既存runを3.15で上書きしない。replayには元のPython版・依存版・LibRaw flags・platform・toolファイルhashを含む環境の完全一致が必要で、3.12のmanifestを3.15で実行すると`MANIFEST_ENVIRONMENT_MISMATCH`になる。同じ依存版や合成画像の一致だけでこの検査を緩和しない。旧runは元のcheckout/toolと旧環境でreplayし、新しい3.15の処理は別runとして作る。
+
+3.12.10の保持は旧run再現用であり、新しい入力を処理する環境のsecurity更新方針ではない。Python 3.12系列のsecurity更新版はsource-onlyのため、旧環境を新しい処理の標準へ据え置く理由にはしない。
 
 ## CLI
 
@@ -62,5 +70,5 @@ rawpy 0.28.0 / NumPy 2.5.4 / Pillow 13.0.0を公式PyPIのCPython3.12 Windows wh
 
 ## CIの範囲
 
-`PC RAW checks`はWindows 2025 x64 / Python 3.12.10の専用venvに同じhash lockを入れ、合成・CLI・再現性のunitだけを実行する。実写真を取得・生成物をuploadしない。既存Android checksとは別で、成功を実DNG decodeやPixel/fp画質の証拠にしない。
+`PC RAW checks`はWindows 2025 x64 / Python 3.15.2の専用venvに`requirements-win-py315.txt`のhash lockを入れ、合成・CLI・再現性のunitだけを実行する。実写真を取得・生成物をuploadしない。既存Android checksとは別で、成功を実DNG decodeやPixel/fp画質の証拠にしない。
 [公式setup-python](https://github.com/actions/setup-python)と[公式runner images](https://github.com/actions/runner-images)の手順に従い、checkout/setup-python v7とcontents:readのみを使う。新しいSecrets・常駐環境は追加しない。
