@@ -12,8 +12,8 @@ RAW提供の有無を先に確認し、合成経路の成功を実DNG decodeやP
 
 | 項目 | 採用と理由 |
 |---|---|
-| Runtime | Windows x86-64 / Python 3.12、専用venv。global環境を変更しない |
-| Dependencies | 公式PyPI rawpy0.28.0、NumPy2.5.4、Pillow13.0.0。CPython3.12 Windows wheel SHA256を固定 |
+| Runtime | 新規処理はWindows x86-64 / CPython 3.15.2通常GIL版、別の専用venv。旧3.12.10環境とglobal環境を変更しない |
+| Dependencies | 公式PyPI rawpy0.28.0、NumPy2.5.4、Pillow13.0.0。通常CPython3.15 Windows wheel SHA256を固定。旧cp312 lockは再現用に保持 |
 | RAW | rawpy同梱LibRawを用いruntime版・flagsを記録。独自decoderやbinary配布なし |
 | Tests | 標準unittest、合成RGB／metadata-only TIFF／mocked decode契約。実DNG品質は別受入 |
 | Data | root明示、DNGだけ、リンク／junction非追跡、512MiB／80MP上限 |
@@ -36,6 +36,7 @@ tools/raw_baseline/
   baseline.py
   test_baseline.py
   requirements-win-py312.txt
+  requirements-win-py315.txt
   README.md
   EVALUATION.md
   .private/                 # ignored; inputs are never copied here automatically
@@ -64,6 +65,8 @@ rawpyはLibRawへの公式wrapperで、固定公式wheelがあるため採用。
 - run: `private staging → 全出力完了 → hash検証 → run公開`。既存runへ上書きしない。失敗stagingは専用private範囲でcleanup。
 
 CLIはinventory/develop/synthetic/replay。path入力と選択肢の詳細・終了code・再生成はREADMEを契約とする。replayはschema、固定条件、環境、入力hash、出力hashを検証し、不一致なら成功を返さない。外部API／networkはないためcontracts専用文書は増やさない。
+
+Python 3.15.2への移行はRenovate PR #51の範囲とする。新規処理は`.venv-py315`と`requirements-win-py315.txt`を使い、旧3.12.10のvenv・cp312 lock・元のcheckout/toolを旧manifest再現用に保持する。旧manifestの3.15でのreplayは環境不一致として拒否し、schemaや完全一致検査を緩和しない。同じ依存版でも別ABIのwheelであるため、公式hash・LibRaw版/flags・許可された代表DNGの原本不変と各環境内の再現性を検証する。Linuxやfree-threaded PythonはこのWindows用lockの対応範囲へ加えない。
 
 ## Validation and rollout
 

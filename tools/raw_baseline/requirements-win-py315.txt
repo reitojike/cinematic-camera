@@ -1,0 +1,4 @@
+# Official PyPI CPython 3.15 (GIL) Windows x86-64 wheels; install with --require-hashes.
+rawpy==0.28.0 --hash=sha256:1c691ef2634bf51dc6bb557496201ecf4de47434288e825eca146ef67c7cf257
+numpy==2.5.4 --hash=sha256:332f3378fe077dd850e677ec01bdcc4f22368fb5d50ef10b2c79230b1bf5a592
+Pillow==13.0.0 --hash=sha256:d4737f50d23ddd11d6685faacbb9252887dde0bc7997127757247983d74399d6
