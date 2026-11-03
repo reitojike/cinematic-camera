@@ -444,7 +444,10 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                 if (intent != null) intent.overrides.focusDistance else focus,
                 probe.selectedReport?.autoFocusAvailable == true, enabled, probe::restoreAutofocus,
                 textModifier = Modifier.sensorRotation(), horizontal = LocalCaptureHorizontal.current,
-                canSelect = { probe.currentEpoch == rulerEpoch && probe.canSelectLiveControls })
+                canSelect = { probe.currentEpoch == rulerEpoch && probe.canSelectLiveControls &&
+                    probe.selectedReport?.autoFocusAvailable == true },
+                manualNow = { probe.liveControlIntent?.let { it.overrides.focusDistance != null }
+                    ?: (probe.selectedControls.overrides.focusDistance != null) })
         }
         Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp)) {
             when (key.group) {

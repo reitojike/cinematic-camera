@@ -4,6 +4,28 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SensorShortcutTest {
+    @Test fun focusHeadingOmitsLensUnitButOtherHeadingsKeepTheirExistingRules() {
+        assertEquals("FOCUS", captureControlHeading("FOCUS", "FOCUS", "LU"))
+        assertEquals("FOCUS", captureControlHeading("FOCUS", "FOCUS", ""))
+        assertEquals("SS", captureControlHeading("SHUTTER", "SS", "s"))
+        assertEquals("EV · stop", captureControlHeading("EV", "EV", "stop"))
+    }
+    @Test fun autofocusShortcutAllowsAlreadyAutoWithoutRedundantRequest() {
+        var manual = false
+        var calls = 0
+        val action: () -> Unit = { calls++ }
+        assertTrue(dispatchFocusAuto(true, { true }, { manual }, action))
+        assertEquals(0, calls)
+        manual = true
+        assertTrue(dispatchFocusAuto(true, { true }, { manual }, action))
+        assertEquals(1, calls)
+        manual = false
+        assertTrue(dispatchFocusAuto(true, { true }, { manual }, action))
+        assertEquals(1, calls)
+        assertFalse(dispatchFocusAuto(false, { true }, { true }, action))
+        assertFalse(dispatchFocusAuto(true, { false }, { true }, action))
+        assertEquals(1, calls)
+    }
     @Test fun resetAndAutoWordsFitTheRotatedHeaderWithoutEllipsisAtLargeFontScales() {
         for (label in listOf("RESET", "AUTO")) for (fontScale in listOf(1f, 1.3f, 2f)) {
             // Production uses TextMeasurer; this fixture exercises the same fitting policy in pixels.
