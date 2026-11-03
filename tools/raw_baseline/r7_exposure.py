@@ -36,10 +36,14 @@ def output_c97(linear: np.ndarray) -> float:
 
 
 def decode_small(path: Path) -> np.ndarray:
+    """Half-size decode with baseline.decode()'s preprocessing, so learned EVs share its exposure scale."""
     with rawpy.imread(str(path)) as raw:
         rgb = raw.postprocess(half_size=True, use_camera_wb=True, use_auto_wb=False, output_color=rawpy.ColorSpace.sRGB,
-                              output_bps=16, gamma=(1, 1), no_auto_bright=True, bright=1.0,
-                              highlight_mode=rawpy.HighlightMode.Clip)
+                              output_bps=16, gamma=(1, 1), no_auto_bright=True, no_auto_scale=False, bright=1.0,
+                              exp_shift=1.0, exp_preserve_highlights=0.0, adjust_maximum_thr=0.0,
+                              highlight_mode=rawpy.HighlightMode.Clip,
+                              fbdd_noise_reduction=rawpy.FBDDNoiseReductionMode.Off, noise_thr=None,
+                              median_filter_passes=0)
     linear = r.crop_default(rgb.astype(np.float32) / 65535)
     size = r.fit_size(linear.shape[1], linear.shape[0])
     scale = 600 / max(size)
