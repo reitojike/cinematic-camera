@@ -228,4 +228,30 @@ class ControlScaleTest {
         assertEquals(0, portrait.offset.x)
         assertEquals(0, portrait.offset.y)
     }
+    @Test fun landscapeDialSizingCoversAllSupportedFamiliesAndExactFocusAnchors() {
+        val choices = ExposureChoices(listOf(100, 3200), listOf(ShutterStop("1/32000 s", 31250), ShutterStop("30 s", 30_000_000_000)))
+        val labels = landscapeDialSizingLabels(choices, -2..2, 0.5, 4f, listOf(1.234f, -1f, 9f), setOf(4, 6))
+        for (expected in listOf("100", "3200", "1/32000", "30", "+1.0", "-1.0", "AF", "∞", "1.23", "W.FLUOR", "CLOUDY")) {
+            assertTrue("missing $expected", expected in labels)
+        }
+        assertFalse("unsupported WB mode", "INCAND" in labels)
+        assertFalse("invalid focus anchor", "9" in labels)
+        assertFalse("unit must stay hidden", "1/32000 s" in labels)
+    }
+
+    @Test fun commonLandscapeDialHeightUsesLargestMeasuredLabelAndPortraitRemainsIndividual() {
+        assertEquals(56, landscapeDialMeasuredHeightPx(56, 12, emptyList()))
+        for (widths in listOf(listOf(22, 64, 31, 40, 71), listOf(44, 128, 62, 80, 142), listOf(68, 196, 95, 124, 218))) {
+            val shared = landscapeDialMeasuredHeightPx(56, 12, widths)
+            assertEquals(widths.maxOrNull()!! + 12, shared)
+            for (angle in listOf(-90, 90)) for (individual in widths) {
+                assertEquals("angle $angle", shared, controlDialHeightPx(true, individual, shared))
+                assertEquals(individual, controlDialHeightPx(false, individual, shared))
+            }
+            // The parent constrains the same requested body height in every ruler, including unavailable states.
+            val available = 100
+            assertTrue(widths.all { minOf(shared, available) == minOf(controlDialHeightPx(true, it, shared), available) })
+        }
+    }
+
 }

@@ -32,6 +32,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
@@ -39,6 +40,9 @@ import androidx.compose.ui.unit.sp
 private val ScaleText = Color(0xFFE4E6E8)
 private val ScaleMuted = Color(0xFFA3AAB1)
 private val ScaleLine = Color(0xFF3A3F44)
+
+/** Supplied from all session capabilities so switching controls does not resize the landscape dial. */
+internal val LocalLandscapeDialHeight = staticCompositionLocalOf<Dp?> { null }
 
 /** Equal side slots keep every title centered and place close at the same right edge. */
 @Composable
@@ -136,8 +140,13 @@ fun ExposureSelectionScale(
         labels.map { textMeasurer.measure(it, style = scaleStyle, maxLines = 1, softWrap = false).size }
     }
     val largestLabel = IntSize(labelSizes.maxOfOrNull { it.width } ?: 0, labelSizes.maxOfOrNull { it.height } ?: 0)
+    val individualHeightPx = with(density) {
+        maxOf(56.dp.roundToPx(), (if (horizontal) largestLabel.width else largestLabel.height) + 12.dp.roundToPx())
+    }
+    val sharedHeight = LocalLandscapeDialHeight.current
     val rulerHeight = with(density) {
-        maxOf(56.dp, ((if (horizontal) largestLabel.width else largestLabel.height) + 12.dp.roundToPx()).toDp())
+        controlDialHeightPx(horizontal && sharedHeight != null, individualHeightPx,
+            sharedHeight?.roundToPx() ?: individualHeightPx).toDp()
     }
     BoxWithConstraints(modifier.fillMaxWidth()) {
         val available = with(density) { (maxWidth - 96.dp).coerceAtLeast(1.dp).roundToPx() }
