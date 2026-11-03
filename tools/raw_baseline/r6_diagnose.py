@@ -218,10 +218,15 @@ def decode_dng_profile(path: Path, hue_sat: bool, multipliers: list[float] | Non
     import rawpy
     tags = dng_profile_tags(path)
     with rawpy.imread(str(path)) as raw:
+        # Same preprocessing as baseline.decode() (no automatic maximum adjustment, no NR),
+        # so only the colour transform differs between the compared stages.
         camera = raw.postprocess(demosaic_algorithm=rawpy.DemosaicAlgorithm.AHD, output_color=rawpy.ColorSpace.raw,
                                  use_camera_wb=multipliers is None, user_wb=multipliers, use_auto_wb=False,
-                                 output_bps=16, gamma=(1, 1), no_auto_bright=True, bright=1.0,
-                                 highlight_mode=rawpy.HighlightMode.Clip)
+                                 output_bps=16, gamma=(1, 1), no_auto_bright=True, no_auto_scale=False, bright=1.0,
+                                 exp_shift=1.0, exp_preserve_highlights=0.0, adjust_maximum_thr=0.0,
+                                 highlight_mode=rawpy.HighlightMode.Clip,
+                                 fbdd_noise_reduction=rawpy.FBDDNoiseReductionMode.Off, noise_thr=None,
+                                 median_filter_passes=0)
         applied = np.array(multipliers if multipliers else raw.camera_whitebalance, dtype=float)[:3]
     camera = crop_default(camera.astype(np.float32) / 65535)
     camera = resize_linear(camera, fit_size(camera.shape[1], camera.shape[0])).astype(np.float64)
