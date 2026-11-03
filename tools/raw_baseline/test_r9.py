@@ -32,6 +32,21 @@ class LookTableTests(unittest.TestCase):
         np.testing.assert_allclose(px.apply_look_table(pixels, table, dims, False), pixels * .5, atol=1e-9)
 
 
+    def test_encoded_value_scale_applies_in_srgb_domain(self):
+        dims = (6, 4, 2)
+        table = np.tile([0., 1., .5], dims[0] * dims[1] * dims[2])
+        grey = np.full((1, 1, 3), .4)
+        out = px.apply_look_table(grey, table, dims, True)
+        # linear 0.4 -> sRGB 0.665 -> x0.5 = 0.333 -> linear ~0.0904 (DNG SDK behaviour)
+        np.testing.assert_allclose(out, np.full((1, 1, 3), .0904), atol=5e-4)
+
+    def test_encoded_identity_keeps_pixels(self):
+        dims = (6, 4, 2)
+        table = np.tile([0., 1., 1.], dims[0] * dims[1] * dims[2])
+        pixels = np.random.default_rng(2).uniform(.01, .9, (4, 4, 3))
+        np.testing.assert_allclose(px.apply_look_table(pixels, table, dims, True), pixels, atol=1e-6)
+
+
 class GainMapTests(unittest.TestCase):
     @staticmethod
     def opcode_list(gain: float, plane_rows: int = 2, plane_cols: int = 2) -> bytes:

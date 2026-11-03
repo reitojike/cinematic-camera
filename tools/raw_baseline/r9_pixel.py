@@ -178,7 +178,14 @@ def apply_look_table(prophoto: np.ndarray, table: np.ndarray, dims: tuple[int, i
     mixed = (1 - zw) * plane(z0) + zw * plane(z1)
     hue = (hue + mixed[..., 0]) % 360
     sat = np.clip(sat * mixed[..., 1], 0, 1)
-    value = value * mixed[..., 2]
+    if srgb_encoded:
+        # DNG SDK: scale the sRGB-encoded value, then decode back to linear (values above 1,
+        # which the camera-normalised input should not contain, keep a linear scale).
+        scaled = v_axis * mixed[..., 2]
+        decoded = np.where(scaled <= .04045, scaled / 12.92, ((np.maximum(scaled, 0) + .055) / 1.055) ** 2.4)
+        value = np.where(value <= 1, decoded, value * mixed[..., 2])
+    else:
+        value = value * mixed[..., 2]
     sector = hue / 60
     i = np.floor(sector).astype(int) % 6
     f = sector - np.floor(sector)
