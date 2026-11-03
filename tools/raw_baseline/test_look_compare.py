@@ -75,6 +75,7 @@ class LookTests(unittest.TestCase):
                  lambda r: r["scenes"][0].update(skin=[[.5, .5, 0, .1]]),
                  lambda r: r["scenes"].append(copy.deepcopy(r["scenes"][0])),
                  lambda r: r["scenes"][0].update(extra=True), lambda r: r["scenes"][0].update(profile="pixel9a"),
+                 lambda r: r["scenes"][0].update(wb="daylight"),
                  lambda r: r["scenes"][0]["focus"].update(skin=[.8, .2, .2, .8])]
         for edit in edits:
             data = recipe(); edit(data)

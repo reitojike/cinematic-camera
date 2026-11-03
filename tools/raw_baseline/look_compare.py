@@ -59,7 +59,7 @@ def validate_recipe(recipe):
             raise b.BaselineError("INVALID_RECIPE")
         ids.add(scene["id"].casefold())
         # This UI/PoC is explicitly SIGMA fp only; Pixel quality is unverified.
-        if scene["profile"] != "sigmafp" or scene["wb"] not in ("camera", "daylight"):
+        if scene["profile"] != "sigmafp" or scene["wb"] != "camera":
             raise b.BaselineError("INVALID_RECIPE")
         number(scene["base_ev"], -2, 3)
         number(scene["skin_ev"], 0, 2)

@@ -32,7 +32,8 @@ recipe schema=1、scenes=1..3。例は実在素材を示さない。
 ```
 
 - sourceは許可root相対DNG。本比較PoCのprofileはsigmafp限定。Pixel/未知機種は拒否し、
-  既存baseline CLIの対応とは分ける。WBはcamera/daylightの明示選択。
+  既存baseline CLIの対応とは分ける。WBはcamera限定で、daylightを拒否する。
+  画質比較で実際の処理条件と固定説明を一致させるため、既存baseline CLIより受付を狭める。
 - editedは任意root相対JPEG。ICC必須、sRGBへrelative-colorimetric変換、EXIF回転のみ適用。
   自動fit・crop・位置合わせ・レタッチ推測をしない。PNG元参照とは別にquality95 JPEG比較版を生成する。
 - base_evはscene共通の手動ゲイン（-2..3）。skin_evはsceneの局所ゲイン追加（0..2）。
