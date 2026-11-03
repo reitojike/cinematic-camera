@@ -111,4 +111,15 @@ class CaptureChromeRegressionTest {
             captureModeLabelRoom(androidx.compose.ui.unit.IntSize(20, 48), true))
     }
 
+    @Test fun rulerTitlesUseTheSameCompactPolicyAndKeepFreshnessWarning() {
+        for (key in listOf(CaptureKey.ISO, CaptureKey.SHUTTER, CaptureKey.EV, CaptureKey.FOCUS, CaptureKey.WB)) {
+            val label = captureKeyVisualLabel(key)
+            assertEquals(label, captureRulerTitle(label, false))
+            assertEquals("$label 待機", captureRulerTitle(label, true))
+            assertEquals(label, captureRulerDescription(label, false))
+            assertEquals("$label AUTO実測待ち、選択一時停止", captureRulerDescription(label, true))
+        }
+        assertEquals("SS 待機", captureRulerTitle(captureKeyVisualLabel(CaptureKey.SHUTTER), true))
+    }
+
 }

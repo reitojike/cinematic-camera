@@ -9,6 +9,8 @@
 
 [v19表示/触覚AC](https://github.com/reitojike/cinematic-camera/issues/47#issuecomment-6595777813)はT021、実機はT006/009/012で確認する。過去の一般的なユーザー報告でv19個別ACを完了にしない。
 
+[v20共通見出し/触覚AC](https://github.com/reitojike/cinematic-camera/issues/47#issuecomment-6596333540)はT022とT021のhaptic種別へ反映する。実機の強度や描画を未確認のまま保ち、追加PO指示なしに無関係な差分を加えない。
+
 ## Phase 1: Setup
 
 - [x] T001 Issue #47/#37の範囲と旧004/009/012の置換を定め、標準resolver/setup-plan/setup-tasksでspec/plan/tasksを作る（specs/013-live-control-intent/spec.md、plan.md、tasks.md、specs/004-live-exposure/spec.md、specs/009-capture-ui-states/spec.md、specs/012-v15-capture-feedback/spec.md）。FR-007。
@@ -63,7 +65,11 @@
 
 ## Phase 9: v19表示・受付触覚
 
-- [ ] T021 SS見出し/短秒・長秒とも可視単位なし・読み上げ秒あり、STILL/CINEスイッチの現在値とguard、EV RESET/FOCUS AUTOの対象別semantics、同期受付した撮影/開始/停止だけの標準CLOCK_TICK(flags 0)を実装接続と純粋状態テストで確認する。拒否/受付遷移のない連打/保存/mode変更は触覚なし、成功証明との分離を保つ（app/src/main/java/dev/cinematic/p0/CaptureScreen.kt、ExposureControls.kt、SensorControlEditors.kt、CaptureChromeModel.kt、ShutterHapticPolicy.kt、app/src/test/java/dev/cinematic/p0/CaptureChromeRegressionTest.kt、ShutterHapticPolicyTest.kt）。FR-009/011、US1/AC6〜7、SC-007。
+- [ ] T021 SS見出し/短秒・長秒とも可視単位なし・読み上げ秒あり、STILL/CINEスイッチの現在値とguard、EV RESET/FOCUS AUTOの対象別semantics、同期受付した撮影/開始/停止だけの標準VIRTUAL_KEY(flags 0)を実装接続と純粋状態テストで確認する。目盛りはCLOCK_TICK(flags 0)、拒否/受付遷移のない連打/保存/mode変更は触覚なしとし、端末強度の非保証と成功証明との分離を保つ（app/src/main/java/dev/cinematic/p0/CaptureScreen.kt、ExposureControls.kt、SensorControlEditors.kt、CaptureChromeModel.kt、ShutterHapticPolicy.kt、app/src/test/java/dev/cinematic/p0/CaptureChromeRegressionTest.kt、ShutterHapticPolicyTest.kt）。FR-009/011、US1/AC6〜7、SC-007/008。
+
+## Phase 10: 共通目盛り見出し
+
+- [ ] T022 ISO/SS/EV/WB/FOCUSを48dp・3等幅slotの左action/中央title/右44dp closeへ共通化し、ISO/SSの通常補足説明を除く。待機title/semantics理由、縦横回転fit、既存action/close/鮮度/epoch/pending guardをsourceと純粋title回帰で確認する（app/src/main/java/dev/cinematic/p0/ExposureControls.kt、CaptureScreen.kt、CaptureChromeModel.kt、app/src/test/java/dev/cinematic/p0/CaptureChromeRegressionTest.kt）。FR-012、US1/AC8、SC-008。
 
 ## Dependencies & Execution Order
 
@@ -74,6 +80,8 @@ T001→T002→US2/US3の実装→各機械確認。US1はT001後に独立着手�
 T019/T020は既存queue/復旧scopeを前提とし、共有CaptureScreenの編集を直列化する。T017/019/020の機械確認後にT018、独立/remote reviewはT014、実機はT006/009/012で別判定する。
 
 T021の機械確認後にT018で現行差分を検証する。T006にはSSの短秒/長秒で可視単位なし・読み上げ秒あり・mode switchの実描画と受付時/拒否時の触覚体感、T009/T012にはRESET=EV0/AUTO=AFの実機確認を含める。一般的な既存ユーザー報告、純粋テスト、独立レビュー、v19実機受入を分けて判定する。
+
+T022後にT018で現行差分を検証し、最終head review/CIはT014へ残す。T006の実機受入に5目盛りの縦横title/action/closeと待機理由・VIRTUAL_KEY受付/既存dial触覚の確認を含める。端末強度を測定済みとはしない。
 
 ## Parallel Examples / Implementation Strategy
 

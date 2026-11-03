@@ -9,6 +9,7 @@ import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,22 +40,43 @@ private val ScaleText = Color(0xFFE4E6E8)
 private val ScaleMuted = Color(0xFFA3AAB1)
 private val ScaleLine = Color(0xFF3A3F44)
 
+/** Equal side slots keep every title centered and place close at the same right edge. */
 @Composable
 fun CaptureRulerHeading(
-    label: String, information: String,
-    modifier: Modifier = Modifier, horizontal: Boolean = false,
-    informationColor: Color = ScaleMuted,
-    actions: @Composable RowScope.() -> Unit,
+    label: String, onClose: () -> Unit, closeEnabled: Boolean,
+    modifier: Modifier = Modifier, rotation: Float = 0f, horizontal: Boolean = false, waiting: Boolean = false,
+    action: @Composable BoxScope.() -> Unit = {},
 ) {
-    Row(modifier.fillMaxWidth().height(48.dp).padding(start = 14.dp, end = 6.dp),
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            if (!horizontal) {
-                Text("$label $information", fontFamily = FontFamily.Monospace, fontSize = 11.sp,
-                    color = informationColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Row(modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.CenterStart) { action() }
+        BoxWithConstraints(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
+            val density = LocalDensity.current
+            val measurer = rememberTextMeasurer()
+            val title = captureRulerTitle(label, waiting)
+            val room = with(density) { captureModeLabelRoom(IntSize(maxWidth.roundToPx(), maxHeight.roundToPx()), horizontal) }
+            val style = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+            val size = remember(title, room, density, measurer) {
+                controlValueFontSize(11f) { candidate ->
+                    val text = measurer.measure(title, style.copy(fontSize = candidate.sp), maxLines = 1, softWrap = false).size
+                    text.width <= room.width && text.height <= room.height
+                }
+            }
+            Text(title, Modifier.layout { measurable, constraints ->
+                val text = measurable.measure(controlScaleTextConstraints(constraints, horizontal))
+                val placement = controlScaleTextPlacement(IntSize(text.width, text.height), horizontal)
+                layout(placement.size.width, placement.size.height) { text.place(placement.offset.x, placement.offset.y) }
+            }.graphicsLayer { rotationZ = rotation }.semantics {
+                contentDescription = captureRulerDescription(label, waiting)
+            }, style = style.copy(fontSize = size.sp), color = ScaleText, maxLines = 1, softWrap = false,
+                textAlign = TextAlign.Center)
+        }
+        Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.CenterEnd) {
+            TextButton(onClick = onClose, enabled = closeEnabled, modifier = Modifier.size(44.dp).semantics {
+                contentDescription = "目盛りを閉じる"
+            }, contentPadding = PaddingValues(0.dp)) {
+                Text("×", Modifier.graphicsLayer { rotationZ = rotation }, fontSize = 22.sp)
             }
         }
-        actions()
     }
 }
 
