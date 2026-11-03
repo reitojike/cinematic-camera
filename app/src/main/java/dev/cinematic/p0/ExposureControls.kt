@@ -235,6 +235,8 @@ fun CaptureControlKey(
     statusDescription: String = "",
     widthSamples: List<String> = listOf(value),
     displayLabel: String = label,
+    landscapeCommonHeight: Float = 0f,
+    onLandscapeNaturalHeight: (Float) -> Unit = {},
 ) {
     val density = LocalDensity.current
     val textMeasurer = rememberTextMeasurer()
@@ -255,7 +257,9 @@ fun CaptureControlKey(
     val natural = with(density) { IntSize(maxOf(headingSize.width, tagSize.width, valueWidth) + 16.dp.roundToPx(),
         headingSize.height + tagSize.height + valueHeight + 16.dp.roundToPx()) }
     val footprint = if (horizontal) IntSize(natural.height, natural.width) else natural
-    val height = with(density) { footprint.height.toDp().coerceAtLeast(72.dp) }
+    val naturalHeight = with(density) { footprint.height.toDp().coerceAtLeast(72.dp) }
+    SideEffect { if (horizontal) onLandscapeNaturalHeight(naturalHeight.value) }
+    val height = captureKeyHeight(naturalHeight.value, landscapeCommonHeight, horizontal).dp
     BoxWithConstraints(modifier.height(height).background(if (selected) Color(0xFF1E2225) else Color.Transparent)
         .alpha(if (enabled) 1f else .45f)
         .clickable(enabled = enabled || onUnavailable != null, role = Role.Button) { if (enabled) onClick() else onUnavailable?.invoke() }

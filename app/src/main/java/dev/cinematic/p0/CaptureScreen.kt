@@ -249,6 +249,8 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                         Box(Modifier.fillMaxWidth().background(if (editor.selected == null) Ink.copy(alpha = .5f) else Color(0xF00D0F10))) {
                             Box(Modifier.matchParentSize().blockPanelBackground())
                             val rows = captureKeyRows()
+                            val landscapeHeights = remember { mutableStateMapOf<CaptureKey, Float>() }
+                            val commonHeight = if (orientation.horizontal) captureKeyCommonHeight(landscapeHeights.values) else 0f
                             val keyMaxHeight = captureKeyMaxHeight(previewAvailableHeight, rows.size, editor.selected != null).dp
                             Column(Modifier.fillMaxWidth()) {
                                 rows.forEach { keys ->
@@ -266,6 +268,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                                             enabled = available.enabled, onUnavailable = { notice = available.reason }, unavailableReason = available.reason,
                                             onClick = { editor = editor.select(key) }, modifier = Modifier.weight(1f).heightIn(max = keyMaxHeight),
                                             displayLabel = captureKeyVisualLabel(key), unit = shown.unit, rotation = animatedAngle, horizontal = orientation.horizontal,
+                                            landscapeCommonHeight = commonHeight, onLandscapeNaturalHeight = { landscapeHeights[key] = it },
                                             valueColor = if (feedback.affected) sensorControlColor(feedback.tone) else Foreground,
                                             statusDescription = shown.contentDescription,
                                             widthSamples = if (key == CaptureKey.ISO) probe.exposureChoices.iso.map { it.toString() }
@@ -283,6 +286,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                                             onClick = { editor = editor.select(key) }, modifier = Modifier.weight(1f).heightIn(max = keyMaxHeight), unit = field.unit,
                                             onUnavailable = { notice = available.reason }, unavailableReason = available.reason,
                                             rotation = animatedAngle, horizontal = orientation.horizontal, valueColor = sensorControlColor(field.tone),
+                                            landscapeCommonHeight = commonHeight, onLandscapeNaturalHeight = { landscapeHeights[key] = it },
                                             statusDescription = "最新の指定 ${field.stateTag}。API受付値と実測は診断で確認",
                                             widthSamples = if (key == CaptureKey.WB) whiteBalanceOptions(probe.selectedReport?.overrides?.whiteBalanceModes ?: emptySet()).map { it.shortLabel }
                                                 else listOf(field.value))
