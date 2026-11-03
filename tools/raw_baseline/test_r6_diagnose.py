@@ -1,4 +1,5 @@
 """Synthetic tests for the round-6 diagnosis maths; no real RAW, references or quality claims."""
+import json
 from pathlib import Path
 import struct
 import tempfile
@@ -70,6 +71,11 @@ class MeasurementTests(unittest.TestCase):
         axis4 = {k: {"c97": c, "skin": c, "manual_ev": 1 - .4 * np.log2(c)} for k, c in zip("abcd", (.05, .1, .2, .4))}
         fit = r.fit_exposure(axis4)
         self.assertTrue(all(abs(v) < 1e-9 for v in fit["c97_-0.40"]["loo_residual"].values()))
+
+    def test_single_scene_loo_is_unavailable_not_nan(self):
+        fit = r.fit_exposure({"g": {"c97": .3, "skin": .05, "manual_ev": .5}})
+        self.assertTrue(all(v["loo_residual"]["g"] is None for v in fit.values()))
+        json.dumps(fit, allow_nan=False)
 
     def test_gamut_compress_keeps_in_gamut_and_range(self):
         values = np.array([[[.2, .4, .6]], [[1.4, -.2, .3]]], dtype=np.float32)

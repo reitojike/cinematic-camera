@@ -566,9 +566,11 @@ def fit_exposure(axis4: dict) -> dict:
         x = np.array([math.log2(axis4[i][metric]) for i in ids])
         for slope in (-.40, -1.):
             intercept = float(np.mean(y - slope * x))
-            loo = [y[k] - (np.mean(np.delete(y - slope * x, k)) + slope * x[k]) for k in range(len(ids))]
+            # Leave-one-out needs at least one other scene; report it as unavailable otherwise.
+            loo = [round(float(y[k] - (np.mean(np.delete(y - slope * x, k)) + slope * x[k])), 3) if len(ids) > 1 else None
+                   for k in range(len(ids))]
             result[f"{metric}_{slope:+.2f}"] = {"metric": metric, "slope": slope, "intercept": intercept,
-                                                "loo_residual": dict(zip(ids, np.round(loo, 3).tolist()))}
+                                                "loo_residual": dict(zip(ids, loo))}
     return result
 
 
@@ -655,7 +657,7 @@ def axes_html(rep: dict, fit: dict) -> str:
                  "<th>手動EV</th>" + "".join(f"<th>{v['metric']} 傾き{v['slope']:+.1f}</th>" for v in fit.values()) + "</tr>")
     for sid, a4 in rep["axis4"].items():
         parts.append(f"<tr><td>{sid.upper()}</td><td>{a4['c97']:.3f}</td><td>{a4['skin']:.4f}</td><td>{a4['manual_ev']:+.2f}</td>"
-                     + "".join(f"<td>{v['loo_residual'][sid]:+.2f}</td>" for v in fit.values()) + "</tr>")
+                     + "".join(f"<td>{fmt(v['loo_residual'][sid], 2)}</td>" for v in fit.values()) + "</tr>")
     parts.append("</table>")
     return "\n".join(parts)
 
