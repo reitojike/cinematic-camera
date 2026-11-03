@@ -1,0 +1,7 @@
+# Diagnostic-only extras for PC face-metering studies (not used by baseline.py or replay).
+# 4.x is pinned because it still bundles the Haar face cascades (5.x needs a separately downloaded model).
+# The face detector here only estimates how much face-based metering helps; the Android app
+# would use the platform's own face information (Camera2/CameraX metadata or ML Kit).
+-r requirements-win-py315.txt
+opencv-python-headless==4.14.0.94 \
+    --hash=sha256:cbed65415b8f6a9541c705afe3e64795840524d0ff3bc58f507826284a1dc64b
