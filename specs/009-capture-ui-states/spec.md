@@ -9,6 +9,8 @@
 
 ## 後続の仕様変更
 
+US2-5/FR-003/SC-003のMF draft適用/取消は[013 ライブ操作の最新意図](../013-live-control-intent/spec.md) FR-003〜006のMF即時previewへ置換する。EV/WB/MFはpending中も次の有効な選択を受け付け、遅いACKで最新intentを巻き戻さない。主値の近似説明分離と可読性は013 FR-001/002で補正する。013はmergeまでmainへ適用済みとは扱わない。
+
 主値の常時preview実測（FR-010/US2）は[012 v15フィードバック](../012-v15-capture-feedback/spec.md) FR-001/002で、AUTO正常値の軸別保持とMANUAL最新撮影targetへ置換する。012はDraftであり、mergeまでmainの契約を変更しない。
 
 ## User Scenarios & Testing

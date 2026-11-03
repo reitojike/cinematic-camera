@@ -58,10 +58,19 @@ class CaptureFeedbackTest {
         assertNull(captureMessage(true, null, null, null, null, null, null))
     }
 
-    @Test fun exposureReplacementRemainsAvailableButOtherMutationsWait() {
+    @Test fun pendingLiveInputsRemainAvailableButCaptureRecordingAndUnknownDoNot() {
         val pending = ready.copy(busy = true, ready = false, exposurePending = true)
         assertTrue(controlAvailability(CaptureKey.SHUTTER, pending).enabled)
         assertFalse(controlAvailability(CaptureKey.WB, pending).enabled)
+        val live = pending.copy(liveSelectable = true)
+        for (key in listOf(CaptureKey.EV, CaptureKey.WB, CaptureKey.FOCUS)) {
+            assertTrue(controlAvailability(key, live).enabled)
+            assertFalse(controlAvailability(key, live.copy(ownsCapture = true)).enabled)
+            assertFalse(controlAvailability(key, live.copy(recording = true)).enabled)
+            assertFalse(controlAvailability(key, live.copy(bound = false)).enabled)
+            assertFalse(controlAvailability(key, live.copy(busy = false, liveSelectable = false)).enabled)
+        }
+        assertFalse(controlAvailability(CaptureKey.ISO, live.copy(exposureSelectable = false)).enabled)
         assertFalse(controlAvailability(CaptureKey.ISO, pending.copy(ownsCapture = true)).enabled)
         assertFalse(controlAvailability(CaptureKey.ISO, pending.copy(recording = true)).enabled)
     }

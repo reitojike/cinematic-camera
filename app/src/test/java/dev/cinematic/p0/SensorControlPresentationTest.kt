@@ -131,4 +131,53 @@ class SensorControlPresentationTest {
         val accepted = receipt.copy(phase = ControlPhase.ACCEPTED, accepted = receipt.requested)
         assertEquals("履歴", whiteBalancePresentation(5, accepted).stateTag)
     }
+
+    @Test fun evZeroToOneAndFurtherPendingIntentsNeverWaitForOrRollBackToAnOlderAck() {
+        val accepted = snapshot().copy(evIndex = 0)
+        val receipt = ControlReceipt(epoch = 3, phase = ControlPhase.PENDING, accepted = accepted, requested = accepted)
+        var intent = accepted.copy(evIndex = 1)
+        assertEquals("+0.3", liveEvPresentation(0, 1.0 / 3.0, intent, receipt, true).value)
+        intent = intent.copy(evIndex = 3)
+        val olderAck = receipt.copy(phase = ControlPhase.ACCEPTED, accepted = accepted.copy(evIndex = 1))
+        val shown = liveEvPresentation(1, 1.0 / 3.0, intent, olderAck, true)
+        assertEquals("+1.0", shown.value); assertEquals(SensorControlTone.PENDING, shown.tone)
+        assertEquals("+1.0", liveEvPresentation(3, 1.0 / 3.0, null,
+            olderAck.copy(accepted = intent), false).value)
+        val restoringZero = accepted
+        val activeOne = receipt.copy(requested = accepted.copy(evIndex = 1))
+        assertEquals(SensorControlTone.PENDING, liveEvPresentation(0, 1.0, restoringZero, activeOne, true).tone)
+        assertEquals(SensorControlTone.UNKNOWN, liveEvPresentation(0, 1.0, restoringZero,
+            activeOne.copy(phase = ControlPhase.UNKNOWN), false).tone)
+    }
+
+    @Test fun whiteBalancePendingSelectionsAndDefaultRemovalFollowLatestIntentNotAcceptedHistory() {
+        val receipt = ControlReceipt(phase = ControlPhase.PENDING, accepted = snapshot(wb = 1), requested = snapshot(wb = 5))
+        for (mode in listOf(5, 6, 7, 8, null)) {
+            val latest = snapshot(wb = mode)
+            val shown = liveWhiteBalancePresentation(1, latest, receipt, true)
+            assertEquals(mode, shown.selectedMode); assertTrue(shown.hasSelection)
+            assertEquals("AUTO", shown.acceptedLabel)
+            assertEquals(SensorControlTone.PENDING, shown.tone)
+            assertEquals(mode, liveWhiteBalancePresentation(5, latest,
+                receipt.copy(phase = ControlPhase.ACCEPTED, accepted = snapshot(wb = 5)), true).selectedMode)
+        }
+    }
+
+    @Test fun focusCanReverseWhilePendingAndDistinguishesAfInfinityUnknownAndActual() {
+        val receipt = ControlReceipt(phase = ControlPhase.PENDING, accepted = snapshot(focus = 2f), requested = snapshot(focus = 3f))
+        for (value in listOf(3f, 4f, 3f, 2f, 0f, null)) {
+            val shown = liveFocusPresentation(2f, snapshot(focus = value), receipt, true)
+            assertEquals(if (value == null) "AF" else "MF", shown.modeTag)
+            assertEquals(if (value == null) "AF" else if (value == 0f) "∞" else focusDistanceText(value), shown.value)
+            assertEquals(SensorControlTone.PENDING, shown.tone)
+            assertEquals(2f, receipt.accepted!!.overrides.focusDistance)
+        }
+        val unknown = liveFocusPresentation(2f, snapshot(focus = 4f), receipt.copy(phase = ControlPhase.UNKNOWN), false)
+        assertEquals("4", unknown.value); assertEquals("不明", unknown.stateTag)
+        assertEquals(SensorControlTone.UNKNOWN, unknown.tone)
+        val restoring = liveFocusPresentation(2f, snapshot(focus = 2f), receipt.copy(phase = ControlPhase.UNKNOWN), false)
+        assertEquals("2", restoring.value); assertEquals(SensorControlTone.UNKNOWN, restoring.tone)
+        assertEquals("∞", liveFocusPresentation(0f, null,
+            receipt.copy(phase = ControlPhase.ACCEPTED, accepted = snapshot(focus = 0f), requested = snapshot(focus = 0f)), false).value)
+    }
 }

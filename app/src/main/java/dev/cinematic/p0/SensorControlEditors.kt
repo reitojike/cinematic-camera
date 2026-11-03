@@ -1,20 +1,11 @@
 package dev.cinematic.p0
 
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.layout
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 private val SensorText = Color(0xFFE4E6E8)
@@ -31,45 +22,27 @@ fun sensorControlColor(tone: SensorControlTone): Color = when (tone) {
     SensorControlTone.FAILED, SensorControlTone.UNKNOWN -> SensorFailed
 }
 
-/** Value selection only: caller retains the existing MF Apply/Cancel/AF action semantics. */
+/** AF and MF lens-unit choices use the same live selection path; no display text is sent back. */
 @Composable
 fun FocusControlEditor(
-    acceptedFocus: Float?, measuredFocus: Float?, draft: String?, maximum: Float?, enabled: Boolean,
-    onDraft: (String) -> Unit, onAutofocus: () -> Unit,
+    selectedFocus: Float?, maximum: Float?, enabled: Boolean,
+    onSelect: (Float) -> Unit, onAutofocus: () -> Unit,
     modifier: Modifier = Modifier, valueModifier: Modifier = Modifier,
     rotation: Float = 0f, horizontal: Boolean = false,
+    epoch: Int = 0, canSelect: () -> Boolean = { true },
 ) {
-    val number = if (draft != null) draft.trim().toFloatOrNull() else acceptedFocus ?: measuredFocus
     val legalMaximum = maximum?.takeIf { it.isFinite() && it > 0f }
-    val legal = number != null && number.isFinite() && legalMaximum != null && number in 0f..legalMaximum
+    // ACKs and actual AF motion cannot insert/remove stops while a gesture is using their indices.
+    val options = remember(epoch, legalMaximum) { focusControlOptions(legalMaximum, selectedFocus) }
+    val selected = if (selectedFocus == null) 0 else focusControlIndex(options, selectedFocus).takeIf { it >= 0 }?.plus(1) ?: -1
     Column(modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            TextButton(onClick = onAutofocus, enabled = enabled, modifier = Modifier.heightIn(min = 44.dp)) {
-                SensorRotated(rotation, horizontal) { SensorLabel("AF", SensorText) }
-            }
-            if (legal) {
-                SensorRotated(rotation, horizontal, valueModifier) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                        SensorLabel("LU", SensorMuted)
-                        SensorLabel(if (draft != null || acceptedFocus != null) "MF" else "候補", SensorMuted,
-                            Modifier.border(1.dp, SensorMuted).padding(horizontal = 4.dp))
-                    }
-                }
-            } else {
-                Text(if (legalMaximum == null) "MF非対応" else "MF値の確認待ち", color = SensorMuted,
-                    fontSize = 12.sp, modifier = Modifier.weight(1f))
-            }
-        }
-        if (legal) {
-            // Keep the exact opening value as a stable extra stop throughout this edit session.
-            val options = remember(legalMaximum, acceptedFocus) { focusControlOptions(legalMaximum, number) }
-            ExposureSelectionScale("FOCUS", options.map { focusDistanceText(it) ?: "—" },
-                focusControlIndex(options, number), enabled, { onDraft(options[it].toString()) },
-                rotation = rotation, horizontal = horizontal,
-                valueColor = if (draft != null) SensorAmber else SensorText,
-                descriptions = options.map { "${focusDistanceText(it)} LU MF候補" })
-        }
+        if (options.isEmpty()) Text("MF非対応", color = SensorMuted, fontSize = 12.sp)
+        else ExposureSelectionScale("FOCUS", listOf("AF") + options.map { if (it == 0f) "∞" else focusDistanceText(it) ?: "—" },
+            selected, enabled, { if (it == 0) onAutofocus() else onSelect(options[it - 1]) },
+            modifier = valueModifier, rotation = rotation, horizontal = horizontal, canSelect = canSelect,
+            descriptions = listOf("AF 自動フォーカス指定") + options.map {
+                if (it == 0f) "MF 無限遠指定 0 LU" else "MF ${focusDistanceText(it)} LU指定。実測は診断で確認"
+            })
     }
 }
 
@@ -99,21 +72,4 @@ fun ExposureCompensationControlEditor(
     val options = exposureCompensationOptions(range, step)
     ExposureSelectionScale("EV", options.map { it.label }, options.indexOfFirst { it.index == acceptedIndex },
         enabled, { onSelect(options[it].index) }, modifier, rotation, horizontal, canSelect = canSelect)
-}
-
-/** Report the quarter-turned footprint before placing the element, rather than rotating clipped text. */
-@Composable
-private fun SensorRotated(rotation: Float, horizontal: Boolean, modifier: Modifier = Modifier,
-    content: @Composable () -> Unit) {
-    Box(modifier.layout { measurable, constraints ->
-        val child = measurable.measure(controlScaleTextConstraints(constraints, horizontal))
-        val placement = controlScaleTextPlacement(IntSize(child.width, child.height), horizontal)
-        layout(placement.size.width, placement.size.height) { child.place(placement.offset.x, placement.offset.y) }
-    }.graphicsLayer { rotationZ = rotation }, contentAlignment = Alignment.Center) { content() }
-}
-
-@Composable
-private fun SensorLabel(value: String, color: Color, modifier: Modifier = Modifier) {
-    Text(value, modifier, color = color, fontFamily = FontFamily.Monospace, fontSize = 11.sp,
-        maxLines = 1, overflow = TextOverflow.Ellipsis)
 }

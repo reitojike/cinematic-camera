@@ -4,6 +4,10 @@
 **Status**: ユーザー承認の仕様変更・修正対象
 **Input**: Issue #37。適用の遅延と極端値で送信中停止。ISO/SSを即時・一般的な段階選択へ変更。
 
+## 後続の仕様変更
+
+FR-007のUNKNOWN後の同値選択再送は[013 FR-006](../013-live-control-intent/spec.md)へ置換する。最新intentを保持し、失敗/timeout後は入力を自動再試行の起点にせず明示reset/rebindで復旧する。期限hintの保持・要求/受付/実測の区別は維持する。013はmergeまでmainへ適用済みとは扱わない。
+
 ## User Scenarios & Testing
 ### User Story 1 - 標準段階で即時変更 (Priority: P1)
 撮影者はISO/SSを選んだ時点で要求し、適用ボタンを押さずプレビュー反映を確認する。
