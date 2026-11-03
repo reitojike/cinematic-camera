@@ -9,6 +9,7 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.*
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.selection.toggleable
@@ -111,6 +112,13 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
     val pendingNotice = if (receipt.phase == ControlPhase.PENDING || probe.exposureOperationPending || probe.liveControlsPending)
         if (changingKeys.isEmpty()) "設定変更中" else "${changingKeys.joinToString("・")}変更中" else null
     val focusAllowed by rememberUpdatedState(panel == CapturePanel.NONE && editor.submitting == null && !ownsCapture && !probe.busy)
+    val previewTap by rememberUpdatedState<(Float?, Float?) -> Unit>({ x, y ->
+        when (previewTapAction(panel, editor.selected, focusAllowed)) {
+            PreviewTapAction.DISMISS_RULER -> editor = editor.close()
+            PreviewTapAction.FOCUS -> if (x == null || y == null) probe.focusCenter() else probe.focusAt(x, y)
+            PreviewTapAction.IGNORE -> Unit
+        }
+    })
     LaunchedEffect(probe.currentEpoch) { editor = editor.session(probe.currentEpoch) }
     LaunchedEffect(receipt) {
         val feedback = completeEditorReceipt(editor, receipt)
@@ -175,16 +183,22 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                     PreviewView(context).also {
                         it.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                         it.scaleType = PreviewView.ScaleType.FIT_CENTER
-                        it.installFocusTap(onCenter = { if (focusAllowed) probe.focusCenter() }) { x, y ->
-                            if (focusAllowed) probe.focusAt(x, y)
+                        it.installFocusTap(onCenter = { previewTap(null, null) }) { x, y ->
+                            previewTap(x, y)
                         }
                         probe.initialize(it)
                     }
                 }, update = {
-                    it.importantForAccessibility = if (panel == CapturePanel.NONE) android.view.View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
+                    it.importantForAccessibility = if (previewAccessibilityVisible(panel, editor.selected)) android.view.View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
                         else android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
                 },
                     modifier = Modifier.fillMaxSize().padding(top = previewTop))
+                if (panel == CapturePanel.NONE && editor.selected != null) {
+                    val interaction = remember { MutableInteractionSource() }
+                    Box(Modifier.matchParentSize().clickable(interactionSource = interaction, indication = null,
+                        role = Role.Button, onClick = { previewTap(null, null) })
+                        .semantics { contentDescription = "目盛りを閉じる" })
+                }
                 if (probe.recordingStage == RecordingStage.RECORDING) Box(Modifier.fillMaxSize().border(1.dp, Rec))
                 val feedback = probe.focusFeedback
                 if (feedback != null && panel == CapturePanel.NONE && !probe.recordingBusy) {
@@ -228,6 +242,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                         .sensorRotation().background(Ink.copy(alpha = .8f)).padding(8.dp), color = bannerColor, fontSize = 12.sp) }
                     if (panel == CapturePanel.NONE) Column(Modifier.align(Alignment.BottomCenter)) {
                         if (editor.selected != null) Box(Modifier.weight(1f, fill = false)) {
+                            Box(Modifier.matchParentSize().blockPanelBackground())
                             Ruler(probe, editor, probe.canSelectLiveControls, exposureEditable,
                                 change = { editor = it }, auto = { editor = editor.cancel(); probe.setExposureAuto() }, refreshGeneration = measurementTick)
                         }

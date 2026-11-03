@@ -1,6 +1,6 @@
 # Feature Specification: ライブ操作の最新意図と主値の可読性
 
-**Feature Branch**: `fix/021-unify-control-headers`
+**Feature Branch**: `fix/022-dismiss-ruler-outside`
 **Created**: 2026-11-03
 **Status**: Draft
 **Input**: [Issue #47追加スコープ](https://github.com/reitojike/cinematic-camera/issues/47#issuecomment-6593446735)、関連[Issue #37](https://github.com/reitojike/cinematic-camera/issues/37)。本書は確定した振る舞いと受入条件を扱い、実機の原因確定・解消済み宣言は行わない。
@@ -10,6 +10,8 @@
 表示と触覚の追加ACは[Issue #47 v19 UI](https://github.com/reitojike/cinematic-camera/issues/47#issuecomment-6595777813)。SSの可視値は後続の明示指示を優先し、短秒/長秒とも単位なし、読み上げには秒を保持する。既存の一般的なユーザー報告をv19個別項目の実機合格に読み替えない。
 
 現行の追加は[Issue #47 v20 共通見出し・触覚](https://github.com/reitojike/cinematic-camera/issues/47#issuecomment-6596333540)。5目盛りの見出し配置と受付触覚の種類だけを変更し、追加PO指示なしに無関係な表示/動作を変えない。
+
+[Issue #61](https://github.com/reitojike/cinematic-camera/issues/61)は目盛り外のプレビューtapを閉じる操作へ統一する。設定/診断パネル自体は横持ちでも回転しない現行動作を明示的に維持する。
 
 ## User Scenarios & Testing
 
@@ -28,6 +30,7 @@
 6. **Given** 撮影画面、**When** SS主値とSTILL/CINE切替を確認する、**Then** 見出しはSS、短秒/長秒とも可視値に単位を付けず（例1/100、1、2）、読み上げでは秒の意味を保持する。スイッチから現在の撮影modeを視覚と読み上げで区別できる。busy/録画/撮影専有中の既存切替制限を維持する。
 7. **Given** シャッターを押す、**When** アプリが静止画の新規撮影、CINE開始または停止を同期的に受け付けた、**Then** 標準の軽い触覚応答を1回だけ要求する。拒否・受付遷移のない連打・保存中・mode切替では要求しない。触覚はAPI受付/保存成功/実録画の証明ではなく、端末/ユーザーの触覚設定を尊重する。
 8. **Given** ISO/SS/EV/WB/FOCUSの目盛り、**When** 縦/左右横持ちで開く、**Then** 見出しは中央title・右close・左actionで共通化し、WBの左actionが空でもtitleを中央に保つ。ISO/SSには通常の補足説明を重ねず、実測待ちの場合はtitleに待機を示し読み上げで理由を伝える。AUTO/RESET/FOCUS AUTOと閉じるの既存guardを維持する。
+9. **Given** 設定/診断を表示せず5項目のいずれかの目盛りを開いている、**When** 目盛り外のプレビュー領域を単一tapする、**Then** tapを消費して目盛りを閉じ、同じtapで背後のAE/AF測光や別操作を起動しない。送信済みintent・選択値・camera受付を取り消さない。目盛り内drag/tap/close、Back、設定/診断、録画停止、既存の撮影専有guardと読み上げを維持する。目盛りを閉じた状態の既存測光は保つ。
 
 ### User Story 2 - EV/WBを待たずに連続選択する (Priority: P1)
 
@@ -74,6 +77,7 @@ ISO/SS片軸欠落、観測時刻の逆転/未来、不正値、PREVIEW/VIDEO_RE
 - **FR-010**: 設定応答/preview確認UNKNOWNで、現epoch・前面・接続中・待機・撮影専有なしの場合に限り同camera/modeの手動再接続を可能にする。表示時と押下時の両方で検査し、背景化/epoch変更/送信中/録画中/撮影中を拒否する。最新intentの既存復旧scopeと旧token無効化を維持する。撮影中の停止/復旧と、API受付/preview実測/保存結果の分離を変更しない。
 - **FR-011**: SS見出しと短秒/長秒の可視値には単位を付けず、読み上げには秒を保持する。STILL/CINEは現在値を示すスイッチとし既存の切替制限を維持する。シャッターの新規撮影/録画開始/停止をアプリが同期受付した時だけ画面key用途の標準hapticを1回要求し、拒否/受付遷移のない連打/保存/mode切替では要求しない。目盛りの段変更用触覚と区別し、端末/ユーザー設定を尊重する。実際の振動強度を保証せず、API受付や保存/録画成功と混同しない。
 - **FR-012**: ISO/SS/EV/WB/FOCUS目盛りの見出しを中央title・右close・左actionで共用し、actionの有無でtitleをずらさない。ISO/SSの通常補足説明を外し、待機titleと読み上げ理由を保つ。既存action/close・epoch/能力/鮮度/pendingのguard、操作領域、読み上げを維持する。追加PO指示のない差分を作らない。
+- **FR-013**: 5目盛り外のプレビュー単一tapは閉じる専用として消費し、同時にAE/AF測光・別操作を発火しない。UIを閉じても送信済みintent/選択値/camera受付を保持する。対象はプレビュー領域に限定し、上位の状態バー/別キー/シャッター/設定入口は既存経路を優先する。目盛り内操作・close/Back・設定/診断・録画停止と既存の状態保護を維持し、撮影中のtap機能を拡張しない。回転設定を変更せず、設定/診断パネル自体は各向きで無回転を維持する。
 
 ### Key Entities
 
@@ -91,6 +95,7 @@ ISO/SS片軸欠落、観測時刻の逆転/未来、不正値、PREVIEW/VIDEO_RE
 - **SC-006**: EV遠端→0、近距離MF/∞→AFが各1回の操作で要求され、古いACKでの巻戻り・他項目intent消失・無効時送信0件。6キーは常に等幅横一列、SS略記/歯車/読み上げを維持する。手動再接続の許可/拒否行列と旧epoch拒否が一致し、撮影専有中の再bind0件とする。純粋テスト・callsite確認・独立レビューを実機原因確定や復旧成功の代用にしない。
 - **SC-007**: SSの短秒/長秒で可視単位なし・読み上げ秒あり、STILL/CINEの現在値、RESET=EV0/AUTO=AFの表示と操作が一致する。静止画新規受付・CINE開始/停止だけで触覚要求1回、それ以外0回とする。純粋状態テスト/接続確認と、v19の実描画・触覚体感・実機受入を分ける。
 - **SC-008**: 5目盛り×縦/左右横持ちでtitle中央・close右・action左が一致し、ISO/SSの通常補足説明0件、待機理由/既存guard/読み上げの欠落0件とする。受付時と目盛り段変更の標準haptic種別を接続で確認し、端末の強度・体感とv20実描画は実機確認まで未確認とする。
+- **SC-009**: 5項目×縦/左右横、pending・録画/保存・設定/診断との重なりで、外側tapの測光/操作貫通・送信済みintent取消0件。目盛り内操作/停止/Back/読み上げの後退と設定/診断パネルの新たな回転0件とする。純粋routing/接続確認と実描画・実機受入を分離する。
 
 ## Assumptions
 
