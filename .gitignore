@@ -26,5 +26,6 @@ device-evidence/
 /tools/raw_baseline/.private/
 /tools/raw_baseline/.venv/
 /tools/raw_baseline/.venv-py315/
+/tools/raw_baseline/.venv-py315-diag/
 /tools/raw_baseline/**/__pycache__/
 /tools/raw_baseline/**/*.pyc
