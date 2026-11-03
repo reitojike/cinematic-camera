@@ -99,6 +99,7 @@ fun ExposureSelectionScale(
     canSelect: () -> Boolean = { true },
     descriptions: List<String> = labels,
     allowCurrentSelection: Boolean = false,
+    allowCurrentSelectionNow: () -> Boolean = { true },
 ) {
     val interactive = enabled && selectedIndex in labels.indices
     val currentIndex by rememberUpdatedState(selectedIndex)
@@ -106,6 +107,7 @@ fun ExposureSelectionScale(
     val currentSelect by rememberUpdatedState(onSelect)
     val currentCanSelect by rememberUpdatedState(canSelect)
     val currentAllowSelection by rememberUpdatedState(allowCurrentSelection)
+    val currentAllowSelectionNow by rememberUpdatedState(allowCurrentSelectionNow)
     val interactiveNow by rememberUpdatedState(interactive)
     val view = LocalView.current
     val stepPx = with(LocalDensity.current) { 24.dp.toPx() }
@@ -119,7 +121,7 @@ fun ExposureSelectionScale(
     }
     fun dispatch(target: Int): Boolean {
         val next = dispatchControlScaleSelection(currentCount, dispatchedIndex, target, interactiveNow,
-            currentCanSelect, currentAllowSelection, currentSelect) ?: return false
+            currentCanSelect, currentAllowSelection && (target != dispatchedIndex || currentAllowSelectionNow()), currentSelect) ?: return false
         dispatchedIndex = next
         // Flags 0 preserve both the View's and the user's haptic settings.
         view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK, 0)

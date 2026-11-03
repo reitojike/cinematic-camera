@@ -1,6 +1,6 @@
 # Implementation Plan: ライブ操作の最新意図と主値の可読性
 
-**Branch**: `fix/024-landscape-dial-width` | **Date**: 2026-11-03 | **Spec**: [spec.md](spec.md)
+**Branch**: `feat/025-focus-auto-observation` | **Date**: 2026-11-03 | **Spec**: [spec.md](spec.md)
 **Input**: [Issue #47追加スコープ](https://github.com/reitojike/cinematic-camera/issues/47#issuecomment-6593446735)、関連Issue #37。
 
 現行の限定補正は[Issue #47 横一列・ショートカット・歯車](https://github.com/reitojike/cinematic-camera/issues/47#issuecomment-6595243467)と[Issue #37 手動再接続](https://github.com/reitojike/cinematic-camera/issues/37#issuecomment-6595251915)。既存013内でspecify → plan → tasks → analyzeを行い、新しいfeature文書を増やさない。
@@ -14,6 +14,8 @@
 [Issue #47 v22 横持ち項目幅](https://github.com/reitojike/cinematic-camera/issues/47#issuecomment-6599683392)は横持ちの見かけ幅共通化に限定する。ユーザーの縦持ち確認を横持ち実機合格へ転用しない。
 
 今回の明確化対象は開いた5ダイヤルとし、6キーの既存共通化は維持する。キー側のsource/テストをダイヤル幅の検証へ流用しない。
+
+FOCUS追加はAF CaptureResult近似/明示MF選択/AUTO復帰に限定し、幅とRAW等の既存処理を維持する。実測・target・API受付と実機受入を分ける。
 
 ## Summary
 
@@ -67,6 +69,8 @@
 - **復旧scope**: 失敗intentはmemory-onlyのcamera/mode key付きで保持し、明示bindでは同じkeyだけ再要求する。異なるkeyへ持ち込まない。bindの優先順はStillResumeIntent → PendingBindControls（明示AUTO）→ 同keyの失敗intent。復旧ACK後にmemory retry intentを解除する。露出AUTOは先に最新全体snapshotを取り、queue/scope/StillResumeをclearしてWB/MFを保持する。全resetは全制御を解除する。UNKNOWN後も設定の全リセットと診断の停止/開始へ到達できる。
 - **保存の意味**: 再送用のfull intent/scopeはmemory-only。通常WB/MF/EVは既存の項目別requestedPrefs保存を維持し、非対応fallbackで未編集の保存要求を書き換えない。露出の受付保存とは分ける。明示full resetは独立設定の保存要求を空/EV0へし、seeded・nonseeded両経路で同じ扱いとする。APIの受付/失敗/実測はこの保存と独立して表示し、保存を適用成功の証拠にしない。
 - **MF**: 即時選択callbackをqueueへ接続しapply/cancelを除く。候補はreported maxの100等分と正確なopening anchor。anchorはepoch/maxで固定し、各ACKで候補を作り直さない。非対応/不正/AF/MF/∞遷移を明示検査し丸めを送信しない。
+- **AF観測**: `FocusObservation.kt`のAutofocusObservationsとbounded mailboxで、現epoch・AF対応・受付時のMF overrideなし/最新intentもAFの場合だけ観測を開く。受付より後の取得時刻・新frame・PREVIEW/VIDEO_RECORD・AF mode 1〜4・finite非負値を採用し、0〜2000msだけfreshとする。報告MF最大値が正なら範囲内を検査、最大値なしを固定焦点の証拠にせず、0/不正最大値やOFF/EDOF等は有効AF値としない。欠落で時刻を延命せず、MF要求/失敗/背景化でsuspendし新AF受付前の値を捨てる。旧ACKで最新MF中の観測を再開しない。
+- **AF表示/明示選択**: `focusAutoPresentation`はAF時だけ100等分の101候補へ表示専用近似し、LU/AF近似、0候補は∞を示す。LUは未校正のレンズ単位で物理距離/合焦保証ではない。freshなしは?・AF待機、候補範囲なしは?・AF候補なし。MFはlatest logical intentを優先し、受付履歴と観測を分ける。FOCUS目盛りはnumeric onlyとし、最初のfresh AFをepoch/max/AF-MF切替ごとのseedへ固定する。中心候補も明示選択でMF要求するが、同期最新intentを再検査して同値要求を重複しない。最初のdetentでAF観測をsuspendしてもMF intentが立った後はdrag継続を許可する。AUTOはheaderから既存override解除経路へ接続し、新AF受付後の実測を待つ。
 - **AUTO**: current epoch、ISO/SSの元timestamp/valid valueを独立保持。正常PREVIEW/VIDEO_RECORDのみaccumulateし、欠落/不正/旧/逆転sampleで更新・延命しない。epoch/unbindでclear、表示時0〜2000msのみ有効とする。MANUAL target、RAW固定targetと補償の分離は維持する。
 - **Presentation**: `captureKeyRows()`は常に6キー1行、各キーは等weightとする。SHUTTERの視覚ラベルはSS、元の意味はsemanticsに保持する。歯車はローカルvector drawable `ic_settings.xml`で表し新依存を使わない。TextMeasurerはheading/tag各11sp・主数値16spを上限に行ごとに適合させ、長いtagの幅で数値を縮小しない。固定最小spはなく極小化し得るため、狭幅/高fontScaleの可読性は未保証。目盛りの104dp優先領域・固定preview寸法を維持する。縦/左右横・fontScale 1.0/1.3/2.0は受入対象だが実viewportの描画は未確認で、純粋幅テストを可読性合格にしない。
 - **横持ち共通寸法**: CaptureControlKeyがTextMeasurerで候補/現値/heading/tagを含む自然寸法を測り、回転後footprintの自然高さ（最小72dp）をSideEffectで6キー分報告する。CaptureScreenは最大値を`captureKeyCommonHeight`で共有し、横持ちだけ`captureKeyHeight`で全キーへ適用する。物理高さが回転後の見かけ横幅となるため、Rowの等weight物理幅とは別に扱う。縦持ちは各キー従来の自然高さを使い、既存`keyMaxHeight`共通上限・104dp目盛り優先領域と行別text fitを維持する。短高では最大自然寸法をそのまま使えず文字縮小が残る。SideEffect集約により初回再構成や値/向き変更時に寸法変化があり得るため、過渡表示と実寸の収まりは実描画未確認とする。tap/clickable/semanticsとcamera guardは変更しない。
@@ -97,6 +101,8 @@ Issue #61は`CaptureStateTest`の5項目/FOCUS可否/パネル表示のrouting�
 v22の`CaptureChromeRegressionTest`は模擬した自然測定高さ・複数文字倍率相当・左右横回転・空集合/長いラベル消失をpure policyで検証する。これは実Android TextMeasurer/viewportの測定結果ではない。6キーの最大寸法/共通上限・初回/回転途中、portrait回帰、touch/a11yを実描画/実機で別確認する。
 
 ダイヤルは`ControlScaleTest`で全5候補family・長いSS/WB・有効/不正MF exact anchor・非対応候補非追加、最大測定幅+padding/下限・左右横・縦個別維持・親制約をpure policyとして確認する。実TextMeasurerを呼ぶproduction接続と、実際の左右横/fontScale/短高/待機描画は別確認であり、実機未確認を維持する。
+
+FOCUSは`FocusObservationTest`でTTL/epoch/用途/範囲/AF mode/受付境界・AF→MF→AF・旧ACK/失敗/背景化/mailboxを、`SensorControlPresentationTest`でAF近似/未確認・MF優先・numeric seed/center tap/最初のdetent後drag・AUTO復帰を確認する。実LUの校正や物理距離変換は追加しない。source接続・純粋テスト・独立レビューと、実描画/実機合焦探索は別判定とする。
 
 実描画の可読性と実機のAUTOちらつき・連続操作・MF合焦探索は別AC。要求発行・API受付・実測・見た目の結果を分離し、Issue/PRへ要約だけ記録する。最終head必須CI・独立レビュー明示OK・canonical review・thread0が揃ってもmerge/配布は別承認まで停止する。
 

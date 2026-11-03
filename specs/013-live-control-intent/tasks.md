@@ -17,6 +17,8 @@
 
 ユーザーが明確化した横幅対象は開いた5ダイヤルでありT025へ分ける。6キーの既存補正T024をダイヤル幅の解決証拠にせず、縦不変と実機未確認を維持する。
 
+FOCUSのAF実測近似/明示MF/AUTO復帰はT026、実機はT012で判定する。幅の確認を新FOCUS機能の実機証明にせず、LUを物理距離/合焦へ読み替えない。
+
 ## Phase 1: Setup
 
 - [x] T001 Issue #47/#37の範囲と旧004/009/012の置換を定め、標準resolver/setup-plan/setup-tasksでspec/plan/tasksを作る（specs/013-live-control-intent/spec.md、plan.md、tasks.md、specs/004-live-exposure/spec.md、specs/009-capture-ui-states/spec.md、specs/012-v15-capture-feedback/spec.md）。FR-007。
@@ -89,6 +91,10 @@
 
 - [ ] T025 現sessionの5候補familyと有効MF exact anchorを先行測定し、横持ち本体`max(56dp,最大候補幅+12dp)`/header48dpの共通外枠を適用する。待機/非対応の外枠、縦個別寸法/6キー維持、親制約・長候補/文字倍率限界と既存操作/guard/a11yをpure候補集合/測定値テストとsource接続で確認する（app/src/main/java/dev/cinematic/p0/CaptureScreen.kt、ControlScale.kt、ExposureControls.kt、app/src/test/java/dev/cinematic/p0/ControlScaleTest.kt）。FR-015、US1/AC11、SC-011。
 
+## Phase 14: AF実測近似と明示MF
+
+- [ ] T026 AF受付後のfresh preview観測を表示専用近似し、LU/AF近似と最新MF target/受付履歴を分離する。numeric-only FOCUSのseed固定・明示center tap/drag→MF・同値1回・最初のdetent後継続・AUTO復帰をsourceとpure policyで確認する。TTL/epoch/nonAF/fixed/非対応/失敗/背景化/旧ACK、未校正LU非物理距離と既存intent/guard/a11yを維持する（app/src/main/java/dev/cinematic/p0/FocusObservation.kt、CameraProbe.kt、CaptureScreen.kt、SensorControlEditors.kt、SensorControlPresentation.kt、ExposureControls.kt、app/src/test/java/dev/cinematic/p0/FocusObservationTest.kt、SensorControlPresentationTest.kt）。FR-005/009/016、US3/AC5〜6、SC-012。
+
 ## Dependencies & Execution Order
 
 T001→T002→US2/US3の実装→各機械確認。US1はT001後に独立着手でき、T003→T004→T005。各実機AC（T006/T009/T012）は対応機械確認後に別判定する。T013は各機械確認後、T014は最終head固定後。共有CameraProbe/SensorControlEditors/CapturePanelsの編集は直列化し、別担当の同一ファイルを上書きしない。
@@ -106,6 +112,8 @@ T023後にT018で現行差分のunit/build/lintと整合を検証する。T006�
 T024後にT018で現行機械検証を確認し、review/CIはT014で判定する。T006の実描画/実機受入に縦/左右横6キーの候補/タグ/文字倍率・共通上限・初回/回転途中の寸法とtouch/a11yを含め、縦持ちの一般確認で横持ちを完了にしない。
 
 T025後にT018で現行機械検証、T014で独立/canonical reviewとCIを確認する。T006には5ダイヤルの左右横・長SS/WB・MF exact値・待機/非対応・fontScale/短高と縦回帰を別途含める。実描画/実機未確認を残し、キー幅の検証を流用しない。
+
+T026後にT018で現行機械検証、T014でreview/CIを確認する。T012にはAF近似の更新/待機、center tap/dragの明示MF、AUTO復帰・旧値非復活と合焦探索の実描画/実機確認を含め、未確認を残す。AF実測/target/受付と物理距離・合焦成功は分ける。
 
 ## Parallel Examples / Implementation Strategy
 
