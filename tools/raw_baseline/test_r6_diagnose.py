@@ -84,6 +84,16 @@ class MeasurementTests(unittest.TestCase):
         self.assertTrue(((out >= 0) & (out <= 1)).all())
 
 
+class CropTests(unittest.TestCase):
+    def test_half_size_crop_removes_the_same_sensor_area(self):
+        full = r.crop_default(np.zeros((4042, 6064, 3), dtype=np.float32))
+        half = r.crop_default(np.zeros((2021, 3032, 3), dtype=np.float32), scale=.5)
+        self.assertEqual(full.shape[:2], (4000, 6000))
+        # Same sensor area within half-pixel rounding of the odd 21-px margin.
+        self.assertLessEqual(abs(half.shape[0] - 2000), 1)
+        self.assertEqual(half.shape[1], 3000)
+
+
 class OutputPathTests(unittest.TestCase):
     def test_dotdot_alias_into_input_is_rejected(self):
         with tempfile.TemporaryDirectory() as folder:

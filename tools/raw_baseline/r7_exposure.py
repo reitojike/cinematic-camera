@@ -44,7 +44,7 @@ def decode_small(path: Path) -> np.ndarray:
                               highlight_mode=rawpy.HighlightMode.Clip,
                               fbdd_noise_reduction=rawpy.FBDDNoiseReductionMode.Off, noise_thr=None,
                               median_filter_passes=0)
-    linear = r.crop_default(rgb.astype(np.float32) / 65535)
+    linear = r.crop_default(rgb.astype(np.float32) / 65535, scale=.5)  # half_size decode
     size = r.fit_size(linear.shape[1], linear.shape[0])
     scale = 600 / max(size)
     return r.resize_linear(linear, (round(size[0] * scale), round(size[1] * scale)))
