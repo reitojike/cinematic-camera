@@ -51,7 +51,7 @@ def profile_layer(linear: np.ndarray, shift_deg: float) -> np.ndarray:
     """Rotate saturated blue-violet (OKLab hue ~250-350°) toward blue by up to shift_deg."""
     if not shift_deg:
         return linear
-    lab = r.oklab(np.maximum(linear, 0))
+    lab = r.oklab(linear)  # signed: keep wide-gamut values until output mapping
     chroma = np.hypot(lab[..., 1], lab[..., 2])
     hue = np.degrees(np.arctan2(lab[..., 2], lab[..., 1])) % 360
     weight = hue_band(hue, 300., 50.) * np.clip((chroma - .03) / .07, 0, 1)
@@ -83,7 +83,7 @@ def local_tone(linear: np.ndarray, highlights: float, shadows: float) -> np.ndar
 
 
 def vibrance(linear: np.ndarray, amount: float) -> np.ndarray:
-    lab = r.oklab(np.maximum(linear, 0))
+    lab = r.oklab(linear)
     lightness = lab[..., 0]
     chroma = np.hypot(lab[..., 1], lab[..., 2])
     hue = np.degrees(np.arctan2(lab[..., 2], lab[..., 1])) % 360
@@ -114,7 +114,7 @@ def render(linear: np.ndarray, scene: dict, look: dict, shift: float, immersion:
     if immersion:
         x = local_tone(x, immersion["highlights"], immersion["shadows"])
     mask = r.skin_mask(x.shape[1], x.shape[0], scene["skin"])
-    x = r.foundation(np.maximum(x, 0), mask, base_ev, look)
+    x = r.foundation(x, mask, base_ev, look)
     if immersion:
         x = vibrance(x, immersion["vibrance"])
     return x

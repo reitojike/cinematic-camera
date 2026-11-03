@@ -34,6 +34,11 @@ class LayerTests(unittest.TestCase):
         self.assertLess(hue_of(k.profile_layer(violet, 20.)), hue_of(violet) - 5)
         self.assertAlmostEqual(hue_of(k.profile_layer(skin, 20.)), hue_of(skin), places=2)
 
+    def test_out_of_srgb_red_keeps_its_hue_through_profile_layer(self):
+        # Display P3 red is outside sRGB (negative G/B) and outside the blue-violet band.
+        p3_red = (np.array([1., 0., 0.], dtype=np.float32) @ r.P3_TO_SRGB.T).reshape(1, 1, 3)
+        np.testing.assert_allclose(k.profile_layer(p3_red, 24.), p3_red, atol=1e-4)
+
     def test_local_tone_keeps_flat_image(self):
         flat = np.full((40, 60, 3), .2, dtype=np.float32)
         np.testing.assert_allclose(k.local_tone(flat, .5, .5), flat, rtol=1e-4)
