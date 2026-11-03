@@ -213,14 +213,14 @@ fun CaptureControlKey(
     statusDescription: String = "",
     widthSamples: List<String> = listOf(value),
     displayLabel: String = label,
-    unitInValue: Boolean = false,
 ) {
     val density = LocalDensity.current
     val textMeasurer = rememberTextMeasurer()
-    val heading = if (unit.isEmpty() || unitInValue) displayLabel else "$displayLabel · $unit"
-    val visibleValue = captureControlValueText(value, unit, unitInValue)
-    val visibleSamples = if (unitInValue && unit.isNotEmpty()) widthSamples.map { "$it $unit" } else widthSamples
+    val heading = if (unit.isEmpty() || label == "SHUTTER") displayLabel else "$displayLabel · $unit"
+    val visibleValue = value
+    val visibleSamples = widthSamples
     val accessibleLabel = if (label == "SHUTTER") "シャッタースピード" else label
+    val accessibleValue = if (label == "SHUTTER") captureShutterDescription(value) else "$value $unit"
     val smallStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp)
     val valueStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 16.sp, fontWeight = FontWeight.Medium)
     val headingSize = textMeasurer.measure(heading, style = smallStyle, maxLines = 1, softWrap = false).size
@@ -237,7 +237,7 @@ fun CaptureControlKey(
     BoxWithConstraints(modifier.height(height).background(if (selected) Color(0xFF1E2225) else Color.Transparent)
         .alpha(if (enabled) 1f else .45f)
         .clickable(enabled = enabled || onUnavailable != null, role = Role.Button) { if (enabled) onClick() else onUnavailable?.invoke() }
-        .semantics { this.selected = selected; contentDescription = "$accessibleLabel $value $unit $tag${if (statusDescription.isNotBlank()) " $statusDescription" else ""}${if (!enabled) " 無効: ${unavailableReason ?: "操作不可"}" else ""}" }) {
+        .semantics { this.selected = selected; contentDescription = "$accessibleLabel $accessibleValue $tag${if (statusDescription.isNotBlank()) " $statusDescription" else ""}${if (!enabled) " 無効: ${unavailableReason ?: "操作不可"}" else ""}" }) {
         if (selected) Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(3.dp).background(ScaleText))
         Box(Modifier.align(Alignment.CenterEnd).width(1.dp).fillMaxHeight().background(Color.White.copy(alpha = .1f)))
         val availableSize = with(density) { IntSize(maxWidth.roundToPx(), maxHeight.roundToPx()) }

@@ -250,7 +250,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                                         CaptureControlKey(key.name, shown.value, shown.qualifier.ifEmpty { "実測未確認" }, selected,
                                             enabled = available.enabled, onUnavailable = { notice = available.reason }, unavailableReason = available.reason,
                                             onClick = { editor = editor.select(key) }, modifier = Modifier.weight(1f).heightIn(max = keyMaxHeight),
-                                            displayLabel = captureKeyVisualLabel(key), unitInValue = key == CaptureKey.SHUTTER, unit = shown.unit, rotation = animatedAngle, horizontal = orientation.horizontal,
+                                            displayLabel = captureKeyVisualLabel(key), unit = shown.unit, rotation = animatedAngle, horizontal = orientation.horizontal,
                                             valueColor = if (feedback.affected) sensorControlColor(feedback.tone) else Foreground,
                                             statusDescription = shown.contentDescription,
                                             widthSamples = if (key == CaptureKey.ISO) probe.exposureChoices.iso.map { it.toString() }
@@ -338,7 +338,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
         // Shield only the ISO/SS ruler; children retain their drag gestures.
         Box(Modifier.matchParentSize().blockPanelBackground())
         Column(Modifier.fillMaxWidth()) {
-            CaptureRulerHeading(key.name, information,
+            CaptureRulerHeading(captureKeyVisualLabel(key), information,
                 horizontal = LocalCaptureHorizontal.current && !waitingForFresh,
                 informationColor = Muted) {
                 TextButton(onClick = auto,
@@ -359,10 +359,12 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                 }
             } else {
                 val index = if (key == CaptureKey.ISO) choices.iso.indexOf(pair.iso) else choices.shutter.indexOfFirst { it.exposureNs == pair.exposureNs }
-                ExposureSelectionScale(key.name,
+                ExposureSelectionScale(if (key == CaptureKey.SHUTTER) "シャッタースピード" else key.name,
                     if (key == CaptureKey.ISO) choices.iso.map { it.toString() } else choices.shutter.map { it.label.removeSuffix(" s") },
                     index, exposureEnabled && !waitingForFresh, { probe.selectExposure(key, it) }, rotation = LocalCaptureAngle.current,
                     horizontal = LocalCaptureHorizontal.current, valueColor = if (probe.exposureOperationPending) Amber else Foreground,
+                    descriptions = if (key == CaptureKey.ISO) choices.iso.map { it.toString() }
+                        else choices.shutter.map { captureShutterDescription(it.label.removeSuffix(" s")) },
                     allowCurrentSelection = !probe.manualExposure && probe.liveExposureTarget == null && probe.appliedExposure == null,
                     canSelect = { probe.currentEpoch == rulerEpoch && probe.canSelectExposure && probe.selectedReport?.manualBlockReason == null &&
                         (probe.liveExposureTarget != null || probe.appliedExposure != null ||

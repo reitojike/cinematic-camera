@@ -97,11 +97,10 @@ class CaptureChromeRegressionTest {
         assertEquals("CINE", captureModeSwitchState(CaptureMode.CINE))
     }
 
-    @Test fun compactShutterValueRetainsItsSecondsUnit() {
-        assertEquals("1/125 s", captureControlValueText("1/125", "s", true))
-        assertEquals("1 s", captureControlValueText("1", "s", true))
-        assertEquals("? s", captureControlValueText("?", "s", true))
-        assertEquals("400", captureControlValueText("400", "", false))
+    @Test fun shutterAccessibilityRetainsSecondsForFractionAndLongExposure() {
+        assertEquals("1/125 秒", captureShutterDescription("1/125"))
+        assertEquals("1 秒", captureShutterDescription("1"))
+        assertEquals("30 秒", captureShutterDescription("30"))
     }
 
     @Test fun switchLabelRoomTracksQuarterTurnAndNarrowSegments() {

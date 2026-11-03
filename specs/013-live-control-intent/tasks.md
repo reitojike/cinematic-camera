@@ -63,7 +63,7 @@
 
 ## Phase 9: v19表示・受付触覚
 
-- [ ] T021 SS見出し/数値s、STILL/CINEスイッチの現在値とguard、EV RESET/FOCUS AUTOの対象別semantics、同期受付した撮影/開始/停止だけの標準CLOCK_TICK(flags 0)を実装接続と純粋状態テストで確認する。拒否/受付遷移のない連打/保存/mode変更は触覚なし、成功証明との分離を保つ（app/src/main/java/dev/cinematic/p0/CaptureScreen.kt、ExposureControls.kt、SensorControlEditors.kt、CaptureChromeModel.kt、ShutterHapticPolicy.kt、app/src/test/java/dev/cinematic/p0/CaptureChromeRegressionTest.kt、ShutterHapticPolicyTest.kt）。FR-009/011、US1/AC6〜7、SC-007。
+- [ ] T021 SS見出し/短秒・長秒とも可視単位なし・読み上げ秒あり、STILL/CINEスイッチの現在値とguard、EV RESET/FOCUS AUTOの対象別semantics、同期受付した撮影/開始/停止だけの標準CLOCK_TICK(flags 0)を実装接続と純粋状態テストで確認する。拒否/受付遷移のない連打/保存/mode変更は触覚なし、成功証明との分離を保つ（app/src/main/java/dev/cinematic/p0/CaptureScreen.kt、ExposureControls.kt、SensorControlEditors.kt、CaptureChromeModel.kt、ShutterHapticPolicy.kt、app/src/test/java/dev/cinematic/p0/CaptureChromeRegressionTest.kt、ShutterHapticPolicyTest.kt）。FR-009/011、US1/AC6〜7、SC-007。
 
 ## Dependencies & Execution Order
 
@@ -73,7 +73,7 @@ T001→T002→US2/US3の実装→各機械確認。US1はT001後に独立着手�
 
 T019/T020は既存queue/復旧scopeを前提とし、共有CaptureScreenの編集を直列化する。T017/019/020の機械確認後にT018、独立/remote reviewはT014、実機はT006/009/012で別判定する。
 
-T021の機械確認後にT018で現行差分を検証する。T006にはSS数値s・mode switchの実描画と受付時/拒否時の触覚体感、T009/T012にはRESET=EV0/AUTO=AFの実機確認を含める。一般的な既存ユーザー報告、純粋テスト、独立レビュー、v19実機受入を分けて判定する。
+T021の機械確認後にT018で現行差分を検証する。T006にはSSの短秒/長秒で可視単位なし・読み上げ秒あり・mode switchの実描画と受付時/拒否時の触覚体感、T009/T012にはRESET=EV0/AUTO=AFの実機確認を含める。一般的な既存ユーザー報告、純粋テスト、独立レビュー、v19実機受入を分けて判定する。
 
 ## Parallel Examples / Implementation Strategy
 

@@ -229,9 +229,8 @@ internal fun captureKeyMaxHeight(previewHeightDp: Float, rowCount: Int, rulerOpe
 /** The accessibility state reports the current mode, independent of the next action. */
 internal fun captureModeSwitchState(mode: CaptureMode): String = mode.name
 
-/** Keep a shutter value's unit with the value when the compact heading omits it. */
-internal fun captureControlValueText(value: String, unit: String, unitInValue: Boolean): String =
-    if (unitInValue && unit.isNotEmpty()) "$value $unit" else value
+/** Spoken values retain seconds even though the SS control omits units visually. */
+internal fun captureShutterDescription(value: String): String = "$value 秒"
 
 /** A rotated switch label uses the segment's height as its text width. */
 internal fun captureModeLabelRoom(cell: androidx.compose.ui.unit.IntSize, horizontal: Boolean): androidx.compose.ui.unit.IntSize =

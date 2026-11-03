@@ -5,7 +5,7 @@
 
 現行の限定補正は[Issue #47 横一列・ショートカット・歯車](https://github.com/reitojike/cinematic-camera/issues/47#issuecomment-6595243467)と[Issue #37 手動再接続](https://github.com/reitojike/cinematic-camera/issues/37#issuecomment-6595251915)。既存013内でspecify → plan → tasks → analyzeを行い、新しいfeature文書を増やさない。
 
-表示/触覚の追加は[Issue #47 v19 UI](https://github.com/reitojike/cinematic-camera/issues/47#issuecomment-6595777813)。SSと秒単位、mode switch、RESET/AUTOの役割表示、同期受付時hapticに限定し、一般的な既存ユーザー報告をv19実機合格へ流用しない。
+表示/触覚の追加は[Issue #47 v19 UI](https://github.com/reitojike/cinematic-camera/issues/47#issuecomment-6595777813)。SSの可視単位なし/読み上げ秒、mode switch、RESET/AUTOの役割表示、同期受付時hapticに限定し、一般的な既存ユーザー報告をv19実機合格へ流用しない。
 
 ## Summary
 
@@ -62,7 +62,7 @@
 - **AUTO**: current epoch、ISO/SSの元timestamp/valid valueを独立保持。正常PREVIEW/VIDEO_RECORDのみaccumulateし、欠落/不正/旧/逆転sampleで更新・延命しない。epoch/unbindでclear、表示時0〜2000msのみ有効とする。MANUAL target、RAW固定targetと補償の分離は維持する。
 - **Presentation**: `captureKeyRows()`は常に6キー1行、各キーは等weightとする。SHUTTERの視覚ラベルはSS、元の意味はsemanticsに保持する。歯車はローカルvector drawable `ic_settings.xml`で表し新依存を使わない。TextMeasurerはheading/tag各11sp・主数値16spを上限に行ごとに適合させ、長いtagの幅で数値を縮小しない。固定最小spはなく極小化し得るため、狭幅/高fontScaleの可読性は未保証。目盛りの104dp優先領域・固定preview寸法を維持する。縦/左右横・fontScale 1.0/1.3/2.0は受入対象だが実viewportの描画は未確認で、純粋幅テストを可読性合格にしない。
 - **Shortcuts**: SensorControlEditorsのEV0/AFボタンは`dispatchSensorShortcut`で押下時の現guardを再評価し、EVは`selectEv(0)`、MF解除は`restoreAutofocus()`へ接続する。latest aggregate intentへ変更項目だけをmergeし、旧ACK/同時ISO/SS/WBを後退させない。EV0は報告range内かつfiniteな正step、AUTO露出時だけ有効。要求1回をAPI受付/実測/合焦の証拠にしない。
-- **v19表示/触覚**: `unitInValue`と`captureControlValueText`でSS見出しはSSだけ、数値と幅測定候補にはsを含める。STILL/CINEはRole.Switchと現在modeのstateDescriptionを持つスイッチとし、既存mode callbackとbusy/recording/撮影専有guardを維持する。EV0ボタンはRESET、MF解除AFボタンはAUTOと表示し、semanticsで対象を明示する。全resetとISO/SSの露出AUTOの責務は変更しない。
+- **v19表示/触覚**: SS見出しはSSだけとし、短秒/長秒とも可視値と幅測定候補へsを付けない（例1/100、1、2）。後続の明示指示が旧数値s付記を置換する。秒の意味は元のunit/semanticsへ保持し、camera設定値や他項目の単位は変更しない。STILL/CINEはRole.Switchと現在modeのstateDescriptionを持つスイッチとし、既存mode callbackとbusy/recording/撮影専有guardを維持する。EV0ボタンはRESET、MF解除AFボタンはAUTOと表示し、semanticsで対象を明示する。全resetとISO/SSの露出AUTOの責務は変更しない。
 - **シャッター受付policy**: 押下直前/処理直後の`ShutterPressState`を比較する。STILLは非CAPTURING/SAVING→CAPTURING、CINEはIDLE→STARTINGおよびSTARTING/RECORDING→STOPPINGだけを受付とし、同modeでの成立時に`CLOCK_TICK`をflags 0で1回要求する。同期受付を確認してから鳴らし、遅い非同期通知で二重に鳴らさない。既存目盛りhapticは維持し、独自振動基盤・権限・依存を追加しない。
 - **手動再接続**: `ControlRecoveryState.canReconnect(expectedEpoch)`を表示可否と押下時に共用し、UNKNOWN（controlまたはstill preview）かつ現epoch・bound・前面・非closed・非busy・非recording・capture tokenなし・撮影専有なしだけ許可する。CameraProbe.recoverControlsは既存bindを呼び、camera/modeを変更しない。既存memory-only intent/scope・bind優先順・旧token無効化・新API受付/preview readinessを使い、自動retryを追加しない。撮影専有中は既存停止/復旧を維持する。
 - **入力と観測**: AUTOの新sampleは表示専用の正常slotを更新し、それだけでbusy/controlReady/epochを変えない。ISO/SS操作は有効な元実測pairを基点にする一方、候補listとgesture保持のkeyは表示値/sample時刻に依存させない。callbackは最新selection/能力/epoch/readinessを参照し、操作中の正常再compositionを越えてdragを継続する。旧epoch/能力変更・実際の鮮度不足は理由付きで拒否する。入力の候補選択をpure境界へ抽出する場合もLiveControlQueue.kt/CameraProbe.kt等の既存責務内に限定する。
@@ -76,7 +76,7 @@
 
 `SensorShortcutTest`でEV両端→0/近距離・∞MF→AFの1要求、他intent保持、旧ACK、無効/変化後guardを確認する。`ControlRecoveryTest`はAPI/preview UNKNOWN、ready/pending/unbound、epoch/lifecycle、busy/recording/capture ownership、期限後の旧tokenを検証する。production callsiteと復旧UI導線、独立レビュー、最終head CIは別確認し、純粋テストだけで実機の停止原因や再接続成功を確定しない。
 
-`CaptureChromeRegressionTest`でSS単位/mode状態、`ShutterHapticPolicyTest`で静止画/全録画段階/mode変更の受付行列を検証する。触覚端末設定・体感・v19実描画は未確認とし、unit pass/独立レビュー/CIを代替証明にしない。
+`CaptureChromeRegressionTest`で短秒/長秒の可視単位なし・読み上げ秒あり/mode状態、`ShutterHapticPolicyTest`で静止画/全録画段階/mode変更の受付行列を検証する。触覚端末設定・体感・v19実描画は未確認とし、unit pass/独立レビュー/CIを代替証明にしない。
 
 実描画の可読性と実機のAUTOちらつき・連続操作・MF合焦探索は別AC。要求発行・API受付・実測・見た目の結果を分離し、Issue/PRへ要約だけ記録する。最終head必須CI・独立レビュー明示OK・canonical review・thread0が揃ってもmerge/配布は別承認まで停止する。
 
