@@ -122,4 +122,20 @@ class CaptureChromeRegressionTest {
         assertEquals("SS 待機", captureRulerTitle(captureKeyVisualLabel(CaptureKey.SHUTTER), true))
     }
 
+    @Test fun landscapeKeysUseTheWidestMeasuredSideInEitherRotation() {
+        // Values stand for measured natural heights at different text scales, not assumed device measurements.
+        for (natural in listOf(listOf(72f, 92f, 72f, 80f, 108f, 72f),
+            listOf(90f, 130f, 85f, 100f, 160f, 84f), listOf(140f, 200f, 130f, 150f, 240f, 130f))) {
+            val common = captureKeyCommonHeight(natural)
+            assertEquals(natural.maxOrNull()!!, common, 0f)
+            for (rotation in listOf(90, -90)) {
+                val sizes = natural.map { captureKeyHeight(it, common, horizontal = true) }
+                assertTrue("rotation $rotation", sizes.all { it == common })
+            }
+            assertEquals(natural, natural.map { captureKeyHeight(it, common, horizontal = false) })
+        }
+        assertEquals(0f, captureKeyCommonHeight(emptyList()), 0f)
+        assertEquals(80f, captureKeyCommonHeight(listOf(72f, 80f)), 0f) // Shrinks after a long label disappears.
+    }
+
 }

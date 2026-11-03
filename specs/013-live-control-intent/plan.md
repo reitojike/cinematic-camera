@@ -1,6 +1,6 @@
 # Implementation Plan: ライブ操作の最新意図と主値の可読性
 
-**Branch**: `fix/022-dismiss-ruler-outside` | **Date**: 2026-11-03 | **Spec**: [spec.md](spec.md)
+**Branch**: `fix/023-landscape-control-width` | **Date**: 2026-11-03 | **Spec**: [spec.md](spec.md)
 **Input**: [Issue #47追加スコープ](https://github.com/reitojike/cinematic-camera/issues/47#issuecomment-6593446735)、関連Issue #37。
 
 現行の限定補正は[Issue #47 横一列・ショートカット・歯車](https://github.com/reitojike/cinematic-camera/issues/47#issuecomment-6595243467)と[Issue #37 手動再接続](https://github.com/reitojike/cinematic-camera/issues/37#issuecomment-6595251915)。既存013内でspecify → plan → tasks → analyzeを行い、新しいfeature文書を増やさない。
@@ -10,6 +10,8 @@
 現行の追加は[Issue #47 v20 共通見出し・触覚](https://github.com/reitojike/cinematic-camera/issues/47#issuecomment-6596333540)。5目盛りの共通見出しと受付haptic種別に限定し、既存guard/読み上げを保つ。追加PO指示のない関連外UI差分を作らない。
 
 [Issue #61](https://github.com/reitojike/cinematic-camera/issues/61)は外側preview tapの閉じる専用routingに限定する。設定/診断パネル自体の無回転はユーザーの明示指定として維持する。
+
+[Issue #47 v22 横持ち項目幅](https://github.com/reitojike/cinematic-camera/issues/47#issuecomment-6599683392)は横持ちの見かけ幅共通化に限定する。ユーザーの縦持ち確認を横持ち実機合格へ転用しない。
 
 ## Summary
 
@@ -65,6 +67,7 @@
 - **MF**: 即時選択callbackをqueueへ接続しapply/cancelを除く。候補はreported maxの100等分と正確なopening anchor。anchorはepoch/maxで固定し、各ACKで候補を作り直さない。非対応/不正/AF/MF/∞遷移を明示検査し丸めを送信しない。
 - **AUTO**: current epoch、ISO/SSの元timestamp/valid valueを独立保持。正常PREVIEW/VIDEO_RECORDのみaccumulateし、欠落/不正/旧/逆転sampleで更新・延命しない。epoch/unbindでclear、表示時0〜2000msのみ有効とする。MANUAL target、RAW固定targetと補償の分離は維持する。
 - **Presentation**: `captureKeyRows()`は常に6キー1行、各キーは等weightとする。SHUTTERの視覚ラベルはSS、元の意味はsemanticsに保持する。歯車はローカルvector drawable `ic_settings.xml`で表し新依存を使わない。TextMeasurerはheading/tag各11sp・主数値16spを上限に行ごとに適合させ、長いtagの幅で数値を縮小しない。固定最小spはなく極小化し得るため、狭幅/高fontScaleの可読性は未保証。目盛りの104dp優先領域・固定preview寸法を維持する。縦/左右横・fontScale 1.0/1.3/2.0は受入対象だが実viewportの描画は未確認で、純粋幅テストを可読性合格にしない。
+- **横持ち共通寸法**: CaptureControlKeyがTextMeasurerで候補/現値/heading/tagを含む自然寸法を測り、回転後footprintの自然高さ（最小72dp）をSideEffectで6キー分報告する。CaptureScreenは最大値を`captureKeyCommonHeight`で共有し、横持ちだけ`captureKeyHeight`で全キーへ適用する。物理高さが回転後の見かけ横幅となるため、Rowの等weight物理幅とは別に扱う。縦持ちは各キー従来の自然高さを使い、既存`keyMaxHeight`共通上限・104dp目盛り優先領域と行別text fitを維持する。短高では最大自然寸法をそのまま使えず文字縮小が残る。SideEffect集約により初回再構成や値/向き変更時に寸法変化があり得るため、過渡表示と実寸の収まりは実描画未確認とする。tap/clickable/semanticsとcamera guardは変更しない。
 - **Shortcuts**: SensorControlEditorsのEV0/AFボタンは`dispatchSensorShortcut`で押下時の現guardを再評価し、EVは`selectEv(0)`、MF解除は`restoreAutofocus()`へ接続する。latest aggregate intentへ変更項目だけをmergeし、旧ACK/同時ISO/SS/WBを後退させない。EV0は報告range内かつfiniteな正step、AUTO露出時だけ有効。要求1回をAPI受付/実測/合焦の証拠にしない。
 - **v19表示/触覚**: SS見出しはSSだけとし、短秒/長秒とも可視値と幅測定候補へsを付けない（例1/100、1、2）。後続の明示指示が旧数値s付記を置換する。秒の意味は元のunit/semanticsへ保持し、camera設定値や他項目の単位は変更しない。STILL/CINEはRole.Switchと現在modeのstateDescriptionを持つスイッチとし、既存mode callbackとbusy/recording/撮影専有guardを維持する。EV0ボタンはRESET、MF解除AFボタンはAUTOと表示し、semanticsで対象を明示する。全resetとISO/SSの露出AUTOの責務は変更しない。
 - **シャッター受付policy**: 押下直前/処理直後の`ShutterPressState`を比較する。STILLは非CAPTURING/SAVING→CAPTURING、CINEはIDLE→STARTINGおよびSTARTING/RECORDING→STOPPINGだけを受付とし、同modeでの成立時に`VIRTUAL_KEY`をflags 0で1回要求する。同期受付を確認してから鳴らし、遅い非同期通知で二重に鳴らさない。目盛りの段変更hapticは`CLOCK_TICK`/flags 0を維持する。端末/設定が効果を決めるため強度は保証しない。独自振動基盤・権限・依存を追加しない。
@@ -87,6 +90,8 @@
 v20は共通title/待機表示の純粋policy、5 callsiteの共通header接続、通常説明の除去、既存action/close guardとhaptic定数/flagsを照合する。実機の描画・触覚強度は未確認であり、source/純粋テスト/独立レビューを実機合格にしない。
 
 Issue #61は`CaptureStateTest`の5項目/FOCUS可否/パネル表示のrouting行列と、closeがepoch/受付経路を変更しないことを確認する。縦/左右横・pending・録画/保存・パネル重なり、AndroidView境界のtap消費、目盛りdrag/close/Back/停止・a11yは接続と実描画/実機を分けて検証する。状態保護との競合が判明した場合はtap機能を広げず停止理由を報告する。
+
+v22の`CaptureChromeRegressionTest`は模擬した自然測定高さ・複数文字倍率相当・左右横回転・空集合/長いラベル消失をpure policyで検証する。これは実Android TextMeasurer/viewportの測定結果ではない。6キーの最大寸法/共通上限・初回/回転途中、portrait回帰、touch/a11yを実描画/実機で別確認する。
 
 実描画の可読性と実機のAUTOちらつき・連続操作・MF合焦探索は別AC。要求発行・API受付・実測・見た目の結果を分離し、Issue/PRへ要約だけ記録する。最終head必須CI・独立レビュー明示OK・canonical review・thread0が揃ってもmerge/配布は別承認まで停止する。
 

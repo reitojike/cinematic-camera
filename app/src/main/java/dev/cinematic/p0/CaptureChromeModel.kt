@@ -242,3 +242,8 @@ internal fun captureRulerTitle(label: String, waiting: Boolean): String =
 
 internal fun captureRulerDescription(label: String, waiting: Boolean): String =
     if (waiting) "$label AUTO実測待ち、選択一時停止" else label
+
+/** Landscape rotates the rail's physical height into the visible width of each key. */
+internal fun captureKeyCommonHeight(measuredHeights: Collection<Float>): Float = measuredHeights.maxOrNull() ?: 0f
+internal fun captureKeyHeight(naturalHeight: Float, commonHeight: Float, horizontal: Boolean): Float =
+    if (horizontal) maxOf(naturalHeight, commonHeight) else naturalHeight
