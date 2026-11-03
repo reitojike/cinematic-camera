@@ -89,9 +89,11 @@ def load_jpeg(path: Path, crop: bool = False) -> np.ndarray:
     return resize_linear(linear, fit_size(linear.shape[1], linear.shape[0]))
 
 
-def crop_default(linear: np.ndarray) -> np.ndarray:
+def crop_default(linear: np.ndarray, scale: float = 1.) -> np.ndarray:
+    """Lightroom-like default crop; `scale` is the decoded resolution relative to the sensor (0.5 for half_size)."""
     h, w = linear.shape[:2]
-    my, mx = (CROP_MARGIN[0], CROP_MARGIN[1]) if h > w else (CROP_MARGIN[1], CROP_MARGIN[0])
+    long_margin, short_margin = (round(m * scale) for m in CROP_MARGIN)
+    my, mx = (long_margin, short_margin) if h > w else (short_margin, long_margin)
     return linear[my:h - my, mx:w - mx]
 
 

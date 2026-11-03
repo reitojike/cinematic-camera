@@ -75,6 +75,26 @@ rawpy 0.28.0 / NumPy 2.5.4 / Pillow 13.0.0を公式PyPIの通常版CPython3.15 W
 - 測定は長辺1200pxの縮小画像と、第5回recipeの手動矩形領域で行う。結果は好みの採否や画質合格を意味しない。
 - 入力の前後hashを照合する。出力は入力外の未作成folderに限る。
 
+## 第7回の層の掛け合わせ比較（r7_*.py）
+
+[Issue #68](https://github.com/reitojike/cinematic-camera/issues/68)の比較用CLI。DNG内蔵プロファイルと第5回の土台の上に層を重ね、2つずつ掛け合わせた3×3で比べる。
+
+| スクリプト | 比べるもの |
+|---|---|
+| `r7_look.py` | プロファイル層（青〜紫を青へ寄せる）× 浸る層（局所トーン・自然な彩度） |
+| `r7b_skin.py` | 肌層（肌の色相だけ白く・黄み赤みを抑える）× 明るさ |
+| `r7c_punch.py` | ぱきっと感（なだらかな黒の締め・コントラスト・肌以外の彩度）× WB |
+| `r7_final.py` | 本人が選んだ組み合わせ（`RECIPE`）を、第5回と参照の編集に並べて書き出す（sRGB / Display P3） |
+| `r7_exposure.py` | 本人の編集済みペアから、測光規則を交差検証で検討する（診断のみ） |
+
+```powershell
+& $rawPython tools/raw_baseline/r7_final.py --livepicture $authorizedRoot --r5 $round5Folder --output $newPrivateOutput
+```
+
+- 層の強さは各スクリプト冒頭の定数で決まる。`RECIPE` は本人の選択の記録で、Androidの既定値ではない。
+- 参照画像やプロファイルのデータは取り込まず、自動fitもしない。
+- 出力は入力外の未作成folderに限り、入力の前後hashを照合する。
+
 ## 公式根拠とlicense
 
 - [rawpy 0.28.0 PyPI](https://pypi.org/project/rawpy/0.28.0/)、[Params API](https://letmaik.github.io/rawpy/api/rawpy.Params.html)、[LibRaw output parameters](https://www.libraw.org/docs/API-datastruct.html)。処理条件はCLI実装で固定しmanifestに記録する。
