@@ -73,8 +73,8 @@ def decode_half(path: Path) -> np.ndarray:
     return r.crop_default(rgb.astype(np.float32) / 65535, scale=.5)
 
 
-def fit(rows: list[dict], metric: str) -> dict:
-    return e.crossval(rows, metric, None)
+def fit(rows: list[dict], metric: str) -> dict | None:
+    return x.safe_crossval(rows, metric, None)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -124,8 +124,8 @@ def main(argv: list[str] | None = None) -> int:
     detected = [row for row in rows if "ev" in row]
     recent = [row for row in detected if row["date"][:7] >= RECENT_FROM]
     result = {"pairs": len(rows), "detected": len(detected), "recent_detected": len(recent),
-              "fits": {"all": [fit(detected, m) for m in ("face", "c97")],
-                       "recent": [fit(recent, m) for m in ("face", "c97")] if len(recent) >= 10 else []},
+              "fits": {"all": [f for f in (fit(detected, m) for m in ("face", "c97")) if f],
+                       "recent": [f for f in (fit(recent, m) for m in ("face", "c97")) if f]},
               "rows": rows}
     output.write_text(json.dumps(result, indent=1), encoding="utf-8")
     print(json.dumps({key: result[key] for key in ("pairs", "detected", "recent_detected", "fits")}))

@@ -62,6 +62,14 @@ def edit_keeps_full_frame(path: Path) -> bool:
     return bool(has_crop) and has_crop.group(1) == b"False"
 
 
+MIN_FIT_ROWS = 10  # 5-fold cross-validation needs at least 2 samples per fold
+
+
+def safe_crossval(rows: list[dict], metric: str, slope: float | None) -> dict | None:
+    """Cross-validated fit, or None when too few usable pairs remain (diagnostics are still written)."""
+    return e.crossval(rows, metric, slope) if len(rows) >= MIN_FIT_ROWS else None
+
+
 def solve_face_ev(decoded: np.ndarray, weight: np.ndarray, target: float, look: dict) -> float:
     choice = fin.chosen("_default")
     low, high = -4., 7.
@@ -110,11 +118,11 @@ def main(argv: list[str] | None = None) -> int:
         rows.append(row)
         print(len(rows), end=" ", flush=True)
     usable = [row for row in rows if "ev" in row]
-    fits = [e.crossval(usable, metric, slope) for metric in ("c97", "skin") for slope in (None, -.4, -1.)]
+    fits = [f for f in (safe_crossval(usable, metric, slope) for metric in ("c97", "skin") for slope in (None, -.4, -1.)) if f]
     output.write_text(json.dumps({"rows": rows, "fits": fits, "usable": len(usable), "min_mass": MIN_MASS}, indent=1),
                       encoding="utf-8")
     print(json.dumps({"status": "ok", "pairs": len(rows), "usable": len(usable),
-                      "best": min(fits, key=lambda f: f["mae"])}))
+                      "best": min(fits, key=lambda f: f["mae"]) if fits else None}))
     return 0
 
 

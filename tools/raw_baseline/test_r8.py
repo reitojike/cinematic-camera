@@ -45,6 +45,17 @@ class SkinProxyTests(unittest.TestCase):
         self.assertAlmostEqual(x.proxy_log_y(self.scene(4.), weight) - x.proxy_log_y(self.scene(), weight), 2., places=4)
 
 
+class FitGuardTests(unittest.TestCase):
+    def test_too_few_rows_give_no_fit_instead_of_error(self):
+        self.assertIsNone(x.safe_crossval([], "c97", None))
+        rows = [{"inputs": {"c97": .1 * (i + 1)}, "ev": float(i)} for i in range(3)]
+        self.assertIsNone(x.safe_crossval(rows, "c97", None))
+
+    def test_enough_rows_fit(self):
+        rows = [{"inputs": {"c97": .02 * (i + 1)}, "ev": 1 - .4 * np.log2(.02 * (i + 1))} for i in range(12)]
+        self.assertLess(x.safe_crossval(rows, "c97", None)["mae"], 1e-6)
+
+
 class FramingTests(unittest.TestCase):
     def check(self, xmp: bytes) -> bool:
         with tempfile.TemporaryDirectory() as folder:
