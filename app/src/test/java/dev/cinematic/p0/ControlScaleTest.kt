@@ -113,6 +113,74 @@ class ControlScaleTest {
         assertEquals(1, requests)
     }
 
+    @Test fun pendingContinuousDetentsAndReverseStepsAreAcceptedBeforeAnyAcknowledgement() {
+        var intentIndex = 0
+        val acceptedIndex = 0
+        var pending = false
+        var captureOwned = false
+        val offered = mutableListOf<Int>()
+        val haptics = mutableListOf<Int>()
+        fun dispatch(target: Int) {
+            val next = dispatchControlScaleSelection(6, intentIndex, target, true, { !captureOwned }) {
+                offered += it
+                intentIndex = it
+                pending = true
+            }
+            if (next != null) haptics += next
+        }
+        val forward = controlDetentDrag(6, ControlDetentState(intentIndex), 72f, 24f)
+        forward.selections.forEach(::dispatch)
+        assertTrue(pending)
+        assertEquals(listOf(1, 2, 3), offered)
+        assertEquals(0, acceptedIndex)
+        val reverse = controlDetentDrag(6, forward.state, -48f, 24f)
+        reverse.selections.forEach(::dispatch)
+        assertEquals(listOf(1, 2, 3, 2, 1), offered)
+        assertEquals(offered, haptics)
+        dispatch(1) // Same intent is not a step even while pending.
+        captureOwned = true
+        dispatch(2)
+        assertEquals(listOf(1, 2, 3, 2, 1), offered)
+        assertEquals(offered, haptics)
+    }
+
+    @Test fun measuredLabelsReduceNeighboursBeforeChangingTypeSizeAtNarrowWidths() {
+        assertEquals(5, controlScaleVisibleCount(300, 60))
+        assertEquals(3, controlScaleVisibleCount(299, 60))
+        assertEquals(1, controlScaleVisibleCount(179, 60))
+        assertEquals(listOf(4), controlScaleVisibleSlots(8, 4, 1))
+        assertEquals(listOf(3, 4, 5), controlScaleVisibleSlots(8, 4, 3))
+        assertEquals(listOf(null, 0, 1), controlScaleVisibleSlots(8, 0, 3))
+        assertEquals(listOf(6, 7, null), controlScaleVisibleSlots(8, 7, 3))
+        assertEquals(listOf(null), controlScaleVisibleSlots(0, 0, 1))
+    }
+
+    @Test fun fontFitUsesBothMeasuredAxesAndRechecksNonlinearAccessibilityScaling() {
+        // A nonlinear measurement predicate stands in for Android's fontScale-aware TextMeasurer.
+        // This verifies the fitting policy, not a device font rasterization or a screenshot.
+        for (density in listOf(1f, 2f, 3f)) for (fontScale in listOf(1f, 1.3f, 2f, 3f)) {
+            for (horizontal in listOf(false, true)) for (longest in listOf(false, true)) {
+                val cell = IntSize((72 * density).toInt(), (100 * density).toInt())
+                val room = if (horizontal) IntSize(cell.height, cell.width) else cell
+                fun measured(size: Float) = IntSize(
+                    ((if (longest) 4.8f else 1.7f) * size * density * fontScale + size * size * .02f).toInt(),
+                    (size * 1.4f * density * fontScale).toInt())
+                var measurements = 0
+                val size = controlValueFontSize(18f) {
+                    measurements++
+                    val actual = measured(it)
+                    actual.width <= room.width && actual.height <= room.height
+                }
+                val actual = measured(size)
+                assertTrue(actual.width <= room.width)
+                assertTrue(actual.height <= room.height)
+                assertTrue(size > 0f && size <= 18f)
+                if (measured(18f).width > room.width || measured(18f).height > room.height) assertTrue(measurements > 1)
+                else assertEquals(18f, size, 0f)
+            }
+        }
+    }
+
     @Test fun wholeModeBadgeIncludingPaddingAndBorderKeepsItsCentreDuringEitherQuarterTurn() {
         for (density in 1..3) {
             val parent = Constraints(maxWidth = 200 * density, maxHeight = 44 * density)

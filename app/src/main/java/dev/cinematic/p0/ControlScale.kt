@@ -69,6 +69,30 @@ internal fun controlScaleTextConstraints(cell: Constraints, quarterTurn: Boolean
 
 internal data class ControlScaleTextPlacement(val size: IntSize, val offset: IntOffset)
 
+/** Preserve complete labels by reducing neighbours before reducing the selected value's type size. */
+internal fun controlScaleVisibleCount(availablePx: Int, labelPx: Int): Int =
+    listOf(5, 3, 1).first { it == 1 || labelPx.toLong() * it <= availablePx }
+
+internal fun controlScaleVisibleSlots(count: Int, selectedIndex: Int, visibleCount: Int): List<Int?> {
+    if (visibleCount !in listOf(1, 3, 5)) return emptyList()
+    val radius = visibleCount / 2
+    return (-radius..radius).map { offset ->
+        (selectedIndex.toLong() + offset).takeIf { selectedIndex in 0 until count && it in 0L until count.toLong() }?.toInt()
+    }
+}
+
+/** Re-measure candidate sizes: Android's accessibility sp scaling need not be linear. */
+internal fun controlValueFontSize(preferredSp: Float, fits: (Float) -> Boolean): Float {
+    if (fits(preferredSp)) return preferredSp
+    var low = 0f
+    var high = preferredSp
+    repeat(16) {
+        val middle = (low + high) / 2f
+        if (fits(middle)) low = middle else high = middle
+    }
+    return low
+}
+
 /** Keep the text's centre fixed while reporting its rotated footprint to the parent. */
 internal fun controlScaleTextPlacement(text: IntSize, quarterTurn: Boolean): ControlScaleTextPlacement =
     if (!quarterTurn) ControlScaleTextPlacement(text, IntOffset.Zero)

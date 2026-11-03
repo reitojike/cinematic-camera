@@ -216,3 +216,12 @@ STILLの明示opt-in固定pair、Builder単発設定とruntime preview補償、�
 - Android自動回転設定は標準Settings/SystemとContentObserverで読取りのみ。UI OFFはportrait、ONはphysical。物理保存方向と録画開始方向固定は分離し、observerはstop/destroy解除。新権限/設定書込なし。
 - sourceの独立レビューは追加P1/P2なし。公開scanで秘密/個人絶対path/媒体混入なし、RAW PC tools変更なし。最終headのcanonical/必須CI/thread証拠はPRへ記録する。
 - 実機のちらつき/感度表示/全format metadata、触感/縦横可読性、自動回転設定の端末挙動は未確認。v15のユーザー確認と今回変更の受入を分け、merge/配布は承認待ち。
+
+## v16後続: 連続操作intentとAUTO可読性（Issue #47 / #37）
+
+- 最終sourceのassembleDebug/testDebugUnitTest/lintDebug成功81秒、53 tasks（15 executed / 38 up-to-date）。30 suites / 229 tests、failure/error/skip 0。lint error0/warning15/hint2、抑制・baseline・チェック無効化なし。
+- EV/WB/MFとISO/SSをlogical ControlSnapshotのflight1+pending1へ統合し、32ms集約・ACK後latest送信。UIはpendingでも最新intentを受け付け、古い受付で戻さない。EV連続段階、WB連続/default、MF往復/AF/∞、古いACK、失敗・epoch・背景/再接続をpure production stateとcallsiteで検証した。旧ISO専用queueの実装依存7testsを新aggregate回帰へ置換し、deadline/history4件を保持。新queue系15testsはmailbox/seed/legacyAUTO復帰を含む。
+- MFの適用/取消を廃止し、操作中も最新要求を送る。capture/録画/未知状態の安全guardは維持。AUTO/reset失敗後のsame-scope rebindで論理AUTOを失わないようAPI前logical seedを保持し、明示fullresetのrequestedPrefs解除を両経路で統一。通常項目別保存とunsupported fallback保持は変更しない。
+- AUTO表示用の正常軸をcallback throttle前にbounded mailboxへ集約。元timestampの2秒失効/epochを維持し、source/frame/時刻/age/freshnessを既存診断とreportへ記録する。これは取り逃し得るsource経路の補正であり、端末の支配的なちらつき原因の確定ではない。
+- 近似説明と数値を分離。TextMeasurerでfontScale込みの幅と回転後footprintを測り、キー列scrollと目盛り5/3/1の適応を行う。主要数値ellipsisを撤去し、preview寸法と停止railを維持。fontScale1.0/1.3/2.0の測定policyを機械検証し、実端末glyph/raster可読性は未確認。
+- source最終独立reviewはcore/UIとも追加P1/P2なし、公開scan/diffcheck成功、RAWtools/原画像/依存/他repo変更なし。Spec013はFR7/SC4に対応。最終headのcanonical/必須CI/thread証拠はPRへ記録し、実機とmerge/配布は未承認・未確認のまま。

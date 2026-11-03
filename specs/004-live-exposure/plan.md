@@ -11,4 +11,6 @@ Kotlin/Compose既存版、CameraX1.6.2、Android28+、Pixel9a。既存preference
 ## Complexity Tracking
 1 active +1 queued、最初32msだけ集約（連続入力で延期し続けない）。期限は基礎2秒+前後露光/実測frame周期の最大値3回分。Future.cancelにhardware取消を期待しない。失敗/期限時はUnknown・queue破棄。自動再試行しない。
 ## 復旧境界の補正
+
+**後続設計**: UNKNOWN後の入力再送と旧LatestExposureQueueは[013 plan](../013-live-control-intent/plan.md)の単一logical intent queue・失敗後の明示reset/rebind復旧へ置換する。期限hintとwatchdogの責務は維持する。
 UNKNOWN/旧epoch/受付時刻不明での同値選択は再送する。既知の要求露光はcamera ID別のメモリ内期限hintとし、stop/rebindで失わず、同cameraのclear/短露光受付後に更新する。実測や設定保存とは別。preview/撮影露光分離は対象外。

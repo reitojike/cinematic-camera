@@ -38,6 +38,8 @@ data class CaptureAccess(
     val bound: Boolean, val busy: Boolean, val recording: Boolean, val ownsCapture: Boolean,
     val ready: Boolean, val exposurePending: Boolean, val manualExposure: Boolean,
     val manualBlockReason: String? = null, val evSupported: Boolean = false, val focusSupported: Boolean = false,
+    val liveSelectable: Boolean = false,
+    val exposureSelectable: Boolean? = null,
 )
 data class ControlAvailability(val enabled: Boolean, val reason: String? = null)
 
@@ -48,9 +50,10 @@ fun controlAvailability(key: CaptureKey, access: CaptureAccess): ControlAvailabi
         access.recording -> "録画・停止処理中は設定を変更できません"
         access.ownsCapture -> "撮影・保存・プレビュー復帰の完了を待ってください"
         !access.bound -> "カメラの接続を待つか、設定の診断からPreviewを開始してください"
-        access.busy && !(key.group == CaptureKey.ISO && access.exposurePending) -> "設定処理中です・完了を待ってください"
+        access.busy && !access.liveSelectable && !(key.group == CaptureKey.ISO && access.exposurePending) -> "設定処理中です・完了を待ってください"
         key.group == CaptureKey.ISO && access.manualBlockReason != null -> access.manualBlockReason
-        key.group != CaptureKey.ISO && !access.ready -> "設定状態が未確認です・診断で確認または復旧してください"
+        key.group == CaptureKey.ISO && access.exposureSelectable == false -> "設定状態が未確認です・診断で確認または復旧してください"
+        key.group != CaptureKey.ISO && !access.ready && !access.liveSelectable -> "設定状態が未確認です・診断で確認または復旧してください"
         key == CaptureKey.EV && access.manualExposure -> "EVは露出AUTO時のみ操作できます"
         key == CaptureKey.EV && !access.evSupported -> "このカメラではEV補正に対応していません"
         key == CaptureKey.FOCUS && !access.focusSupported -> "このカメラではMFに対応していません"

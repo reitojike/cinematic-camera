@@ -109,7 +109,7 @@ private val PanelFailure = Color(0xFFEF8A74)
     }
 }
 
-@Composable internal fun CaptureDiagnosticsPanel(probe: CameraProbe, enabled: Boolean, export: () -> Unit) {
+@Composable internal fun CaptureDiagnosticsPanel(probe: CameraProbe, enabled: Boolean, export: () -> Unit, nowMs: Long) {
     CaptureExposureSummary(probe)
     PanelSection("接続 / レポート") {
         Row(Modifier.horizontalScroll(rememberScrollState())) {
@@ -124,8 +124,10 @@ private val PanelFailure = Color(0xFFEF8A74)
             PanelSection("要求 / 受付履歴 / 直近preview実測") {
                 val table = controlDiagnosticTable(probe.controlReceipt, probe.sample, probe.currentEpoch)
                 Text("epoch ${probe.currentEpoch} · API ${probe.controlReceipt.phase}\n${probe.controlReceipt.detail}", fontSize = 12.sp)
+                Text("最新操作intent（未受付を含む）: ${probe.liveControlIntent ?: "なし"}",
+                    fontSize = 11.sp, color = PanelMuted)
                 Row(Modifier.fillMaxWidth()) {
-                    listOf("設定要求", "受付履歴", "直近実測").forEach { Text(it, Modifier.weight(1f), color = PanelMuted, fontSize = 11.sp) }
+                    listOf("API要求", "受付履歴", "直近実測").forEach { Text(it, Modifier.weight(1f), color = PanelMuted, fontSize = 11.sp) }
                 }
                 table.rows.forEach { row ->
                     Text(row.label, color = PanelMuted, fontSize = 11.sp)
@@ -140,6 +142,15 @@ private val PanelFailure = Color(0xFFEF8A74)
                     table.corresponds -> "現受付に対応するframeです。実測値・画質の一致は別評価です。"
                     else -> "直近frameを表示中です。最新要求への対応・一致は未確認です。"
                 }, color = PanelMuted, fontSize = 11.sp)
+            }
+            PanelSection("主値のsource / 観測の期限") {
+                val target = logicalCaptureTarget(probe.currentEpoch, probe.controlReceipt, probe.liveExposureTarget,
+                    probe.stillExposure?.target, probe.appliedExposure)
+                listOf(CaptureKey.ISO, CaptureKey.SHUTTER).forEach { key ->
+                    Text(exposureDisplayDiagnostic(key, probe.previewExposureSamples, probe.currentEpoch, nowMs,
+                        probe.exposureChoices, probe.bound, target), color = PanelMuted, fontSize = 11.sp)
+                }
+                Text("観測は元の取得時刻から2000ms以内だけ有効です。設定値・API受付・実測は別です。", color = PanelMuted, fontSize = 11.sp)
             }
             PanelSection("出力の設定 / bind情報") {
                 Text(probe.exposurePolicyStatus, fontSize = 11.sp, color = PanelMuted)
