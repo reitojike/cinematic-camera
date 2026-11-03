@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' file:; style-src 'self' file:; script-src 'self' file:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>RAWルック比較 — 明るい肌と舞台の色</title>
+<link rel="stylesheet" href="style.css">
+<script src="data.js" defer></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+<main>
+<header class="intro"><p class="eyebrow">PRIVATE / LOCAL RAW STUDY</p><h1>明るい肌と、舞台の色。</h1><p class="lead">同じRAWから作った4案です。肌の明るさを共通の土台に、色・柔らかさ・舞台の鮮明さを比べます。</p><p class="notice">手動で指定した領域を使う画質PoCです。自動肌検出・Stage Clearは未完成。画像のローカル目視と機械検証を行いますが、このHTMLのブラウザ描画は未検証です。</p></header>
+<section class="toolbar" aria-label="比較する場面と表示">
+<div class="scene-row"><label for="scene">照明の代表</label><select id="scene"></select><span id="foundation-note"></span></div><p id="scene-note" class="scene-note"></p>
+<div class="view-controls"><button id="fit" type="button">全体</button><button id="actual" type="button">等倍 1:1</button><button type="button" data-focus="skin">肌</button><button type="button" data-focus="costume">衣装</button><button type="button" data-focus="light">照明</button><span class="separator"></span><button id="minus" type="button" aria-label="縮小">−</button><button id="plus" type="button" aria-label="拡大">＋</button><button id="center" type="button">中央へ</button><span id="status" role="status" aria-live="polite">画像を読み込み中…</span></div>
+<p class="hint">2枚の移動と倍率は同期します。ドラッグで移動、ホイールで拡大縮小。画像枠にフォーカスして矢印・＋・−、Homeで全体、1で等倍。</p>
+</section>
+<section class="comparison" aria-label="2枚を同じ位置で比較">
+<article class="panel"><header><label for="left">左の画像</label><select id="left"></select><p class="description" id="left-description"></p></header><div class="viewport" id="left-view" tabindex="0" role="group" aria-label="左の比較画像。矢印で移動、プラスとマイナスで倍率を変更"><img id="left-image" alt="左の比較画像" draggable="false"><span class="load-state">読み込み中…</span></div><footer id="left-scale"></footer></article>
+<article class="panel"><header><label for="right">右の画像</label><select id="right"></select><p class="description" id="right-description"></p></header><div class="viewport" id="right-view" tabindex="0" role="group" aria-label="右の比較画像。矢印で移動、プラスとマイナスで倍率を変更"><img id="right-image" alt="右の比較画像" draggable="false"><span class="load-state">読み込み中…</span></div><footer id="right-scale"></footer></article>
+</section>
+<p id="crop-note" class="notice" hidden>本人JPEGは構図・crop・寸法が異なります。同期は画像内の相対位置であり、画素単位の位置合わせではありません。sRGBへICC変換した参照で、正解画像や自動fitの目標ではありません。</p>
+<section class="looks-section" aria-labelledby="looks-heading"><div class="section-heading"><h2 id="looks-heading">4案から選ぶ</h2><p>カードを押すと右の画像が切り替わります。</p></div><div id="looks" class="looks"></div></section>
+<section class="evaluation" aria-labelledby="evaluation-heading"><h2 id="evaluation-heading">好みを分けてメモする</h2><p>明るさと肌色を別に見ると、次の調整が選びやすくなります。鼻・頬の階調、唇の血色、顔・首・腕のつながり、白衣装の柄、照明色、領域の境界も確認してください。</p><label for="notes">比較メモ（この画面の中だけ。保存・送信しません）</label><textarea id="notes" rows="5" placeholder="代表A：顔の明るさ＝標準クリア、肌色＝暖色自然、照明・背景＝ステージ鮮明、柔らかさ＝透明感クール。気になる点：…"></textarea><p class="hint">ページを閉じるとメモは消えます。残す場合はご自身のメモへコピーしてください。</p></section>
+<details class="notes"><summary>基準・処理・比較の限界</summary><ul><li>旧固定基準はカメラWB・露出固定・profile toneなし。一般的なRAWコンバーターの標準表示の正解とは扱いません。4案は明記された共通露出補正を加えてから作っています。</li><li>共通明度土台は、代表ごとに手動で決めた露出補正と有界shoulderによる比較です。DNG metadata値の自動転写でも、ProfileToneCurveを含む標準現像の完全再現でもありません。肌の局所調整と色の違いは4案側で加えています。</li><li>顔・首・腕には写真別の手動領域を指定し、境界をぼかしています。髪・マイク・衣装への漏れ、境界のハロー、混色下の不自然な色は観察対象です。汎用の人物認識・自動肌検出の成功ではありません。</li><li>全出力は有限範囲のsRGB表示用です。失われたRAWの色情報や白飛びを復元したという意味ではありません。ノイズ低減・美肌平滑化・顔の形の変更は行いません。</li><li>等倍は画像1pxをCSS 1pxで表示します。OS拡大率・画面DPR・ブラウザ色管理・縮小補間を含む表示品質は未検証です。</li><li>SIGMA fp素材の結果です。Pixelの画質成立やAndroid処理の完成を示しません。原本・人物・GPSを外部へ送信する機能はありません。</li></ul><p>再生成設定と記録：<a href="recipe.json">recipe.json</a> / <a href="manifest.json">manifest.json</a>（非公開のローカル記録）</p><div id="parameters"></div></details>
+<details class="notes"><summary>参考作例と見どころ</summary><p>画像は転載していません。作例は画作りの仮説であり、人気や高評価を保証する処方ではありません。撮影条件の違う数値をそのまま転用していません。</p><ul><li><a href="https://note.com/sakamotoooo/n/n365fc1da7306" target="_blank" rel="noreferrer noopener">ライブ写真の現像・WB編</a>：赤い背景、自然な温色の肌、暗い衣装の模様を別々に見る。</li><li><a href="https://note.com/nym0711/n/n76bdd3a4c865" target="_blank" rel="noreferrer noopener">完成版とふんわり版の比較作例</a>：明るい肌と白衣装、青黒い背景、レースの階調を比べる。</li><li><a href="https://www.adobe.com/learn/lightroom-cc/web/precise-color-adjustments" target="_blank" rel="noreferrer noopener">Adobe：特定の色を精密に調整</a>：局所の明度と控えめな彩度調整を参考に、肌の色のばらつきを残す。</li></ul></details>
+<footer class="page-footer">PRIVATE / ローカル比較専用 · 外部画像・CDN・通信APIなし · HTMLの実描画は未検証</footer>
+<noscript><p class="notice">比較操作にはJavaScriptが必要です。assetsフォルダーの画像は個別に開けます。</p></noscript>
+</main>
+</body>
+</html>

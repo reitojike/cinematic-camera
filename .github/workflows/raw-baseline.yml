@@ -36,3 +36,10 @@ jobs:
       - name: 合成・CLI・再現性テスト（実素材なし）
         shell: pwsh
         run: .\tools\raw_baseline\.venv\Scripts\python.exe -m unittest discover -s tools/raw_baseline -p test_*.py -v
+      - name: 比較UIの構文と座標検証（実描画・実素材なし）
+        shell: pwsh
+        run: |
+          node --check tools/raw_baseline/compare_web/app.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node tools/raw_baseline/compare_web/test_math.cjs
+          exit $LASTEXITCODE
