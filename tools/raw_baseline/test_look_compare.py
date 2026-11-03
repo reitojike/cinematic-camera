@@ -126,7 +126,9 @@ class LookTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             temp = Path(directory); root = temp / "input"; root.mkdir()
             with self.assertRaisesRegex(b.BaselineError, "OUTPUT_OVERLAPS_INPUT"):
-                c.output_path(root, root / "output")
+                # Exercise the real entry point, including root canonicalization
+                # (Windows runners may expose TEMP using an 8.3 short alias).
+                c.prepare(root, recipe(), root / "output")
             with self.assertRaises(b.BaselineError):
                 c.reference_path(root, "../private.jpg")
             with patch.object(b, "linked", return_value=True):
