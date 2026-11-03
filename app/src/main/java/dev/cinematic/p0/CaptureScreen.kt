@@ -15,7 +15,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -194,7 +193,13 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                         onSettings = { if (unlocked || recoveryRequired) { editor = editor.close(); panel = if (panel == CapturePanel.SETTINGS) CapturePanel.NONE else CapturePanel.SETTINGS } },
                         rotation = animatedAngle, horizontal = orientation.horizontal)
                     if (!probe.bound && permission) Text("接続待ち・プレビュー停止中", Modifier.align(Alignment.Center).sensorRotation().background(Ink.copy(alpha = .7f)).padding(12.dp), color = Foreground, fontSize = 13.sp)
-                    if (probe.bound && !probe.controlReady && !probe.busy) Text("設定状態を確認・復旧してください", Modifier.align(Alignment.Center).sensorRotation().background(Ink.copy(alpha = .8f)).padding(12.dp), color = Failed, fontSize = 13.sp)
+                    if (probe.bound && !probe.controlReady && !probe.busy && !recoveryRequired) {
+                        val recoveryEpoch = probe.currentEpoch
+                        Column(Modifier.align(Alignment.Center).sensorRotation().background(Ink.copy(alpha = .8f)).padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("設定状態を確認・復旧してください", color = Failed, fontSize = 13.sp)
+                            if (probe.canRecoverControls) TextButton(onClick = { probe.recoverControls(recoveryEpoch) }) { Text("再接続") }
+                        }
+                    }
                     val message = captureMessage(probe.sharedSaveSupported,
                         thermalWarning = if (ProbeControls.shouldStopRecording(probe.thermalSeverity)) "熱: OS ${ProbeControls.thermalName(probe.thermalSeverity)}・録画開始不可" else null,
                         microphoneWarning = if (probe.mode == CaptureMode.CINE && probe.audioWanted && probe.audioPermissionDenied) "マイク許可なし: 録画は未開始。権限を許可するか設定で音声OFFにしてください" else null,
@@ -205,7 +210,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                     if (recoveryRequired) Column(Modifier.align(Alignment.Center).widthIn(max = 300.dp).sensorRotation().background(Ink.copy(alpha = .9f)).padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("撮影状態が不明です。停止して接続をやり直してください", color = Failed, fontSize = 12.sp)
                         TextButton(onClick = probe::stop) { Text("停止・復旧") }
-                    } else banner?.let { Text(it, Modifier.align(if (orientation.horizontal) Alignment.Center else Alignment.TopCenter)
+                    } else if (!(probe.bound && !probe.controlReady && !probe.busy)) banner?.let { Text(it, Modifier.align(if (orientation.horizontal) Alignment.Center else Alignment.TopCenter)
                         .padding(top = if (orientation.horizontal) 0.dp else 48.dp).widthIn(max = if (orientation.horizontal) 220.dp else 380.dp)
                         .sensorRotation().background(Ink.copy(alpha = .8f)).padding(8.dp), color = bannerColor, fontSize = 12.sp) }
                     if (panel == CapturePanel.NONE) Column(Modifier.align(Alignment.BottomCenter)) {
@@ -215,7 +220,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                         }
                         BoxWithConstraints(Modifier.fillMaxWidth().background(if (editor.selected == null) Ink.copy(alpha = .5f) else Color(0xF00D0F10))) {
                             Box(Modifier.matchParentSize().blockPanelBackground())
-                            val rows = captureKeyRows(maxWidth.value, LocalDensity.current.fontScale, previewAvailableHeight)
+                            val rows = captureKeyRows()
                             val keyMaxHeight = captureKeyMaxHeight(previewAvailableHeight, rows.size, editor.selected != null).dp
                             Column(Modifier.fillMaxWidth()) {
                                 rows.forEach { keys ->
@@ -232,7 +237,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                                         CaptureControlKey(key.name, shown.value, shown.qualifier.ifEmpty { "実測未確認" }, selected,
                                             enabled = available.enabled, onUnavailable = { notice = available.reason }, unavailableReason = available.reason,
                                             onClick = { editor = editor.select(key) }, modifier = Modifier.weight(1f).heightIn(max = keyMaxHeight),
-                                            unit = shown.unit, rotation = animatedAngle, horizontal = orientation.horizontal,
+                                            displayLabel = captureKeyVisualLabel(key), unit = shown.unit, rotation = animatedAngle, horizontal = orientation.horizontal,
                                             valueColor = if (feedback.affected) sensorControlColor(feedback.tone) else Foreground,
                                             statusDescription = shown.contentDescription,
                                             widthSamples = if (key == CaptureKey.ISO) probe.exposureChoices.iso.map { it.toString() }
@@ -361,6 +366,16 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
         Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = { change(editor.close()) }, enabled = editor.submitting == null, modifier = Modifier.width(44.dp), contentPadding = PaddingValues(0.dp)) { Text("×", Modifier.sensorRotation(), fontSize = 22.sp) }
             Mono(key.name, Foreground, Modifier.weight(1f))
+            if (key == CaptureKey.EV) ExposureZeroAction(intent?.evIndex ?: probe.acceptedEv,
+                probe.exposureCompensationRange, probe.exposureCompensationStep,
+                enabled && requestedExposureMode(probe) != true && probe.exposureCompensationSupported,
+                probe::selectEv, textModifier = Modifier.sensorRotation(), horizontal = LocalCaptureHorizontal.current,
+                canSelect = { probe.currentEpoch == rulerEpoch && probe.canSelectLiveControls && requestedExposureMode(probe) != true && probe.exposureCompensationSupported })
+            if (key == CaptureKey.FOCUS) FocusAutofocusAction(
+                if (intent != null) intent.overrides.focusDistance else focus,
+                probe.selectedReport?.autoFocusAvailable == true, enabled, probe::restoreAutofocus,
+                textModifier = Modifier.sensorRotation(), horizontal = LocalCaptureHorizontal.current,
+                canSelect = { probe.currentEpoch == rulerEpoch && probe.canSelectLiveControls })
         }
         when (key.group) {
             CaptureKey.FOCUS -> FocusControlEditor(if (intent != null) intent.overrides.focusDistance else focus,
