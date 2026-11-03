@@ -46,6 +46,29 @@ def develop(path: Path, look: dict, profile: str) -> np.ndarray:
     return fin.render(decoded, {"skin": [], "base_ev": px.auto_base_ev(plain)}, look, choice)
 
 
+def shots(folder: Path) -> tuple[list[tuple[Path, Path]], list[Path]]:
+    """DNG+JPEG pairs in capture order, plus any DNG or JPEG left without its partner."""
+    files = [f for f in folder.iterdir() if f.suffix.lower() in (".dng", ".jpg")]
+    key = lambda f: f.stem.split(".")[0]
+    dngs = {key(f): f for f in files if f.suffix.lower() == ".dng"}
+    jpgs = {key(f): f for f in files if f.suffix.lower() == ".jpg"}
+    pairs = sorted(((dngs[k], jpgs[k]) for k in dngs.keys() & jpgs.keys()), key=lambda pair: capture_time(pair[1]))
+    return pairs, sorted(f for k, f in {**dngs, **jpgs}.items() if k not in dngs.keys() & jpgs.keys())
+
+
+def paired_shots(app: Path, google: Path) -> tuple[list[tuple[Path, Path]], list[tuple[Path, Path]]]:
+    """Pairing is by capture order, so refuse any input that would shift or drop a pair."""
+    (app_shots, app_left), (google_shots, google_left) = shots(app), shots(google)
+    problems = [f"unmatched file: {f.name}" for f in app_left + google_left]
+    if not app_shots or not google_shots:
+        problems.append("no DNG+JPEG pairs in one of the folders")
+    if len(app_shots) != len(google_shots):
+        problems.append(f"capture counts differ: app {len(app_shots)}, google {len(google_shots)}")
+    if problems:
+        raise SystemExit("ERROR INPUT_MISMATCH\n" + "\n".join(problems))
+    return app_shots, google_shots
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", type=Path, required=True, help="folder of this app's DNG+JPEG pairs")
@@ -58,17 +81,7 @@ def main(argv: list[str] | None = None) -> int:
     look = dict(json.loads((r5 / "reproducer" / "settings.json").read_text(encoding="utf-8"))["looks"]["clear"],
                 rgb=[1., 1., 1.])
 
-    def shots(folder: Path) -> list[tuple[Path, Path]]:
-        pairs = []
-        for dng in folder.iterdir():
-            if dng.suffix.lower() != ".dng":
-                continue
-            jpgs = [j for j in folder.glob("*.jpg") if j.stem.split(".")[0] == dng.stem.split(".")[0]]
-            if jpgs:
-                pairs.append((dng, jpgs[0]))
-        return sorted(pairs, key=lambda pair: capture_time(pair[1]))
-
-    app_shots, google_shots = shots(app), shots(google)
+    app_shots, google_shots = paired_shots(app, google)
     before = {p: b.digest(p) for pair in app_shots + google_shots for p in pair}
     out.mkdir(parents=True)
     rows, record = [], []

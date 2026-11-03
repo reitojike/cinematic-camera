@@ -1,10 +1,14 @@
 """Synthetic tests for the Pixel 9a DNG maths (white XY, ForwardMatrix, LookTable, GainMap)."""
+from pathlib import Path
 import struct
+import tempfile
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
 import r6_diagnose as r
+import r9_app as app
 import r9_pixel as px
 
 IDENTITY = [1., 0., 0., 0., 1., 0., 0., 0., 1.]
@@ -81,6 +85,42 @@ class GainMapTests(unittest.TestCase):
         px.apply_gain_maps(image, maps, black=100., white=65535.)
         self.assertEqual(int(image[0, 0]), 100 + 2 * 900)  # pitch 2: (0,0) is corrected
         self.assertEqual(int(image[0, 1]), 1000)           # (0,1) belongs to another plane
+
+
+class PairingTests(unittest.TestCase):
+    """Pairs are matched by capture order, so a missing or extra capture must stop the run."""
+
+    def folders(self, app_names, google_names):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        for folder, names in (("app", app_names), ("google", google_names)):
+            (root / folder).mkdir()
+            for name in names:
+                (root / folder / name).write_bytes(b"")
+        self.enterContext(patch.object(app, "capture_time", side_effect=lambda jpeg: jpeg.stem))
+        return root / "app", root / "google"
+
+    def test_equal_sets_pair_in_capture_order(self):
+        a, g = self.folders(["A2.dng", "A2.jpg", "A1.dng", "A1.jpg"], ["G1.dng", "G1.jpg", "G2.dng", "G2.jpg"])
+        app_shots, google_shots = app.paired_shots(a, g)
+        self.assertEqual([d.name for d, _ in app_shots], ["A1.dng", "A2.dng"])
+        self.assertEqual(len(google_shots), 2)
+
+    def test_extra_capture_is_rejected(self):
+        a, g = self.folders(["A1.dng", "A1.jpg", "A2.dng", "A2.jpg"], ["G1.dng", "G1.jpg"])
+        with self.assertRaises(SystemExit) as caught:
+            app.paired_shots(a, g)
+        self.assertIn("capture counts differ", str(caught.exception))
+
+    def test_dng_without_jpeg_is_reported(self):
+        a, g = self.folders(["A1.dng", "A1.jpg", "A2.dng"], ["G1.dng", "G1.jpg"])
+        with self.assertRaises(SystemExit) as caught:
+            app.paired_shots(a, g)
+        self.assertIn("unmatched file: A2.dng", str(caught.exception))
+
+    def test_empty_folder_is_rejected(self):
+        a, g = self.folders([], [])
+        with self.assertRaises(SystemExit):
+            app.paired_shots(a, g)
 
 
 if __name__ == "__main__":
