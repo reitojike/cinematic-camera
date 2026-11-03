@@ -4,6 +4,19 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SensorShortcutTest {
+    @Test fun resetAndAutoWordsFitTheRotatedHeaderWithoutEllipsisAtLargeFontScales() {
+        for (label in listOf("RESET", "AUTO")) for (fontScale in listOf(1f, 1.3f, 2f)) {
+            // Production uses TextMeasurer; this fixture exercises the same fitting policy in pixels.
+            fun measuredWidth(size: Float) = kotlin.math.ceil(label.length * size * fontScale * 0.7f).toInt()
+            val fitted = controlValueFontSize(12f) { measuredWidth(it) <= 44 }
+            assertTrue(fitted > 0f)
+            assertTrue(fitted <= 12f)
+            assertTrue(measuredWidth(fitted) <= 44)
+            if (measuredWidth(12f) <= 44) assertEquals(12f, fitted, 0f)
+            else assertTrue(measuredWidth(fitted + 0.01f) > 44)
+        }
+    }
+
     @Test fun zeroShortcutAcceptsOnlyAReportedNeutralIndexAndValidStep() {
         assertTrue(evZeroShortcutSupported(-12..12, 1.0 / 3))
         assertTrue(evZeroShortcutSupported(0..0, 1.0))

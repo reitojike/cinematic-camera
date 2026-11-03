@@ -216,13 +216,17 @@ fun CaptureControlKey(
 ) {
     val density = LocalDensity.current
     val textMeasurer = rememberTextMeasurer()
-    val heading = if (unit.isEmpty()) displayLabel else "$displayLabel · $unit"
+    val heading = if (unit.isEmpty() || label == "SHUTTER") displayLabel else "$displayLabel · $unit"
+    val visibleValue = value
+    val visibleSamples = widthSamples
+    val accessibleLabel = if (label == "SHUTTER") "シャッタースピード" else label
+    val accessibleValue = if (label == "SHUTTER") captureShutterDescription(value) else "$value $unit"
     val smallStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp)
     val valueStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 16.sp, fontWeight = FontWeight.Medium)
     val headingSize = textMeasurer.measure(heading, style = smallStyle, maxLines = 1, softWrap = false).size
     val tagSize = textMeasurer.measure(tag.ifEmpty { " " }, style = smallStyle, maxLines = 1, softWrap = false).size
-    val values = remember(widthSamples, value, density, textMeasurer) {
-        (widthSamples + value).map { textMeasurer.measure(it, style = valueStyle, maxLines = 1, softWrap = false).size }
+    val values = remember(visibleSamples, visibleValue, density, textMeasurer) {
+        (visibleSamples + visibleValue).map { textMeasurer.measure(it, style = valueStyle, maxLines = 1, softWrap = false).size }
     }
     val valueWidth = values.maxOfOrNull { it.width } ?: 0
     val valueHeight = values.maxOfOrNull { it.height } ?: 0
@@ -233,13 +237,13 @@ fun CaptureControlKey(
     BoxWithConstraints(modifier.height(height).background(if (selected) Color(0xFF1E2225) else Color.Transparent)
         .alpha(if (enabled) 1f else .45f)
         .clickable(enabled = enabled || onUnavailable != null, role = Role.Button) { if (enabled) onClick() else onUnavailable?.invoke() }
-        .semantics { this.selected = selected; contentDescription = "$label $value $unit $tag${if (statusDescription.isNotBlank()) " $statusDescription" else ""}${if (!enabled) " 無効: ${unavailableReason ?: "操作不可"}" else ""}" }) {
+        .semantics { this.selected = selected; contentDescription = "$accessibleLabel $accessibleValue $tag${if (statusDescription.isNotBlank()) " $statusDescription" else ""}${if (!enabled) " 無効: ${unavailableReason ?: "操作不可"}" else ""}" }) {
         if (selected) Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(3.dp).background(ScaleText))
         Box(Modifier.align(Alignment.CenterEnd).width(1.dp).fillMaxHeight().background(Color.White.copy(alpha = .1f)))
         val availableSize = with(density) { IntSize(maxWidth.roundToPx(), maxHeight.roundToPx()) }
         val logicalRoom = if (horizontal) IntSize(availableSize.height, availableSize.width) else availableSize
         // Fit each line separately so a long status tag cannot make the numeric value smaller.
-        val sizes = remember(logicalRoom, heading, tag, value, density, textMeasurer) {
+        val sizes = remember(logicalRoom, heading, tag, visibleValue, density, textMeasurer) {
             val padding = with(density) { 8.dp.roundToPx() }
             val roomWidth = (logicalRoom.width - padding).coerceAtLeast(0)
             val roomHeight = (logicalRoom.height - padding).coerceAtLeast(0)
@@ -253,7 +257,7 @@ fun CaptureControlKey(
             val tagSp = fit(tag.ifEmpty { " " }, smallStyle, 11f, smallHeight)
             val headingHeight = textMeasurer.measure(heading, style = smallStyle.copy(fontSize = headingSp.sp), maxLines = 1, softWrap = false).size.height
             val tagHeight = textMeasurer.measure(tag.ifEmpty { " " }, style = smallStyle.copy(fontSize = tagSp.sp), maxLines = 1, softWrap = false).size.height
-            val valueSp = fit(value, valueStyle, 16f, (roomHeight - headingHeight - tagHeight).coerceAtLeast(0))
+            val valueSp = fit(visibleValue, valueStyle, 16f, (roomHeight - headingHeight - tagHeight).coerceAtLeast(0))
             Triple(headingSp, valueSp, tagSp)
         }
         Column(Modifier.align(Alignment.Center).layout { measurable, constraints ->
@@ -263,7 +267,7 @@ fun CaptureControlKey(
         }.graphicsLayer { rotationZ = rotation }.padding(horizontal = 4.dp, vertical = 2.dp),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(heading, color = ScaleMuted, style = smallStyle.copy(fontSize = sizes.first.sp), maxLines = 1, softWrap = false, overflow = TextOverflow.Visible)
-            Text(value, color = valueColor, style = valueStyle.copy(fontSize = sizes.second.sp), maxLines = 1, softWrap = false, overflow = TextOverflow.Visible)
+            Text(visibleValue, color = valueColor, style = valueStyle.copy(fontSize = sizes.second.sp), maxLines = 1, softWrap = false, overflow = TextOverflow.Visible)
             Text(tag.ifEmpty { " " }, color = tagColor, style = smallStyle.copy(fontSize = sizes.third.sp), maxLines = 1, softWrap = false, overflow = TextOverflow.Visible)
         }
     }

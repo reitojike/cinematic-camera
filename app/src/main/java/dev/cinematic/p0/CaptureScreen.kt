@@ -1,27 +1,39 @@
 package dev.cinematic.p0
 
 import android.os.SystemClock
+import android.view.HapticFeedbackConstants
 import androidx.activity.compose.BackHandler
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.platform.LocalView
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
@@ -53,6 +65,7 @@ private val Rec = Color(0xFFE5483B)
 @Composable
 fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureOrientation, requestPermission: () -> Unit,
     record: () -> Unit, export: () -> Unit, reportPending: Boolean, exit: () -> Unit) {
+    val hapticView = LocalView.current
     var editor by remember { mutableStateOf(CaptureEditor(epoch = probe.currentEpoch)) }
     var panel by remember { mutableStateOf(CapturePanel.NONE) }
     var confirmReset by remember { mutableStateOf(false) }
@@ -281,9 +294,12 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
             CaptureBar(probe, captureReady, interactable = panel != CapturePanel.DIAGNOSTICS && !ownsCapture,
                 shutter = shutter@{
                     if (panel == CapturePanel.DIAGNOSTICS) return@shutter
+                    val before = ShutterPressState(probe.mode, probe.photoStage, probe.recordingStage)
                     if (probe.recordingStage in setOf(RecordingStage.STARTING, RecordingStage.RECORDING)) probe.stopRecording()
                     else if (probe.mode == CaptureMode.STILL) { if (editor.dirty) notice = "受付値で撮影・未適用の編集は保持"; probe.capture() }
                     else record()
+                    val after = ShutterPressState(probe.mode, probe.photoStage, probe.recordingStage)
+                    if (shutterPressAccepted(before, after)) hapticView.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK, 0)
                 }, mode = { if (panel != CapturePanel.DIAGNOSTICS && unlocked) { editor = editor.close(); probe.selectMode(if (probe.mode == CaptureMode.STILL) CaptureMode.CINE else CaptureMode.STILL) } },
                 placeholder = { if (panel != CapturePanel.DIAGNOSTICS) notice = "最新写真ビューアは未実装です。端末のギャラリーで確認してください" })
         }
@@ -322,7 +338,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
         // Shield only the ISO/SS ruler; children retain their drag gestures.
         Box(Modifier.matchParentSize().blockPanelBackground())
         Column(Modifier.fillMaxWidth()) {
-            CaptureRulerHeading(key.name, information,
+            CaptureRulerHeading(captureKeyVisualLabel(key), information,
                 horizontal = LocalCaptureHorizontal.current && !waitingForFresh,
                 informationColor = Muted) {
                 TextButton(onClick = auto,
@@ -343,10 +359,12 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                 }
             } else {
                 val index = if (key == CaptureKey.ISO) choices.iso.indexOf(pair.iso) else choices.shutter.indexOfFirst { it.exposureNs == pair.exposureNs }
-                ExposureSelectionScale(key.name,
+                ExposureSelectionScale(if (key == CaptureKey.SHUTTER) "シャッタースピード" else key.name,
                     if (key == CaptureKey.ISO) choices.iso.map { it.toString() } else choices.shutter.map { it.label.removeSuffix(" s") },
                     index, exposureEnabled && !waitingForFresh, { probe.selectExposure(key, it) }, rotation = LocalCaptureAngle.current,
                     horizontal = LocalCaptureHorizontal.current, valueColor = if (probe.exposureOperationPending) Amber else Foreground,
+                    descriptions = if (key == CaptureKey.ISO) choices.iso.map { it.toString() }
+                        else choices.shutter.map { captureShutterDescription(it.label.removeSuffix(" s")) },
                     allowCurrentSelection = !probe.manualExposure && probe.liveExposureTarget == null && probe.appliedExposure == null,
                     canSelect = { probe.currentEpoch == rulerEpoch && probe.canSelectExposure && probe.selectedReport?.manualBlockReason == null &&
                         (probe.liveExposureTarget != null || probe.appliedExposure != null ||
@@ -409,10 +427,42 @@ private fun exposureKeyValue(key: CaptureKey, probe: CameraProbe, refreshGenerat
         }
         CaptureShutter(chromeInput(probe, ready, interactable), shutter, rotation = LocalCaptureAngle.current)
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
-            TextButton(onClick = mode, enabled = interactable && !probe.busy && !probe.recordingBusy, modifier = Modifier.width(100.dp).height(48.dp), shape = RoundedCornerShape(24.dp), border = BorderStroke(1.dp, Muted)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Mono(if (probe.mode == CaptureMode.STILL) "●STILL" else "STILL", if (probe.mode == CaptureMode.STILL) Foreground else Muted, Modifier.weight(1f))
-                    Mono(if (probe.mode == CaptureMode.CINE) "●CINE" else "CINE", if (probe.mode == CaptureMode.CINE) Foreground else Muted, Modifier.weight(1f))
+            CaptureModeSwitch(probe.mode, interactable && !probe.busy && !probe.recordingBusy, mode)
+        }
+    }
+}
+
+@Composable private fun CaptureModeSwitch(mode: CaptureMode, enabled: Boolean, onToggle: () -> Unit) {
+    BoxWithConstraints(Modifier.width(100.dp).height(48.dp).alpha(if (enabled) 1f else .4f)
+        .background(Color(0xFF0D0F10), RoundedCornerShape(6.dp))
+        .border(1.dp, Color(0xFF5A6066), RoundedCornerShape(6.dp))
+        .toggleable(value = mode == CaptureMode.CINE, enabled = enabled, role = Role.Switch, onValueChange = { onToggle() })
+        .semantics { contentDescription = "撮影モード"; stateDescription = captureModeSwitchState(mode) }
+        .padding(2.dp)) {
+        val thumbWidth = maxWidth / 2
+        val thumbOffset by animateDpAsState(if (mode == CaptureMode.CINE) thumbWidth else 0.dp, tween(180), label = "mode-thumb")
+        Box(Modifier.offset(x = thumbOffset).width(thumbWidth).fillMaxHeight().background(Color(0xFFCFD3D6), RoundedCornerShape(4.dp)))
+        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+            listOf(CaptureMode.STILL, CaptureMode.CINE).forEach { choice ->
+                BoxWithConstraints(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
+                    val density = LocalDensity.current
+                    val horizontal = LocalCaptureHorizontal.current
+                    val angle = LocalCaptureAngle.current
+                    val measurer = rememberTextMeasurer()
+                    val room = with(density) { captureModeLabelRoom(IntSize(maxWidth.roundToPx(), maxHeight.roundToPx()), horizontal) }
+                    val style = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                    val size = remember(choice, room, density, measurer) {
+                        controlValueFontSize(11f) { candidate ->
+                            val measured = measurer.measure(choice.name, style = style.copy(fontSize = candidate.sp), maxLines = 1, softWrap = false).size
+                            measured.width <= room.width && measured.height <= room.height
+                        }
+                    }
+                    Text(choice.name, Modifier.layout { measurable, constraints ->
+                        val text = measurable.measure(controlScaleTextConstraints(constraints, horizontal))
+                        val placement = controlScaleTextPlacement(IntSize(text.width, text.height), horizontal)
+                        layout(placement.size.width, placement.size.height) { text.place(placement.offset.x, placement.offset.y) }
+                    }.graphicsLayer { rotationZ = angle }, color = if (mode == choice) Ink else Muted,
+                        fontSize = size.sp, fontFamily = FontFamily.Monospace, maxLines = 1, softWrap = false)
                 }
             }
         }

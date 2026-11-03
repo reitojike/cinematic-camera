@@ -225,3 +225,13 @@ internal fun captureKeyVisualLabel(key: CaptureKey): String = if (key == Capture
 /** Reserve room for the ruler while giving every key row the same maximum height. */
 internal fun captureKeyMaxHeight(previewHeightDp: Float, rowCount: Int, rulerOpen: Boolean): Float =
     ((previewHeightDp - if (rulerOpen) 104f else 0f).coerceAtLeast(0f) / rowCount.coerceAtLeast(1))
+
+/** The accessibility state reports the current mode, independent of the next action. */
+internal fun captureModeSwitchState(mode: CaptureMode): String = mode.name
+
+/** Spoken values retain seconds even though the SS control omits units visually. */
+internal fun captureShutterDescription(value: String): String = "$value 秒"
+
+/** A rotated switch label uses the segment's height as its text width. */
+internal fun captureModeLabelRoom(cell: androidx.compose.ui.unit.IntSize, horizontal: Boolean): androidx.compose.ui.unit.IntSize =
+    if (horizontal) androidx.compose.ui.unit.IntSize(cell.height, cell.width) else cell

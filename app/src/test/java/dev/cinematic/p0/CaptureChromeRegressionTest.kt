@@ -92,4 +92,23 @@ class CaptureChromeRegressionTest {
         assertEquals(196f, captureKeyMaxHeight(300f, 1, true), 0f)
         assertEquals(0f, captureKeyMaxHeight(80f, 1, true), 0f)
     }
+    @Test fun modeSwitchAccessibilityReportsCurrentMode() {
+        assertEquals("STILL", captureModeSwitchState(CaptureMode.STILL))
+        assertEquals("CINE", captureModeSwitchState(CaptureMode.CINE))
+    }
+
+    @Test fun shutterAccessibilityRetainsSecondsForFractionAndLongExposure() {
+        assertEquals("1/125 秒", captureShutterDescription("1/125"))
+        assertEquals("1 秒", captureShutterDescription("1"))
+        assertEquals("30 秒", captureShutterDescription("30"))
+    }
+
+    @Test fun switchLabelRoomTracksQuarterTurnAndNarrowSegments() {
+        val segment = androidx.compose.ui.unit.IntSize(42, 80)
+        assertEquals(segment, captureModeLabelRoom(segment, false))
+        assertEquals(androidx.compose.ui.unit.IntSize(80, 42), captureModeLabelRoom(segment, true))
+        assertEquals(androidx.compose.ui.unit.IntSize(48, 20),
+            captureModeLabelRoom(androidx.compose.ui.unit.IntSize(20, 48), true))
+    }
+
 }

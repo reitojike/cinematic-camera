@@ -7,6 +7,8 @@
 
 横一列/ショートカットの[Issue #47 AC](https://github.com/reitojike/cinematic-camera/issues/47#issuecomment-6595243467)と手動再接続の[Issue #37 AC](https://github.com/reitojike/cinematic-camera/issues/37#issuecomment-6595251915)はT017/018とPhase 8で追跡する。旧2段配置は6等幅横一列へ置換する。純粋テスト、production接続、独立レビュー、実機結果の完了は個別に判定する。
 
+[v19表示/触覚AC](https://github.com/reitojike/cinematic-camera/issues/47#issuecomment-6595777813)はT021、実機はT006/009/012で確認する。過去の一般的なユーザー報告でv19個別ACを完了にしない。
+
 ## Phase 1: Setup
 
 - [x] T001 Issue #47/#37の範囲と旧004/009/012の置換を定め、標準resolver/setup-plan/setup-tasksでspec/plan/tasksを作る（specs/013-live-control-intent/spec.md、plan.md、tasks.md、specs/004-live-exposure/spec.md、specs/009-capture-ui-states/spec.md、specs/012-v15-capture-feedback/spec.md）。FR-007。
@@ -59,6 +61,10 @@
 - [ ] T019 EV0とMF解除AFの独立ボタンを既存latest intent経路へ接続し、各1回要求・能力/epoch/現guard・他intent保持・旧ACKを純粋テストとcallsiteで確認する（app/src/main/java/dev/cinematic/p0/SensorControlEditors.kt、CaptureScreen.kt、app/src/test/java/dev/cinematic/p0/SensorShortcutTest.kt）。FR-009、US2/AC4、US3/AC4、SC-006。
 - [ ] T020 設定/preview UNKNOWNの安全な同camera/mode手動再接続を表示時/押下時に検査し、旧epoch/lifecycle/busy/recording/capture ownership拒否と撮影中の既存停止を純粋テストとcallsiteで確認する（app/src/main/java/dev/cinematic/p0/ControlRecovery.kt、CameraProbe.kt、CaptureScreen.kt、app/src/test/java/dev/cinematic/p0/ControlRecoveryTest.kt）。FR-006/010、US2/AC5、SC-003/006。
 
+## Phase 9: v19表示・受付触覚
+
+- [ ] T021 SS見出し/短秒・長秒とも可視単位なし・読み上げ秒あり、STILL/CINEスイッチの現在値とguard、EV RESET/FOCUS AUTOの対象別semantics、同期受付した撮影/開始/停止だけの標準CLOCK_TICK(flags 0)を実装接続と純粋状態テストで確認する。拒否/受付遷移のない連打/保存/mode変更は触覚なし、成功証明との分離を保つ（app/src/main/java/dev/cinematic/p0/CaptureScreen.kt、ExposureControls.kt、SensorControlEditors.kt、CaptureChromeModel.kt、ShutterHapticPolicy.kt、app/src/test/java/dev/cinematic/p0/CaptureChromeRegressionTest.kt、ShutterHapticPolicyTest.kt）。FR-009/011、US1/AC6〜7、SC-007。
+
 ## Dependencies & Execution Order
 
 T001→T002→US2/US3の実装→各機械確認。US1はT001後に独立着手でき、T003→T004→T005。各実機AC（T006/T009/T012）は対応機械確認後に別判定する。T013は各機械確認後、T014は最終head固定後。共有CameraProbe/SensorControlEditors/CapturePanelsの編集は直列化し、別担当の同一ファイルを上書きしない。
@@ -66,6 +72,8 @@ T001→T002→US2/US3の実装→各機械確認。US1はT001後に独立着手�
 追加補正はT015→T016、T017は独立した配置測定の設計/テストを並行可能とする。CaptureScreen/ExposureControls等の共有編集は調整して直列化する。T015〜017後にT018、実機受入はT006、現行headのremote gateはT014で判定する。既存完了のT013を追加差分の検証済みに読み替えない。
 
 T019/T020は既存queue/復旧scopeを前提とし、共有CaptureScreenの編集を直列化する。T017/019/020の機械確認後にT018、独立/remote reviewはT014、実機はT006/009/012で別判定する。
+
+T021の機械確認後にT018で現行差分を検証する。T006にはSSの短秒/長秒で可視単位なし・読み上げ秒あり・mode switchの実描画と受付時/拒否時の触覚体感、T009/T012にはRESET=EV0/AUTO=AFの実機確認を含める。一般的な既存ユーザー報告、純粋テスト、独立レビュー、v19実機受入を分けて判定する。
 
 ## Parallel Examples / Implementation Strategy
 
