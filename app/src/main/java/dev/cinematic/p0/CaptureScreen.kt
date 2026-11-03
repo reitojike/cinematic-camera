@@ -29,7 +29,9 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -171,7 +173,9 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
         confirmButton = { TextButton(onClick = { confirmReset = false; if (unlocked) { editor = editor.close(); probe.resetAllControls() } }) { Text("全リセット") } },
         dismissButton = { TextButton(onClick = { confirmReset = false }) { Text("取消") } })
 
-    CompositionLocalProvider(LocalCaptureAngle provides animatedAngle, LocalCaptureHorizontal provides orientation.horizontal) {
+    val landscapeDialHeight = rememberLandscapeDialHeight(probe, liveIntent)
+    CompositionLocalProvider(LocalCaptureAngle provides animatedAngle, LocalCaptureHorizontal provides orientation.horizontal,
+        LocalLandscapeDialHeight provides if (orientation.horizontal) landscapeDialHeight else null) {
     BoxWithConstraints(Modifier.fillMaxSize().background(Ink).safeDrawingPadding()) {
         val dimensions = CaptureLayout.measure(maxHeight.value, panel)
         Column(Modifier.fillMaxSize()) {
@@ -241,7 +245,8 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                         .padding(top = if (orientation.horizontal) 0.dp else 48.dp).widthIn(max = if (orientation.horizontal) 220.dp else 380.dp)
                         .sensorRotation().background(Ink.copy(alpha = .8f)).padding(8.dp), color = bannerColor, fontSize = 12.sp) }
                     if (panel == CapturePanel.NONE) Column(Modifier.align(Alignment.BottomCenter)) {
-                        if (editor.selected != null) Box(Modifier.weight(1f, fill = false)) {
+                        if (editor.selected != null) Box(Modifier.weight(1f, fill = false)
+                            .then(if (orientation.horizontal) Modifier.height(48.dp + landscapeDialHeight).background(Color(0xF00D0F10)) else Modifier)) {
                             Box(Modifier.matchParentSize().blockPanelBackground())
                             Ruler(probe, editor, probe.canSelectLiveControls, exposureEditable,
                                 change = { editor = it }, auto = { editor = editor.cancel(); probe.setExposureAuto() }, refreshGeneration = measurementTick)
@@ -249,6 +254,8 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                         Box(Modifier.fillMaxWidth().background(if (editor.selected == null) Ink.copy(alpha = .5f) else Color(0xF00D0F10))) {
                             Box(Modifier.matchParentSize().blockPanelBackground())
                             val rows = captureKeyRows()
+                            val landscapeHeights = remember { mutableStateMapOf<CaptureKey, Float>() }
+                            val commonHeight = if (orientation.horizontal) captureKeyCommonHeight(landscapeHeights.values) else 0f
                             val keyMaxHeight = captureKeyMaxHeight(previewAvailableHeight, rows.size, editor.selected != null).dp
                             Column(Modifier.fillMaxWidth()) {
                                 rows.forEach { keys ->
@@ -266,6 +273,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                                             enabled = available.enabled, onUnavailable = { notice = available.reason }, unavailableReason = available.reason,
                                             onClick = { editor = editor.select(key) }, modifier = Modifier.weight(1f).heightIn(max = keyMaxHeight),
                                             displayLabel = captureKeyVisualLabel(key), unit = shown.unit, rotation = animatedAngle, horizontal = orientation.horizontal,
+                                            landscapeCommonHeight = commonHeight, onLandscapeNaturalHeight = { landscapeHeights[key] = it },
                                             valueColor = if (feedback.affected) sensorControlColor(feedback.tone) else Foreground,
                                             statusDescription = shown.contentDescription,
                                             widthSamples = if (key == CaptureKey.ISO) probe.exposureChoices.iso.map { it.toString() }
@@ -283,6 +291,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                                             onClick = { editor = editor.select(key) }, modifier = Modifier.weight(1f).heightIn(max = keyMaxHeight), unit = field.unit,
                                             onUnavailable = { notice = available.reason }, unavailableReason = available.reason,
                                             rotation = animatedAngle, horizontal = orientation.horizontal, valueColor = sensorControlColor(field.tone),
+                                            landscapeCommonHeight = commonHeight, onLandscapeNaturalHeight = { landscapeHeights[key] = it },
                                             statusDescription = "最新の指定 ${field.stateTag}。API受付値と実測は診断で確認",
                                             widthSamples = if (key == CaptureKey.WB) whiteBalanceOptions(probe.selectedReport?.overrides?.whiteBalanceModes ?: emptySet()).map { it.shortLabel }
                                                 else listOf(field.value))
@@ -329,6 +338,30 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
         }
     }
     }
+}
+
+/** Measure all supported label families before a particular ruler is opened. */
+@Composable private fun rememberLandscapeDialHeight(probe: CameraProbe, intent: ControlSnapshot?): Dp {
+    val maximum = probe.selectedReport?.overrides?.manualFocusMaximum
+    val anchor = if (intent != null) intent.overrides.focusDistance else probe.overrides.focusDistance
+    val history = remember(probe.currentEpoch, maximum) { mutableStateListOf<Float>() }
+    // A formerly selected exact MF anchor can remain in the active editor after the value changes.
+    SideEffect { if (anchor != null && anchor.isFinite() && anchor !in history) history.add(anchor) }
+    val anchors = (history + listOfNotNull(anchor)).distinct()
+    val choices = probe.exposureChoices
+    val range = probe.exposureCompensationRange
+    val step = probe.exposureCompensationStep
+    val wbModes = probe.selectedReport?.overrides?.whiteBalanceModes ?: emptySet()
+    val labels = remember(choices, range, step, maximum, anchors, wbModes) {
+        landscapeDialSizingLabels(choices, range, step, maximum, anchors, wbModes)
+    }
+    val density = LocalDensity.current
+    val measurer = rememberTextMeasurer()
+    val style = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+    val widths = remember(labels, density, measurer) {
+        labels.map { measurer.measure(it, style, maxLines = 1, softWrap = false).size.width }
+    }
+    return with(density) { landscapeDialMeasuredHeightPx(56.dp.roundToPx(), 12.dp.roundToPx(), widths).toDp() }
 }
 
 @Composable private fun Ruler(probe: CameraProbe, editor: CaptureEditor, enabled: Boolean, exposureEnabled: Boolean,

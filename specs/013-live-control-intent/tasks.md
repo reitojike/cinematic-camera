@@ -13,6 +13,10 @@
 
 [Issue #61](https://github.com/reitojike/cinematic-camera/issues/61)の外側preview tapはT023、実機はT006で追跡する。設定/診断パネル自体の無回転を維持し、閉じる操作とcamera設定取消を区別する。
 
+[v22横持ち項目幅AC](https://github.com/reitojike/cinematic-camera/issues/47#issuecomment-6599683392)はT024とT006で追跡する。縦持ちのユーザー確認は報告された表示範囲だけとし、横持ち/他の実機ACは確認まで未完了とする。
+
+ユーザーが明確化した横幅対象は開いた5ダイヤルでありT025へ分ける。6キーの既存補正T024をダイヤル幅の解決証拠にせず、縦不変と実機未確認を維持する。
+
 ## Phase 1: Setup
 
 - [x] T001 Issue #47/#37の範囲と旧004/009/012の置換を定め、標準resolver/setup-plan/setup-tasksでspec/plan/tasksを作る（specs/013-live-control-intent/spec.md、plan.md、tasks.md、specs/004-live-exposure/spec.md、specs/009-capture-ui-states/spec.md、specs/012-v15-capture-feedback/spec.md）。FR-007。
@@ -77,6 +81,14 @@
 
 - [ ] T023 5目盛り外のpreview単一tapを消費して閉じる専用routingへ統一し、背後のAE/AF測光・他操作を起動しない。送信済みintent/選択値/受付、目盛り内drag/close/Back、設定/診断/録画停止と状態guardをsource接続・pure routing行列で確認する。回転設定/preview寸法と設定/診断の無回転を維持する（app/src/main/java/dev/cinematic/p0/CaptureState.kt、CaptureScreen.kt、app/src/test/java/dev/cinematic/p0/CaptureStateTest.kt）。FR-013、US1/AC9、SC-009。
 
+## Phase 12: 横持ち6キーの見かけ幅
+
+- [ ] T024 横持ち6キーの自然測定高さ最大値を共用して広い側へ揃え、既存共通上限/文字fitと縦持ち自然高さを維持する。候補/タグ/空集合/文字倍率相当・左右横回転をpure模擬測定とsource接続で確認し、初回SideEffect再構成・短高制約と実描画未確認を分ける。等weight物理tap領域/a11y/layout/guardを維持する（app/src/main/java/dev/cinematic/p0/ExposureControls.kt、CaptureScreen.kt、CaptureChromeModel.kt、app/src/test/java/dev/cinematic/p0/CaptureChromeRegressionTest.kt）。FR-014、US1/AC10、SC-010。
+
+## Phase 13: 開いた横持ちダイヤル幅
+
+- [ ] T025 現sessionの5候補familyと有効MF exact anchorを先行測定し、横持ち本体`max(56dp,最大候補幅+12dp)`/header48dpの共通外枠を適用する。待機/非対応の外枠、縦個別寸法/6キー維持、親制約・長候補/文字倍率限界と既存操作/guard/a11yをpure候補集合/測定値テストとsource接続で確認する（app/src/main/java/dev/cinematic/p0/CaptureScreen.kt、ControlScale.kt、ExposureControls.kt、app/src/test/java/dev/cinematic/p0/ControlScaleTest.kt）。FR-015、US1/AC11、SC-011。
+
 ## Dependencies & Execution Order
 
 T001→T002→US2/US3の実装→各機械確認。US1はT001後に独立着手でき、T003→T004→T005。各実機AC（T006/T009/T012）は対応機械確認後に別判定する。T013は各機械確認後、T014は最終head固定後。共有CameraProbe/SensorControlEditors/CapturePanelsの編集は直列化し、別担当の同一ファイルを上書きしない。
@@ -90,6 +102,10 @@ T021の機械確認後にT018で現行差分を検証する。T006にはSSの短
 T022後にT018で現行差分を検証し、最終head review/CIはT014へ残す。T006の実機受入に5目盛りの縦横title/action/closeと待機理由・VIRTUAL_KEY受付/既存dial触覚の確認を含める。端末強度を測定済みとはしない。
 
 T023後にT018で現行差分のunit/build/lintと整合を検証する。T006の実機受入に5項目×縦/左右横、pending・録画/保存・パネル重なりでのtap消費/intent保持・内側操作/Back/停止・設定/診断無回転を含める。独立/canonical/CIはT014で別判定し、実描画/実機未確認を残す。
+
+T024後にT018で現行機械検証を確認し、review/CIはT014で判定する。T006の実描画/実機受入に縦/左右横6キーの候補/タグ/文字倍率・共通上限・初回/回転途中の寸法とtouch/a11yを含め、縦持ちの一般確認で横持ちを完了にしない。
+
+T025後にT018で現行機械検証、T014で独立/canonical reviewとCIを確認する。T006には5ダイヤルの左右横・長SS/WB・MF exact値・待機/非対応・fontScale/短高と縦回帰を別途含める。実描画/実機未確認を残し、キー幅の検証を流用しない。
 
 ## Parallel Examples / Implementation Strategy
 

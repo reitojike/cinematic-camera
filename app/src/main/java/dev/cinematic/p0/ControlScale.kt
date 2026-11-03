@@ -100,3 +100,26 @@ internal fun controlScaleTextPlacement(text: IntSize, quarterTurn: Boolean): Con
     if (!quarterTurn) ControlScaleTextPlacement(text, IntOffset.Zero)
     else ControlScaleTextPlacement(IntSize(text.height, text.width),
         IntOffset((text.height - text.width) / 2, (text.width - text.height) / 2))
+
+/** Labels used only for sizing: no unsupported choice is exposed to the user. */
+internal fun landscapeDialSizingLabels(
+    choices: ExposureChoices, evRange: IntRange?, evStep: Double?, focusMaximum: Float?,
+    focusAnchors: List<Float>, wbModes: Set<Int>,
+): List<String> = buildList {
+    addAll(choices.iso.map { it.toString() })
+    addAll(choices.shutter.map { it.label.removeSuffix(" s") })
+    addAll(exposureCompensationOptions(evRange, evStep).map { it.label })
+    val focusOptions = (focusControlOptions(focusMaximum, null) + focusAnchors.filter { anchor ->
+        focusMaximum != null && focusMaximum.isFinite() && focusMaximum > 0f && anchor.isFinite() && anchor in 0f..focusMaximum
+    }).distinct()
+    add("AF")
+    addAll(focusOptions.map { if (it == 0f) "∞" else focusDistanceText(it) ?: "?" })
+    addAll(whiteBalanceOptions(wbModes).map { it.shortLabel })
+}
+
+/** Landscape uses one measured body height; portrait retains the individual ruler's measurement. */
+internal fun controlDialHeightPx(horizontal: Boolean, individualPx: Int, sharedPx: Int): Int =
+    if (horizontal) sharedPx else individualPx
+
+internal fun landscapeDialMeasuredHeightPx(minimumPx: Int, paddingPx: Int, widths: List<Int>): Int =
+    maxOf(minimumPx, (widths.maxOrNull() ?: 0) + paddingPx)
