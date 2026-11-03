@@ -6,7 +6,10 @@ Pixel画質、Android/NDK/GPU/gallery成立の証拠ではない。新依存は�
 
 ## 実行と再生成
 
-既存の[専用Python環境](README.md)を使い、許可された素材rootとprivate recipeを指定する。
+現行mainの[専用Python環境](README.md)に従い、新規処理はPython3.15.2通常GIL版とcp315 lockを使う。
+旧3.12.10で作った比較はその環境・生成時コード・cp312 lockを再現用に保持し、既存画像を上書きしない。
+環境を跨ぐ同一byte再現は保証せず、3.15の合成検証を旧画像の再現実績には数えない。
+許可された素材rootとprivate recipeを指定する。
 入力root外かつ未作成のoutput folderへ生成する。出力parentは事前に存在する実directoryとする。
 
 ```powershell

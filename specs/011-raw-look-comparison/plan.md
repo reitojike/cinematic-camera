@@ -8,7 +8,8 @@
 
 ## Technical Context
 
-Windows x64/Python3.12、既存固定rawpy/NumPy/Pillow、素のHTML/CSS/JS。新依存なし。
+Windows x64、現行mainに従い新規処理/CIはPython3.15.2通常GIL版。既存固定rawpy/NumPy/Pillow、素のHTML/CSS/JS。新依存なし。
+旧3.12.10の環境と既存比較は再現用に保持し、3.15の検証を旧画像の同一byte再現の証拠へ転用しない。
 row chunkでfloat配列を制限し原解像度を保持。実素材はCIへ送らない。
 
 ## Constitution Check
