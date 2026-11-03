@@ -675,7 +675,8 @@ def main(argv: list[str] | None = None) -> int:
     by_id = {scene["id"]: scene for scene in recipe["scenes"]}
     scenes1 = [by_id[i] for i in args.scenes.split(",")]
     scenes2 = [by_id[i] for i in args.axes_scenes.split(",")]
-    before = {p: b.digest(p) for s in by_id.values() for p in scene_inputs(args, s).values()}
+    used = (scenes1 if "1" in args.axes else []) + (scenes2 if "2" in args.axes else [])
+    before = {p: b.digest(p) for s in used for p in scene_inputs(args, s).values()}
     output.mkdir(parents=True)
     results, record = {}, {"environment": b.versions(), "look": look}
     if "1" in args.axes:
