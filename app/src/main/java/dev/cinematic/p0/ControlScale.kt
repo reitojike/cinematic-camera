@@ -28,9 +28,11 @@ internal fun controlScaleSelection(count: Int, current: Int, target: Int, enable
 /** A synchronous gate prevents feedback for input refused while an immediate request is in flight. */
 internal fun dispatchControlScaleSelection(
     count: Int, current: Int, target: Int, enabled: Boolean,
-    canSelect: () -> Boolean, select: (Int) -> Unit,
+    canSelect: () -> Boolean, allowCurrent: Boolean = false, select: (Int) -> Unit,
 ): Int? {
-    val next = controlScaleSelection(count, current, target, enabled) ?: return null
+    val next = controlScaleSelection(count, current, target, enabled)
+        ?: target.takeIf { allowCurrent && enabled && current in 0 until count && target == current }
+        ?: return null
     if (!canSelect()) return null
     select(next)
     return next

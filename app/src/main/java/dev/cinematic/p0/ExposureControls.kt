@@ -72,25 +72,28 @@ fun ExposureSelectionScale(
     valueColor: Color = ScaleText,
     canSelect: () -> Boolean = { true },
     descriptions: List<String> = labels,
+    allowCurrentSelection: Boolean = false,
 ) {
-    val window = controlScaleWindow(labels.size, selectedIndex)
-    val interactive = enabled && window.current != null
+    val interactive = enabled && selectedIndex in labels.indices
     val currentIndex by rememberUpdatedState(selectedIndex)
     val currentCount by rememberUpdatedState(labels.size)
     val currentSelect by rememberUpdatedState(onSelect)
     val currentCanSelect by rememberUpdatedState(canSelect)
+    val currentAllowSelection by rememberUpdatedState(allowCurrentSelection)
     val interactiveNow by rememberUpdatedState(interactive)
     val view = LocalView.current
     val stepPx = with(LocalDensity.current) { 24.dp.toPx() }
     var detent by remember(label, labels) { mutableStateOf(ControlDetentState(selectedIndex)) }
     var dispatchedIndex by remember(label, labels) { mutableIntStateOf(selectedIndex) }
     var dragging by remember(label, labels) { mutableStateOf(false) }
+    val shownIndex = if (dragging) dispatchedIndex else selectedIndex
+    val window = controlScaleWindow(labels.size, shownIndex)
     LaunchedEffect(selectedIndex, label, labels) {
         if (!dragging) { dispatchedIndex = selectedIndex; detent = ControlDetentState(selectedIndex) }
     }
     fun dispatch(target: Int): Boolean {
         val next = dispatchControlScaleSelection(currentCount, dispatchedIndex, target, interactiveNow,
-            currentCanSelect, currentSelect) ?: return false
+            currentCanSelect, currentAllowSelection, currentSelect) ?: return false
         dispatchedIndex = next
         // Flags 0 preserve both the View's and the user's haptic settings.
         view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK, 0)
@@ -118,7 +121,7 @@ fun ExposureSelectionScale(
         val available = with(density) { (maxWidth - 96.dp).coerceAtLeast(1.dp).roundToPx() }
         val labelAxis = if (horizontal) largestLabel.height else largestLabel.width
         val visibleCount = controlScaleVisibleCount(available, labelAxis + with(density) { 8.dp.roundToPx() })
-        val slots = controlScaleVisibleSlots(labels.size, selectedIndex, visibleCount)
+        val slots = controlScaleVisibleSlots(labels.size, shownIndex, visibleCount)
         Row(Modifier.fillMaxWidth().height(rulerHeight).alpha(if (interactive) 1f else .45f)
             .draggable(drag, Orientation.Horizontal, enabled = interactive,
                 onDragStarted = { dragging = true; dispatchedIndex = currentIndex; detent = ControlDetentState(currentIndex) },
@@ -147,7 +150,7 @@ fun ExposureSelectionScale(
                 }
                 Row(Modifier.fillMaxSize()) {
                     slots.forEach { index ->
-                        val isCurrent = index != null && index == selectedIndex
+                        val isCurrent = index != null && index == shownIndex
                         Box(Modifier.weight(1f).fillMaxHeight()
                             .background(if (isCurrent) Color(0xFF1E2225) else Color.Transparent)
                             .clickable(enabled = interactive && index != null, role = Role.RadioButton,
@@ -225,23 +228,34 @@ fun CaptureControlKey(
     val natural = with(density) { IntSize(maxOf(headingSize.width, tagSize.width, valueWidth) + 16.dp.roundToPx(),
         headingSize.height + tagSize.height + valueHeight + 16.dp.roundToPx()) }
     val footprint = if (horizontal) IntSize(natural.height, natural.width) else natural
-    val width = with(density) { footprint.width.toDp().coerceAtLeast(60.dp) }
     val height = with(density) { footprint.height.toDp().coerceAtLeast(72.dp) }
-    Box(modifier.widthIn(min = width).height(height).background(if (selected) Color(0xFF1E2225) else Color.Transparent)
+    BoxWithConstraints(modifier.height(height).background(if (selected) Color(0xFF1E2225) else Color.Transparent)
         .alpha(if (enabled) 1f else .45f)
         .clickable(enabled = enabled || onUnavailable != null, role = Role.Button) { if (enabled) onClick() else onUnavailable?.invoke() }
         .semantics { this.selected = selected; contentDescription = "$label $value $unit $tag${if (statusDescription.isNotBlank()) " $statusDescription" else ""}${if (!enabled) " 無効: ${unavailableReason ?: "操作不可"}" else ""}" }) {
         if (selected) Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(3.dp).background(ScaleText))
         Box(Modifier.align(Alignment.CenterEnd).width(1.dp).fillMaxHeight().background(Color.White.copy(alpha = .1f)))
+        val availableSize = with(density) { IntSize(maxWidth.roundToPx(), maxHeight.roundToPx()) }
+        val logicalRoom = if (horizontal) IntSize(availableSize.height, availableSize.width) else availableSize
+        val fontScale = remember(logicalRoom, heading, tag, value, widthSamples, density, textMeasurer) {
+            controlValueFontSize(1f) { scale ->
+            val h = textMeasurer.measure(heading, style = smallStyle.copy(fontSize = (11f * scale).sp), maxLines = 1, softWrap = false).size
+            val t = textMeasurer.measure(tag.ifEmpty { " " }, style = smallStyle.copy(fontSize = (11f * scale).sp), maxLines = 1, softWrap = false).size
+            val v = (widthSamples + value).map { textMeasurer.measure(it, style = valueStyle.copy(fontSize = (16f * scale).sp), maxLines = 1, softWrap = false).size }
+            val padding = with(density) { 16.dp.roundToPx() }
+            maxOf(h.width, t.width, v.maxOfOrNull { it.width } ?: 0) + padding <= logicalRoom.width &&
+                h.height + t.height + (v.maxOfOrNull { it.height } ?: 0) + padding <= logicalRoom.height
+            }
+        }
         Column(Modifier.align(Alignment.Center).layout { measurable, constraints ->
             val content = measurable.measure(controlScaleTextConstraints(constraints, horizontal))
             val placement = controlScaleTextPlacement(IntSize(content.width, content.height), horizontal)
             layout(placement.size.width, placement.size.height) { content.place(placement.offset.x, placement.offset.y) }
         }.graphicsLayer { rotationZ = rotation }.padding(horizontal = 8.dp, vertical = 4.dp),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(heading, color = ScaleMuted, style = smallStyle, maxLines = 1, softWrap = false, overflow = TextOverflow.Visible)
-            Text(value, color = valueColor, style = valueStyle, maxLines = 1, softWrap = false, overflow = TextOverflow.Visible)
-            Text(tag.ifEmpty { " " }, color = tagColor, style = smallStyle, maxLines = 1, softWrap = false, overflow = TextOverflow.Visible)
+            Text(heading, color = ScaleMuted, style = smallStyle.copy(fontSize = (11f * fontScale).sp), maxLines = 1, softWrap = false, overflow = TextOverflow.Visible)
+            Text(value, color = valueColor, style = valueStyle.copy(fontSize = (16f * fontScale).sp), maxLines = 1, softWrap = false, overflow = TextOverflow.Visible)
+            Text(tag.ifEmpty { " " }, color = tagColor, style = smallStyle.copy(fontSize = (11f * fontScale).sp), maxLines = 1, softWrap = false, overflow = TextOverflow.Visible)
         }
     }
 }

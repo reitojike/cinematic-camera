@@ -276,17 +276,10 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     }
     fun selectExposure(key: CaptureKey, index: Int) {
         if (!canSelectExposure || selectedReport?.manualBlockReason != null) return
-        val choices = exposureChoices
-        val source = editControls.exposure ?: freshPreviewExposurePair(previewExposureSamples, epoch, SystemClock.elapsedRealtime())
-            ?: run { event("Exposure input unavailable: waiting for fresh AUTO preview sensor values"); return }
-        val base = choices.pair(source.iso, source.exposureNs) ?: run { event("No conventional exposure pair within device/session range"); return }
-        val pair = when (key) {
-            CaptureKey.ISO -> choices.iso.getOrNull(index)?.let { base.copy(iso = it) }
-            CaptureKey.SHUTTER -> choices.shutter.getOrNull(index)?.let { base.copy(exposureNs = it.exposureNs) }
-            else -> null
-        } ?: return
-        offerLiveControls(editControls.copy(exposure = pair,
-            locks = editControls.locks.forControls(true, editControls.overrides.whiteBalance)))
+        val target = liveExposureSelection(key, index, exposureChoices, editControls, previewExposureSamples,
+            epoch, SystemClock.elapsedRealtime())
+            ?: run { event("Exposure input unavailable: fresh AUTO preview values and supported candidates required"); return }
+        offerLiveControls(target)
     }
     private fun offerLiveControls(target: ControlSnapshot) {
         if (!canSelectLiveControls || target == editControls) return

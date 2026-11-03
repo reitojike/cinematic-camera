@@ -15,6 +15,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -155,6 +156,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
         val dimensions = CaptureLayout.measure(maxHeight.value, panel)
         Column(Modifier.fillMaxSize()) {
             BoxWithConstraints(Modifier.height(dimensions.previewHeight.dp).fillMaxWidth().background(Color.Black)) {
+                val previewAvailableHeight = maxHeight.value
                 // Keep the same PreviewView mounted while panels/rulers change: no UI-induced camera rebind.
                 val previewTop = CaptureLayout.previewTop(probe.mode).dp
                 if (permission) AndroidView(factory = { context ->
@@ -207,24 +209,29 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                         .padding(top = if (orientation.horizontal) 0.dp else 48.dp).widthIn(max = if (orientation.horizontal) 220.dp else 380.dp)
                         .sensorRotation().background(Ink.copy(alpha = .8f)).padding(8.dp), color = bannerColor, fontSize = 12.sp) }
                     if (panel == CapturePanel.NONE) Column(Modifier.align(Alignment.BottomCenter)) {
-                        if (editor.selected != null) Ruler(probe, editor, probe.canSelectLiveControls, exposureEditable,
-                            change = { editor = it }, auto = { editor = editor.cancel(); probe.setExposureAuto() }, nowMs = measurementNow)
+                        if (editor.selected != null) Box(Modifier.weight(1f, fill = false)) {
+                            Ruler(probe, editor, probe.canSelectLiveControls, exposureEditable,
+                                change = { editor = it }, auto = { editor = editor.cancel(); probe.setExposureAuto() }, refreshGeneration = measurementTick)
+                        }
                         BoxWithConstraints(Modifier.fillMaxWidth().background(if (editor.selected == null) Ink.copy(alpha = .5f) else Color(0xF00D0F10))) {
                             Box(Modifier.matchParentSize().blockPanelBackground())
-                            val minimumKeyWidth = maxWidth / CaptureKey.entries.size
-                            Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.Bottom) {
-                                CaptureKey.entries.forEach { key ->
+                            val rows = captureKeyRows(maxWidth.value, LocalDensity.current.fontScale, previewAvailableHeight)
+                            val keyMaxHeight = captureKeyMaxHeight(previewAvailableHeight, rows.size, editor.selected != null).dp
+                            Column(Modifier.fillMaxWidth()) {
+                                rows.forEach { keys ->
+                                  Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+                                   keys.forEach { key ->
                                     val selected = editor.selected == key
                                     val available = controlAvailability(key, CaptureAccess(probe.bound, probe.busy, probe.recordingBusy, ownsCapture,
                                         probe.controlReady, probe.exposureOperationPending, requestedExposureMode(probe) == true, probe.selectedReport?.manualBlockReason,
                                         probe.exposureCompensationSupported, probe.selectedReport?.overrides?.manualFocusMaximum?.let { it > 0f } == true,
                                         liveSelectable = probe.canSelectLiveControls, exposureSelectable = probe.canSelectExposure))
                                     if (key.group == CaptureKey.ISO) {
-                                        val shown = exposureKeyValue(key, probe, measurementNow)
+                                        val shown = exposureKeyValue(key, probe, measurementTick)
                                         val feedback = exposureFeedback.getValue(key)
                                         CaptureControlKey(key.name, shown.value, shown.qualifier.ifEmpty { "実測未確認" }, selected,
                                             enabled = available.enabled, onUnavailable = { notice = available.reason }, unavailableReason = available.reason,
-                                            onClick = { editor = editor.select(key) }, modifier = Modifier.widthIn(min = minimumKeyWidth),
+                                            onClick = { editor = editor.select(key) }, modifier = Modifier.weight(1f).heightIn(max = keyMaxHeight),
                                             unit = shown.unit, rotation = animatedAngle, horizontal = orientation.horizontal,
                                             valueColor = if (feedback.affected) sensorControlColor(feedback.tone) else Foreground,
                                             statusDescription = shown.contentDescription,
@@ -240,13 +247,15 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                                         }
                                         val tag = if (key == CaptureKey.FOCUS) field.modeTag else if (key == CaptureKey.LOOK) "未実装" else ""
                                         CaptureControlKey(key.name, field.value, tag, selected, available.enabled,
-                                            onClick = { editor = editor.select(key) }, modifier = Modifier.widthIn(min = minimumKeyWidth), unit = field.unit,
+                                            onClick = { editor = editor.select(key) }, modifier = Modifier.weight(1f).heightIn(max = keyMaxHeight), unit = field.unit,
                                             onUnavailable = { notice = available.reason }, unavailableReason = available.reason,
                                             rotation = animatedAngle, horizontal = orientation.horizontal, valueColor = sensorControlColor(field.tone),
                                             statusDescription = "最新の指定 ${field.stateTag}。API受付値と実測は診断で確認",
                                             widthSamples = if (key == CaptureKey.WB) whiteBalanceOptions(probe.selectedReport?.overrides?.whiteBalanceModes ?: emptySet()).map { it.shortLabel }
                                                 else listOf(field.value))
                                     }
+                                   }
+                                  }
                                 }
                             }
                         }
@@ -287,7 +296,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
 }
 
 @Composable private fun Ruler(probe: CameraProbe, editor: CaptureEditor, enabled: Boolean, exposureEnabled: Boolean,
-    change: (CaptureEditor) -> Unit, auto: () -> Unit, nowMs: Long) {
+    change: (CaptureEditor) -> Unit, auto: () -> Unit, refreshGeneration: Long) {
     val key = editor.selected ?: return
     if (key.group != CaptureKey.ISO) {
         OtherControlRuler(probe, editor, enabled, change)
@@ -295,16 +304,21 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
     }
     val choices = probe.exposureChoices
     val rulerEpoch = probe.currentEpoch
-    val source = probe.liveExposureTarget ?: probe.appliedExposure ?:
-        freshPreviewExposurePair(probe.previewExposureSamples, probe.currentEpoch, nowMs)
+    // The AUTO observation starts the editor; subsequent frames do not move the selection.
+    val samples = probe.previewExposureSamples
+    val fresh = freshPreviewExposurePair(samples, rulerEpoch, refreshGeneration.let { SystemClock.elapsedRealtime() })
+    var autoSeed by remember(rulerEpoch, key) { mutableStateOf<ManualExposure?>(null) }
+    if (autoSeed == null && fresh != null) autoSeed = captureAutoRulerSeed(autoSeed, fresh)
+    val source = probe.liveExposureTarget ?: probe.appliedExposure ?: autoSeed
     val pair = source?.let { choices.pair(it.iso, it.exposureNs) }
-    val information = if (probe.manualExposure || probe.liveExposureTarget != null) "撮影target · 変更即反映" else "候補を選ぶと撮影targetへ反映"
+    val waitingForFresh = probe.liveExposureTarget == null && probe.appliedExposure == null && fresh == null
+    val information = if (waitingForFresh) "AUTO実測待ち · 選択一時停止" else if (probe.manualExposure || probe.liveExposureTarget != null) "撮影target · 変更即反映" else "候補を選ぶと撮影targetへ反映"
     Box(Modifier.fillMaxWidth().background(Color(0xF00D0F10))) {
         // Shield only the ISO/SS ruler; children retain their drag gestures.
         Box(Modifier.matchParentSize().blockPanelBackground())
         Column(Modifier.fillMaxWidth()) {
             CaptureRulerHeading(key.name, information,
-                horizontal = LocalCaptureHorizontal.current,
+                horizontal = LocalCaptureHorizontal.current && !waitingForFresh,
                 informationColor = Muted) {
                 TextButton(onClick = auto,
                     enabled = probe.bound && (!probe.busy || probe.exposureOperationPending) && !probe.recordingBusy && probe.stillExposure?.ownsCapture != true,
@@ -326,8 +340,9 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                 val index = if (key == CaptureKey.ISO) choices.iso.indexOf(pair.iso) else choices.shutter.indexOfFirst { it.exposureNs == pair.exposureNs }
                 ExposureSelectionScale(key.name,
                     if (key == CaptureKey.ISO) choices.iso.map { it.toString() } else choices.shutter.map { it.label.removeSuffix(" s") },
-                    index, exposureEnabled, { probe.selectExposure(key, it) }, rotation = LocalCaptureAngle.current,
+                    index, exposureEnabled && !waitingForFresh, { probe.selectExposure(key, it) }, rotation = LocalCaptureAngle.current,
                     horizontal = LocalCaptureHorizontal.current, valueColor = if (probe.exposureOperationPending) Amber else Foreground,
+                    allowCurrentSelection = !probe.manualExposure && probe.liveExposureTarget == null && probe.appliedExposure == null,
                     canSelect = { probe.currentEpoch == rulerEpoch && probe.canSelectExposure && probe.selectedReport?.manualBlockReason == null &&
                         (probe.liveExposureTarget != null || probe.appliedExposure != null ||
                             freshPreviewExposurePair(probe.previewExposureSamples, probe.currentEpoch, SystemClock.elapsedRealtime()) != null) })
@@ -367,9 +382,9 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
     }
 }
 
-private fun exposureKeyValue(key: CaptureKey, probe: CameraProbe, nowMs: Long): ExposureValuePresentation =
+private fun exposureKeyValue(key: CaptureKey, probe: CameraProbe, refreshGeneration: Long): ExposureValuePresentation =
     exposureValuePresentation(key, probe.previewExposureSamples.sample(key).takeIf { probe.bound }, probe.currentEpoch,
-        nowMs, probe.exposureChoices, captureTarget = if (probe.bound) logicalCaptureTarget(probe.currentEpoch,
+        refreshGeneration.let { SystemClock.elapsedRealtime() }, probe.exposureChoices, captureTarget = if (probe.bound) logicalCaptureTarget(probe.currentEpoch,
             probe.controlReceipt, probe.liveExposureTarget, probe.stillExposure?.target, probe.appliedExposure) else null)
 
 @Composable private fun CaptureBar(probe: CameraProbe, ready: Boolean, interactable: Boolean, shutter: () -> Unit, mode: () -> Unit, placeholder: () -> Unit) {

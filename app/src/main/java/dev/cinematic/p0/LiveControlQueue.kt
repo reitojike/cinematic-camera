@@ -80,3 +80,16 @@ fun freshPreviewExposurePair(samples: PreviewExposureSamples, epoch: Int, nowMs:
     val ns = samples.shutter?.actual?.exposureNs?.takeIf { it > 0 } ?: return null
     return ManualExposure(iso, ns)
 }
+
+/** First manual input uses fresh raw AUTO observations; later inputs use the logical pair only. */
+fun liveExposureSelection(key: CaptureKey, index: Int, choices: ExposureChoices, controls: ControlSnapshot,
+    samples: PreviewExposureSamples, epoch: Int, nowMs: Long): ControlSnapshot? {
+    val source = controls.exposure ?: freshPreviewExposurePair(samples, epoch, nowMs) ?: return null
+    val base = choices.pair(source.iso, source.exposureNs) ?: return null
+    val pair = when (key) {
+        CaptureKey.ISO -> choices.iso.getOrNull(index)?.let { base.copy(iso = it) }
+        CaptureKey.SHUTTER -> choices.shutter.getOrNull(index)?.let { base.copy(exposureNs = it.exposureNs) }
+        else -> null
+    } ?: return null
+    return controls.copy(exposure = pair, locks = controls.locks.forControls(true, controls.overrides.whiteBalance))
+}

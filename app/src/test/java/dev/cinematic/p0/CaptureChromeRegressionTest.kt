@@ -59,4 +59,47 @@ class CaptureChromeRegressionTest {
         assertEquals("operation", chips[1].id)
         assertEquals("—", chips.first { it.id == "exposure" }.text)
     }
+    @Test fun autoEditorKeepsItsStartingChoiceAcrossLiveObservations() {
+        val initial = ManualExposure(100, 10_000_000)
+        val next = ManualExposure(400, 20_000_000)
+        val seed = captureAutoRulerSeed(null, initial)
+        assertEquals(initial, captureAutoRulerSeed(seed, next))
+        assertEquals(initial, captureAutoRulerSeed(seed, null))
+        // A new editor/session starts without the previous session's seed.
+        assertNull(captureAutoRulerSeed(null, null))
+        assertEquals(next, captureAutoRulerSeed(null, next))
+    }
+
+    @Test fun autoCurrentChoiceCanEnterManualButManualDuplicateIsIgnored() {
+        val received = mutableListOf<Int>()
+        assertNull(dispatchControlScaleSelection(5, 2, 2, true, { true }) { received.add(it) })
+        assertEquals(2, dispatchControlScaleSelection(5, 2, 2, true, { true }, allowCurrent = true) { received.add(it) })
+        assertNull(dispatchControlScaleSelection(5, 2, 2, true, { false }, allowCurrent = true) { received.add(it) })
+        assertEquals(listOf(2), received)
+    }
+
+    @Test fun keyRailKeepsAllSixInEqualRowsAtNarrowAndLargeTextWidths() {
+        for ((width, fontScale) in listOf(320f to 1f, 480f to 1.3f, 800f to 2f)) {
+            val rows = captureKeyRows(width, fontScale)
+            assertEquals(listOf(3, 3), rows.map { it.size })
+            assertEquals(CaptureKey.entries.toList(), rows.flatten())
+        }
+        for ((width, fontScale) in listOf(600f to 1f, 780f to 1.3f, 1200f to 2f)) {
+            val rows = captureKeyRows(width, fontScale)
+            assertEquals(listOf(6), rows.map { it.size })
+            assertEquals(CaptureKey.entries.toList(), rows.flatten())
+        }
+    }
+
+    @Test fun shortPreviewReservesRulerSpaceAndKeepsAllKeysInOneRow() {
+        val rows = captureKeyRows(320f, 2f, 240f)
+        assertEquals(listOf(6), rows.map { it.size })
+        assertEquals(CaptureKey.entries.toList(), rows.flatten())
+        assertEquals(136f, captureKeyMaxHeight(240f, rows.size, true), 0f)
+        val taller = captureKeyRows(320f, 1f, 300f)
+        assertEquals(listOf(3, 3), taller.map { it.size })
+        assertEquals(98f, captureKeyMaxHeight(300f, taller.size, true), 0f)
+        assertEquals(0f, captureKeyMaxHeight(80f, 1, true), 0f)
+    }
+
 }
