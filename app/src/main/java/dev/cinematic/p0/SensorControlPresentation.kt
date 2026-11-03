@@ -18,6 +18,20 @@ fun focusControlIndex(options: List<Float>, value: Float?): Int =
     if (value == null || !value.isFinite() || options.isEmpty() || value < options.first() || value > options.last()) -1
     else options.indices.minBy { kotlin.math.abs(options[it].toDouble() - value) }
 
+/** A preview observation starts the ruler once; later frames do not move an in-progress gesture. */
+internal fun focusAutoSeed(seed: Float?, fresh: Float?): Float? = seed ?: fresh
+internal fun focusDialLabels(options: List<Float>): List<String> =
+    options.map { if (it == 0f) "∞" else focusDistanceText(it) ?: "?" }
+internal fun focusDialIndex(options: List<Float>, manual: Float?, autoSeed: Float?): Int =
+    focusControlIndex(options, manual ?: autoSeed)
+
+/** After the first detent, synchronous logical MF intent replaces the need for a fresh AF seed. */
+internal fun focusDialAutoActive(intent: ControlSnapshot?, acceptedFocus: Float?): Boolean =
+    (if (intent != null) intent.overrides.focusDistance else acceptedFocus) == null
+
+internal fun focusDialInputAllowed(intent: ControlSnapshot?, acceptedFocus: Float?, freshAuto: Boolean): Boolean =
+    !focusDialAutoActive(intent, acceptedFocus) || freshAuto
+
 data class ExposureCompensationOption(val index: Int, val label: String)
 
 fun exposureCompensationOptions(range: IntRange?, step: Double?): List<ExposureCompensationOption> {
@@ -50,6 +64,18 @@ fun liveFocusPresentation(acceptedFocus: Float?, intent: ControlSnapshot?, recei
     val text = focusDistanceText(focus)
         ?: return SensorControlValue("—", stateTag = "不明", tone = SensorControlTone.UNKNOWN, affected = changed)
     return SensorControlValue(if (focus == 0f) "∞" else text, if (focus == 0f) "" else "LU", "MF", state.first, state.second, changed)
+}
+
+/** AF values are observations rounded only for display; they never become a request implicitly. */
+internal fun focusAutoPresentation(base: SensorControlValue, observed: Float?, maximum: Float?): SensorControlValue {
+    if (base.modeTag != "AF") return base
+    val options = focusControlOptions(maximum, null)
+    if (options.isEmpty()) return base.copy(value = "?", unit = "", modeTag = "AF 候補なし")
+    val index = focusControlIndex(options, observed)
+    if (index < 0) return base.copy(value = "?", unit = "", modeTag = "AF 待機")
+    val nearest = options[index]
+    return base.copy(value = if (nearest == 0f) "∞" else focusDistanceText(nearest) ?: "?",
+        unit = if (nearest == 0f) "" else "LU", modeTag = "AF 近似")
 }
 
 fun liveEvPresentation(acceptedIndex: Int?, step: Double?, intent: ControlSnapshot?, receipt: ControlReceipt,
