@@ -2,7 +2,11 @@ package dev.cinematic.p0
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.database.ContentObserver
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -15,18 +19,29 @@ class MainActivity : ComponentActivity() {
     private lateinit var probe: CameraProbe
     private var permission by mutableStateOf(false)
     private var pendingAudioRequest = false
-    private var orientation by mutableStateOf(CaptureOrientation())
+    private var orientation = CaptureOrientation()
+    private var uiOrientation by mutableStateOf(CaptureOrientation())
+    private var autoRotateEnabled = false
+    private var observingRotationSetting = false
+    private val rotationSettingObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) {
+            if (observingRotationSetting) refreshRotationSetting()
+        }
+    }
     private var orientationListener: android.view.OrientationEventListener? = null
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(statusBarStyle = androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             navigationBarStyle = androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
         probe = CameraProbe(this, this)
+        refreshRotationSetting()
         orientationListener = object : android.view.OrientationEventListener(this) {
             override fun onOrientationChanged(degrees: Int) {
                 val next = orientation.observe(degrees)
                 if (next != orientation) {
                     orientation = next
+                    uiOrientation = next.forUi(autoRotateEnabled, uiOrientation)
+                    // Capture orientation follows the device independently of the UI setting.
                     probe.setDeviceRotation(next.surfaceRotation)
                 }
             }
@@ -47,7 +62,7 @@ class MainActivity : ComponentActivity() {
                     probe.reportAudioPermission(granted)
                     if (granted && requested) probe.startRecording()
                 }
-                CaptureScreen(probe, permission, orientation,
+                CaptureScreen(probe, permission, uiOrientation,
                     requestPermission = { camera.launch(Manifest.permission.CAMERA) },
                     record = {
                         if (probe.audioWanted && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -64,10 +79,18 @@ class MainActivity : ComponentActivity() {
     }
     override fun onStart() {
         super.onStart()
+        if (!observingRotationSetting) {
+            contentResolver.registerContentObserver(
+                Settings.System.getUriFor(Settings.System.ACCELEROMETER_ROTATION), false, rotationSettingObserver)
+            observingRotationSetting = true
+        }
+        // Register before reading so a setting change cannot fall between the two.
+        refreshRotationSetting()
         orientationListener?.let { if (it.canDetectOrientation()) it.enable() }
     }
     override fun onResume() {
         super.onResume()
+        refreshRotationSetting()
         val granted = checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
         if (permission && !granted && ::probe.isInitialized) probe.stop()
         permission = granted
@@ -76,7 +99,18 @@ class MainActivity : ComponentActivity() {
             probe.reportAudioPermission(true)
         }
     }
-    override fun onStop() { orientationListener?.disable(); if (::probe.isInitialized) probe.onBackground(); super.onStop() }
+    private fun refreshRotationSetting() {
+        autoRotateEnabled = Settings.System.getInt(contentResolver, Settings.System.ACCELEROMETER_ROTATION, 0) == 1
+        // USER_ROTATION is a fallback only when no Activity orientation preference applies.
+        // This portrait Activity therefore stays portrait when auto-rotate is disabled.
+        uiOrientation = orientation.forUi(autoRotateEnabled, uiOrientation)
+    }
+    private fun stopObservingRotationSetting() {
+        if (!observingRotationSetting) return
+        observingRotationSetting = false
+        contentResolver.unregisterContentObserver(rotationSettingObserver)
+    }
+    override fun onStop() { stopObservingRotationSetting(); orientationListener?.disable(); if (::probe.isInitialized) probe.onBackground(); super.onStop() }
     override fun onPause() { if (::probe.isInitialized) probe.onBackground(); super.onPause() }
-    override fun onDestroy() { orientationListener?.disable(); orientationListener = null; if (::probe.isInitialized) probe.close(); super.onDestroy() }
+    override fun onDestroy() { stopObservingRotationSetting(); orientationListener?.disable(); orientationListener = null; if (::probe.isInitialized) probe.close(); super.onDestroy() }
 }

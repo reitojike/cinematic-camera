@@ -12,10 +12,40 @@ class ExposureValuePresentationTest {
     private fun display(key: CaptureKey, value: CaptureSample? = sample(), now: Long = 101,
         options: ExposureChoices = choices) = exposureValuePresentation(key, value, 3, now, options)
 
+    @Test fun manualLongShutterShowsUncompensatedCaptureTargetWithoutNeedingPreviewMetadata() {
+        val target = ManualExposure(100, 1_000_000_000)
+        val iso = exposureValuePresentation(CaptureKey.ISO, sample(), 3, 101, choices, true, target)
+        val shutter = exposureValuePresentation(CaptureKey.SHUTTER, null, 3, 5000, choices, true, target)
+        assertEquals("100", iso.value)
+        assertEquals("1", shutter.value); assertEquals("s", shutter.unit)
+        assertEquals(ExposureValueSource.CAPTURE_TARGET, iso.source)
+        assertTrue(iso.contentDescription.contains("撮影設定値"))
+        assertFalse(iso.value.contains("約"))
+        assertEquals(3100, sample().actual.iso)
+        assertEquals(ExposureValueSource.PREVIEW_ACTUAL, display(CaptureKey.ISO).source)
+    }
+
+    @Test fun currentManualTargetFollowsLatestRapidIntentAndRejectsPreviousSession() {
+        val old = ManualExposure(100, 8_000_000)
+        val current = ManualExposure(100, 1_000_000_000)
+        val newest = ManualExposure(200, 1_000_000_000)
+        val compensated = ManualExposure(3000, 33_333_333)
+        val target = StillExposureTarget(3, 2, SimulationPlan(current, compensated, SimulationStage.COMPENSATED,
+            33_333_333, 0.0), ControlSnapshot(current), null)
+        val pending = ControlReceipt(3, 2, ControlPhase.PENDING, requested = ControlSnapshot(compensated))
+        assertEquals(current, logicalCaptureTarget(3, pending, null, target, old))
+        assertEquals(newest, logicalCaptureTarget(3, pending, newest, target, old))
+        assertEquals(newest, logicalCaptureTarget(3, pending.copy(phase = ControlPhase.UNKNOWN), newest, target, old))
+        assertNull(logicalCaptureTarget(4, pending, newest, target, old))
+        assertNull(logicalCaptureTarget(4, pending.copy(epoch = 4), null, target, old))
+        assertNull(logicalCaptureTarget(3, pending.copy(requested = ControlSnapshot()), null, null, old))
+        assertEquals(current, logicalCaptureTarget(3, pending.copy(phase = ControlPhase.ACCEPTED), null, null, current))
+    }
+
     @Test fun actualPreviewValuesAreRoundedToChoicesForDisplayWithoutReplacingInputValues() {
         val sample = sample()
-        assertEquals("≈3200", display(CaptureKey.ISO, sample).value)
-        assertEquals("≈1/125", display(CaptureKey.SHUTTER, sample).value)
+        assertEquals("約3200", display(CaptureKey.ISO, sample).value)
+        assertEquals("約1/125", display(CaptureKey.SHUTTER, sample).value)
         assertEquals("s", display(CaptureKey.SHUTTER, sample).unit)
         assertEquals(3100, sample.actual.iso); assertEquals(8_100_000L, sample.actual.exposureNs)
         assertEquals(100, sample.request.iso)
@@ -47,7 +77,7 @@ class ExposureValuePresentationTest {
         assertEquals(ExposureValueFreshness.INVALID, display(CaptureKey.SHUTTER, sample().copy(actual = SensorValues(100, -1))).freshness)
         assertEquals(ExposureValueFreshness.NO_CHOICES, display(CaptureKey.ISO, options = choices.copy(iso = emptyList())).freshness)
         assertEquals(ExposureValueFreshness.NO_CHOICES, display(CaptureKey.SHUTTER, options = choices.copy(shutter = emptyList())).freshness)
-        assertEquals("≈3200", display(CaptureKey.ISO, sample().copy(actual = SensorValues(3100)),
+        assertEquals("約3200", display(CaptureKey.ISO, sample().copy(actual = SensorValues(3100)),
             options = choices.copy(shutter = emptyList())).value)
         assertEquals(ExposureValueFreshness.INVALID, display(CaptureKey.WB).freshness)
     }

@@ -72,6 +72,47 @@ class ControlScaleTest {
         assertEquals(ControlDetentState(3), end.state)
     }
 
+    @Test fun immediateControlDispatchRechecksBusyForEveryDragStageBeforeFeedback() {
+        var busy = false
+        var current = 1
+        val requests = mutableListOf<Int>()
+        val feedback = mutableListOf<Int>()
+        val update = controlDetentDrag(6, ControlDetentState(current), 100f, 24f)
+        for (target in update.selections) {
+            val next = dispatchControlScaleSelection(6, current, target, true, { !busy }) {
+                requests += it
+                busy = true
+            } ?: break
+            current = next
+            feedback += next
+        }
+        assertEquals(listOf(2), requests)
+        assertEquals(requests, feedback)
+        assertEquals(2, current)
+        busy = false
+        val next = dispatchControlScaleSelection(6, current, 3, true, { !busy }) { requests += it }
+        assertEquals(3, next)
+        assertEquals(listOf(2, 3), requests)
+    }
+
+    @Test fun invalidSameValueOrDisabledDispatchCannotReachTheLiveGateOrIssueRequests() {
+        var gateCalls = 0
+        var requests = 0
+        val dispatch: (Int, Boolean) -> Int? = { target, enabled ->
+            dispatchControlScaleSelection(3, 2, target, enabled, { gateCalls++; true }) { requests++ }
+        }
+        assertNull(dispatch(2, true))
+        assertNull(dispatch(3, true))
+        assertNull(dispatch(1, false))
+        assertEquals(0, gateCalls)
+        assertEquals(0, requests)
+        assertNull(dispatchControlScaleSelection(3, 2, 1, true, { false }) { requests++ })
+        assertEquals(0, requests)
+        assertEquals(1, dispatch(1, true))
+        assertEquals(1, gateCalls)
+        assertEquals(1, requests)
+    }
+
     @Test fun wholeModeBadgeIncludingPaddingAndBorderKeepsItsCentreDuringEitherQuarterTurn() {
         for (density in 1..3) {
             val parent = Constraints(maxWidth = 200 * density, maxHeight = 44 * density)

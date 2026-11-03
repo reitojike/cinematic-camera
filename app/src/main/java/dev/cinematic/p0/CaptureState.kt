@@ -67,6 +67,27 @@ data class CaptureSample(
 fun newerSample(previous: CaptureSample?, candidate: CaptureSample, epoch: Int): CaptureSample? =
     if (candidate.epoch != epoch || (previous?.epoch == epoch && candidate.frame <= previous.frame)) previous else candidate
 
+/** Display observations only. Each axis keeps its own original timestamp; this cannot prove readiness. */
+data class PreviewExposureSamples(
+    val epoch: Int = 0, val latestFrame: Long = -1,
+    val iso: CaptureSample? = null, val shutter: CaptureSample? = null,
+) {
+    fun observe(candidate: CaptureSample, currentEpoch: Int): PreviewExposureSamples {
+        val current = if (epoch == currentEpoch) this else PreviewExposureSamples(epoch = currentEpoch)
+        if (candidate.epoch != currentEpoch || candidate.frame <= current.latestFrame) return current
+        if (candidate.intent !in setOf(CaptureSampleIntent.PREVIEW, CaptureSampleIntent.VIDEO_RECORD)) return current
+        return current.copy(latestFrame = candidate.frame,
+            iso = if ((candidate.actual.iso ?: 0) > 0) candidate else current.iso,
+            shutter = if ((candidate.actual.exposureNs ?: 0L) > 0L) candidate else current.shutter)
+    }
+
+    fun sample(key: CaptureKey): CaptureSample? = when (key) {
+        CaptureKey.ISO -> iso
+        CaptureKey.SHUTTER -> shutter
+        else -> null
+    }
+}
+
 enum class CaptureKey { ISO, SHUTTER, EV, FOCUS, WB, LOOK;
     val group get() = if (this == SHUTTER) ISO else this
 }

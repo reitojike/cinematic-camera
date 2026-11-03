@@ -48,7 +48,7 @@ class CaptureChromeRegressionTest {
         val input = CaptureChromeInput(CaptureMode.STILL, bound = true, photoStage = PhotoStage.SAVING,
             ownsStill = true, stillPhase = StillExposurePhase.CAPTURING)
         val shown = captureShutterModel(input)
-        assertEquals(68, shown.innerDp)
+        assertEquals(58, shown.innerDp)
         assertEquals(ShutterColor.CONTROL, shown.inner)
         assertFalse(shown.enabled)
         assertEquals("保存中", shown.caption)

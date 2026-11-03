@@ -18,6 +18,32 @@ class StillExposureStateTest {
     private fun ready() = StillExposureState(target()).previewReceipt(1, receipt()).observe(frame())
     private fun issued() = ready().beginCapture().captureReceipt(receipt(capture, 2, 12)).singleStarted()
 
+    @Test fun singleCaptureFreezesLatestOneSecondTargetAndNeverUsesCompensatedIso() {
+        val selected = ManualExposure(100, 1_000_000_000)
+        val plan = (ExposureSimulationPolicy.plan(selected, 100..6400, 100_000L..1_000_000_000L,
+            1_000_000_000L) as SimulationPlanning.Ready).plan
+        assertTrue(plan.preview.iso > selected.iso)
+        val latest = StillExposureTarget(3, 2, plan, ControlSnapshot(selected), null)
+        val current = ready().retarget(latest).previewReceipt(2, receipt(plan.preview, 2, 100))
+            .observe(SimulationFrame(3, 21, 101, SimulationIntent.PREVIEW,
+                SensorValues(plan.preview.iso, plan.preview.exposureNs, 0),
+                SensorValues(plan.preview.iso, plan.preview.exposureNs, 0)))
+        assertTrue(current.canCapture)
+        val fixed = current.beginCapture()
+        assertSame(latest, fixed.captureTarget)
+        assertEquals(selected, fixed.captureTarget!!.controls.exposure)
+        assertEquals(100, fixed.captureTarget.plan.capture.iso)
+        assertEquals(fixed, fixed.retarget(latest.copy(revision = 3, controls = ControlSnapshot(selected.copy(iso = 200)))))
+        assertEquals(fixed, fixed.captureReceipt(receipt(selected, 3, 102, epoch = 2)))
+        assertFalse(fixed.captureReceipt(receipt(plan.preview, 3, 102)).canIssueCapture)
+        val single = fixed.captureReceipt(receipt(selected, 3, 102)).singleStarted()
+        assertTrue(single.singleIssued)
+        assertSame(latest, single.captureTarget)
+        assertEquals(single, single.observe(frame(22, 103).copy(epoch = 2)))
+        assertEquals(100, single.captureTarget!!.controls.exposure!!.iso)
+        // Shared JPEG/RAW single-capture target; this is not evidence of the saved file's sensor ISO.
+    }
+
     @Test fun previewReadinessRequiresCurrentReceiptAndFreshCompleteMetadataNotExactActualPair() {
         val state = StillExposureState(target())
         assertFalse(state.observe(frame()).canCapture)

@@ -9,12 +9,12 @@ class CaptureChromeModelTest {
 
     @Test fun idleShapesMatchStillAndCineWithoutMovingCaptionFootprint() {
         val still = captureShutterModel(ready(CaptureMode.STILL))
-        assertEquals(68, still.innerDp)
+        assertEquals(58, still.innerDp)
         assertEquals(ShutterColor.CONTROL, still.inner)
         assertFalse(still.square)
         assertEquals("", still.caption)
         val cine = captureShutterModel(ready(CaptureMode.CINE))
-        assertEquals(58, cine.innerDp)
+        assertEquals(48, cine.innerDp)
         assertEquals(ShutterColor.CONTROL, cine.ring)
         assertEquals(ShutterColor.CONTROL, cine.inner)
         assertTrue(cine.enabled)
@@ -28,7 +28,7 @@ class CaptureChromeModelTest {
                 RecordingStage.STARTING -> {
                     assertTrue(model.enabled)
                     assertFalse(model.square)
-                    assertEquals(58, model.innerDp)
+                    assertEquals(48, model.innerDp)
                     assertEquals("開始中", model.caption)
                     assertEquals(ShutterColor.CONTROL, model.ring)
                     assertEquals(ShutterColor.CONTROL, model.inner)
@@ -66,7 +66,7 @@ class CaptureChromeModelTest {
     @Test fun stillCaptureSaveFailureAndExclusiveRecoveryRemainDistinct() {
         val still = ready(CaptureMode.STILL)
         val capturing = captureShutterModel(still.copy(photoStage = PhotoStage.CAPTURING))
-        assertEquals(68, capturing.innerDp)
+        assertEquals(58, capturing.innerDp)
         assertEquals(ShutterColor.CONTROL, capturing.inner)
         assertFalse(capturing.enabled)
         val saving = captureShutterModel(still.copy(photoStage = PhotoStage.SAVING))

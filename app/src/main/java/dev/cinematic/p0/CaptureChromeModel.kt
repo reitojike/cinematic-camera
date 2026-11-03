@@ -51,7 +51,7 @@ data class CaptureShutterModel(
 fun captureShutterModel(input: CaptureChromeInput): CaptureShutterModel {
     val cine = input.mode == CaptureMode.CINE
     val stop = cine && input.recordingStage in setOf(RecordingStage.STARTING, RecordingStage.RECORDING)
-    if (stop) return CaptureShutterModel(if (input.recordingStage == RecordingStage.RECORDING) 26 else 58,
+    if (stop) return CaptureShutterModel(if (input.recordingStage == RecordingStage.RECORDING) 26 else 48,
         input.recordingStage == RecordingStage.RECORDING,
         if (input.recordingStage == RecordingStage.RECORDING) ShutterColor.RECORDING else ShutterColor.CONTROL,
         if (input.recordingStage == RecordingStage.RECORDING) ShutterColor.RECORDING else ShutterColor.CONTROL,
@@ -98,7 +98,7 @@ fun captureShutterModel(input: CaptureChromeInput): CaptureShutterModel {
         (!input.ownsStill || input.stillPhase == StillExposurePhase.CAPTURING)
     val action = if (cine) "録画開始" else "静止画撮影"
     val reason = input.blockedReason ?: caption.takeIf { it.isNotEmpty() } ?: "撮影条件の確認待ち"
-    return CaptureShutterModel(if (cine) 58 else 68, false,
+    return CaptureShutterModel(if (cine) 48 else 58, false,
         ShutterColor.CONTROL, ShutterColor.CONTROL,
         if (severe) .35f else if (!enabled && !exposing && input.photoStage != PhotoStage.SAVING) .4f else 1f,
         enabled, caption, tone, if (enabled) "$action${if (caption.isNotEmpty()) "・$caption" else ""}" else "$action・操作不可: $reason")

@@ -11,6 +11,14 @@ data class CaptureOrientation(val sensorQuarter: Int = 0, val uiAngle: Float = 0
         val distance = abs(((sensorDegrees - sensorQuarter + 540) % 360) - 180)
         if (distance <= 57) return this // 45 degree boundary + 12 degree hysteresis.
         val quarter = ((sensorDegrees + 45) / 90 * 90) % 360
+        return rotateTo(quarter)
+    }
+
+    /** The Activity stays portrait; only UI elements honor the user's auto-rotate setting. */
+    fun forUi(autoRotateEnabled: Boolean, previousUi: CaptureOrientation): CaptureOrientation =
+        previousUi.rotateTo(if (autoRotateEnabled) sensorQuarter else 0)
+
+    private fun rotateTo(quarter: Int): CaptureOrientation {
         val target = ((360 - quarter) % 360).toFloat()
         val delta = ((target - (uiAngle % 360) + 540) % 360) - 180
         return CaptureOrientation(quarter, uiAngle + delta)
