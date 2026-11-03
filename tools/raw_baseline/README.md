@@ -61,6 +61,20 @@ rawpy 0.28.0 / NumPy 2.5.4 / Pillow 13.0.0を公式PyPIの通常版CPython3.15 W
 
 [評価枠](EVALUATION.md)に従い、同じDNGをbaseline／tone-only／将来Stage Clearで比較する。Stage Clearはmanifest上`not_implemented`の予約枠。実DNGがない段階では合成テストだけを報告し、decode・色・ディテール・ノイズの品質を未確認に残す。
 
+## 第6回の色差段階診断（r6_diagnose.py）
+
+[Issue #63](https://github.com/reitojike/cinematic-camera/issues/63)の診断用CLI。色照明下の色差が、デコーダー／行列・DNG内蔵プロファイル・WB・スライダーのどこで生じるか（軸1）を測る。あわせて、第5回の土台に対してWB（軸2）、肌の明るさの付け方（軸3）、測光規則（軸4）を1つずつ変えた結果を、非公開の1ページにまとめる。
+
+```powershell
+& $rawPython tools/raw_baseline/r6_diagnose.py --livepicture $authorizedRoot --references $diagnosticExports --r5 $round5Folder --output $newPrivateOutput
+```
+
+- 本人が書き出した診断用参照JPEGは比較にだけ使う。第三者のプロファイルやプリセットのデータを処理へ取り込まず、自動fitもしない。
+- DNG内蔵のColorMatrix1/2とProfileHueSatMapは、DNG仕様の計算で適用する（診断用。既定の処理にはしていない）。
+- 参照JPEGのICCがDisplay P3なら線形sRGBへ変換し、sRGB外の値も測定に残す。
+- 測定は長辺1200pxの縮小画像と、第5回recipeの手動矩形領域で行う。結果は好みの採否や画質合格を意味しない。
+- 入力の前後hashを照合する。出力は入力外の未作成folderに限る。
+
 ## 公式根拠とlicense
 
 - [rawpy 0.28.0 PyPI](https://pypi.org/project/rawpy/0.28.0/)、[Params API](https://letmaik.github.io/rawpy/api/rawpy.Params.html)、[LibRaw output parameters](https://www.libraw.org/docs/API-datastruct.html)。処理条件はCLI実装で固定しmanifestに記録する。
