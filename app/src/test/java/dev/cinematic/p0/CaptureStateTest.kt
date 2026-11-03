@@ -80,4 +80,34 @@ class CaptureStateTest {
         assertTrue(editor.complete(ControlReceipt(epoch = 2, sequence = 5, phase = ControlPhase.UNKNOWN, detail = "unknown")).dirty)
         assertFalse(editor.complete(ControlReceipt(epoch = 2, sequence = 5, phase = ControlPhase.ACCEPTED)).dirty)
     }
+    @Test fun previewTapRoutesRulerDismissalWithoutMetering() {
+        for (key in listOf(CaptureKey.ISO, CaptureKey.SHUTTER, CaptureKey.EV, CaptureKey.FOCUS, CaptureKey.WB)) {
+            assertEquals(PreviewTapAction.DISMISS_RULER, previewTapAction(CapturePanel.NONE, key, true))
+            assertEquals(PreviewTapAction.DISMISS_RULER, previewTapAction(CapturePanel.NONE, key, false))
+            val editor = CaptureEditor(epoch = 7, selected = key)
+            assertNull(editor.close().selected)
+            assertEquals(7, editor.close().epoch)
+        }
+        assertEquals(PreviewTapAction.FOCUS, previewTapAction(CapturePanel.NONE, null, true))
+        assertEquals(PreviewTapAction.IGNORE, previewTapAction(CapturePanel.NONE, null, false))
+        for (panel in listOf(CapturePanel.SETTINGS, CapturePanel.DIAGNOSTICS)) {
+            assertEquals(PreviewTapAction.IGNORE, previewTapAction(panel, CaptureKey.ISO, true))
+            assertEquals(PreviewTapAction.IGNORE, previewTapAction(panel, null, true))
+        }
+        val sending = CaptureEditor(epoch = 7, selected = CaptureKey.ISO, submitting = 12)
+        assertEquals(sending, sending.close()) // Existing legacy submission guard is retained.
+    }
+
+    @Test fun nativePreviewAccessibilityReturnsWhenRulerCloses() {
+        assertTrue(previewAccessibilityVisible(CapturePanel.NONE, null))
+        for (key in listOf(CaptureKey.ISO, CaptureKey.SHUTTER, CaptureKey.EV, CaptureKey.FOCUS, CaptureKey.WB)) {
+            assertFalse(previewAccessibilityVisible(CapturePanel.NONE, key))
+            assertTrue(previewAccessibilityVisible(CapturePanel.NONE, CaptureEditor(selected = key).close().selected))
+        }
+        for (panel in listOf(CapturePanel.SETTINGS, CapturePanel.DIAGNOSTICS)) {
+            assertFalse(previewAccessibilityVisible(panel, null))
+            assertFalse(previewAccessibilityVisible(panel, CaptureKey.ISO))
+        }
+    }
+
 }

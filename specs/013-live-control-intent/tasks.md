@@ -11,6 +11,8 @@
 
 [v20共通見出し/触覚AC](https://github.com/reitojike/cinematic-camera/issues/47#issuecomment-6596333540)はT022とT021のhaptic種別へ反映する。実機の強度や描画を未確認のまま保ち、追加PO指示なしに無関係な差分を加えない。
 
+[Issue #61](https://github.com/reitojike/cinematic-camera/issues/61)の外側preview tapはT023、実機はT006で追跡する。設定/診断パネル自体の無回転を維持し、閉じる操作とcamera設定取消を区別する。
+
 ## Phase 1: Setup
 
 - [x] T001 Issue #47/#37の範囲と旧004/009/012の置換を定め、標準resolver/setup-plan/setup-tasksでspec/plan/tasksを作る（specs/013-live-control-intent/spec.md、plan.md、tasks.md、specs/004-live-exposure/spec.md、specs/009-capture-ui-states/spec.md、specs/012-v15-capture-feedback/spec.md）。FR-007。
@@ -71,6 +73,10 @@
 
 - [ ] T022 ISO/SS/EV/WB/FOCUSを48dp・3等幅slotの左action/中央title/右44dp closeへ共通化し、ISO/SSの通常補足説明を除く。待機title/semantics理由、縦横回転fit、既存action/close/鮮度/epoch/pending guardをsourceと純粋title回帰で確認する（app/src/main/java/dev/cinematic/p0/ExposureControls.kt、CaptureScreen.kt、CaptureChromeModel.kt、app/src/test/java/dev/cinematic/p0/CaptureChromeRegressionTest.kt）。FR-012、US1/AC8、SC-008。
 
+## Phase 11: 目盛り外tapの閉じる専用routing
+
+- [ ] T023 5目盛り外のpreview単一tapを消費して閉じる専用routingへ統一し、背後のAE/AF測光・他操作を起動しない。送信済みintent/選択値/受付、目盛り内drag/close/Back、設定/診断/録画停止と状態guardをsource接続・pure routing行列で確認する。回転設定/preview寸法と設定/診断の無回転を維持する（app/src/main/java/dev/cinematic/p0/CaptureState.kt、CaptureScreen.kt、app/src/test/java/dev/cinematic/p0/CaptureStateTest.kt）。FR-013、US1/AC9、SC-009。
+
 ## Dependencies & Execution Order
 
 T001→T002→US2/US3の実装→各機械確認。US1はT001後に独立着手でき、T003→T004→T005。各実機AC（T006/T009/T012）は対応機械確認後に別判定する。T013は各機械確認後、T014は最終head固定後。共有CameraProbe/SensorControlEditors/CapturePanelsの編集は直列化し、別担当の同一ファイルを上書きしない。
@@ -82,6 +88,8 @@ T019/T020は既存queue/復旧scopeを前提とし、共有CaptureScreenの編�
 T021の機械確認後にT018で現行差分を検証する。T006にはSSの短秒/長秒で可視単位なし・読み上げ秒あり・mode switchの実描画と受付時/拒否時の触覚体感、T009/T012にはRESET=EV0/AUTO=AFの実機確認を含める。一般的な既存ユーザー報告、純粋テスト、独立レビュー、v19実機受入を分けて判定する。
 
 T022後にT018で現行差分を検証し、最終head review/CIはT014へ残す。T006の実機受入に5目盛りの縦横title/action/closeと待機理由・VIRTUAL_KEY受付/既存dial触覚の確認を含める。端末強度を測定済みとはしない。
+
+T023後にT018で現行差分のunit/build/lintと整合を検証する。T006の実機受入に5項目×縦/左右横、pending・録画/保存・パネル重なりでのtap消費/intent保持・内側操作/Back/停止・設定/診断無回転を含める。独立/canonical/CIはT014で別判定し、実描画/実機未確認を残す。
 
 ## Parallel Examples / Implementation Strategy
 

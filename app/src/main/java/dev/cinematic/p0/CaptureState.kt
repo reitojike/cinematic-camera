@@ -130,6 +130,19 @@ enum class FocusPhase { PENDING, COMPLETED, FAILED }
 data class FocusFeedback(val point: Pair<Float, Float>, val phase: FocusPhase, val afSucceeded: Boolean? = null)
 
 enum class CapturePanel { NONE, SETTINGS, DIAGNOSTICS }
+
+/** Preview tap routing is exclusive: closing a ruler never also meters the image. */
+internal fun previewAccessibilityVisible(panel: CapturePanel, selected: CaptureKey?): Boolean =
+    panel == CapturePanel.NONE && selected == null
+
+internal enum class PreviewTapAction { DISMISS_RULER, FOCUS, IGNORE }
+internal fun previewTapAction(panel: CapturePanel, selected: CaptureKey?, canFocus: Boolean): PreviewTapAction = when {
+    panel != CapturePanel.NONE -> PreviewTapAction.IGNORE
+    selected != null -> PreviewTapAction.DISMISS_RULER
+    canFocus -> PreviewTapAction.FOCUS
+    else -> PreviewTapAction.IGNORE
+}
+
 data class CaptureBack(val panel: CapturePanel, val closeRuler: Boolean = false, val exit: Boolean = false,
     val armExit: Boolean = false, val note: String? = null)
 fun captureBack(panel: CapturePanel, ruler: Boolean, pending: Boolean, recording: Boolean, armed: Boolean): CaptureBack = when {
