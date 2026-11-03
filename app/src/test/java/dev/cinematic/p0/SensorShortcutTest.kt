@@ -4,6 +4,12 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SensorShortcutTest {
+    @Test fun focusHeadingOmitsLensUnitButOtherHeadingsKeepTheirExistingRules() {
+        assertEquals("FOCUS", captureControlHeading("FOCUS", "FOCUS", "LU"))
+        assertEquals("FOCUS", captureControlHeading("FOCUS", "FOCUS", ""))
+        assertEquals("SS", captureControlHeading("SHUTTER", "SS", "s"))
+        assertEquals("EV · stop", captureControlHeading("EV", "EV", "stop"))
+    }
     @Test fun autofocusShortcutAllowsAlreadyAutoWithoutRedundantRequest() {
         var manual = false
         var calls = 0

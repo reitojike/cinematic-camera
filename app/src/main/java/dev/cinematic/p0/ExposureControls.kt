@@ -236,6 +236,9 @@ private fun ScaleArrow(text: String, description: String, target: Int?, enabled:
     }
 }
 
+internal fun captureControlHeading(label: String, displayLabel: String, unit: String): String =
+    if (unit.isEmpty() || label == "SHUTTER" || label == "FOCUS") displayLabel else "$displayLabel · $unit"
+
 /** The rail stays fixed; only its contents rotate with the device. */
 @Composable
 fun CaptureControlKey(
@@ -251,7 +254,7 @@ fun CaptureControlKey(
 ) {
     val density = LocalDensity.current
     val textMeasurer = rememberTextMeasurer()
-    val heading = if (unit.isEmpty() || label == "SHUTTER") displayLabel else "$displayLabel · $unit"
+    val heading = captureControlHeading(label, displayLabel, unit)
     val visibleValue = value
     val visibleSamples = widthSamples
     val accessibleLabel = if (label == "SHUTTER") "シャッタースピード" else label
