@@ -78,6 +78,29 @@ class MeasurementTests(unittest.TestCase):
         self.assertTrue(((out >= 0) & (out <= 1)).all())
 
 
+class OutputPathTests(unittest.TestCase):
+    def test_dotdot_alias_into_input_is_rejected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder).resolve()
+            (base / "inputs").mkdir()
+            (base / "outside").mkdir()
+            with self.assertRaises(SystemExit):
+                r.resolve_output(base / "outside" / ".." / "inputs" / "report", [base / "inputs"])
+
+    def test_new_folder_outside_inputs_is_accepted(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder).resolve()
+            (base / "inputs").mkdir()
+            self.assertEqual(r.resolve_output(base / "report", [base / "inputs"]), base / "report")
+
+    def test_output_containing_input_is_rejected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder).resolve()
+            (base / "report" / "inputs").mkdir(parents=True)
+            with self.assertRaises(SystemExit):
+                r.resolve_output(base / "report", [base / "report" / "inputs"])
+
+
 class TagTests(unittest.TestCase):
     def test_reads_srational_and_short_profile_tags(self):
         entries = [(50721, 10, 9, [(i, 1000) for i in range(1, 10)]), (50778, 3, 1, [17])]

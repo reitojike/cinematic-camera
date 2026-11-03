@@ -660,6 +660,19 @@ def axes_html(rep: dict, fit: dict) -> str:
     return "\n".join(parts)
 
 
+def resolve_output(value: Path, roots: list[Path]) -> Path:
+    """New output folder whose resolved parent (no links, no '..' aliases) is outside every input root."""
+    name = Path(value).name
+    if name in ("", ".", ".."):
+        raise SystemExit("ERROR INVALID_OUTPUT")
+    output = b.root_path(Path(value).absolute().parent) / name
+    if output.exists() or output.is_symlink():
+        raise SystemExit("ERROR OUTPUT_EXISTS")
+    if any(output.is_relative_to(root) or root.is_relative_to(output) for root in roots):
+        raise SystemExit("ERROR OUTPUT_OVERLAPS_INPUT")
+    return output
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--livepicture", type=Path, required=True, help="authorized root containing adopted/")
@@ -672,9 +685,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     for name in ("livepicture", "references", "r5"):
         setattr(args, name, b.root_path(getattr(args, name)))
-    output = args.output.absolute()
-    if output.exists() or any(output.is_relative_to(getattr(args, n)) for n in ("livepicture", "references", "r5")):
-        raise SystemExit("ERROR OUTPUT_EXISTS_OR_OVERLAPS_INPUT")
+    output = resolve_output(args.output, [args.livepicture, args.references, args.r5])
     recipe = json.loads((args.r5 / "recipe.json").read_text(encoding="utf-8"))
     look = json.loads((args.r5 / "reproducer" / "settings.json").read_text(encoding="utf-8"))["looks"]["clear"]
     by_id = {scene["id"]: scene for scene in recipe["scenes"]}
