@@ -40,7 +40,7 @@ internal fun dispatchSensorShortcut(enabled: Boolean, canSelect: () -> Boolean, 
 
 /** A rotated word occupies the header's height; fit measured glyphs without changing the tap target. */
 @Composable
-private fun SensorShortcutText(label: String, modifier: Modifier, horizontal: Boolean) {
+internal fun SensorShortcutText(label: String, modifier: Modifier, horizontal: Boolean) {
     val measurer = rememberTextMeasurer()
     val style = LocalTextStyle.current
     BoxWithConstraints {

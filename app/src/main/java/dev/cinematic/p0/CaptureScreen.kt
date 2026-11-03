@@ -299,7 +299,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                     else if (probe.mode == CaptureMode.STILL) { if (editor.dirty) notice = "受付値で撮影・未適用の編集は保持"; probe.capture() }
                     else record()
                     val after = ShutterPressState(probe.mode, probe.photoStage, probe.recordingStage)
-                    if (shutterPressAccepted(before, after)) hapticView.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK, 0)
+                    if (shutterPressAccepted(before, after)) hapticView.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY, 0)
                 }, mode = { if (panel != CapturePanel.DIAGNOSTICS && unlocked) { editor = editor.close(); probe.selectMode(if (probe.mode == CaptureMode.STILL) CaptureMode.CINE else CaptureMode.STILL) } },
                 placeholder = { if (panel != CapturePanel.DIAGNOSTICS) notice = "最新写真ビューアは未実装です。端末のギャラリーで確認してください" })
         }
@@ -333,22 +333,17 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
     val source = probe.liveExposureTarget ?: probe.appliedExposure ?: autoSeed
     val pair = source?.let { choices.pair(it.iso, it.exposureNs) }
     val waitingForFresh = probe.liveExposureTarget == null && probe.appliedExposure == null && fresh == null
-    val information = if (waitingForFresh) "AUTO実測待ち · 選択一時停止" else if (probe.manualExposure || probe.liveExposureTarget != null) "撮影target · 変更即反映" else "候補を選ぶと撮影targetへ反映"
     Box(Modifier.fillMaxWidth().background(Color(0xF00D0F10))) {
         // Shield only the ISO/SS ruler; children retain their drag gestures.
         Box(Modifier.matchParentSize().blockPanelBackground())
         Column(Modifier.fillMaxWidth()) {
-            CaptureRulerHeading(captureKeyVisualLabel(key), information,
-                horizontal = LocalCaptureHorizontal.current && !waitingForFresh,
-                informationColor = Muted) {
+            CaptureRulerHeading(captureKeyVisualLabel(key), onClose = { change(editor.close()) },
+                closeEnabled = editor.submitting == null, rotation = LocalCaptureAngle.current,
+                horizontal = LocalCaptureHorizontal.current, waiting = waitingForFresh) {
                 TextButton(onClick = auto,
                     enabled = probe.bound && (!probe.busy || probe.exposureOperationPending) && !probe.recordingBusy && probe.stillExposure?.ownsCapture != true,
                     modifier = Modifier.height(44.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
-                    Text("AUTO", Modifier.sensorRotation(), fontSize = 12.sp)
-                }
-                TextButton(onClick = { change(editor.close()) }, enabled = editor.submitting == null,
-                    modifier = Modifier.size(44.dp), contentPadding = PaddingValues(0.dp)) {
-                    Text("×", Modifier.sensorRotation().semantics { contentDescription = "目盛りを閉じる" }, fontSize = 22.sp)
+                    SensorShortcutText("AUTO", Modifier.sensorRotation(), LocalCaptureHorizontal.current)
                 }
             }
             val count = if (key == CaptureKey.ISO) choices.iso.size else choices.shutter.size
@@ -379,11 +374,10 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
     val rulerEpoch = probe.currentEpoch
     val intent = probe.liveControlIntent
     val focus = intent?.overrides?.focusDistance ?: probe.overrides.focusDistance
-    Column(Modifier.fillMaxWidth().heightIn(min = 104.dp).background(Color(0xF00D0F10)).padding(horizontal = 10.dp),
+    Column(Modifier.fillMaxWidth().heightIn(min = 104.dp).background(Color(0xF00D0F10)),
         horizontalAlignment = Alignment.CenterHorizontally) {
-        Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = { change(editor.close()) }, enabled = editor.submitting == null, modifier = Modifier.width(44.dp), contentPadding = PaddingValues(0.dp)) { Text("×", Modifier.sensorRotation(), fontSize = 22.sp) }
-            Mono(key.name, Foreground, Modifier.weight(1f))
+        CaptureRulerHeading(key.name, onClose = { change(editor.close()) }, closeEnabled = editor.submitting == null,
+            rotation = LocalCaptureAngle.current, horizontal = LocalCaptureHorizontal.current) {
             if (key == CaptureKey.EV) ExposureZeroAction(intent?.evIndex ?: probe.acceptedEv,
                 probe.exposureCompensationRange, probe.exposureCompensationStep,
                 enabled && requestedExposureMode(probe) != true && probe.exposureCompensationSupported,
@@ -395,23 +389,24 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                 textModifier = Modifier.sensorRotation(), horizontal = LocalCaptureHorizontal.current,
                 canSelect = { probe.currentEpoch == rulerEpoch && probe.canSelectLiveControls })
         }
-        when (key.group) {
-            CaptureKey.FOCUS -> FocusControlEditor(if (intent != null) intent.overrides.focusDistance else focus,
-                probe.selectedReport?.overrides?.manualFocusMaximum, enabled,
-                onSelect = probe::selectManualFocus, onAutofocus = probe::restoreAutofocus,
-                rotation = LocalCaptureAngle.current, horizontal = LocalCaptureHorizontal.current,
-                epoch = probe.currentEpoch, canSelect = { probe.currentEpoch == rulerEpoch && probe.canSelectLiveControls })
-            CaptureKey.EV -> ExposureCompensationControlEditor(intent?.evIndex ?: probe.acceptedEv, probe.exposureCompensationRange,
-                probe.exposureCompensationStep, enabled && requestedExposureMode(probe) != true && probe.exposureCompensationSupported,
-                onSelect = probe::selectEv, rotation = LocalCaptureAngle.current, horizontal = LocalCaptureHorizontal.current,
-                canSelect = { probe.currentEpoch == rulerEpoch && probe.canSelectLiveControls && requestedExposureMode(probe) != true && probe.exposureCompensationSupported })
-            CaptureKey.WB -> WhiteBalanceControlEditor(probe.selectedReport?.overrides?.whiteBalanceModes ?: emptySet(),
-                liveWhiteBalancePresentation(probe.overrides.whiteBalance, intent, probe.controlReceipt, probe.liveControlsPending), enabled, probe::selectWhiteBalance,
-                rotation = LocalCaptureAngle.current, horizontal = LocalCaptureHorizontal.current,
-                canSelect = { probe.currentEpoch == rulerEpoch && probe.canSelectLiveControls })
-            else -> Unit
+        Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp)) {
+            when (key.group) {
+                CaptureKey.FOCUS -> FocusControlEditor(if (intent != null) intent.overrides.focusDistance else focus,
+                    probe.selectedReport?.overrides?.manualFocusMaximum, enabled,
+                    onSelect = probe::selectManualFocus, onAutofocus = probe::restoreAutofocus,
+                    rotation = LocalCaptureAngle.current, horizontal = LocalCaptureHorizontal.current,
+                    epoch = probe.currentEpoch, canSelect = { probe.currentEpoch == rulerEpoch && probe.canSelectLiveControls })
+                CaptureKey.EV -> ExposureCompensationControlEditor(intent?.evIndex ?: probe.acceptedEv, probe.exposureCompensationRange,
+                    probe.exposureCompensationStep, enabled && requestedExposureMode(probe) != true && probe.exposureCompensationSupported,
+                    onSelect = probe::selectEv, rotation = LocalCaptureAngle.current, horizontal = LocalCaptureHorizontal.current,
+                    canSelect = { probe.currentEpoch == rulerEpoch && probe.canSelectLiveControls && requestedExposureMode(probe) != true && probe.exposureCompensationSupported })
+                CaptureKey.WB -> WhiteBalanceControlEditor(probe.selectedReport?.overrides?.whiteBalanceModes ?: emptySet(),
+                    liveWhiteBalancePresentation(probe.overrides.whiteBalance, intent, probe.controlReceipt, probe.liveControlsPending), enabled, probe::selectWhiteBalance,
+                    rotation = LocalCaptureAngle.current, horizontal = LocalCaptureHorizontal.current,
+                    canSelect = { probe.currentEpoch == rulerEpoch && probe.canSelectLiveControls })
+                else -> Unit
+            }
         }
-
     }
 }
 

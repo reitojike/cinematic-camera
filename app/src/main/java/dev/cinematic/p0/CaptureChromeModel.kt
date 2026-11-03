@@ -235,3 +235,10 @@ internal fun captureShutterDescription(value: String): String = "$value 秒"
 /** A rotated switch label uses the segment's height as its text width. */
 internal fun captureModeLabelRoom(cell: androidx.compose.ui.unit.IntSize, horizontal: Boolean): androidx.compose.ui.unit.IntSize =
     if (horizontal) androidx.compose.ui.unit.IntSize(cell.height, cell.width) else cell
+
+/** Keep an AUTO freshness warning visible without the obsolete edit/apply explanation. */
+internal fun captureRulerTitle(label: String, waiting: Boolean): String =
+    if (waiting) "$label 待機" else label
+
+internal fun captureRulerDescription(label: String, waiting: Boolean): String =
+    if (waiting) "$label AUTO実測待ち、選択一時停止" else label
