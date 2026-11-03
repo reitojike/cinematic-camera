@@ -95,6 +95,26 @@ rawpy 0.28.0 / NumPy 2.5.4 / Pillow 13.0.0を公式PyPIの通常版CPython3.15 W
 - 参照画像やプロファイルのデータは取り込まず、自動fitもしない。
 - 出力は入力外の未作成folderに限り、入力の前後hashを照合する。
 
+## 第8回の汎用性と露出の検討（r8_*.py）
+
+[Issue #71](https://github.com/reitojike/cinematic-camera/issues/71)の検討用CLI。
+
+| スクリプト | 内容 | 環境 |
+|---|---|---|
+| `r8_generalize.py` | 撮影日に偏らないよう選んだ、調整に使っていない写真へ確定ルックを適用し、本人の編集とシリーズで比べる | 通常の`.venv-py315` |
+| `r8_exposure.py` | 肌の色相を顔の代わりにした測光で、本人の編集の顔の明るさを予測できるかを交差検証する | 通常の`.venv-py315` |
+| `r8_face.py` | 顔検出（OpenCV同梱のHaar）で顔を測り、同じ比較を行う | 診断専用の`.venv-py315-diag` |
+
+診断専用の環境は、既存の固定環境とロックを変えずに別に作る。OpenCVはこの評価のためだけに使い、Androidアプリには組み込まない（Androidでは Camera2/CameraX の顔情報や ML Kit を想定）。
+
+```powershell
+py -3.15 -m venv tools/raw_baseline/.venv-py315-diag
+& tools/raw_baseline/.venv-py315-diag/Scripts/python.exe -m pip --isolated install --index-url https://pypi.org/simple --only-binary=:all: --require-hashes -r tools/raw_baseline/requirements-win-py315-diag.txt
+```
+
+- 本人の編集で切り抜きのある写真は、画素の位置が合わないため露出の評価から除く。判定は編集JPEGのLightroom記録（XMPの`crs:HasCrop`）で行い、記録がない写真も除く。
+- 結果は非公開の出力に置く。測光規則は検討結果で、Androidの既定値ではない。
+
 ## 第9回のPixel 9a対応（r9_*.py）
 
 [Issue #73](https://github.com/reitojike/cinematic-camera/issues/73)の検討用CLI。Pixel 9a の DNG を DNG 仕様どおりに現像し、第7回の確定ルックをかける。

@@ -217,14 +217,19 @@ def apply_hue_sat_map(prophoto: np.ndarray, table: np.ndarray, hue_divs: int, sa
     return out
 
 
-def decode_dng_profile(path: Path, hue_sat: bool, multipliers: list[float] | None = None) -> tuple[np.ndarray, dict]:
-    """Camera RGB from LibRaw (WB applied, no colour matrix), then the DNG's own profile maths."""
+def decode_dng_profile(path: Path, hue_sat: bool, multipliers: list[float] | None = None,
+                       half_size: bool = False) -> tuple[np.ndarray, dict]:
+    """Camera RGB from LibRaw (WB applied, no colour matrix), then the DNG's own profile maths.
+
+    half_size skips demosaicing (2x2 binning) for fast metering studies; colour maths is unchanged.
+    """
     import rawpy
     tags = dng_profile_tags(path)
     with rawpy.imread(str(path)) as raw:
         # Same preprocessing as baseline.decode() (no automatic maximum adjustment, no NR),
         # so only the colour transform differs between the compared stages.
         camera = raw.postprocess(demosaic_algorithm=rawpy.DemosaicAlgorithm.AHD, output_color=rawpy.ColorSpace.raw,
+                                 half_size=half_size,
                                  use_camera_wb=multipliers is None, user_wb=multipliers, use_auto_wb=False,
                                  output_bps=16, gamma=(1, 1), no_auto_bright=True, no_auto_scale=False, bright=1.0,
                                  exp_shift=1.0, exp_preserve_highlights=0.0, adjust_maximum_thr=0.0,
@@ -232,7 +237,7 @@ def decode_dng_profile(path: Path, hue_sat: bool, multipliers: list[float] | Non
                                  fbdd_noise_reduction=rawpy.FBDDNoiseReductionMode.Off, noise_thr=None,
                                  median_filter_passes=0)
         applied = np.array(multipliers if multipliers else raw.camera_whitebalance, dtype=float)[:3]
-    camera = crop_default(camera.astype(np.float32) / 65535)
+    camera = crop_default(camera.astype(np.float32) / 65535, scale=.5 if half_size else 1.)
     camera = resize_linear(camera, fit_size(camera.shape[1], camera.shape[0])).astype(np.float64)
     neutral = (1 / applied) / (1 / applied).max()
     white, weight = neutral_white(tags, neutral)
