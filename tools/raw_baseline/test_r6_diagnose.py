@@ -36,9 +36,22 @@ class ColourTests(unittest.TestCase):
             self.assertAlmostEqual(got_temp / temp, 1., delta=.01)
             self.assertAlmostEqual(got_tint, tint, delta=1.)
 
-    def test_positive_tint_is_magenta(self):
-        neutral, magenta = r.temp_tint_to_xy(5000., 0.), r.temp_tint_to_xy(5000., 30.)
-        self.assertLess(magenta[1], neutral[1])
+    def test_positive_tint_assumes_greener_illuminant(self):
+        neutral, shifted = r.temp_tint_to_xy(5000., 0.), r.temp_tint_to_xy(5000., 30.)
+        self.assertGreater(shifted[1], neutral[1])
+
+    def test_positive_tint_correction_renders_more_magenta(self):
+        # With an identity XYZ->camera matrix the correction multipliers are 1/illuminant XYZ.
+        def green_share(tint):
+            mult = 1 / r.xy_to_xyz(r.temp_tint_to_xy(5000., tint))
+            return mult[1] / (mult[0] + mult[2])
+        self.assertLess(green_share(30.), green_share(0.))
+
+    def test_oklab_keeps_out_of_gamut_chroma(self):
+        p3_red = np.array([[1., 0., 0.]], dtype=np.float32) @ r.P3_TO_SRGB.T
+        signed = r.oklab(p3_red)[0]
+        clipped = r.oklab(np.maximum(p3_red, 0))[0]
+        self.assertGreater(float(np.hypot(signed[1], signed[2])), float(np.hypot(clipped[1], clipped[2])) + .01)
 
 
 class MeasurementTests(unittest.TestCase):

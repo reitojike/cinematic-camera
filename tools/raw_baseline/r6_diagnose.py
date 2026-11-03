@@ -49,7 +49,9 @@ def oklab(linear: np.ndarray) -> np.ndarray:
                    [.0883024619, .2817188376, .6299787005]], dtype=np.float32)
     m2 = np.array([[.2104542553, .7936177850, -.0040720468], [1.9779984951, -2.4285922050, .4505937099],
                    [.0259040371, .7827717662, -.8086757660]], dtype=np.float32)
-    lms = np.cbrt(np.maximum(linear, 0) @ m1.T)
+    # Signed cube root on unclipped values: wide-gamut (e.g. Display P3) colours keep their
+    # measured chroma; clipping belongs to preview generation only.
+    lms = np.cbrt(linear @ m1.T)
     return lms @ m2.T
 
 
@@ -422,9 +424,14 @@ def planck_uv(temp: float) -> np.ndarray:
 
 
 def tint_normal(temp: float) -> np.ndarray:
+    """Unit normal for the *illuminant* tint in Lightroom's convention.
+
+    Lightroom's Tint is a correction: a positive value renders more magenta, i.e. it assumes
+    a greener illuminant, which lies above the Planckian locus (higher v).
+    """
     d = planck_uv(temp * 1.001) - planck_uv(temp * .999)
     n = np.array([-d[1], d[0]]) / np.hypot(*d)
-    return n if n[1] < 0 else -n  # positive tint = magenta = below the locus
+    return n if n[1] > 0 else -n
 
 
 def uv_to_xy(uv: np.ndarray) -> np.ndarray:
