@@ -1,5 +1,6 @@
 """Synthetic tests for the generalisation-check photo selection; no real photos."""
 from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -42,6 +43,24 @@ class SkinProxyTests(unittest.TestCase):
     def test_proxy_luminance_tracks_exposure(self):
         weight = x.skin_proxy_weight(self.scene())
         self.assertAlmostEqual(x.proxy_log_y(self.scene(4.), weight) - x.proxy_log_y(self.scene(), weight), 2., places=4)
+
+
+class FramingTests(unittest.TestCase):
+    def check(self, xmp: bytes) -> bool:
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "edit.jpg"
+            path.write_bytes(b"\xff\xd8 fake jpeg " + xmp + b" \xff\xd9")
+            return x.edit_keeps_full_frame(path)
+
+    def test_uncropped_edit_is_accepted(self):
+        self.assertTrue(self.check(b'<x:xmpmeta crs:HasCrop="False"></x:xmpmeta>'))
+
+    def test_cropped_edit_is_rejected_even_with_same_aspect(self):
+        self.assertFalse(self.check(b'<x:xmpmeta crs:HasCrop="True" crs:CropTop="0.1"></x:xmpmeta>'))
+
+    def test_edit_without_crop_record_is_rejected(self):
+        self.assertFalse(self.check(b"<x:xmpmeta></x:xmpmeta>"))
+        self.assertFalse(self.check(b""))
 
 
 if __name__ == "__main__":

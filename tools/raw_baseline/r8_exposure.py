@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 from pathlib import Path
 import sys
 
@@ -20,6 +21,7 @@ import baseline as b
 import r6_diagnose as r
 import r7_exposure as e
 import r7_final as fin
+import r7_look as k
 import r7b_skin as sk
 import r7c_punch as cp
 import r8_generalize as g
@@ -50,13 +52,24 @@ def proxy_log_y(linear: np.ndarray, weight: np.ndarray) -> float:
     return float((np.log2(y) * weight).sum() / weight.sum())
 
 
+def edit_keeps_full_frame(path: Path) -> bool:
+    """True only when the edit's Lightroom XMP records no crop (equal aspect ratios are not enough)."""
+    data = path.read_bytes()
+    xmp = data[data.find(b"<x:xmpmeta"):data.find(b"</x:xmpmeta>")]
+    if not xmp:
+        return False
+    has_crop = re.search(rb'crs:HasCrop="(True|False)"', xmp)
+    return bool(has_crop) and has_crop.group(1) == b"False"
+
+
 def solve_face_ev(decoded: np.ndarray, weight: np.ndarray, target: float, look: dict) -> float:
     choice = fin.chosen("_default")
     low, high = -4., 7.
     for _ in range(20):
         mid = (low + high) / 2
         values = fin.render(decoded, {"skin": [], "base_ev": mid}, look, choice)
-        value = proxy_log_y(np.clip(values, 0, 1), weight)
+        # Measure the image the look actually saves (luminance-preserving gamut mapping).
+        value = proxy_log_y(k.gamut_compress_luma(values, r.LUMA), weight)
         low, high = (mid, high) if value < target else (low, mid)
     return (low + high) / 2
 
@@ -78,8 +91,8 @@ def main(argv: list[str] | None = None) -> int:
             continue
         target_image = r.load_jpeg(edited)
         reference = e.decode_small(originals[g.stem(edited)])
-        if abs(target_image.shape[1] / target_image.shape[0] - reference.shape[1] / reference.shape[0]) > .01:
-            continue  # cropped edit: pixels do not align
+        if not edit_keeps_full_frame(edited) or                 abs(target_image.shape[1] / target_image.shape[0] - reference.shape[1] / reference.shape[0]) > .01:
+            continue  # cropped (or unverifiable) edit: pixels do not align
         size = (round(reference.shape[1] * SIZE / max(reference.shape[:2])), round(reference.shape[0] * SIZE / max(reference.shape[:2])))
         reference = r.resize_linear(reference, size)
         target_image = r.resize_linear(target_image, size)
@@ -93,7 +106,7 @@ def main(argv: list[str] | None = None) -> int:
         row = {"id": len(rows), "date": g.capture_date(edited), "mass": mass,
                "inputs": dict(e.input_metrics(reference), skin=2 ** proxy_log_y(reference, weight) if mass >= MIN_MASS else None)}
         if mass >= MIN_MASS:
-            row["ev"] = solve_face_ev(decoded, weight, proxy_log_y(np.clip(target_image, 0, 1), weight), look)
+            row["ev"] = solve_face_ev(decoded, weight, proxy_log_y(target_image, weight), look)
         rows.append(row)
         print(len(rows), end=" ", flush=True)
     usable = [row for row in rows if "ev" in row]

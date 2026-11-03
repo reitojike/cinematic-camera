@@ -112,7 +112,7 @@ py -3.15 -m venv tools/raw_baseline/.venv-py315-diag
 & tools/raw_baseline/.venv-py315-diag/Scripts/python.exe -m pip --isolated install --index-url https://pypi.org/simple --only-binary=:all: --require-hashes -r tools/raw_baseline/requirements-win-py315-diag.txt
 ```
 
-- 本人の編集で切り抜きのある写真は、画素の位置が合わないため露出の評価から除く。
+- 本人の編集で切り抜きのある写真は、画素の位置が合わないため露出の評価から除く。判定は編集JPEGのLightroom記録（XMPの`crs:HasCrop`）で行い、記録がない写真も除く。
 - 結果は非公開の出力に置く。測光規則は検討結果で、Androidの既定値ではない。
 
 ## 公式根拠とlicense

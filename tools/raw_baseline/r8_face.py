@@ -86,6 +86,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     adopted, r5 = b.root_path(args.adopted), b.root_path(args.r5)
     output = r.resolve_output(args.output, [adopted, r5])
+    # The progress file is rewritten during the run: it must be a new file outside every input.
+    progress = r.resolve_output(args.progress, [adopted, r5]) if args.progress else None
     look = dict(json.loads((r5 / "reproducer" / "settings.json").read_text(encoding="utf-8"))["looks"]["clear"],
                 rgb=[1., 1., 1.])
     originals = {g.stem(p): p for p in (adopted / "original").iterdir() if p.suffix.lower() == ".dng"}
@@ -95,8 +97,8 @@ def main(argv: list[str] | None = None) -> int:
         dng = originals[g.stem(edited)]
         full = decode_half(dng)
         target_image = r.load_jpeg(edited)
-        if abs(target_image.shape[1] / target_image.shape[0] - full.shape[1] / full.shape[0]) > .01:
-            continue  # cropped edit
+        if not x.edit_keeps_full_frame(edited) or                 abs(target_image.shape[1] / target_image.shape[0] - full.shape[1] / full.shape[0]) > .01:
+            continue  # cropped (or unverifiable) edit
         long = max(full.shape[:2])
         detect = r.resize_linear(full, (round(full.shape[1] * DETECT_LONG / long), round(full.shape[0] * DETECT_LONG / long)))
         faces = detect_faces(detection_image(detect))
@@ -115,10 +117,10 @@ def main(argv: list[str] | None = None) -> int:
             decoded = r.resize_linear(decoded.astype(np.float32), size)
             decoded *= float(np.median(reference @ r.LUMA) / max(np.median(decoded @ r.LUMA), 1e-6))
             row["inputs"]["face"] = 2 ** x.proxy_log_y(reference, weight)
-            row["ev"] = x.solve_face_ev(decoded, weight, x.proxy_log_y(np.clip(target_image, 0, 1), weight), look)
+            row["ev"] = x.solve_face_ev(decoded, weight, x.proxy_log_y(target_image, weight), look)
         rows.append(row)
-        if args.progress:
-            args.progress.write_text(f"{index}/{len(pairs)}\n", encoding="utf-8")
+        if progress:
+            progress.write_text(f"{index}/{len(pairs)}\n", encoding="utf-8")
     detected = [row for row in rows if "ev" in row]
     recent = [row for row in detected if row["date"][:7] >= RECENT_FROM]
     result = {"pairs": len(rows), "detected": len(detected), "recent_detected": len(recent),
