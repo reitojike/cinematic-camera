@@ -1,4 +1,6 @@
 """Synthetic tests for the round-7 layers and metering fit; no real RAW or quality claims."""
+from pathlib import Path
+import tempfile
 import unittest
 
 import numpy as np
@@ -120,6 +122,20 @@ class RecipeTests(unittest.TestCase):
             self.assertIn(choice["brightness"], sk.BRIGHTNESS_LEVELS)
             self.assertIn(choice["crisp"], cp.CRISP_LEVELS)
             self.assertIn(choice["wb"], cp.WB_LEVELS)
+
+
+class OutputIsolationTests(unittest.TestCase):
+    def test_dotdot_output_into_inputs_is_rejected_before_work(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder).resolve()
+            for name in ("inputs", "r5", "outside"):
+                (base / name).mkdir()
+            alias = str(base / "outside" / ".." / "inputs" / "report")
+            with self.assertRaises(SystemExit):
+                k.main(["--livepicture", str(base / "inputs"), "--r5", str(base / "r5"), "--output", alias])
+            with self.assertRaises(SystemExit):
+                e.main(["--adopted", str(base / "inputs"), "--r5", str(base / "r5"), "--output", alias + ".json"])
+            self.assertEqual(list((base / "inputs").iterdir()), [])
 
 
 class ExposureTests(unittest.TestCase):

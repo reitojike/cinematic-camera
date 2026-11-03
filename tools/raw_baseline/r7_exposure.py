@@ -85,8 +85,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True, help="new JSON path outside inputs")
     args = parser.parse_args(argv)
     adopted = b.root_path(args.adopted)
-    if args.output.exists() or args.output.absolute().is_relative_to(adopted):
-        raise SystemExit("ERROR OUTPUT_EXISTS_OR_OVERLAPS_INPUT")
+    output = r.resolve_output(args.output, [adopted])  # resolves '..' and links before the overlap check
     look = dict(json.loads((b.root_path(args.r5) / "reproducer" / "settings.json").read_text(encoding="utf-8"))["looks"]["clear"],
                 rgb=[1., 1., 1.])
     # Pair by file stem after an optional "<number>-" ordering prefix.
@@ -103,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
                      "ev": solve_ev(linear, output_c97(target), look)})
         print(len(rows), end=" ", flush=True)
     fits = [crossval(rows, m, s) for m in METRICS for s in (None, -.4, -1.)]
-    args.output.write_text(json.dumps({"rows": rows, "fits": fits}, indent=1), encoding="utf-8")
+    output.write_text(json.dumps({"rows": rows, "fits": fits}, indent=1), encoding="utf-8")
     best = min(fits, key=lambda f: f["mae"])
     print(json.dumps({"status": "ok", "pairs": len(rows), "best": best}))
     return 0

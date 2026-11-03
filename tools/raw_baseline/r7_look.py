@@ -202,9 +202,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     args.livepicture, args.r5 = b.root_path(args.livepicture), b.root_path(args.r5)
     args.references = args.r5  # scene_inputs needs the attribute; no Lightroom exports are read here
-    out = args.output.absolute()
-    if out.exists() or out.is_relative_to(args.livepicture) or out.is_relative_to(args.r5):
-        raise SystemExit("ERROR OUTPUT_EXISTS_OR_OVERLAPS_INPUT")
+    out = r.resolve_output(args.output, [args.livepicture, args.r5])
     recipe = json.loads((args.r5 / "recipe.json").read_text(encoding="utf-8"))
     look = dict(json.loads((args.r5 / "reproducer" / "settings.json").read_text(encoding="utf-8"))["looks"]["clear"],
                 rgb=[1., 1., 1.])
