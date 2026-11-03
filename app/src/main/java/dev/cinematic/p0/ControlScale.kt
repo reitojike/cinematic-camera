@@ -25,6 +25,17 @@ fun controlScaleMove(count: Int, selectedIndex: Int, delta: Int): Int? =
 internal fun controlScaleSelection(count: Int, current: Int, target: Int, enabled: Boolean): Int? =
     target.takeIf { enabled && current in 0 until count && it in 0 until count && it != current }
 
+/** A synchronous gate prevents feedback for input refused while an immediate request is in flight. */
+internal fun dispatchControlScaleSelection(
+    count: Int, current: Int, target: Int, enabled: Boolean,
+    canSelect: () -> Boolean, select: (Int) -> Unit,
+): Int? {
+    val next = controlScaleSelection(count, current, target, enabled) ?: return null
+    if (!canSelect()) return null
+    select(next)
+    return next
+}
+
 internal data class ControlDetentState(val index: Int, val remainderPx: Float = 0f)
 internal data class ControlDetentUpdate(val state: ControlDetentState, val selections: IntProgression = IntRange.EMPTY)
 

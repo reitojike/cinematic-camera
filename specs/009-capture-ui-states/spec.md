@@ -7,6 +7,10 @@
 
 本書のpreview系実測はCaptureResult intentがPREVIEWまたはVIDEO_RECORDの待機/録画frameを指す。CINE repeatingのVIDEO_RECORDを含み、STILL_CAPTURE/UNKNOWNは採用しない。intent metadataの観測追加はcamera設定/pipeline変更を伴わない。
 
+## 後続の仕様変更
+
+主値の常時preview実測（FR-010/US2）は[012 v15フィードバック](../012-v15-capture-feedback/spec.md) FR-001/002で、AUTO正常値の軸別保持とMANUAL最新撮影targetへ置換する。012はDraftであり、mergeまでmainの契約を変更しない。
+
 ## User Scenarios & Testing
 
 ### User Story 1 - 進捗と失敗を一か所で判断する (Priority: P1)

@@ -118,6 +118,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     var acceptedEv by mutableStateOf<Int?>(null); private set
     var controlReceipt by mutableStateOf(ControlReceipt()); private set
     var sample by mutableStateOf<CaptureSample?>(null); private set
+    var previewExposureSamples by mutableStateOf(PreviewExposureSamples()); private set
     var photoStage by mutableStateOf(PhotoStage.IDLE); private set
     var lastFailure by mutableStateOf<String?>(null); private set
     var thermalSeverity by mutableIntStateOf(-1); private set
@@ -638,14 +639,14 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         }
     }
 
-    fun compensateEv(delta: Int) {
+    fun selectEv(index: Int) {
         if (captureBlocksControl()) return
         if (busy || recordingBusy || !bound || !controlReady) return
         val c = camera ?: return
         try {
             val state = c.cameraInfo.exposureState
             val range = state.exposureCompensationRange
-            val target = ProbeControls.evTarget(state.exposureCompensationIndex, delta, range.lower..range.upper,
+            val target = ProbeControls.evTarget(index, 0, range.lower..range.upper,
                 state.isExposureCompensationSupported, !manualExposure && controlReady)
             val generation = epoch
             beginControl(selectedControls.copy(evIndex = target))
@@ -852,6 +853,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         clearStillExposure(); invalidateControl(); clearLiveExposure()
         lastPreviewMinFrameNs = null
         val generation = ++epoch
+        previewExposureSamples = PreviewExposureSamples(epoch = epoch)
         sample = null; acceptedEv = null; photoStage = PhotoStage.IDLE; focusFeedback = null
         outputOrientation = outputOrientation.copy(applied = null)
         controlReceipt = ControlReceipt(epoch = epoch, sequence = controlReceipt.sequence)
@@ -882,6 +884,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                 list.filter { Camera2CameraInfo.from(it).cameraId == id }
             }.build()
             var lastSample = 0L
+            var lastOtherSample = 0L
             var lastResultLog = 0L
             val builder = Preview.Builder()
             previewSeeded = false
@@ -910,10 +913,13 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                 override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
                     // Observe only: never operate CameraX's CameraDevice / session.
                     val still = request.get(CaptureRequest.CONTROL_CAPTURE_INTENT) == CaptureRequest.CONTROL_CAPTURE_INTENT_STILL_CAPTURE
+                    val previewIntent = request.get(CaptureRequest.CONTROL_CAPTURE_INTENT) in setOf(
+                        CaptureRequest.CONTROL_CAPTURE_INTENT_PREVIEW, CaptureRequest.CONTROL_CAPTURE_INTENT_VIDEO_RECORD)
                     val now = SystemClock.elapsedRealtime()
-                    val sampleIntervalMs = if (now < sampleBurstUntilMs || stillExposure != null) 200L else 1000L
-                    if (!still && now - lastSample < sampleIntervalMs) return
-                    lastSample = now
+                    // Leave headroom within the display's 2s lifetime without changing camera requests.
+                    val sampleIntervalMs = if (now < sampleBurstUntilMs || stillExposure != null) 200L else 500L
+                    if (!still && now - (if (previewIntent) lastSample else lastOtherSample) < sampleIntervalMs) return
+                    if (previewIntent) lastSample = now else lastOtherSample = now
                     val periodRate = Exposure.sensorPeriodFps(result.get(CaptureResult.SENSOR_FRAME_DURATION))
                         ?.let { String.format(java.util.Locale.ROOT, "%.2f", it) } ?: "unknown"
                     val locks = "requestAELock=${request.get(CaptureRequest.CONTROL_AE_LOCK)} actualAELock=${result.get(CaptureResult.CONTROL_AE_LOCK)} aeState=${result.get(CaptureResult.CONTROL_AE_STATE)} requestAWBLock=${request.get(CaptureRequest.CONTROL_AWB_LOCK)} actualAWBLock=${result.get(CaptureResult.CONTROL_AWB_LOCK)}"
@@ -938,6 +944,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                                     CaptureRequest.CONTROL_CAPTURE_INTENT_STILL_CAPTURE -> CaptureSampleIntent.STILL_CAPTURE
                                     else -> CaptureSampleIntent.UNKNOWN
                                 })
+                            previewExposureSamples = previewExposureSamples.observe(observation, epoch)
                             if (stillExposure != null) {
                                 val kind = when (request.get(CaptureRequest.CONTROL_CAPTURE_INTENT)) {
                                     CaptureRequest.CONTROL_CAPTURE_INTENT_PREVIEW -> SimulationIntent.PREVIEW
@@ -1061,6 +1068,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         if (recordingBusy) { pendingStop = true; cine.stop("preview Stop"); return }
         invalidateControl(); clearLiveExposure()
         ++epoch
+        previewExposureSamples = PreviewExposureSamples(epoch = epoch)
         sample = null; acceptedEv = null; photoStage = PhotoStage.IDLE; focusFeedback = null
         outputOrientation = outputOrientation.copy(applied = null)
         controlReceipt = ControlReceipt(epoch = epoch, sequence = controlReceipt.sequence)

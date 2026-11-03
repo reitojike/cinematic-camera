@@ -3,6 +3,27 @@ package dev.cinematic.p0
 import java.math.BigDecimal
 import java.math.MathContext
 import java.math.RoundingMode
+import java.util.Locale
+
+/** UI intervals in lens units, not a claim that the lens has discrete hardware positions. */
+fun focusControlOptions(maximum: Float?, anchor: Float?): List<Float> {
+    val limit = maximum?.takeIf { it.isFinite() && it > 0f } ?: return emptyList()
+    val stops = (0..100).map { (limit.toDouble() * it / 100).toFloat() }
+    val exact = anchor?.takeIf { it.isFinite() && it in 0f..limit }
+    return (if (exact == null) stops else stops + exact).distinct().sorted()
+}
+
+/** Choosing the nearest display slot never writes it back to the camera or draft. */
+fun focusControlIndex(options: List<Float>, value: Float?): Int =
+    if (value == null || !value.isFinite() || options.isEmpty() || value < options.first() || value > options.last()) -1
+    else options.indices.minBy { kotlin.math.abs(options[it].toDouble() - value) }
+
+data class ExposureCompensationOption(val index: Int, val label: String)
+
+fun exposureCompensationOptions(range: IntRange?, step: Double?): List<ExposureCompensationOption> {
+    if (range == null || range.isEmpty() || step == null || !step.isFinite() || step <= 0.0) return emptyList()
+    return range.map { ExposureCompensationOption(it, String.format(Locale.ROOT, "%+.1f", it * step)) }
+}
 
 enum class SensorControlTone { NORMAL, MUTED, EDITING, PENDING, ACCEPTED, FAILED, UNKNOWN }
 

@@ -207,3 +207,12 @@ STILLの明示opt-in固定pair、Builder単発設定とruntime preview補償、�
 - 実機移行/全format撮影/復帰の応答は未確認。1秒制限を数秒撮影の停止原因解消と扱わない。既存撮影経路は撮影pair受付→単発撮影/file callback→保存IO→preview設定受付/新frameの直列区間があり、主な遅延区間は実測ログで別途切り分ける。
 - 独立追加レビューで、camera切替後に旧移行受付の診断文字列を現sessionと混同するP2を補正。移行開始時のcamera ID/mode/epochを捕捉し、要求notice・受付履歴の両方へ履歴scopeを明示する（新状態や撮影動作変更なし）。
 - 上記履歴scope表示の補正後、Kotlin compile成功21秒（7tasks、1executed/6up-to-date）。最終headの自然CIで全unit/build/lintを再確認する。
+
+## v15実機フィードバックのUI修正（Issue #47 / #37）
+
+- assembleDebug/testDebugUnitTest/lintDebug成功81秒、53 tasks全実行。29 suites / 213 tests、failure/error/skip 0。lint 0 errors / 15 warnings / 2 hints、抑制・baseline・チェック無効化なし。
+- MANUAL主値は現epochの最新logical撮影target、AUTOは軸別に保持した有効preview実測を「約」表示。欠損/単発撮影/UNKNOWN観測で正常な別軸を空白化せず、元timestampの2秒期限とepoch resetを維持。観測は通常500msで、preview以外の観測が更新を延期しない。
+- 固定RAW/単発target参照・epoch/revision、AUTO欠損/失効、最新要求、detent距離・同値/端点/無効、EV絶対index/即時単一要求、MF exact draft/apply、WB対応preset、shutter58/48dpと実録画赤、ユーザー自動回転設定のON/OFF/左右/180度/途中toggleと録画出力freezeをpure/state・callsiteで検証。実ファイルISOや描画fpsの実測には読み替えない。
+- Android自動回転設定は標準Settings/SystemとContentObserverで読取りのみ。UI OFFはportrait、ONはphysical。物理保存方向と録画開始方向固定は分離し、observerはstop/destroy解除。新権限/設定書込なし。
+- sourceの独立レビューは追加P1/P2なし。公開scanで秘密/個人絶対path/媒体混入なし、RAW PC tools変更なし。最終headのcanonical/必須CI/thread証拠はPRへ記録する。
+- 実機のちらつき/感度表示/全format metadata、触感/縦横可読性、自動回転設定の端末挙動は未確認。v15のユーザー確認と今回変更の受入を分け、merge/配布は承認待ち。

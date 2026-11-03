@@ -75,12 +75,15 @@ fun ExposureSelectionScale(
     rotation: Float = 0f,
     horizontal: Boolean = false,
     valueColor: Color = ScaleText,
+    canSelect: () -> Boolean = { true },
+    descriptions: List<String> = labels,
 ) {
     val window = controlScaleWindow(labels.size, selectedIndex)
     val interactive = enabled && window.current != null
     val currentIndex by rememberUpdatedState(selectedIndex)
     val currentCount by rememberUpdatedState(labels.size)
     val currentSelect by rememberUpdatedState(onSelect)
+    val currentCanSelect by rememberUpdatedState(canSelect)
     val interactiveNow by rememberUpdatedState(interactive)
     val view = LocalView.current
     val stepPx = with(LocalDensity.current) { 24.dp.toPx() }
@@ -90,18 +93,21 @@ fun ExposureSelectionScale(
     LaunchedEffect(selectedIndex, label, labels) {
         if (!dragging) { dispatchedIndex = selectedIndex; detent = ControlDetentState(selectedIndex) }
     }
-    fun dispatch(target: Int) {
-        controlScaleSelection(currentCount, dispatchedIndex, target, interactiveNow)?.let { next ->
-            dispatchedIndex = next
-            currentSelect(next)
-            // Flags 0 preserve both the View's and the user's haptic settings.
-            view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK, 0)
-        }
+    fun dispatch(target: Int): Boolean {
+        val next = dispatchControlScaleSelection(currentCount, dispatchedIndex, target, interactiveNow,
+            currentCanSelect, currentSelect) ?: return false
+        dispatchedIndex = next
+        // Flags 0 preserve both the View's and the user's haptic settings.
+        view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK, 0)
+        return true
     }
     val drag = rememberDraggableState { delta ->
         val update = controlDetentDrag(currentCount, detent, -delta, stepPx)
         detent = update.state
-        update.selections.forEach(::dispatch)
+        for (next in update.selections) if (!dispatch(next)) {
+            detent = ControlDetentState(dispatchedIndex)
+            break
+        }
     }
     Row(modifier.fillMaxWidth().height(56.dp).alpha(if (interactive) 1f else .45f)
         .draggable(drag, Orientation.Horizontal, enabled = interactive,
@@ -112,13 +118,13 @@ fun ExposureSelectionScale(
                 progressBarRangeInfo = ProgressBarRangeInfo(selectedIndex.toFloat(), 0f..(labels.size - 1).toFloat(), labels.size - 2)
                 setProgress { position ->
                     if (!interactiveNow || currentCount <= 0 || !position.isFinite()) false else {
-                        dispatch(kotlin.math.round(position).toInt().coerceIn(0, currentCount - 1)); true
+                        dispatch(kotlin.math.round(position).toInt().coerceIn(0, currentCount - 1))
                     }
                 }
             }
         },
         verticalAlignment = Alignment.CenterVertically) {
-        ScaleArrow("‹", "$label 前の値", window.previous, interactive, ::dispatch)
+        ScaleArrow("‹", "$label 前の値", window.previous, interactive) { dispatch(it) }
         Box(Modifier.weight(1f).fillMaxHeight()) {
             Canvas(Modifier.fillMaxSize()) {
                 val spacing = 9.dp.toPx()
@@ -135,10 +141,10 @@ fun ExposureSelectionScale(
                     Box(Modifier.weight(1f).fillMaxHeight()
                         .background(if (isCurrent) Color(0xFF1E2225) else Color.Transparent)
                         .clickable(enabled = interactive && index != null, role = Role.RadioButton,
-                            onClick = { index?.let(::dispatch) })
+                            onClick = { index?.let { dispatch(it) } })
                         .semantics {
                             selected = isCurrent
-                            if (index != null) contentDescription = "$label ${labels[index]}"
+                            if (index != null) contentDescription = "$label ${descriptions.getOrElse(index) { labels[index] }}"
                         }, contentAlignment = Alignment.Center) {
                         if (isCurrent) Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(3.dp).background(valueColor))
                         if (index != null) BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -161,7 +167,7 @@ fun ExposureSelectionScale(
                 }
             }
         }
-        ScaleArrow("›", "$label 次の値", window.next, interactive, ::dispatch)
+        ScaleArrow("›", "$label 次の値", window.next, interactive) { dispatch(it) }
     }
 }
 

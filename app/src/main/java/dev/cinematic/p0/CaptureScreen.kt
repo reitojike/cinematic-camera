@@ -90,8 +90,8 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
     val captureReady = unlocked && probe.bound && probe.controlReady && probe.sharedSaveSupported && (stillExposure == null || stillExposure.canCapture)
     val receipt = probe.controlReceipt
     val exposurePhase = if (probe.exposureOperationPending) ControlPhase.PENDING else receipt.phase
-    val requestedCapture = probe.liveExposureTarget ?: probe.stillExposure?.target?.plan?.capture ?:
-        if (receipt.phase in setOf(ControlPhase.PENDING, ControlPhase.UNKNOWN)) receipt.requested?.exposure else probe.appliedExposure
+    val requestedCapture = logicalCaptureTarget(probe.currentEpoch, receipt, probe.liveExposureTarget,
+        probe.stillExposure?.target, probe.appliedExposure)
     val exposureFeedback = listOf(CaptureKey.ISO, CaptureKey.SHUTTER).associateWith {
         exposureKeyFeedback(it, requestedCapture, probe.appliedExposure, exposurePhase)
     }
@@ -238,8 +238,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                                     probe.controlReady, probe.exposureOperationPending, probe.manualExposure, probe.selectedReport?.manualBlockReason,
                                     probe.exposureCompensationSupported, probe.selectedReport?.overrides?.manualFocusMaximum?.let { it > 0f } == true))
                                 if (key.group == CaptureKey.ISO) {
-                                    val shown = exposureValuePresentation(key, probe.sample, probe.currentEpoch, measurementNow, probe.exposureChoices,
-                                        compensatedPreview = probe.stillExposure != null)
+                                    val shown = exposureKeyValue(key, probe, measurementNow)
                                     val feedback = exposureFeedback.getValue(key)
                                     CaptureControlKey(key.name, shown.value, "", selected,
                                         enabled = available.enabled, onUnavailable = { notice = available.reason }, unavailableReason = available.reason,
@@ -372,17 +371,19 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
         when (key.group) {
             CaptureKey.FOCUS -> FocusControlEditor(probe.overrides.focusDistance, actual?.focus, editor.focus,
                 probe.selectedReport?.overrides?.manualFocusMaximum, enabled,
-                onDraft = { value -> value.toFloatOrNull()?.let { change(editor.copy(focus = String.format(Locale.ROOT, "%.4f", it))) } },
+                onDraft = { value -> change(editor.copy(focus = value)) },
                 onAutofocus = { change(editor.cancel()); probe.restoreAutofocus() },
                 rotation = LocalCaptureAngle.current, horizontal = LocalCaptureHorizontal.current)
-            CaptureKey.EV -> Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { probe.compensateEv(-1) }, enabled = enabled && !probe.manualExposure && probe.exposureCompensationSupported) { Text("−") }
-                Mono(if (probe.manualExposure) "MAN中は無効" else "EV ${evText(probe)}", Foreground)
-                TextButton(onClick = { probe.compensateEv(1) }, enabled = enabled && !probe.manualExposure && probe.exposureCompensationSupported) { Text("＋") }
-            }
+            CaptureKey.EV -> ExposureCompensationControlEditor(probe.acceptedEv, probe.exposureCompensationRange,
+                probe.exposureCompensationStep, enabled && !probe.manualExposure && probe.exposureCompensationSupported,
+                onSelect = probe::selectEv, rotation = LocalCaptureAngle.current, horizontal = LocalCaptureHorizontal.current,
+                canSelect = { !probe.busy && !probe.recordingBusy && probe.bound && probe.controlReady &&
+                    probe.stillExposure?.ownsCapture != true && !probe.manualExposure && probe.exposureCompensationSupported })
             CaptureKey.WB -> WhiteBalanceControlEditor(probe.selectedReport?.overrides?.whiteBalanceModes ?: emptySet(),
                 whiteBalancePresentation(probe.overrides.whiteBalance, probe.controlReceipt), enabled, probe::selectWhiteBalance,
-                rotation = LocalCaptureAngle.current, horizontal = LocalCaptureHorizontal.current)
+                rotation = LocalCaptureAngle.current, horizontal = LocalCaptureHorizontal.current,
+                canSelect = { !probe.busy && !probe.recordingBusy && probe.bound && probe.controlReady &&
+                    probe.stillExposure?.ownsCapture != true })
             else -> Unit
         }
 
@@ -390,9 +391,13 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
 }
 
 private fun evText(probe: CameraProbe): String = probe.acceptedEv?.let { index -> probe.exposureCompensationStep?.let { String.format(Locale.ROOT, "%+.1f", index * it) } } ?: "—"
+private fun exposureKeyValue(key: CaptureKey, probe: CameraProbe, nowMs: Long): ExposureValuePresentation =
+    exposureValuePresentation(key, probe.previewExposureSamples.sample(key).takeIf { probe.bound }, probe.currentEpoch,
+        nowMs, probe.exposureChoices, captureTarget = if (probe.bound) logicalCaptureTarget(probe.currentEpoch,
+            probe.controlReceipt, probe.liveExposureTarget, probe.stillExposure?.target, probe.appliedExposure) else null)
+
 private fun keyValue(key: CaptureKey, editor: CaptureEditor, probe: CameraProbe, nowMs: Long): String = when (key) {
-    CaptureKey.ISO, CaptureKey.SHUTTER -> exposureValuePresentation(key, probe.sample, probe.currentEpoch, nowMs,
-        probe.exposureChoices, compensatedPreview = probe.stillExposure != null).value
+    CaptureKey.ISO, CaptureKey.SHUTTER -> exposureKeyValue(key, probe, nowMs).value
     CaptureKey.EV -> if (probe.manualExposure) "—" else evText(probe)
     CaptureKey.FOCUS -> focusPresentation(probe.overrides.focusDistance, null, probe.controlReceipt).value
     CaptureKey.WB -> whiteBalancePresentation(probe.overrides.whiteBalance, probe.controlReceipt).let { if (it.stateTag == "未確認") "—" else it.selectedLabel }

@@ -1,22 +1,16 @@
 package dev.cinematic.p0
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.selected
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
@@ -48,26 +42,33 @@ fun FocusControlEditor(
     val number = if (draft != null) draft.trim().toFloatOrNull() else acceptedFocus ?: measuredFocus
     val legalMaximum = maximum?.takeIf { it.isFinite() && it > 0f }
     val legal = number != null && number.isFinite() && legalMaximum != null && number in 0f..legalMaximum
-    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        TextButton(onClick = onAutofocus, enabled = enabled, modifier = Modifier.heightIn(min = 44.dp)) {
-            SensorRotated(rotation, horizontal) { SensorLabel("AF", SensorText) }
+    Column(modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            TextButton(onClick = onAutofocus, enabled = enabled, modifier = Modifier.heightIn(min = 44.dp)) {
+                SensorRotated(rotation, horizontal) { SensorLabel("AF", SensorText) }
+            }
+            if (legal) {
+                SensorRotated(rotation, horizontal, valueModifier) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                        SensorLabel("LU", SensorMuted)
+                        SensorLabel(if (draft != null || acceptedFocus != null) "MF" else "候補", SensorMuted,
+                            Modifier.border(1.dp, SensorMuted).padding(horizontal = 4.dp))
+                    }
+                }
+            } else {
+                Text(if (legalMaximum == null) "MF非対応" else "MF値の確認待ち", color = SensorMuted,
+                    fontSize = 12.sp, modifier = Modifier.weight(1f))
+            }
         }
         if (legal) {
-            Slider(number, onValueChange = { onDraft(it.toString()) }, valueRange = 0f..legalMaximum,
-                enabled = enabled, modifier = Modifier.weight(1f))
-            SensorRotated(rotation, horizontal, valueModifier) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(focusDistanceText(number) ?: "—", color = if (draft != null) SensorAmber else SensorText,
-                        fontFamily = FontFamily.Monospace, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    SensorLabel("LU", SensorMuted)
-                    SensorLabel(if (draft != null || acceptedFocus != null) "MF" else "候補", SensorMuted,
-                        Modifier.border(1.dp, SensorMuted).padding(horizontal = 4.dp))
-                }
-            }
-        } else {
-            Text(if (legalMaximum == null) "MF非対応" else "MF値の確認待ち", color = SensorMuted,
-                fontSize = 12.sp, modifier = Modifier.weight(1f))
+            // Keep the exact opening value as a stable extra stop throughout this edit session.
+            val options = remember(legalMaximum, acceptedFocus) { focusControlOptions(legalMaximum, number) }
+            ExposureSelectionScale("FOCUS", options.map { focusDistanceText(it) ?: "—" },
+                focusControlIndex(options, number), enabled, { onDraft(options[it].toString()) },
+                rotation = rotation, horizontal = horizontal,
+                valueColor = if (draft != null) SensorAmber else SensorText,
+                descriptions = options.map { "${focusDistanceText(it)} LU MF候補" })
         }
     }
 }
@@ -78,28 +79,26 @@ fun WhiteBalanceControlEditor(
     modes: Set<Int>, presentation: WhiteBalancePresentation, enabled: Boolean, onSelect: (Int?) -> Unit,
     modifier: Modifier = Modifier, itemModifier: Modifier = Modifier,
     rotation: Float = 0f, horizontal: Boolean = false,
+    canSelect: () -> Boolean = { true },
 ) {
-    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            whiteBalanceOptions(modes).forEach { option ->
-                val current = presentation.hasSelection && presentation.selectedMode == option.mode
-                val border = if (current) sensorControlColor(presentation.tone) else Color(0xFF3A3F44)
-                TextButton(onClick = { onSelect(option.mode) }, enabled = enabled,
-                    border = BorderStroke(if (current) 2.dp else 1.dp, border),
-                    modifier = itemModifier.heightIn(min = 44.dp).semantics {
-                        selected = current
-                        contentDescription = "WB ${option.fullLabel}${if (current) " 選択 ${presentation.stateTag}" else ""}"
-                    }) {
-                    SensorRotated(rotation, horizontal) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            SensorLabel(option.shortLabel, if (current) sensorControlColor(presentation.tone) else SensorText)
-                        }
-                    }
-                }
-            }
-        }
-    }
+    val options = whiteBalanceOptions(modes)
+    val selected = if (presentation.hasSelection) options.indexOfFirst { it.mode == presentation.selectedMode } else -1
+    ExposureSelectionScale("WB", options.map { it.shortLabel }, selected, enabled,
+        { onSelect(options[it].mode) }, modifier.then(itemModifier), rotation, horizontal,
+        sensorControlColor(presentation.tone), canSelect,
+        descriptions = options.map { "${it.fullLabel}${if (presentation.hasSelection && it.mode == presentation.selectedMode) " 選択 ${presentation.stateTag}" else ""}" })
+}
+
+/** Reported EV indices remain immediate selections; MANUAL does not gain EV support. */
+@Composable
+fun ExposureCompensationControlEditor(
+    acceptedIndex: Int?, range: IntRange?, step: Double?, enabled: Boolean, onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier, rotation: Float = 0f, horizontal: Boolean = false,
+    canSelect: () -> Boolean = { true },
+) {
+    val options = exposureCompensationOptions(range, step)
+    ExposureSelectionScale("EV", options.map { it.label }, options.indexOfFirst { it.index == acceptedIndex },
+        enabled, { onSelect(options[it].index) }, modifier, rotation, horizontal, canSelect = canSelect)
 }
 
 /** Report the quarter-turned footprint before placing the element, rather than rotating clipped text. */

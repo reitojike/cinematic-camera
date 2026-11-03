@@ -31,6 +31,76 @@ class CaptureOrientationTest {
         }
         assertEquals(0, value.surfaceRotation)
     }
+    @Test fun autoRotateOffKeepsPortraitUiForEveryPhysicalQuarter() {
+        var physical = CaptureOrientation()
+        var ui = CaptureOrientation()
+        for (degrees in listOf(90, 180, 270, 0, -1)) {
+            physical = physical.observe(degrees)
+            ui = physical.forUi(autoRotateEnabled = false, previousUi = ui)
+            assertEquals(0, ui.sensorQuarter)
+            assertEquals(0f, ui.uiAngle, 0f)
+            assertFalse(ui.horizontal)
+            if (degrees >= 0) assertEquals(degrees, physical.sensorQuarter)
+        }
+    }
+    @Test fun autoRotateOnSupportsBothLandscapesAndUpsideDown() {
+        var physical = CaptureOrientation()
+        var ui = CaptureOrientation()
+        for (degrees in listOf(90, 180, 270, 0)) {
+            physical = physical.observe(degrees)
+            ui = physical.forUi(autoRotateEnabled = true, previousUi = ui)
+            assertEquals(degrees, ui.sensorQuarter)
+            assertEquals(physical.surfaceRotation, ui.surfaceRotation)
+            assertEquals(degrees == 90 || degrees == 270, ui.horizontal)
+        }
+    }
+    @Test fun togglingSettingReprojectsLatestPhysicalDirectionWithoutNewSensorEvent() {
+        var physical = CaptureOrientation().observe(90)
+        var ui = physical.forUi(autoRotateEnabled = true, previousUi = CaptureOrientation())
+        assertEquals(-90f, ui.uiAngle, 0f)
+        ui = physical.forUi(autoRotateEnabled = false, previousUi = ui)
+        assertEquals(0, ui.sensorQuarter)
+        physical = physical.observe(270)
+        ui = physical.forUi(autoRotateEnabled = false, previousUi = ui)
+        assertEquals(0, ui.sensorQuarter)
+        ui = physical.forUi(autoRotateEnabled = true, previousUi = ui)
+        assertEquals(270, ui.sensorQuarter)
+        assertEquals(90f, ui.uiAngle, 0f)
+        assertEquals(ui, physical.forUi(autoRotateEnabled = true, previousUi = ui))
+    }
+    @Test fun togglingAfterMultipleTurnsStillUsesShortestUiAnimation() {
+        var physical = CaptureOrientation()
+        var ui = CaptureOrientation()
+        repeat(5) {
+            for (degrees in listOf(90, 180, 270, 0)) {
+                physical = physical.observe(degrees)
+                val enabled = physical.forUi(autoRotateEnabled = true, previousUi = ui)
+                assertTrue(kotlin.math.abs(enabled.uiAngle - ui.uiAngle) <= 180f)
+                val disabled = physical.forUi(autoRotateEnabled = false, previousUi = enabled)
+                assertEquals(0, disabled.sensorQuarter)
+                assertTrue(kotlin.math.abs(disabled.uiAngle - enabled.uiAngle) <= 180f)
+                ui = disabled
+            }
+        }
+        assertTrue(kotlin.math.abs(physical.uiAngle) > 360f)
+    }
+    @Test fun uiSettingTogglesDoNotChooseOrThawRecordingOutputOrientation() {
+        var physical = CaptureOrientation().observe(90)
+        var ui = physical.forUi(autoRotateEnabled = false, previousUi = CaptureOrientation())
+        var output = OutputOrientation().observe(physical.surfaceRotation)
+        output = output.copy(applied = output.target(photoActive = false, recordingActive = false))
+        assertEquals(3, output.applied)
+        assertEquals(0, ui.sensorQuarter)
+        val stages = listOf(RecordingStage.STARTING, RecordingStage.RECORDING, RecordingStage.STOPPING, RecordingStage.FINALIZING)
+        for ((index, stage) in stages.withIndex()) {
+            physical = physical.observe(if (index % 2 == 0) 180 else 270)
+            ui = physical.forUi(autoRotateEnabled = index % 2 == 0, previousUi = ui)
+            output = output.observe(physical.surfaceRotation)
+            assertNull(output.target(photoActive = false, recordingActive = stage != RecordingStage.IDLE))
+            assertEquals(3, output.applied)
+        }
+        assertEquals(1, output.target(photoActive = false, recordingActive = false))
+    }
     @Test fun outputFreezesThroughPhotoAndWholeRecordingGateThenUsesLatest() {
         val starting = OutputOrientation().observe(1)
         val frozen = starting.copy(applied = starting.target(false, false)).observe(3)

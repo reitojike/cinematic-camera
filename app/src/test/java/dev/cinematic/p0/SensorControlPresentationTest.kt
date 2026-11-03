@@ -7,6 +7,49 @@ class SensorControlPresentationTest {
     private fun snapshot(wb: Int? = null, focus: Float? = null) =
         ControlSnapshot(overrides = SensorOverrides(whiteBalance = wb, focusDistance = focus))
 
+    @Test fun focusUiIntervalsKeepExactLensUnitAnchorAndDoNotWriteRoundedDisplayBack() {
+        val exact = 4.200001f
+        val options = focusControlOptions(10f, exact)
+        assertEquals(102, options.size)
+        assertEquals(0f, options.first(), 0f)
+        assertEquals(10f, options.last(), 0f)
+        assertTrue(options.zipWithNext().all { (a, b) -> a < b })
+        assertEquals(exact, options[focusControlIndex(options, exact)], 0f)
+        assertEquals(exact, options[focusControlIndex(options, exact)].toString().toFloat(), 0f)
+        assertEquals("4.2", focusDistanceText(exact))
+        val next = focusControlIndex(options, exact) + 1
+        assertTrue(options[next] > exact)
+        assertEquals(options[next], options[focusControlIndex(options, options[next])], 0f)
+        assertEquals(101, focusControlOptions(10f, 5f).size)
+    }
+
+    @Test fun focusIntervalsRespectDeviceMaximumAndMissingOrInvalidValuesStayUnknown() {
+        for (maximum in listOf(null, 0f, -1f, Float.NaN, Float.POSITIVE_INFINITY))
+            assertTrue(focusControlOptions(maximum, 1f).isEmpty())
+        val options = focusControlOptions(0.00001f, 0.0000001f)
+        assertTrue(options.all { it.isFinite() && it in 0f..0.00001f })
+        assertEquals(0f, options.first(), 0f)
+        assertEquals(0.00001f, options.last(), 0f)
+        assertEquals(-1, focusControlIndex(options, null))
+        assertEquals(-1, focusControlIndex(options, Float.NaN))
+        assertEquals(-1, focusControlIndex(options, -1f))
+        assertEquals(-1, focusControlIndex(options, 1f))
+        assertEquals(-1, focusControlIndex(emptyList(), 0f))
+        assertEquals(101, focusControlOptions(10f, Float.POSITIVE_INFINITY).size)
+    }
+
+    @Test fun evIntervalsUseOnlyReportedIndicesAndStepWithoutInventingAnUnknownCurrentIndex() {
+        val options = exposureCompensationOptions(-2..1, 1.0 / 3.0)
+        assertEquals(listOf(-2, -1, 0, 1), options.map { it.index })
+        assertEquals(listOf("-0.7", "-0.3", "+0.0", "+0.3"), options.map { it.label })
+        val unknown: Int? = null
+        assertEquals(-1, options.indexOfFirst { it.index == unknown })
+        assertTrue(exposureCompensationOptions(null, 1.0).isEmpty())
+        assertTrue(exposureCompensationOptions(2..1, 1.0).isEmpty())
+        for (step in listOf(null, 0.0, -1.0, Double.NaN, Double.POSITIVE_INFINITY))
+            assertTrue(exposureCompensationOptions(-1..1, step).isEmpty())
+    }
+
     @Test fun focusFormattingIsFiniteAndNeverTurnsPositiveLensUnitsIntoInfinity() {
         assertEquals("4.2", focusDistanceText(4.200001f))
         assertEquals("0", focusDistanceText(-0f))
