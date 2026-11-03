@@ -44,8 +44,11 @@ class ExposureValuePresentationTest {
 
     @Test fun actualPreviewValuesAreRoundedToChoicesForDisplayWithoutReplacingInputValues() {
         val sample = sample()
-        assertEquals("約3200", display(CaptureKey.ISO, sample).value)
-        assertEquals("約1/125", display(CaptureKey.SHUTTER, sample).value)
+        assertEquals("3200", display(CaptureKey.ISO, sample).value)
+        assertEquals("1/125", display(CaptureKey.SHUTTER, sample).value)
+        assertEquals("近似実測", display(CaptureKey.SHUTTER, sample).qualifier)
+        assertFalse(display(CaptureKey.SHUTTER, sample).value.contains("約"))
+        assertTrue(display(CaptureKey.SHUTTER, sample).contentDescription.contains("約1/125"))
         assertEquals("s", display(CaptureKey.SHUTTER, sample).unit)
         assertEquals(3100, sample.actual.iso); assertEquals(8_100_000L, sample.actual.exposureNs)
         assertEquals(100, sample.request.iso)
@@ -77,7 +80,7 @@ class ExposureValuePresentationTest {
         assertEquals(ExposureValueFreshness.INVALID, display(CaptureKey.SHUTTER, sample().copy(actual = SensorValues(100, -1))).freshness)
         assertEquals(ExposureValueFreshness.NO_CHOICES, display(CaptureKey.ISO, options = choices.copy(iso = emptyList())).freshness)
         assertEquals(ExposureValueFreshness.NO_CHOICES, display(CaptureKey.SHUTTER, options = choices.copy(shutter = emptyList())).freshness)
-        assertEquals("約3200", display(CaptureKey.ISO, sample().copy(actual = SensorValues(3100)),
+        assertEquals("3200", display(CaptureKey.ISO, sample().copy(actual = SensorValues(3100)),
             options = choices.copy(shutter = emptyList())).value)
         assertEquals(ExposureValueFreshness.INVALID, display(CaptureKey.WB).freshness)
     }
@@ -106,5 +109,21 @@ class ExposureValuePresentationTest {
             assertFalse(exposureKeyFeedback(key, manual, manual, ControlPhase.PENDING).affected)
             assertEquals(SensorControlTone.MUTED, exposureKeyFeedback(key, manual, manual, ControlPhase.ACCEPTED).tone)
         }
+    }
+
+    @Test fun diagnosticReportsOriginalAxisAgeAndExpiryWithoutRefreshingIt() {
+        var cache = PreviewExposureSamples().observe(sample().copy(frame = 1), 3)
+        cache = cache.observe(sample().copy(frame = 2, receivedAtMs = 1800, actual = SensorValues(exposureNs = 8_000_000)), 3)
+        val iso = exposureDisplayDiagnostic(CaptureKey.ISO, cache, 3, 2101, choices, true)
+        val shutter = exposureDisplayDiagnostic(CaptureKey.SHUTTER, cache, 3, 2101, choices, true)
+        assertTrue(iso.contains("frame=1")); assertTrue(iso.contains("sourceAtMs=100"))
+        assertTrue(iso.contains("ageMs=2001")); assertTrue(iso.contains("freshness=STALE"))
+        assertTrue(shutter.contains("frame=2")); assertTrue(shutter.contains("ageMs=301"))
+        assertTrue(shutter.contains("freshness=FRESH"))
+        val target = exposureDisplayDiagnostic(CaptureKey.ISO, cache, 3, 2101, choices, true, ManualExposure(100, 8_000_000))
+        assertTrue(target.contains("source=CAPTURE_TARGET freshness=FRESH"))
+        assertTrue(target.contains("observation=STALE"))
+        assertTrue(exposureDisplayDiagnostic(CaptureKey.ISO, cache, 3, 2101, choices, false).contains("freshness=MISSING"))
+        assertEquals(100L, cache.iso!!.receivedAtMs)
     }
 }

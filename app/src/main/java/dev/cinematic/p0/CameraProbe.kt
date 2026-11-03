@@ -43,7 +43,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     private val main = ContextCompat.getMainExecutor(context)
     private val controlHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val controlOperation = ControlOperation()
-    private val exposureQueue = LatestExposureQueue()
+    private val liveControls = LatestLiveControlQueue()
     var stillExposure by mutableStateOf<StillExposureState?>(null); private set
     private enum class RuntimeTarget { GENERAL, PREVIEW, CAPTURE }
     private var runtimeTarget = RuntimeTarget.GENERAL
@@ -72,10 +72,19 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     var exposureOperationPending by mutableStateOf(false); private set
     var exposureQueued by mutableStateOf(false); private set
     var liveExposureTarget by mutableStateOf<ManualExposure?>(null); private set
+    var liveControlIntent by mutableStateOf<ControlSnapshot?>(null); private set
+    private var liveIntentKey: String? = null
+    val liveControlsPending get() = exposureOperationPending
     val exposureChoices get() = ExposureStops.choices(selectedReport?.isoRange, selectedReport?.exposureRange,
         selectedReport?.maxFrameDurationNs, if (mode == CaptureMode.CINE) activeVideoChoice?.fpsUpper else null)
-    val canSelectExposure get() = !closed && bound && !recordingBusy && activeCaptureToken == null &&
-        stillExposure?.ownsCapture != true && (!busy || exposureOperationPending)
+    val canSelectLiveControls get() = !closed && bound && !recordingBusy && activeCaptureToken == null &&
+        owner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED) &&
+        stillExposure?.ownsCapture != true && stillExposure?.phase != StillExposurePhase.UNKNOWN &&
+        controlReceipt.phase !in setOf(ControlPhase.UNKNOWN, ControlPhase.UNBOUND) &&
+        (!busy || liveControlsPending) && (controlReady || liveControlsPending ||
+        (stillExposure?.phase == StillExposurePhase.PREVIEW_APPLYING && controlReceipt.phase == ControlPhase.ACCEPTED))
+    val canSelectExposure get() = canSelectLiveControls
+    private val editControls get() = liveControlIntent ?: selectedControls
 
     private val preferences = CapturePreferences(context)
     val log = ProbeLog(context)
@@ -112,7 +121,6 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     var overrideStatus by mutableStateOf("CameraX defaults; no accepted overrides"); private set
     var autoLocks by mutableStateOf(AutoLocks()); private set
     var lockStatus by mutableStateOf("No requested locks; transient, not saved"); private set
-    var requestedFocus by mutableStateOf("0"); private set
     var exportingReport by mutableStateOf(false); private set
     var appliedExposure by mutableStateOf<ManualExposure?>(null); private set
     var acceptedEv by mutableStateOf<Int?>(null); private set
@@ -210,8 +218,11 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     }
     private fun clearLiveExposure(keepTarget: Boolean = false) {
         exposureFlush?.let(controlHandler::removeCallbacks); exposureFlush = null
-        exposureQueue.cancel(); exposureOperationPending = false; exposureQueued = false
-        if (!keepTarget) liveExposureTarget = null
+        val retained = liveControlIntent
+        liveControls.cancel(keepTarget); exposureOperationPending = false; exposureQueued = false
+        liveControlIntent = if (keepTarget) retained else null
+        if (!keepTarget) liveIntentKey = null
+        liveExposureTarget = liveControlIntent?.exposure
     }
     private fun invalidateControl() {
         clearControlDeadline(); controlOperation.invalidate()
@@ -266,40 +277,85 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     fun selectExposure(key: CaptureKey, index: Int) {
         if (!canSelectExposure || selectedReport?.manualBlockReason != null) return
         val choices = exposureChoices
-        val source = exposureQueue.latest?.pair ?: liveExposureTarget ?: appliedExposure ?: sample?.actual?.let {
-            if (it.iso != null && it.exposureNs != null) ManualExposure(it.iso, it.exposureNs) else null
-        } ?: run { event("Exposure input unavailable: waiting for AUTO sensor values"); return }
+        val source = editControls.exposure ?: freshPreviewExposurePair(previewExposureSamples, epoch, SystemClock.elapsedRealtime())
+            ?: run { event("Exposure input unavailable: waiting for fresh AUTO preview sensor values"); return }
         val base = choices.pair(source.iso, source.exposureNs) ?: run { event("No conventional exposure pair within device/session range"); return }
         val pair = when (key) {
             CaptureKey.ISO -> choices.iso.getOrNull(index)?.let { base.copy(iso = it) }
             CaptureKey.SHUTTER -> choices.shutter.getOrNull(index)?.let { base.copy(exposureNs = it.exposureNs) }
             else -> null
         } ?: return
-        val redundant = if (mode == CaptureMode.STILL) pair == exposureQueue.latest?.pair ||
-            (!exposureQueue.hasWork && controlReady && pair == appliedExposure) else exposureQueue.redundant(pair, controlReceipt, epoch, controlReady)
-        if (redundant) return
-        stillResumeIntent.clear() // A new user target supersedes any failed foreground restoration.
-        exposureQueue.offer(epoch, pair); liveExposureTarget = pair
+        offerLiveControls(editControls.copy(exposure = pair,
+            locks = editControls.locks.forControls(true, editControls.overrides.whiteBalance)))
+    }
+    private fun offerLiveControls(target: ControlSnapshot) {
+        if (!canSelectLiveControls || target == editControls) return
+        stillResumeIntent.clear()
+        cancelPreviewWait()
+        liveControls.offer(epoch, target)
+        liveControlIntent = target; liveExposureTarget = target.exposure; liveIntentKey = exposureKey()
         exposureOperationPending = true; exposureQueued = true
-        busy = true // Also owns the bounded first-frame coalescing interval.
-        if ((mode == CaptureMode.STILL || exposureQueue.active == null) && exposureFlush == null) {
+        busy = true
+        scheduleLiveControls()
+    }
+    private fun scheduleLiveControls() {
+        if (liveControls.active == null && liveControls.queued != null && exposureFlush == null) {
             exposureFlush = Runnable {
                 exposureFlush = null
-                (if (mode == CaptureMode.STILL) exposureQueue.takeReplacingActive() else exposureQueue.take())?.let(::dispatchLiveExposure)
+                liveControls.take()?.let(::dispatchLiveControls)
             }.also { controlHandler.postDelayed(it, 32) }
         }
     }
-    private fun dispatchLiveExposure(entry: ExposureEntry) {
-        if (closed || entry.epoch != epoch || exposureQueue.active != entry || recordingBusy) return
-        exposureQueued = exposureQueue.queued != null
-        setExposure(entry.pair.iso.toString(), java.math.BigDecimal.valueOf(entry.pair.exposureNs, 6).toPlainString(), live = entry)
-    }
-    private fun completeLiveExposure(entry: ExposureEntry) {
-        if (exposureQueue.active != entry) return
-        val next = exposureQueue.complete(entry)
-        if (next != null) dispatchLiveExposure(next)
-        else {
-            exposureOperationPending = false; exposureQueued = false; liveExposureTarget = null
+    private fun dispatchLiveControls(entry: LiveControlEntry) {
+        if (closed || entry.epoch != epoch || liveControls.active != entry || recordingBusy) return
+        val c = camera ?: return
+        val target = entry.controls
+        val manual = target.exposure != null
+        val key = exposureKey()
+        try {
+            cancelPreviewWait()
+            val request = if (manual && mode == CaptureMode.STILL)
+                selectStillTarget(target.exposure, target.overrides, target.locks, target.evIndex)
+                else target.also { stillExposure = null }
+            val kind = if (manual && mode == CaptureMode.STILL) RuntimeTarget.PREVIEW else RuntimeTarget.GENERAL
+            beginControl(request, kind)
+            busy = true; controlReady = false; exposureQueued = liveControls.queued != null
+            desired = "要求=$target; runtime=${request.exposure} 送信中"
+            val finish = {
+                // These are acceptance history only. A newer intent remains in the queue and UI.
+                appliedExposure = target.exposure; overrides = target.overrides; manualExposure = manual
+                acceptLocks(target.locks, "Live aggregate snapshot")
+                acceptedControl()
+                target.exposure?.let { preferences.saveExposure(key, it.iso.toString(),
+                    java.math.BigDecimal.valueOf(it.exposureNs, 6).toPlainString()) }
+                overrideStatus = "Accepted=${target.overrides}; actual results separate"
+                if (manual) evStatus = "EV inactive while MANUAL exposure is requested"
+                liveControls.complete(entry)
+                liveControlIntent = liveControls.intent; liveExposureTarget = liveControlIntent?.exposure
+                if (liveControlIntent == null) liveIntentKey = null
+                exposureOperationPending = liveControls.hasWork; exposureQueued = liveControls.queued != null
+                busy = liveControls.hasWork
+                controlReady = !busy && (stillExposure?.canCapture ?: true)
+                desired = "API受付=$target; 実測は別確認"
+                if (liveControls.hasWork) scheduleLiveControls() else if (kind == RuntimeTarget.PREVIEW) armPreviewWait()
+            }
+            val applyEvOrFinish = {
+                if (manual || target.evIndex == acceptedEv) finish()
+                else applyEv(c, entry.epoch, key, target.evIndex ?: 0, persist = false, accepted = finish)
+            }
+            val acceptedRuntime = controlReceipt.accepted
+            if (acceptedRuntime != null && acceptedRuntime.exposure == request.exposure &&
+                acceptedRuntime.overrides == target.overrides && acceptedRuntime.locks == target.locks) {
+                applyEvOrFinish()
+            } else requestSnapshot(c, entry.epoch, request.exposure, target.overrides, target.locks,
+                clearFirst = false, cancelFocus = (target.overrides.focusDistance == null) != (overrides.focusDistance == null),
+                boostPercent = if (kind == RuntimeTarget.PREVIEW) runtimeBoost else null,
+                accepted = applyEvOrFinish, failed = { failure -> error("live controls", failure) })
+        } catch (failure: Exception) {
+            operationReceipt(operationReceipt.copy(phase = ControlPhase.UNKNOWN, acceptedAtMs = null,
+                detail = "Live control failed; latest intent retained, reset or rebind required"))
+            error("live controls", failure)
+            invalidateControl(); clearLiveExposure(keepTarget = true); busy = false; controlReady = false
         }
     }
     private fun error(operation: String, e: Exception) {
@@ -320,6 +376,11 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             return
         }
         val snapshotAt = java.time.Instant.now()
+        val observationNowMs = SystemClock.elapsedRealtime()
+        val displayTarget = logicalCaptureTarget(epoch, controlReceipt, liveExposureTarget, stillExposure?.target, appliedExposure)
+        val displayDiagnostics = listOf(CaptureKey.ISO, CaptureKey.SHUTTER).joinToString("\n") {
+            exposureDisplayDiagnostic(it, previewExposureSamples, epoch, observationNowMs, exposureChoices, bound, displayTarget)
+        }
         val snapshot = """
             applicationId=${BuildConfig.APPLICATION_ID} version=${BuildConfig.VERSION_NAME} code=${BuildConfig.VERSION_CODE}
             cameraId=$selectedId mode=$mode bound=$bound ready=$controlReady operationPending=$busy
@@ -331,6 +392,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             focus=$focusStatus EV=$evStatus thermal=$thermalStatus
             outputOrientation=$outputOrientation
             observedCaptureResult=$measured
+            $displayDiagnostics
+            latestLiveIntent=$liveControlIntent livePending=$liveControlsPending
             normalStillExposure=$stillExposure
             still=$stillResolution
             video=$videoSelection
@@ -419,7 +482,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             }, main)
         } catch (failure: Exception) { log.write("INTEROP_HELD_OPTIONS_CLEAR_FAILED " + failure.message); throw failure }
     }
-    private fun plannedStill(value: ManualExposure, extras: SensorOverrides, locks: AutoLocks): StillExposureTarget {
+    private fun plannedStill(value: ManualExposure, extras: SensorOverrides, locks: AutoLocks, evIndex: Int? = acceptedEv): StillExposureTarget {
         NormalExposurePolicy.validate(value)
         val report = selectedReport ?: error("No Camera2 capability report")
         require(report.manualBlockReason == null) { report.manualBlockReason!! }
@@ -427,10 +490,10 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             report.maxFrameDurationNs, maxOf(33_333_333L, lastPreviewMinFrameNs ?: 0L))
         require(planning is SimulationPlanning.Ready) { "明るさ近似previewを構成できません: " + (planning as SimulationPlanning.Blocked).reason }
         return StillExposureTarget(epoch, ++targetRevision, planning.plan,
-            ControlSnapshot(value, acceptedEv, extras, locks), if (report.unityPostRawBoostSupported) 100 else null)
+            ControlSnapshot(value, evIndex, extras, locks), if (report.unityPostRawBoostSupported) 100 else null)
     }
-    private fun selectStillTarget(value: ManualExposure, extras: SensorOverrides, locks: AutoLocks): ControlSnapshot {
-        val target = plannedStill(value, extras, locks)
+    private fun selectStillTarget(value: ManualExposure, extras: SensorOverrides, locks: AutoLocks, evIndex: Int? = acceptedEv): ControlSnapshot {
+        val target = plannedStill(value, extras, locks, evIndex)
         val previous = stillExposure
         stillExposure = if (previous == null || (previous.ownsCapture && previous.filesTerminal)) StillExposureState(target)
             else previous.retarget(target)
@@ -438,6 +501,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         return target.controls.copy(exposure = target.plan.preview)
     }
     private fun armPreviewWait() {
+        if (liveControlsPending) return
         val state = stillExposure ?: return
         if (state.canCapture) { cancelPreviewWait(); return }
         if (state.phase !in setOf(StillExposurePhase.PREVIEW_APPLYING, StillExposurePhase.RESTORING) || previewWait != null) return
@@ -450,6 +514,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             if (!closed && generation == epoch && current?.target?.revision == revision &&
                 current.phase in setOf(StillExposurePhase.PREVIEW_APPLYING, StillExposurePhase.RESTORING)) {
                 stillExposure = current.unknown("preview実測の確認期限を超過。保存結果とは別・AUTOまたは接続停止で復旧")
+                invalidateControl(); clearLiveExposure(keepTarget = true)
                 controlReady = false; busy = false; lastFailure = stillExposure?.detail
                 event("PREVIEW_OBSERVATION_TIMEOUT revision=" + revision + "; sensor/CameraX timing unconfirmed, not a save failure")
             }
@@ -572,8 +637,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         cine.stop("activity background; no background recording")
         if (mode == CaptureMode.STILL && (bound || stillExposure != null || exposureOperationPending)) {
             val pendingAuto = if (runtimeTarget == RuntimeTarget.GENERAL) autoResumeTarget(operationReceipt) else null
-            stillResumeIntent.remember(exposureKey(), exposureQueue.latest?.pair, liveExposureTarget,
-                pendingAuto, stillExposure?.target?.controls ?: selectedControls)
+            stillResumeIntent.remember(exposureKey(), null, null,
+                liveControlIntent ?: pendingAuto, liveControlIntent ?: stillExposure?.target?.controls ?: selectedControls)
             // Invalidate the old session while keeping only its logical target for the next bind.
             pendingForegroundBind = true
             stopPreview()
@@ -581,12 +646,9 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             return
         }
         if (controlOperation.token != null || exposureOperationPending) {
-            val sent = controlOperation.token != null
-            invalidateControl(); clearLiveExposure(); busy = false
-            if (sent) {
-                controlReady = false
-                controlReceipt = controlReceipt.copy(phase = ControlPhase.UNKNOWN, acceptedAtMs = null, detail = "背景化により応答待ちを終了・AUTOまたは再接続で復旧")
-            }
+            invalidateControl(); clearLiveExposure(keepTarget = true); busy = false
+            controlReady = false
+            controlReceipt = controlReceipt.copy(phase = ControlPhase.UNKNOWN, acceptedAtMs = null, detail = "背景化により送信/応答待ちを終了・AUTOまたは再接続で復旧")
         }
     }
     private fun onCineChanged() {
@@ -640,18 +702,22 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     }
 
     fun selectEv(index: Int) {
-        if (captureBlocksControl()) return
-        if (busy || recordingBusy || !bound || !controlReady) return
+        if (!canSelectLiveControls) return
         val c = camera ?: return
         try {
             val state = c.cameraInfo.exposureState
             val range = state.exposureCompensationRange
             val target = ProbeControls.evTarget(index, 0, range.lower..range.upper,
-                state.isExposureCompensationSupported, !manualExposure && controlReady)
-            val generation = epoch
-            beginControl(selectedControls.copy(evIndex = target))
-            applyEv(c, generation, exposureKey(), target, persist = true) { busy = false; controlReady = true; acceptedControl() }
-        } catch (failure: Exception) { error("EV validation", failure) }
+                state.isExposureCompensationSupported, editControls.exposure == null)
+            offerLiveControls(editControls.copy(evIndex = target))
+            // A saved user request is distinct from acceptedEv and CaptureResult evidence.
+            preferences.put("${exposureKey()}/ev", target.toString())
+        } catch (failure: Exception) { rejectLiveInput("EV", failure) }
+    }
+
+    private fun rejectLiveInput(name: String, failure: Exception) {
+        lastFailure = "$name: ${failure.message}"
+        event("LIVE_INPUT_REJECTED $name ${failure.message}; active snapshot unchanged")
     }
 
     private fun applyEv(c: Camera, generation: Int, key: String, requested: Int, persist: Boolean, accepted: () -> Unit) {
@@ -661,6 +727,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             val state = c.cameraInfo.exposureState
             if (!state.isExposureCompensationSupported) {
                 acceptedEv = null
+                operationReceipt(operationReceipt.copy(requested = operationReceipt.requested?.copy(evIndex = null)))
                 evStatus = "CameraX EV unsupported; requested index=$requested not applied"
                 log.write("EV_UNSUPPORTED $evStatus")
                 accepted(); return
@@ -677,6 +744,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                 try {
                     val value = future.get()
                     acceptedEv = value
+                    operationReceipt(operationReceipt.copy(requested = operationReceipt.requested?.copy(evIndex = value)))
                     if (persist) preferences.put("$key/ev", requested.toString())
                     evStatus = "Requested index=$requested, CameraX accepted=$value step=${state.exposureCompensationStep}$fallback; check actual CaptureResult"
                     log.write("EV $evStatus")
@@ -698,15 +766,10 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         format = value; preferences.put("format/$selectedId", value.toString()); bind()
     }
 
-    fun editFocus(value: String) { if (captureBlocksControl()) return; requestedFocus = value; preferences.put(exposureKey() + "/focusDraft", value) }
-    fun selectWhiteBalance(value: Int?) = changeOverrides(overrides.copy(whiteBalance = value), OverrideField.WHITE_BALANCE)
-    fun selectAntiBanding(value: Int?) = changeOverrides(overrides.copy(antiBanding = value), OverrideField.ANTI_BANDING)
-    fun restoreAutofocus() = changeOverrides(overrides.copy(focusDistance = null), OverrideField.FOCUS)
-    fun applyManualFocus() {
-        if (captureBlocksControl()) return
-        try { changeOverrides(overrides.copy(focusDistance = requestedFocus.trim().toFloat()), OverrideField.FOCUS) }
-        catch (failure: Exception) { error("manual focus input", failure) }
-    }
+    fun selectWhiteBalance(value: Int?) = changeOverrides(editControls.overrides.copy(whiteBalance = value), OverrideField.WHITE_BALANCE)
+    fun selectAntiBanding(value: Int?) = changeOverrides(editControls.overrides.copy(antiBanding = value), OverrideField.ANTI_BANDING)
+    fun restoreAutofocus() = changeOverrides(editControls.overrides.copy(focusDistance = null), OverrideField.FOCUS)
+    fun selectManualFocus(value: Float) = changeOverrides(editControls.overrides.copy(focusDistance = value), OverrideField.FOCUS)
 
     private fun saveOverrides(key: String, value: SensorOverrides) {
         OverrideField.entries.forEach { field ->
@@ -727,42 +790,15 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     }
 
     private fun changeOverrides(candidate: SensorOverrides, edited: OverrideField) {
-        if (captureBlocksControl()) return
-        if (busy || recordingBusy || !bound || !controlReady) return
-        val c = camera ?: return
-        var started = false
+        if (!canSelectLiveControls) return
         try {
             candidate.validate(selectedReport?.overrides ?: OverrideCapabilities())
-            val targetLocks = autoLocks.forControls(manualExposure, candidate.whiteBalance)
-            val generation = epoch
-            val key = exposureKey()
-            val request = if (stillExposure != null && appliedExposure != null) selectStillTarget(appliedExposure!!, candidate, targetLocks)
-                else runtimeControls.copy(overrides = candidate, locks = targetLocks)
-            beginControl(request, if (stillExposure != null) RuntimeTarget.PREVIEW else RuntimeTarget.GENERAL)
-            busy = true; controlReady = false; started = true
-            overrideStatus = "Requested=$candidate PENDING; no quality claim"
-            requestSnapshot(c, generation, request.exposure, candidate, targetLocks, clearFirst = false, boostPercent = runtimeBoost,
-                cancelFocus = candidate.focusDistance != overrides.focusDistance,
-                accepted = {
-                    overrides = candidate
-                    acceptLocks(targetLocks, "Fixed WB releases AWB lock; other eligible locks retained")
-                    candidate.persistencePatch(edited).forEach { (name, saved) -> preferences.put("$key/$name", saved) }
-                    busy = false
-                    overrideStatus = "Accepted=$candidate; inspect CaptureResult. AE anti-banding has no effect in MANUAL exposure."
-                    acceptedControl()
-                    controlReady = stillExposure?.canCapture ?: true
-                    if (stillExposure != null) armPreviewWait()
-                    event("OVERRIDES $overrideStatus")
-                }, failed = { failure ->
-                    busy = false; controlReady = false
-                    overrideStatus = "FAILED; sensor state unknown, use AUTO reset or restart"
-                    lockStatus = "State unknown after control failure; use AUTO reset"
-                    error("control snapshot", failure)
-                })
-        } catch (failure: Exception) {
-            if (started) { busy = false; controlReady = false; overrideStatus = "FAILED; use AUTO reset or restart"; lockStatus = "State unknown; use AUTO reset" }
-            error("override validation/control", failure)
-        }
+            val current = editControls
+            val targetLocks = current.locks.forControls(current.exposure != null, candidate.whiteBalance)
+            offerLiveControls(current.copy(overrides = candidate, locks = targetLocks))
+            // Persist the explicitly edited preference, never fallback values from another group.
+            candidate.persistencePatch(edited).forEach { (name, saved) -> preferences.put("${exposureKey()}/$name", saved) }
+        } catch (failure: Exception) { rejectLiveInput("override", failure) }
     }
 
     fun toggleExposureLock() = setLocks(autoLocks.copy(exposure = !autoLocks.exposure))
@@ -849,6 +885,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         val p = provider ?: return
         val id = selectedId ?: run { event("UNSUPPORTED no CameraX camera"); return }
         val previewView = view ?: return
+        val retryIntent = liveControlIntent.takeIf { liveIntentKey == exposureKey() }
         try { clearRetainedInterop() } catch (failure: Exception) { error("bind: held Interop clear", failure); return }
         clearStillExposure(); invalidateControl(); clearLiveExposure()
         lastPreviewMinFrameNs = null
@@ -860,10 +897,11 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         val settingsKey = exposureKey()
         val resumeForThisBind = stillResumeIntent.peek(settingsKey)
         val pendingForThisBind = pendingBindControls.take(settingsKey, generation)
-        val restoreForThisBind = resumeForThisBind?.controls ?: pendingForThisBind
+        val restoreForThisBind = resumeForThisBind?.controls ?: pendingForThisBind ?: retryIntent?.copy(locks = AutoLocks())
+        liveControlIntent = restoreForThisBind; liveExposureTarget = restoreForThisBind?.exposure
+        liveIntentKey = settingsKey.takeIf { restoreForThisBind != null }
         requestedIso = preferences.text("$settingsKey/iso", "100")
         requestedMs = preferences.text("$settingsKey/ms", "10")
-        requestedFocus = preferences.text("$settingsKey/focusDraft", "0")
         camera?.cameraInfo?.cameraState?.removeObservers(owner)
         bound = false; controlReady = false; formats = emptySet()
         videoSelection = "No applied video profile for this session; requested preference retained"
@@ -909,6 +947,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             }
             if (mode == CaptureMode.CINE) builder.setResolutionSelector(ResolutionSelector.Builder()
                 .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY).build())
+            val exposureMailbox = PreviewExposureMailbox()
             val resultCallback = object : CameraCaptureSession.CaptureCallback() {
                 override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
                     // Observe only: never operate CameraX's CameraDevice / session.
@@ -916,7 +955,33 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                     val previewIntent = request.get(CaptureRequest.CONTROL_CAPTURE_INTENT) in setOf(
                         CaptureRequest.CONTROL_CAPTURE_INTENT_PREVIEW, CaptureRequest.CONTROL_CAPTURE_INTENT_VIDEO_RECORD)
                     val now = SystemClock.elapsedRealtime()
-                    // Leave headroom within the display's 2s lifetime without changing camera requests.
+                    val observation = CaptureSample(generation, result.frameNumber, now,
+                        SensorValues(request.get(CaptureRequest.SENSOR_SENSITIVITY), request.get(CaptureRequest.SENSOR_EXPOSURE_TIME), request.get(CaptureRequest.CONTROL_AE_MODE),
+                            request.get(CaptureRequest.LENS_FOCUS_DISTANCE), request.get(CaptureRequest.CONTROL_AF_MODE), request.get(CaptureRequest.CONTROL_AWB_MODE),
+                            request.get(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION), request.get(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE),
+                            request.get(CaptureRequest.CONTROL_AE_LOCK), request.get(CaptureRequest.CONTROL_AWB_LOCK)),
+                        SensorValues(result.get(CaptureResult.SENSOR_SENSITIVITY), result.get(CaptureResult.SENSOR_EXPOSURE_TIME), result.get(CaptureResult.CONTROL_AE_MODE),
+                            result.get(CaptureResult.LENS_FOCUS_DISTANCE), result.get(CaptureResult.CONTROL_AF_MODE), result.get(CaptureResult.CONTROL_AWB_MODE),
+                            result.get(CaptureResult.CONTROL_AE_EXPOSURE_COMPENSATION), result.get(CaptureResult.CONTROL_AE_ANTIBANDING_MODE),
+                            result.get(CaptureResult.CONTROL_AE_LOCK), result.get(CaptureResult.CONTROL_AWB_LOCK)),
+                        frameDurationNs = result.get(CaptureResult.SENSOR_FRAME_DURATION),
+                        intent = when (request.get(CaptureRequest.CONTROL_CAPTURE_INTENT)) {
+                            CaptureRequest.CONTROL_CAPTURE_INTENT_PREVIEW -> CaptureSampleIntent.PREVIEW
+                            CaptureRequest.CONTROL_CAPTURE_INTENT_VIDEO_RECORD -> CaptureSampleIntent.VIDEO_RECORD
+                            CaptureRequest.CONTROL_CAPTURE_INTENT_STILL_CAPTURE -> CaptureSampleIntent.STILL_CAPTURE
+                            else -> CaptureSampleIntent.UNKNOWN
+                        })
+                    // Preserve every valid axis before diagnostic sampling can discard its frame.
+                    // The mailbox owns at most one pending UI runnable and retains source timestamps.
+                    if (previewIntent && exposureMailbox.offer(observation)) main.execute {
+                        val pending = exposureMailbox.drain()
+                        if (generation == epoch && !closed && pending != null) {
+                            listOfNotNull(pending.iso, pending.shutter).distinctBy { it.frame }.sortedBy { it.frame }.forEach {
+                                previewExposureSamples = previewExposureSamples.observe(it, epoch)
+                            }
+                        }
+                    }
+                    // Diagnostics and acceptance observations have their own sampling budget.
                     val sampleIntervalMs = if (now < sampleBurstUntilMs || stillExposure != null) 200L else 500L
                     if (!still && now - (if (previewIntent) lastSample else lastOtherSample) < sampleIntervalMs) return
                     if (previewIntent) lastSample = now else lastOtherSample = now
@@ -928,23 +993,6 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                     main.execute {
                         if (generation == epoch && !closed) {
                             measured = actual
-                            val observation = CaptureSample(generation, result.frameNumber, now,
-                                SensorValues(request.get(CaptureRequest.SENSOR_SENSITIVITY), request.get(CaptureRequest.SENSOR_EXPOSURE_TIME), request.get(CaptureRequest.CONTROL_AE_MODE),
-                                    request.get(CaptureRequest.LENS_FOCUS_DISTANCE), request.get(CaptureRequest.CONTROL_AF_MODE), request.get(CaptureRequest.CONTROL_AWB_MODE),
-                                    request.get(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION), request.get(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE),
-                                    request.get(CaptureRequest.CONTROL_AE_LOCK), request.get(CaptureRequest.CONTROL_AWB_LOCK)),
-                                SensorValues(result.get(CaptureResult.SENSOR_SENSITIVITY), result.get(CaptureResult.SENSOR_EXPOSURE_TIME), result.get(CaptureResult.CONTROL_AE_MODE),
-                                    result.get(CaptureResult.LENS_FOCUS_DISTANCE), result.get(CaptureResult.CONTROL_AF_MODE), result.get(CaptureResult.CONTROL_AWB_MODE),
-                                    result.get(CaptureResult.CONTROL_AE_EXPOSURE_COMPENSATION), result.get(CaptureResult.CONTROL_AE_ANTIBANDING_MODE),
-                                    result.get(CaptureResult.CONTROL_AE_LOCK), result.get(CaptureResult.CONTROL_AWB_LOCK)),
-                                frameDurationNs = result.get(CaptureResult.SENSOR_FRAME_DURATION),
-                                intent = when (request.get(CaptureRequest.CONTROL_CAPTURE_INTENT)) {
-                                    CaptureRequest.CONTROL_CAPTURE_INTENT_PREVIEW -> CaptureSampleIntent.PREVIEW
-                                    CaptureRequest.CONTROL_CAPTURE_INTENT_VIDEO_RECORD -> CaptureSampleIntent.VIDEO_RECORD
-                                    CaptureRequest.CONTROL_CAPTURE_INTENT_STILL_CAPTURE -> CaptureSampleIntent.STILL_CAPTURE
-                                    else -> CaptureSampleIntent.UNKNOWN
-                                })
-                            previewExposureSamples = previewExposureSamples.observe(observation, epoch)
                             if (stillExposure != null) {
                                 val kind = when (request.get(CaptureRequest.CONTROL_CAPTURE_INTENT)) {
                                     CaptureRequest.CONTROL_CAPTURE_INTENT_PREVIEW -> SimulationIntent.PREVIEW
@@ -1053,7 +1101,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             event("BOUND id=$id mode=$mode format=${formatName(format)}; clearing Interop before capture")
             // The provider may reuse a CameraControl whose Interop options survive unbind/rebind.
             // Explicitly clear them and wait for acceptance before enabling capture.
-            setExposure(remember = resumeForThisBind != null, restoreSaved = true, bindRestore = restoreForThisBind,
+            setExposure(remember = restoreForThisBind != null, restoreSaved = true, bindRestore = restoreForThisBind,
                 bindResume = resumeForThisBind)
         } catch (e: Exception) { stillExposure = stillExposure?.unknown("bind failed: ${e.message}"); error("bind id=$id mode=$mode format=${formatName(format)} (see selection/fallback log)", e) }
     }
@@ -1094,24 +1142,25 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         if (closed || recordingBusy || captureBlocksControl()) return
         if (exposureOperationPending) { invalidateControl(); busy = false }
         if (busy) return
+        val previous = editControls
         // AUTO supersedes retained failed/UNKNOWN manual input even after its pending flag cleared.
         clearLiveExposure()
         stillResumeIntent.clear(); pendingForegroundBind = false
         exposurePolicyStatus = NormalExposurePolicy.DESCRIPTION + "; AUTOは手動露出解除・実測露光は別確認"
         exposureMigrationNotice = null
+        val key = exposureKey()
+        // These are explicit reset preferences, not API acceptance or measured sensor state.
+        if (reset) { saveOverrides(key, SensorOverrides()); preferences.put("$key/ev", "0") }
         // A static manual Preview seed would reappear after clear; replace that use case once.
         if (mode == CaptureMode.STILL && (previewSeeded || camera == null)) {
-            val key = exposureKey()
             pendingBindControls.offer(key, epoch + 1,
-                autoControlSnapshot(selectedControls, preferences.text("$key/ev", "0").toIntOrNull() ?: 0, reset))
+                autoControlSnapshot(previous, preferences.text("$key/ev", "0").toIntOrNull() ?: 0, reset))
             preferences.saveExposure(key, null, null)
-            if (reset) { saveOverrides(key, SensorOverrides()); preferences.put("$key/ev", "0") }
             clearStillExposure(); bind()
-        } else setExposure(reset = reset)
+        } else setExposure(reset = reset, autoBase = previous)
     }
-    fun setExposure(iso: String? = null, ms: String? = null, remember: Boolean = true, restoreSaved: Boolean = false, reset: Boolean = false, live: ExposureEntry? = null, bindRestore: ControlSnapshot? = null, bindResume: StillResumeRequest? = null) {
-        if (captureBlocksControl() || (busy && live == null) || recordingBusy) return
-        if (live != null && (live.epoch != epoch || exposureQueue.active != live)) return
+    fun setExposure(iso: String? = null, ms: String? = null, remember: Boolean = true, restoreSaved: Boolean = false, reset: Boolean = false, bindRestore: ControlSnapshot? = null, bindResume: StillResumeRequest? = null, autoBase: ControlSnapshot? = null) {
+        if (captureBlocksControl() || busy || recordingBusy) return
         val c = camera ?: return
         try {
             val report = selectedReport
@@ -1147,13 +1196,17 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             }
             val manual = value != null
             val restored = if (restoreSaved) bindRestore else null
-            val auto = autoControlSnapshot(selectedControls, preferences.text("$key/ev", "0").toIntOrNull() ?: 0, reset)
-            val extras = restored?.overrides ?: if (restoreSaved) savedOverrides(key) else if (manual) overrides else auto.overrides
-            val targetLocks = restored?.locks ?: if (restoreSaved) AutoLocks() else if (manual)
-                autoLocks.forControls(true, extras.whiteBalance) else auto.locks
+            val logical = exposureOperationIntent(value, autoBase ?: selectedControls,
+                preferences.text("$key/ev", "0").toIntOrNull() ?: 0, reset, restored,
+                if (restoreSaved && restored == null) savedOverrides(key) else null)
+            val extras = logical.overrides
+            val targetLocks = logical.locks
+            // Legacy AUTO/reset shares the same scoped intent owner as live inputs. A failed request
+            // must remain AUTO on explicit rebind even while saved exposure still says MANUAL.
+            liveControlIntent = logical; liveExposureTarget = logical.exposure; liveIntentKey = key
             cancelPreviewWait()
-            val request = if (manual && mode == CaptureMode.STILL) selectStillTarget(value, extras, targetLocks)
-                else ControlSnapshot(value, if (manual) acceptedEv else auto.evIndex, extras, targetLocks).also { stillExposure = null }
+            val request = if (manual && mode == CaptureMode.STILL) selectStillTarget(value, extras, targetLocks, logical.evIndex)
+                else logical.also { stillExposure = null }
             val kind = if (manual && mode == CaptureMode.STILL) RuntimeTarget.PREVIEW else RuntimeTarget.GENERAL
             val generation = epoch
             val label = if (manual) "撮影target ISO=" + value.iso + " ns=" + value.exposureNs
@@ -1163,13 +1216,15 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             busy = true; controlReady = false
             log.write("EXPOSURE_DISPATCH captureTarget=" + value + " runtime=" + request.exposure + " kind=" + kind + "; no editing rebind")
             requestSnapshot(c, generation, request.exposure, extras, targetLocks, clearFirst = reset || restoreSaved,
-                cancelFocus = reset || restoreSaved, boostPercent = if (kind == RuntimeTarget.PREVIEW) runtimeBoost else null,
+                cancelFocus = reset || restoreSaved || (extras.focusDistance == null) != (overrides.focusDistance == null),
+                boostPercent = if (kind == RuntimeTarget.PREVIEW) runtimeBoost else null,
                 accepted = {
                     val finish = {
                         appliedExposure = value; overrides = extras; manualExposure = manual
                         acceptLocks(targetLocks, if (manual) "MANUAL releases AE lock" else "AUTO/reset control snapshot")
                         overrideStatus = "Accepted runtime controls=" + extras + "; actual results separate"
                         acceptedControl()
+                        clearLiveExposure()
                         busy = false; controlReady = if (kind == RuntimeTarget.PREVIEW) stillExposure?.canCapture == true else true
                         desired = label + "; " + if (kind == RuntimeTarget.PREVIEW) "preview API受付・撮影API受付はシャッター時" else "API受付・実測は別確認"
                         event(desired)
@@ -1186,10 +1241,9 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                         }
                         bindResume?.let { stillResumeIntent.accepted(key, it) }
                         if (manual) evStatus = "EV inactive while MANUAL exposure is requested"
-                        if (live != null) completeLiveExposure(live)
                         if (kind == RuntimeTarget.PREVIEW) armPreviewWait()
                     }
-                    if (manual) finish() else applyEv(c, generation, key, if (reset) 0 else restored?.evIndex ?: auto.evIndex ?: 0,
+                    if (manual) finish() else applyEv(c, generation, key, logical.evIndex ?: 0,
                         persist = false, accepted = finish)
                 }, failed = { failure ->
                     busy = false; controlReady = false
@@ -1198,7 +1252,6 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                 })
         } catch (failure: Exception) {
             busy = false; controlReady = false
-            if (live != null) clearLiveExposure(keepTarget = true)
             error("exposure validation/control", failure)
         }
     }
