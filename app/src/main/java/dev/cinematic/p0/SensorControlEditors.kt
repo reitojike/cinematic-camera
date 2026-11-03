@@ -6,6 +6,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
@@ -85,26 +87,39 @@ fun FocusAutofocusAction(
     }
 }
 
-/** AF and MF lens-unit choices use the same live selection path; no display text is sent back. */
+/** AF observation seeds the numeric ruler; only an explicit selection requests MF. */
 @Composable
 fun FocusControlEditor(
     selectedFocus: Float?, maximum: Float?, enabled: Boolean,
-    onSelect: (Float) -> Unit, onAutofocus: () -> Unit,
+    observedAutoFocus: Float?, onSelect: (Float) -> Unit,
     modifier: Modifier = Modifier, valueModifier: Modifier = Modifier,
     rotation: Float = 0f, horizontal: Boolean = false,
-    epoch: Int = 0, canSelect: () -> Boolean = { true },
+    epoch: Int = 0, canSelect: () -> Boolean = { true }, autoCanSelect: () -> Boolean = { true },
+    autoStillActive: () -> Boolean = { true },
 ) {
     val legalMaximum = maximum?.takeIf { it.isFinite() && it > 0f }
-    // ACKs and actual AF motion cannot insert/remove stops while a gesture is using their indices.
+    // ACKs and actual AF motion cannot insert/remove stops while a gesture uses their indices.
     val options = remember(epoch, legalMaximum) { focusControlOptions(legalMaximum, selectedFocus) }
-    val selected = if (selectedFocus == null) 0 else focusControlIndex(options, selectedFocus).takeIf { it >= 0 }?.plus(1) ?: -1
+    var autoSeed by remember(epoch, legalMaximum, selectedFocus == null) { androidx.compose.runtime.mutableStateOf<Float?>(null) }
+    if (selectedFocus == null && autoSeed == null && observedAutoFocus != null) autoSeed = focusAutoSeed(autoSeed, observedAutoFocus)
+    val selected = focusDialIndex(options, selectedFocus, autoSeed)
     Column(modifier.fillMaxWidth()) {
         if (options.isEmpty()) Text("MF非対応", color = SensorMuted, fontSize = 12.sp)
-        else ExposureSelectionScale("FOCUS", listOf("AF") + options.map { if (it == 0f) "∞" else focusDistanceText(it) ?: "—" },
-            selected, enabled, { if (it == 0) onAutofocus() else onSelect(options[it - 1]) },
-            modifier = valueModifier, rotation = rotation, horizontal = horizontal, canSelect = canSelect,
-            descriptions = listOf("AF 自動フォーカス指定") + options.map {
-                if (it == 0f) "MF 無限遠指定 0 LU" else "MF ${focusDistanceText(it)} LU指定。実測は診断で確認"
+        else if (selected < 0) Text(if (selectedFocus == null) "AF実測待ち・値は未確認" else "MF指定値を確認できません", color = SensorMuted, fontSize = 12.sp)
+        else ExposureSelectionScale("FOCUS", focusDialLabels(options),
+            selected, enabled && (selectedFocus != null || observedAutoFocus != null), { onSelect(options[it]) },
+            modifier = valueModifier, rotation = rotation, horizontal = horizontal,
+            canSelect = { canSelect() && autoCanSelect() },
+            allowCurrentSelection = selectedFocus == null, allowCurrentSelectionNow = autoStillActive,
+            descriptions = options.mapIndexed { index, value ->
+                val candidate = if (value == 0f) "無限遠 0 LU" else "${focusDistanceText(value)} LU"
+                when {
+                    selectedFocus == null && index == selected && observedAutoFocus == null ->
+                        "AF実測待ち、前回の候補 $candidate。選択一時停止"
+                    selectedFocus == null && index == selected ->
+                        "AF開始時の近似候補 $candidate。選択するとMFに指定"
+                    else -> "MF $candidate 指定。実際は診断で確認"
+                }
             })
     }
 }

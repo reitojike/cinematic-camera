@@ -280,7 +280,8 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                                                 else probe.exposureChoices.shutter.map { it.label.removeSuffix(" s") })
                                     } else {
                                         val field = when (key) {
-                                            CaptureKey.FOCUS -> focusFeedback
+                                            CaptureKey.FOCUS -> focusAutoPresentation(focusFeedback,
+                                                autofocusObservation(probe, measurementTick), probe.selectedReport?.overrides?.manualFocusMaximum)
                                             CaptureKey.WB -> SensorControlValue(if (wbFeedback.hasSelection) wbFeedback.selectedLabel else "—",
                                                 stateTag = wbFeedback.stateTag, tone = wbFeedback.tone, affected = wbFeedback.affected)
                                             CaptureKey.EV -> if (requestedExposureMode(probe) == true) SensorControlValue("—", stateTag = "AUTO専用") else evFeedback
@@ -292,7 +293,12 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                                             onUnavailable = { notice = available.reason }, unavailableReason = available.reason,
                                             rotation = animatedAngle, horizontal = orientation.horizontal, valueColor = sensorControlColor(field.tone),
                                             landscapeCommonHeight = commonHeight, onLandscapeNaturalHeight = { landscapeHeights[key] = it },
-                                            statusDescription = "最新の指定 ${field.stateTag}。API受付値と実測は診断で確認",
+                                            statusDescription = when {
+                                                key == CaptureKey.FOCUS && field.modeTag == "AF 近似" -> "AFプレビュー実測の近似。${field.stateTag}。撮影設定値ではありません"
+                                                key == CaptureKey.FOCUS && field.modeTag == "AF 待機" -> "AF実測待ち、現在値未確認。${field.stateTag}"
+                                                key == CaptureKey.FOCUS && field.modeTag == "AF 候補なし" -> "手動フォーカス候補なし。${field.stateTag}"
+                                                else -> "最新の指定 ${field.stateTag}。API受付値と実測は診断で確認"
+                                            },
                                             widthSamples = if (key == CaptureKey.WB) whiteBalanceOptions(probe.selectedReport?.overrides?.whiteBalanceModes ?: emptySet()).map { it.shortLabel }
                                                 else listOf(field.value))
                                     }
@@ -368,7 +374,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
     change: (CaptureEditor) -> Unit, auto: () -> Unit, refreshGeneration: Long) {
     val key = editor.selected ?: return
     if (key.group != CaptureKey.ISO) {
-        OtherControlRuler(probe, editor, enabled, change)
+        OtherControlRuler(probe, editor, enabled, change, refreshGeneration)
         return
     }
     val choices = probe.exposureChoices
@@ -417,15 +423,18 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
     }
 }
 @Composable private fun OtherControlRuler(probe: CameraProbe, editor: CaptureEditor, enabled: Boolean,
-    change: (CaptureEditor) -> Unit) {
+    change: (CaptureEditor) -> Unit, refreshGeneration: Long) {
     val key = editor.selected ?: return
     val rulerEpoch = probe.currentEpoch
     val intent = probe.liveControlIntent
-    val focus = intent?.overrides?.focusDistance ?: probe.overrides.focusDistance
+    val focus = if (intent != null) intent.overrides.focusDistance else probe.overrides.focusDistance
+    val observedFocus = if (key == CaptureKey.FOCUS && focus == null) autofocusObservation(probe, refreshGeneration) else null
     Column(Modifier.fillMaxWidth().heightIn(min = 104.dp).background(Color(0xF00D0F10)),
         horizontalAlignment = Alignment.CenterHorizontally) {
         CaptureRulerHeading(key.name, onClose = { change(editor.close()) }, closeEnabled = editor.submitting == null,
-            rotation = LocalCaptureAngle.current, horizontal = LocalCaptureHorizontal.current) {
+            rotation = LocalCaptureAngle.current, horizontal = LocalCaptureHorizontal.current,
+            waiting = key == CaptureKey.FOCUS && focus == null && observedFocus == null &&
+                probe.selectedReport?.overrides?.manualFocusMaximum?.let { it.isFinite() && it > 0f } == true) {
             if (key == CaptureKey.EV) ExposureZeroAction(intent?.evIndex ?: probe.acceptedEv,
                 probe.exposureCompensationRange, probe.exposureCompensationStep,
                 enabled && requestedExposureMode(probe) != true && probe.exposureCompensationSupported,
@@ -439,11 +448,14 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
         }
         Box(Modifier.fillMaxWidth().padding(horizontal = 10.dp)) {
             when (key.group) {
-                CaptureKey.FOCUS -> FocusControlEditor(if (intent != null) intent.overrides.focusDistance else focus,
+                CaptureKey.FOCUS -> FocusControlEditor(focus,
                     probe.selectedReport?.overrides?.manualFocusMaximum, enabled,
-                    onSelect = probe::selectManualFocus, onAutofocus = probe::restoreAutofocus,
+                    observedAutoFocus = observedFocus, onSelect = probe::selectManualFocus,
                     rotation = LocalCaptureAngle.current, horizontal = LocalCaptureHorizontal.current,
-                    epoch = probe.currentEpoch, canSelect = { probe.currentEpoch == rulerEpoch && probe.canSelectLiveControls })
+                    epoch = probe.currentEpoch, canSelect = { probe.currentEpoch == rulerEpoch && probe.canSelectLiveControls },
+                    autoCanSelect = { focusDialInputAllowed(probe.liveControlIntent, probe.overrides.focusDistance,
+                        autofocusObservation(probe, refreshGeneration) != null) },
+                    autoStillActive = { focusDialAutoActive(probe.liveControlIntent, probe.overrides.focusDistance) })
                 CaptureKey.EV -> ExposureCompensationControlEditor(intent?.evIndex ?: probe.acceptedEv, probe.exposureCompensationRange,
                     probe.exposureCompensationStep, enabled && requestedExposureMode(probe) != true && probe.exposureCompensationSupported,
                     onSelect = probe::selectEv, rotation = LocalCaptureAngle.current, horizontal = LocalCaptureHorizontal.current,
@@ -456,6 +468,14 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
             }
         }
     }
+}
+
+/** Read the sample before the clock; the generation also expires values when frames stop. */
+private fun autofocusObservation(probe: CameraProbe, refreshGeneration: Long): Float? {
+    val sample = probe.previewFocusSample
+    val now = refreshGeneration.let { SystemClock.elapsedRealtime() }
+    return freshAutofocusSample(sample, probe.currentEpoch, now,
+        probe.selectedReport?.overrides?.manualFocusMaximum)?.actual?.focus?.takeIf { probe.bound }
 }
 
 private fun exposureKeyValue(key: CaptureKey, probe: CameraProbe, refreshGeneration: Long): ExposureValuePresentation =

@@ -180,4 +180,84 @@ class SensorControlPresentationTest {
         assertEquals("∞", liveFocusPresentation(0f, null,
             receipt.copy(phase = ControlPhase.ACCEPTED, accepted = snapshot(focus = 0f), requested = snapshot(focus = 0f)), false).value)
     }
+    @Test fun autoFocusIsApproximateAndMissingDataNeverInventsAValue() {
+        val af = SensorControlValue("AF", modeTag = "AF", stateTag = "受付済")
+        val measured = focusAutoPresentation(af, 2.04f, 10f)
+        assertEquals("2", measured.value)
+        assertEquals("LU", measured.unit)
+        assertEquals("AF 近似", measured.modeTag)
+        assertEquals("受付済", measured.stateTag)
+        val infinity = focusAutoPresentation(af, 0f, 10f)
+        assertEquals("∞", infinity.value)
+        for (value in listOf(null, Float.NaN, -1f, 11f)) {
+            val waiting = focusAutoPresentation(af, value, 10f)
+            assertEquals("?", waiting.value)
+            assertEquals("AF 待機", waiting.modeTag)
+        }
+        val mf = SensorControlValue("4.2", "LU", "MF")
+        assertEquals(mf, focusAutoPresentation(mf, 1f, 10f))
+    }
+
+    @Test fun focusDialSeedsFromObservationButOnlyNumericSelectionRequestsManual() {
+        val options = focusControlOptions(10f, null)
+        val seed = focusAutoSeed(null, 2.04f)
+        assertEquals(seed, focusAutoSeed(seed, 8f)) // Later AF frames cannot move the active ruler.
+        assertEquals(20, focusDialIndex(options, null, seed))
+        assertEquals(50, focusDialIndex(options, 5f, seed)) // Latest manual intent wins.
+        assertEquals(-1, focusDialIndex(options, null, null))
+        assertEquals("∞", focusDialLabels(options).first())
+        assertFalse(focusDialLabels(options).contains("AF"))
+        val requests = mutableListOf<Float>()
+        val selected = focusDialIndex(options, null, seed)
+        assertEquals(selected, dispatchControlScaleSelection(options.size, selected, selected, true,
+            { true }, allowCurrent = true) { requests.add(options[it]) })
+        assertEquals(listOf(2f), requests)
+        assertNull(dispatchControlScaleSelection(options.size, selected, selected, true,
+            { false }, allowCurrent = true) { requests.add(options[it]) })
+        assertEquals(listOf(2f), requests)
+    }
+
+    @Test fun autofocusDragContinuesAfterFirstDetentInvalidatesObservation() {
+        val options = focusControlOptions(10f, null)
+        var fresh = true
+        var intent: ControlSnapshot? = null
+        var current = 20
+        val selected = mutableListOf<Float>()
+        val drag = controlDetentDrag(options.size, ControlDetentState(current), 72f, 24f)
+        for (target in drag.selections) {
+            val next = dispatchControlScaleSelection(options.size, current, target, true,
+                { focusDialInputAllowed(intent, null, fresh) }) { index ->
+                selected.add(options[index])
+                intent = ControlSnapshot(overrides = SensorOverrides(focusDistance = options[index]))
+                fresh = false // Core invalidates AF immediately on the first MF offer.
+            } ?: break
+            current = next
+        }
+        assertEquals(listOf(options[21], options[22], options[23]), selected)
+        assertFalse(focusDialInputAllowed(null, null, false))
+        assertTrue(focusDialInputAllowed(null, 2f, false))
+        // A newer AUTO intent takes precedence over old accepted MF state.
+        assertFalse(focusDialInputAllowed(ControlSnapshot(), 2f, false))
+    }
+
+    @Test fun autofocusCurrentChoiceIsAcceptedOnceBeforeRecomposition() {
+        val options = focusControlOptions(10f, null)
+        var intent: ControlSnapshot? = null
+        var fresh = true
+        var dispatched = 20
+        val requests = mutableListOf<Float>()
+        fun select(target: Int): Int? = dispatchControlScaleSelection(options.size, dispatched, target, true,
+            { focusDialInputAllowed(intent, null, fresh) },
+            allowCurrent = focusDialAutoActive(intent, null)) { index ->
+                requests.add(options[index])
+                intent = ControlSnapshot(overrides = SensorOverrides(focusDistance = options[index]))
+                fresh = false
+            }?.also { dispatched = it }
+        assertEquals(20, select(20))
+        assertNull(select(20)) // A second event cannot issue a request or trigger selection haptics.
+        assertEquals(21, select(21)) // A different detent remains available immediately.
+        assertEquals(listOf(options[20], options[21]), requests)
+        assertTrue(focusDialAutoActive(ControlSnapshot(), 2f)) // Latest AUTO intent supersedes accepted MF.
+    }
+
 }

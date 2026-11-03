@@ -132,6 +132,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     var controlReceipt by mutableStateOf(ControlReceipt()); private set
     var sample by mutableStateOf<CaptureSample?>(null); private set
     var previewExposureSamples by mutableStateOf(PreviewExposureSamples()); private set
+    private var autofocusObservations by mutableStateOf(AutofocusObservations())
+    val previewFocusSample get() = autofocusObservations.sample
     var photoStage by mutableStateOf(PhotoStage.IDLE); private set
     var lastFailure by mutableStateOf<String?>(null); private set
     var thermalSeverity by mutableIntStateOf(-1); private set
@@ -234,6 +236,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     }
     private fun expireControl(token: ControlToken) {
         if (!controlOperation.expire(token, SystemClock.elapsedRealtime())) return
+        autofocusObservations = autofocusObservations.suspend()
         clearControlDeadline(); clearLiveExposure(keepTarget = true)
         val capturePreparation = runtimeTarget == RuntimeTarget.CAPTURE
         busy = false; controlReady = false
@@ -250,6 +253,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         return true
     }
     private fun beginControl(target: ControlSnapshot, kind: RuntimeTarget = RuntimeTarget.GENERAL) {
+        if (target.overrides.focusDistance != operationReceipt.accepted?.overrides?.focusDistance)
+            autofocusObservations = autofocusObservations.suspend()
         invalidateControl()
         runtimeTarget = kind
         runtimeRevision = stillExposure?.target?.revision ?: 0L
@@ -271,6 +276,9 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         clearControlDeadline(); controlOperation.finish(token)
         sampleBurstUntilMs = SystemClock.elapsedRealtime() + 2500
         val accepted = operationReceipt.requested ?: return
+        autofocusObservations = autofocusObservations.controlsAccepted(epoch, SystemClock.elapsedRealtime(),
+            accepted.overrides.focusDistance, editControls.overrides.focusDistance,
+            selectedReport?.autoFocusAvailable == true)
         exposureDurations.accepted(selectedId, accepted.exposure?.exposureNs)
         operationReceipt(operationReceipt.copy(epoch = epoch, phase = ControlPhase.ACCEPTED,
             accepted = accepted, acceptedAtMs = SystemClock.elapsedRealtime(), detail = when (runtimeTarget) {
@@ -288,6 +296,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     }
     private fun offerLiveControls(target: ControlSnapshot) {
         if (!canSelectLiveControls || target == editControls) return
+        if (target.overrides.focusDistance != editControls.overrides.focusDistance)
+            autofocusObservations = autofocusObservations.suspend()
         stillResumeIntent.clear()
         cancelPreviewWait()
         liveControls.offer(epoch, target)
@@ -361,6 +371,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         operationReceipt(operationReceipt.failure(e.message ?: operation,
             operation.contains("validation") || operation.contains("input")))
         if (operationReceipt.phase == ControlPhase.UNKNOWN) {
+            autofocusObservations = autofocusObservations.suspend()
             controlReady = false; busy = false; invalidateControl(); clearLiveExposure(keepTarget = true)
         }
         event("ERROR $operation ${e.javaClass.simpleName}: ${e.message}")
@@ -511,6 +522,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             val current = stillExposure
             if (!closed && generation == epoch && current?.target?.revision == revision &&
                 current.phase in setOf(StillExposurePhase.PREVIEW_APPLYING, StillExposurePhase.RESTORING)) {
+                autofocusObservations = autofocusObservations.suspend()
                 stillExposure = current.unknown("preview実測の確認期限を超過。保存結果とは別・AUTOまたは接続停止で復旧")
                 invalidateControl(); clearLiveExposure(keepTarget = true)
                 controlReady = false; busy = false; lastFailure = stillExposure?.detail
@@ -644,6 +656,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             return
         }
         if (controlOperation.token != null || exposureOperationPending) {
+            autofocusObservations = autofocusObservations.suspend()
             invalidateControl(); clearLiveExposure(keepTarget = true); busy = false
             controlReady = false
             controlReceipt = controlReceipt.copy(phase = ControlPhase.UNKNOWN, acceptedAtMs = null, detail = "背景化により送信/応答待ちを終了・AUTOまたは再接続で復旧")
@@ -895,6 +908,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         clearStillExposure(); invalidateControl(); clearLiveExposure()
         lastPreviewMinFrameNs = null
         val generation = ++epoch
+        autofocusObservations = AutofocusObservations(epoch = epoch)
         previewExposureSamples = PreviewExposureSamples(epoch = epoch)
         sample = null; acceptedEv = null; photoStage = PhotoStage.IDLE; focusFeedback = null
         outputOrientation = outputOrientation.copy(applied = null)
@@ -953,6 +967,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             if (mode == CaptureMode.CINE) builder.setResolutionSelector(ResolutionSelector.Builder()
                 .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY).build())
             val exposureMailbox = PreviewExposureMailbox()
+            val focusMaximum = selectedReport?.overrides?.manualFocusMaximum
+            val focusMailbox = AutofocusObservationMailbox(focusMaximum)
             val resultCallback = object : CameraCaptureSession.CaptureCallback() {
                 override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
                     // Observe only: never operate CameraX's CameraDevice / session.
@@ -984,6 +1000,13 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                             listOfNotNull(pending.iso, pending.shutter).distinctBy { it.frame }.sortedBy { it.frame }.forEach {
                                 previewExposureSamples = previewExposureSamples.observe(it, epoch)
                             }
+                        }
+                    }
+                    if (previewIntent && focusMailbox.offer(observation)) main.execute {
+                        val pending = focusMailbox.drain()
+                        if (generation == epoch && !closed && pending != null) {
+                            autofocusObservations = autofocusObservations.observe(pending, epoch,
+                                SystemClock.elapsedRealtime(), focusMaximum)
                         }
                     }
                     // Diagnostics and acceptance observations have their own sampling budget.
@@ -1092,6 +1115,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                 if (generation == epoch && !closed) {
                     log.write("CAMERA_STATE id=$id type=${state.type} error=${state.error?.code}")
                     state.error?.let {
+                        autofocusObservations = autofocusObservations.suspend()
                         if (controlOperation.token != null || exposureOperationPending) {
                             invalidateControl(); clearLiveExposure(keepTarget = true); busy = false
                         }
@@ -1121,6 +1145,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         if (recordingBusy) { pendingStop = true; cine.stop("preview Stop"); return }
         invalidateControl(); clearLiveExposure()
         ++epoch
+        autofocusObservations = AutofocusObservations(epoch = epoch)
         previewExposureSamples = PreviewExposureSamples(epoch = epoch)
         sample = null; acceptedEv = null; photoStage = PhotoStage.IDLE; focusFeedback = null
         outputOrientation = outputOrientation.copy(applied = null)
@@ -1441,6 +1466,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         clearStillExposure()
         invalidateControl(); clearLiveExposure()
         closed = true; controlReady = false; activeCaptureToken = null; ++epoch
+        autofocusObservations = AutofocusObservations(epoch = epoch)
         cine.stop("activity destroyed")
         try { removeThermalListener?.invoke(); removeThermalListener = null }
         catch (failure: Exception) { log.write("THERMAL_REMOVE_ERROR ${failure.message}") }
