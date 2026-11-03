@@ -57,6 +57,8 @@ def main(argv: list[str] | None = None) -> int:
         choice = chosen(sid)
         dng, edited = args.livepicture / scene["source"], args.livepicture / scene["edited"]
         reference = r.load_dng(dng)
+        # Uncorrected original: the fixed baseline decode (camera WB, no exposure lift, no look).
+        k.save_srgb(reference, out / f"{sid}-original.jpg")
         mired = cp.WB_LEVELS[choice["wb"]]
         decoded = sk.decode(dng, reference, r.shifted_multipliers(dng, mired, 0.)[0] if mired else None)
         values = render(decoded, scene, look, choice)
@@ -71,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
             image = r.resize_linear(image, (values.shape[1], values.shape[0])) if image.shape[:2] != values.shape[:2] else image
             k.save_srgb(image, out / f"{sid}-{ref}.jpg")
         record[sid] = {"choice": choice, "stats": k.measure(values, scene["focus"]), "tone": cp.tone_stats(values)}
-        cells = [("r5", "第5回①"), ("chosen", "第7回の確定版（sRGB）")] + ([("chosen-p3", "確定版（Display P3）")] if has_p3 else []) \
+        cells = [("original", "補正前（RAWそのまま）"), ("r5", "第5回①"), ("chosen", "第7回の確定版（sRGB）")] + ([("chosen-p3", "確定版（Display P3）")] if has_p3 else []) \
             + [("edited", "本人の編集")]
         rows.append(f"<h2>{sid.upper()}　<small>{' / '.join(f'{k_}:{v}' for k_, v in choice.items())}</small></h2>"
                     f"<div class='row' style='grid-template-columns:repeat({len(cells)},1fr)'>"
@@ -82,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
         "<!doctype html><html lang='ja'><meta charset='utf-8'><title>第7回 確定版</title><style>"
         "body{background:#16181a;color:#eee;font:15px/1.7 system-ui,sans-serif;margin:0 auto;max-width:1800px;padding:20px}"
         ".row{display:grid;gap:8px}figure{margin:0}img{width:100%;display:block}figcaption{font-size:13px;color:#cdd}"
-        "</style><h1>第7回 確定版（非公開）</h1><p>P2・I1・S2・E2・K1・W1（BのみI0・W0）。第5回①と本人の編集を並べる。"
+        "</style><h1>第7回 確定版（非公開）</h1><p>P2・I1・S2・E2・K1・W1（BのみI0・W0）。補正前の元画像（固定基準の現像、露出の持ち上げなし）、第5回①、本人の編集を並べる。"
         "Display P3版はP3対応の画面とブラウザで色の差が出る。</p>" + "".join(rows), encoding="utf-8")
     (out / "recipe.json").write_text(json.dumps({"environment": b.versions(), "recipe": RECIPE, "look": look,
                                                  "levels": {"profile": k.PROFILE_LEVELS, "immersion": k.IMMERSION_LEVELS,
