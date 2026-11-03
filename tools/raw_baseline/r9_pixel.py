@@ -224,6 +224,8 @@ def decode_pixel(path: Path, gain_map: bool = True, look_table: bool = True, mir
     camera = r.resize_linear(camera, r.fit_size(camera.shape[1], camera.shape[0])).astype(np.float64)
     fm = weight * np.array(tags["fm1"]).reshape(3, 3) + (1 - weight) * np.array(tags["fm2"]).reshape(3, 3)
     xyz_d50 = camera @ fm.T  # white-balanced camera RGB -> XYZ(D50); FM maps [1,1,1] to the D50 white
+    # DNG SDK order: BaselineExposure is applied before the value-dependent LookTable.
+    xyz_d50 = xyz_d50 * 2 ** tags.get("baseline_exposure", (0.,))[0]
     if look_table and "look" in tags:
         prophoto = xyz_d50 @ np.linalg.inv(r.PROPHOTO_TO_XYZ_D50).T
         prophoto = apply_look_table(prophoto, np.array(tags["look"], dtype=np.float64), tuple(tags["look_dims"]),

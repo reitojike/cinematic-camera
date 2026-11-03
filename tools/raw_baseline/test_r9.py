@@ -18,6 +18,20 @@ class WhiteTests(unittest.TestCase):
         np.testing.assert_allclose(neutral, expected / expected.max(), atol=1e-9)
 
 
+class IlluminantOrderTests(unittest.TestCase):
+    def test_weight_is_independent_of_illuminant_order(self):
+        a_first = {"illum1": (17,), "illum2": (21,)}
+        d65_first = {"illum1": (21,), "illum2": (17,)}
+        for cct in (2500., 4000., 5000., 7000.):
+            self.assertAlmostEqual(r.profile_weight(cct, a_first), 1 - r.profile_weight(cct, d65_first), places=9)
+        self.assertAlmostEqual(r.profile_weight(4000., d65_first), .51, places=2)
+
+    def test_weight_is_clamped_outside_the_illuminants(self):
+        tags = {"illum1": (21,), "illum2": (17,)}
+        self.assertEqual(r.profile_weight(9000., tags), 1.)
+        self.assertEqual(r.profile_weight(2000., tags), 0.)
+
+
 class LookTableTests(unittest.TestCase):
     def test_identity_table_keeps_pixels(self):
         dims = (6, 4, 3)
