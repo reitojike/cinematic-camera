@@ -5,6 +5,10 @@
 **Status**: Draft
 **Input**: [Issue #47 の追加受入条件](https://github.com/reitojike/cinematic-camera/issues/47#issuecomment-6592453274)。v15の既存案内4点の確認と、今回の6件の不具合の解消は別に扱う。
 
+## 後続の仕様変更
+
+US3/FR-005/SC-003のEV/WB pending入力拒否とMF draft適用/取消は、[013 ライブ操作の最新意図](../013-live-control-intent/spec.md) FR-003〜006へ置換する。API同時1要求はUI入力を禁止せず、MFは操作中の即時previewへ変更する。AUTOの正常観測集約と主値可読性は013 FR-001/002で補正し、TTL・MANUAL/RAW target分離は維持する。その他の契約は維持し、013はmerge前にmainへ適用済みとは扱わない。
+
 ## User Scenarios & Testing
 
 ### User Story 1 - 露出の主値を読み違えず撮影する (Priority: P1)

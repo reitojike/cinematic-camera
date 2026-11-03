@@ -15,18 +15,18 @@ class PreviewExposureSamplesTest {
         var state = PreviewExposureSamples().observe(frame(1, 100), 3)
         for (intent in listOf(CaptureSampleIntent.STILL_CAPTURE, CaptureSampleIntent.UNKNOWN)) {
             state = state.observe(frame(2, 200, SensorValues(400, 10_000_000), intent), 3)
-            assertEquals("約100", shown(state, CaptureKey.ISO, 200).value)
+            assertEquals("100", shown(state, CaptureKey.ISO, 200).value)
         }
         state = state.observe(frame(3, 600, SensorValues(exposureNs = 10_000_000)), 3)
-        assertEquals("約100", shown(state, CaptureKey.ISO, 600).value)
-        assertEquals("約1/100", shown(state, CaptureKey.SHUTTER, 600).value)
+        assertEquals("100", shown(state, CaptureKey.ISO, 600).value)
+        assertEquals("1/100", shown(state, CaptureKey.SHUTTER, 600).value)
         assertEquals(100L, state.iso!!.receivedAtMs)
         assertEquals(600L, state.shutter!!.receivedAtMs)
         state = state.observe(frame(4, 1100, SensorValues(200), CaptureSampleIntent.VIDEO_RECORD), 3)
-        assertEquals("約200", shown(state, CaptureKey.ISO, 1100).value)
-        assertEquals("約1/100", shown(state, CaptureKey.SHUTTER, 1100).value)
+        assertEquals("200", shown(state, CaptureKey.ISO, 1100).value)
+        assertEquals("1/100", shown(state, CaptureKey.SHUTTER, 1100).value)
         state = state.observe(frame(5, 1600, SensorValues(400, 10_000_000)), 3)
-        assertEquals("約400", shown(state, CaptureKey.ISO, 1600).value)
+        assertEquals("400", shown(state, CaptureKey.ISO, 1600).value)
     }
 
     @Test fun missingAxisCannotBorrowAnotherAxesTimestampAndExpiresAtOriginalBoundary() {
@@ -49,6 +49,6 @@ class PreviewExposureSamplesTest {
         assertNull(reset.iso); assertNull(reset.shutter)
         assertEquals(ExposureValueFreshness.MISSING, shown(reset, CaptureKey.ISO, 200, epoch = 4).freshness)
         val current = reset.observe(frame(1, 300, SensorValues(200, 10_000_000), epoch = 4), 4)
-        assertEquals("約200", shown(current, CaptureKey.ISO, 301, epoch = 4).value)
+        assertEquals("200", shown(current, CaptureKey.ISO, 301, epoch = 4).value)
     }
 }

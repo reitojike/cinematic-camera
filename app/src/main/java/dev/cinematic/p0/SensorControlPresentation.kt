@@ -36,6 +36,33 @@ data class SensorControlValue(
     val affected: Boolean = false,
 )
 
+/** The latest logical intent is independent of an older API acknowledgement and sensor results. */
+fun liveFocusPresentation(acceptedFocus: Float?, intent: ControlSnapshot?, receipt: ControlReceipt,
+    pending: Boolean): SensorControlValue {
+    if (intent == null) return focusPresentation(acceptedFocus, null, receipt).let {
+        if (acceptedFocus == 0f && it.modeTag == "MF") it.copy(value = "∞", unit = "") else it
+    }
+    val focus = intent.overrides.focusDistance
+    val changed = receipt.accepted == null || focus != receipt.accepted.overrides.focusDistance ||
+        (pending || receipt.phase == ControlPhase.UNKNOWN) && receipt.requested != null && focus != receipt.requested.overrides.focusDistance
+    val state = sensorFieldState(if (pending) ControlPhase.PENDING else receipt.phase, changed, receipt.accepted != null)
+    if (focus == null) return SensorControlValue("AF", modeTag = "AF", stateTag = state.first, tone = state.second, affected = changed)
+    val text = focusDistanceText(focus)
+        ?: return SensorControlValue("—", stateTag = "不明", tone = SensorControlTone.UNKNOWN, affected = changed)
+    return SensorControlValue(if (focus == 0f) "∞" else text, if (focus == 0f) "" else "LU", "MF", state.first, state.second, changed)
+}
+
+fun liveEvPresentation(acceptedIndex: Int?, step: Double?, intent: ControlSnapshot?, receipt: ControlReceipt,
+    pending: Boolean): SensorControlValue {
+    val index = intent?.evIndex ?: acceptedIndex
+    val text = if (index == null || step == null || !step.isFinite() || step <= 0.0) "—"
+        else String.format(Locale.ROOT, "%+.1f", index * step)
+    val changed = intent?.evIndex != null && (intent.evIndex != acceptedIndex ||
+        (pending || receipt.phase == ControlPhase.UNKNOWN) && receipt.requested != null && intent.evIndex != receipt.requested.evIndex)
+    val state = sensorFieldState(if (pending) ControlPhase.PENDING else receipt.phase, changed, acceptedIndex != null)
+    return SensorControlValue(text, stateTag = state.first, tone = state.second, affected = changed)
+}
+
 /** Lens units only. A tiny positive value must never round to the infinity endpoint, 0. */
 fun focusDistanceText(value: Float?): String? {
     if (value == null || !value.isFinite() || value < 0f) return null
@@ -118,6 +145,18 @@ fun whiteBalancePresentation(currentMode: Int?, receipt: ControlReceipt): WhiteB
         if (accepted == null) "—" else whiteBalanceShortLabel(accepted.overrides.whiteBalance),
         state.first, state.second, changed,
     )
+}
+
+fun liveWhiteBalancePresentation(currentMode: Int?, intent: ControlSnapshot?, receipt: ControlReceipt,
+    pending: Boolean): WhiteBalancePresentation {
+    if (intent == null) return whiteBalancePresentation(currentMode, receipt)
+    val changed = receipt.accepted == null || intent.overrides.whiteBalance != receipt.accepted.overrides.whiteBalance ||
+        (pending || receipt.phase == ControlPhase.UNKNOWN) && receipt.requested != null && intent.overrides.whiteBalance != receipt.requested.overrides.whiteBalance
+    val selected = intent.overrides.whiteBalance
+    val state = sensorFieldState(if (pending) ControlPhase.PENDING else receipt.phase, changed, receipt.accepted != null)
+    return WhiteBalancePresentation(selected, true, whiteBalanceShortLabel(selected), whiteBalanceShortLabel(selected),
+        receipt.accepted?.let { whiteBalanceShortLabel(it.overrides.whiteBalance) } ?: "—",
+        state.first, state.second, changed)
 }
 
 private fun sensorFieldState(phase: ControlPhase, changed: Boolean, acceptedKnown: Boolean): Pair<String, SensorControlTone> {

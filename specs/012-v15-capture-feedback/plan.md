@@ -5,6 +5,8 @@
 
 ## Summary
 
+**後続設計**: 本planのEV/WB busyによる選択拒否・MF適用時のみ送信は[013 plan](../013-live-control-intent/plan.md)の単一logical intent queueとMF即時previewへ置換する。AUTO正常観測はdiagnostics throttle前の軸別集約へ補正する。本文は012の設計境界として保持し、013の採用範囲と競合する箇所は013を優先する。
+
 正常なAUTO実測を軸別に保持し、MANUAL主値を最新撮影targetへ切り替える。シャッターの内円を58/48dpへ、EV/WB/MFの目盛りを既存ISO/SS共通選択へ統一する。Android自動回転の読み取りでUI向きだけを制御し、物理出力向きと録画開始固定を維持する。
 
 ## Technical Context

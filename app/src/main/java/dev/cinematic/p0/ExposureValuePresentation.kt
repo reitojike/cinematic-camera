@@ -13,6 +13,8 @@ data class ExposureValuePresentation(
     val contentDescription: String,
     val freshness: ExposureValueFreshness,
     val source: ExposureValueSource = ExposureValueSource.PREVIEW_ACTUAL,
+    /** Approximation never consumes the numeric value's reading width. */
+    val qualifier: String = "",
 )
 
 fun exposureValuePresentation(
@@ -21,7 +23,14 @@ fun exposureValuePresentation(
     captureTarget: ManualExposure? = null,
 ): ExposureValuePresentation {
     fun unavailable(reason: ExposureValueFreshness, detail: String) =
-        ExposureValuePresentation("—", "", "${key.name} プレビュー実測 $detail", reason)
+        ExposureValuePresentation("—", if (key == CaptureKey.SHUTTER) "s" else "", "${key.name} プレビュー実測 $detail", reason,
+            qualifier = when (reason) {
+                ExposureValueFreshness.STALE -> "期限切れ"
+                ExposureValueFreshness.WRONG_EPOCH -> "旧接続"
+                ExposureValueFreshness.NOT_PREVIEW -> "対象外"
+                ExposureValueFreshness.NO_CHOICES -> "候補なし"
+                else -> "実測未確認"
+            })
     if (key !in setOf(CaptureKey.ISO, CaptureKey.SHUTTER)) return unavailable(ExposureValueFreshness.INVALID, "対象外")
     if (captureTarget != null) {
         if (captureTarget.iso <= 0 || captureTarget.exposureNs <= 0L) return unavailable(ExposureValueFreshness.INVALID, "撮影設定未確認")
@@ -30,7 +39,7 @@ fun exposureValuePresentation(
                 ?: java.math.BigDecimal.valueOf(captureTarget.exposureNs, 9).stripTrailingZeros().toPlainString())
         val unit = if (key == CaptureKey.SHUTTER) "s" else ""
         return ExposureValuePresentation(value, unit, "${key.name} $value $unit、撮影設定値。実測・保存ファイルの露出とは別",
-            ExposureValueFreshness.FRESH, ExposureValueSource.CAPTURE_TARGET)
+            ExposureValueFreshness.FRESH, ExposureValueSource.CAPTURE_TARGET, "設定値")
     }
     if (frame == null) return unavailable(ExposureValueFreshness.MISSING, "未取得")
     if (frame.epoch != currentEpoch) return unavailable(ExposureValueFreshness.WRONG_EPOCH, "旧世代")
@@ -46,18 +55,32 @@ fun exposureValuePresentation(
             ?: return unavailable(ExposureValueFreshness.INVALID, "ISO未確認")
         val nearest = choices.iso.filter { it > 0 }.minByOrNull { abs(ln(it.toDouble() / actual)) }
             ?: return unavailable(ExposureValueFreshness.NO_CHOICES, "標準ISO候補なし")
-        value = "約$nearest"; unit = ""
+        value = nearest.toString(); unit = ""
     } else {
         val actual = frame.actual.exposureNs?.takeIf { it > 0L }
             ?: return unavailable(ExposureValueFreshness.INVALID, "露光時間未確認")
         val nearest = choices.shutter.filter { it.exposureNs > 0L && it.label.isNotBlank() }
             .minByOrNull { abs(ln(it.exposureNs.toDouble() / actual)) }
             ?: return unavailable(ExposureValueFreshness.NO_CHOICES, "標準シャッター候補なし")
-        value = "約${nearest.label.removeSuffix(" s")}"; unit = "s"
+        value = nearest.label.removeSuffix(" s"); unit = "s"
     }
     val origin = if (compensatedPreview) "補償プレビューの実測" else "待機・録画プレビューの実測"
     return ExposureValuePresentation(value, unit,
-        "${key.name} $value $unit、${origin}を標準候補へ近似表示。撮影targetではなく表示だけの丸め", ExposureValueFreshness.FRESH)
+        "${key.name} 約$value $unit、${origin}を標準候補へ近似表示。撮影targetではなく表示だけの丸め", ExposureValueFreshness.FRESH,
+        qualifier = "近似実測")
+}
+
+/** Compact diagnostics shared by the screen and verification report; never stores new observations. */
+fun exposureDisplayDiagnostic(key: CaptureKey, samples: PreviewExposureSamples, currentEpoch: Int, nowMs: Long,
+    choices: ExposureChoices, bound: Boolean, captureTarget: ManualExposure? = null): String {
+    val sample = samples.sample(key)
+    val observation = exposureValuePresentation(key, sample.takeIf { bound }, currentEpoch, nowMs, choices)
+    val display = exposureValuePresentation(key, sample.takeIf { bound }, currentEpoch, nowMs, choices,
+        captureTarget = captureTarget.takeIf { bound })
+    val age = sample?.receivedAtMs?.takeIf { it >= 0 && nowMs >= it }?.let { (nowMs - it).toString() } ?: "—"
+    return "display ${key.name}: source=${display.source} freshness=${display.freshness} " +
+        "frame=${sample?.frame ?: "—"} epoch=${sample?.epoch ?: "—"}/$currentEpoch " +
+        "sourceAtMs=${sample?.receivedAtMs ?: "—"} ageMs=$age observation=${observation.freshness}"
 }
 
 /** Latest user intent wins over older API acceptance; runtime preview compensation is never a target. */
