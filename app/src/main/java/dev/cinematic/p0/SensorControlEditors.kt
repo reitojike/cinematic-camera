@@ -40,6 +40,11 @@ internal fun dispatchSensorShortcut(enabled: Boolean, canSelect: () -> Boolean, 
     return true
 }
 
+internal fun dispatchFocusAuto(enabled: Boolean, canSelect: () -> Boolean, manualNow: () -> Boolean,
+    onAutofocus: () -> Unit): Boolean = dispatchSensorShortcut(enabled, canSelect) {
+    if (manualNow()) onAutofocus()
+}
+
 /** A rotated word occupies the header's height; fit measured glyphs without changing the tap target. */
 @Composable
 internal fun SensorShortcutText(label: String, modifier: Modifier, horizontal: Boolean) {
@@ -77,9 +82,10 @@ fun FocusAutofocusAction(
     selectedFocus: Float?, autofocusSupported: Boolean, enabled: Boolean, onAutofocus: () -> Unit,
     modifier: Modifier = Modifier, textModifier: Modifier = Modifier, horizontal: Boolean = false,
     canSelect: () -> Boolean = { true },
+    manualNow: () -> Boolean = { selectedFocus != null },
 ) {
-    val available = enabled && autofocusSupported && selectedFocus != null
-    TextButton(onClick = { dispatchSensorShortcut(available, canSelect, onAutofocus) },
+    val available = enabled && autofocusSupported
+    TextButton(onClick = { dispatchFocusAuto(available, canSelect, manualNow, onAutofocus) },
         enabled = available, modifier = modifier.heightIn(min = 44.dp).semantics {
             contentDescription = if (autofocusSupported) "AFに戻す。合焦の実測結果とは別" else "AF非対応"
         }, contentPadding = PaddingValues(horizontal = 8.dp)) {
