@@ -137,6 +137,15 @@ class OutputIsolationTests(unittest.TestCase):
                 e.main(["--adopted", str(base / "inputs"), "--r5", str(base / "r5"), "--output", alias + ".json"])
             self.assertEqual(list((base / "inputs").iterdir()), [])
 
+    def test_exposure_output_inside_r5_is_rejected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder).resolve()
+            for name in ("inputs", "r5"):
+                (base / name).mkdir()
+            with self.assertRaises(SystemExit):
+                e.main(["--adopted", str(base / "inputs"), "--r5", str(base / "r5"), "--output", str(base / "r5" / "rule.json")])
+            self.assertEqual(list((base / "r5").iterdir()), [])
+
 
 class ExposureTests(unittest.TestCase):
     def test_crossval_exact_rule(self):

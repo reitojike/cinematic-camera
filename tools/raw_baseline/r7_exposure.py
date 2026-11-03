@@ -84,9 +84,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--r5", type=Path, required=True, help="round-5 folder (reproducer/settings.json)")
     parser.add_argument("--output", type=Path, required=True, help="new JSON path outside inputs")
     args = parser.parse_args(argv)
-    adopted = b.root_path(args.adopted)
-    output = r.resolve_output(args.output, [adopted])  # resolves '..' and links before the overlap check
-    look = dict(json.loads((b.root_path(args.r5) / "reproducer" / "settings.json").read_text(encoding="utf-8"))["looks"]["clear"],
+    adopted, r5 = b.root_path(args.adopted), b.root_path(args.r5)
+    output = r.resolve_output(args.output, [adopted, r5])  # resolves '..' and links before the overlap check
+    look = dict(json.loads((r5 / "reproducer" / "settings.json").read_text(encoding="utf-8"))["looks"]["clear"],
                 rgb=[1., 1., 1.])
     # Pair by file stem after an optional "<number>-" ordering prefix.
     stem = lambda path: re.sub(r"^\d+-", "", path.stem).casefold()
