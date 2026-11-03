@@ -95,6 +95,23 @@ rawpy 0.28.0 / NumPy 2.5.4 / Pillow 13.0.0を公式PyPIの通常版CPython3.15 W
 - 参照画像やプロファイルのデータは取り込まず、自動fitもしない。
 - 出力は入力外の未作成folderに限り、入力の前後hashを照合する。
 
+## 第9回のPixel 9a対応（r9_*.py）
+
+[Issue #73](https://github.com/reitojike/cinematic-camera/issues/73)の検討用CLI。Pixel 9a の DNG を DNG 仕様どおりに現像し、第7回の確定ルックをかける。
+
+| スクリプト | 内容 |
+|---|---|
+| `r9_pixel.py` | Pixel の DNG の現像。撮影時の WB（AsShotWhiteXY、または AsShotNeutral）、ForwardMatrix の補間、ProfileLookTable（あれば）、生データへの GainMap（周辺減光・色むらの補正）を扱う |
+| `r9_app.py` | 本アプリ（DngCreator）の DNG と Google カメラ（HDR+）の DNG を撮影順で組にし、同じ処理とルックで並べる |
+
+- 本アプリの DNG は1枚撮り・10bitで、WB は AsShotNeutral、LookTable はない。Google カメラの HDR+ は合成 RAW で、WB は AsShotWhiteXY、Google の LookTable がある。どちらにも対応する。
+- GainMap はベイヤーの4色ごとにあり、当てないと白が緑寄りになる。レンズの歪み補正（WarpRectilinear）は色の検証に不要なため適用しない。
+- 露出はステージ写真から学んだ規則による仮のもので、Android の既定値ではない。
+
+```powershell
+& $rawPython tools/raw_baseline/r9_app.py --app $appDngFolder --google $googleRawFolder --r5 $round5Folder --output $newPrivateOutput
+```
+
 ## 公式根拠とlicense
 
 - [rawpy 0.28.0 PyPI](https://pypi.org/project/rawpy/0.28.0/)、[Params API](https://letmaik.github.io/rawpy/api/rawpy.Params.html)、[LibRaw output parameters](https://www.libraw.org/docs/API-datastruct.html)。処理条件はCLI実装で固定しmanifestに記録する。
