@@ -212,10 +212,11 @@ fun CaptureControlKey(
     tagColor: Color = ScaleMuted, unavailableReason: String? = null, onUnavailable: (() -> Unit)? = null,
     statusDescription: String = "",
     widthSamples: List<String> = listOf(value),
+    displayLabel: String = label,
 ) {
     val density = LocalDensity.current
     val textMeasurer = rememberTextMeasurer()
-    val heading = if (unit.isEmpty()) label else "$label · $unit"
+    val heading = if (unit.isEmpty()) displayLabel else "$displayLabel · $unit"
     val smallStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp)
     val valueStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 16.sp, fontWeight = FontWeight.Medium)
     val headingSize = textMeasurer.measure(heading, style = smallStyle, maxLines = 1, softWrap = false).size
@@ -237,25 +238,33 @@ fun CaptureControlKey(
         Box(Modifier.align(Alignment.CenterEnd).width(1.dp).fillMaxHeight().background(Color.White.copy(alpha = .1f)))
         val availableSize = with(density) { IntSize(maxWidth.roundToPx(), maxHeight.roundToPx()) }
         val logicalRoom = if (horizontal) IntSize(availableSize.height, availableSize.width) else availableSize
-        val fontScale = remember(logicalRoom, heading, tag, value, widthSamples, density, textMeasurer) {
-            controlValueFontSize(1f) { scale ->
-            val h = textMeasurer.measure(heading, style = smallStyle.copy(fontSize = (11f * scale).sp), maxLines = 1, softWrap = false).size
-            val t = textMeasurer.measure(tag.ifEmpty { " " }, style = smallStyle.copy(fontSize = (11f * scale).sp), maxLines = 1, softWrap = false).size
-            val v = (widthSamples + value).map { textMeasurer.measure(it, style = valueStyle.copy(fontSize = (16f * scale).sp), maxLines = 1, softWrap = false).size }
-            val padding = with(density) { 16.dp.roundToPx() }
-            maxOf(h.width, t.width, v.maxOfOrNull { it.width } ?: 0) + padding <= logicalRoom.width &&
-                h.height + t.height + (v.maxOfOrNull { it.height } ?: 0) + padding <= logicalRoom.height
-            }
+        // Fit each line separately so a long status tag cannot make the numeric value smaller.
+        val sizes = remember(logicalRoom, heading, tag, value, density, textMeasurer) {
+            val padding = with(density) { 8.dp.roundToPx() }
+            val roomWidth = (logicalRoom.width - padding).coerceAtLeast(0)
+            val roomHeight = (logicalRoom.height - padding).coerceAtLeast(0)
+            fun fit(text: String, style: TextStyle, preferred: Float, maxHeight: Int): Float =
+                controlValueFontSize(preferred) { size ->
+                    val measured = textMeasurer.measure(text, style = style.copy(fontSize = size.sp), maxLines = 1, softWrap = false).size
+                    measured.width <= roomWidth && measured.height <= maxHeight
+                }
+            val smallHeight = roomHeight / 4
+            val headingSp = fit(heading, smallStyle, 11f, smallHeight)
+            val tagSp = fit(tag.ifEmpty { " " }, smallStyle, 11f, smallHeight)
+            val headingHeight = textMeasurer.measure(heading, style = smallStyle.copy(fontSize = headingSp.sp), maxLines = 1, softWrap = false).size.height
+            val tagHeight = textMeasurer.measure(tag.ifEmpty { " " }, style = smallStyle.copy(fontSize = tagSp.sp), maxLines = 1, softWrap = false).size.height
+            val valueSp = fit(value, valueStyle, 16f, (roomHeight - headingHeight - tagHeight).coerceAtLeast(0))
+            Triple(headingSp, valueSp, tagSp)
         }
         Column(Modifier.align(Alignment.Center).layout { measurable, constraints ->
             val content = measurable.measure(controlScaleTextConstraints(constraints, horizontal))
             val placement = controlScaleTextPlacement(IntSize(content.width, content.height), horizontal)
             layout(placement.size.width, placement.size.height) { content.place(placement.offset.x, placement.offset.y) }
-        }.graphicsLayer { rotationZ = rotation }.padding(horizontal = 8.dp, vertical = 4.dp),
-            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(heading, color = ScaleMuted, style = smallStyle.copy(fontSize = (11f * fontScale).sp), maxLines = 1, softWrap = false, overflow = TextOverflow.Visible)
-            Text(value, color = valueColor, style = valueStyle.copy(fontSize = (16f * fontScale).sp), maxLines = 1, softWrap = false, overflow = TextOverflow.Visible)
-            Text(tag.ifEmpty { " " }, color = tagColor, style = smallStyle.copy(fontSize = (11f * fontScale).sp), maxLines = 1, softWrap = false, overflow = TextOverflow.Visible)
+        }.graphicsLayer { rotationZ = rotation }.padding(horizontal = 4.dp, vertical = 2.dp),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(heading, color = ScaleMuted, style = smallStyle.copy(fontSize = sizes.first.sp), maxLines = 1, softWrap = false, overflow = TextOverflow.Visible)
+            Text(value, color = valueColor, style = valueStyle.copy(fontSize = sizes.second.sp), maxLines = 1, softWrap = false, overflow = TextOverflow.Visible)
+            Text(tag.ifEmpty { " " }, color = tagColor, style = smallStyle.copy(fontSize = sizes.third.sp), maxLines = 1, softWrap = false, overflow = TextOverflow.Visible)
         }
     }
 }

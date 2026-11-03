@@ -84,6 +84,11 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         (!busy || liveControlsPending) && (controlReady || liveControlsPending ||
         (stillExposure?.phase == StillExposurePhase.PREVIEW_APPLYING && controlReceipt.phase == ControlPhase.ACCEPTED))
     val canSelectExposure get() = canSelectLiveControls
+    private val controlRecovery get() = ControlRecoveryState(epoch, bound,
+        owner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED), closed,
+        busy, recordingBusy, activeCaptureToken != null, stillExposure?.ownsCapture == true,
+        controlReceipt.phase, stillExposure?.phase)
+    val canRecoverControls get() = controlRecovery.canReconnect(epoch)
     private val editControls get() = liveControlIntent ?: selectedControls
 
     private val preferences = CapturePreferences(context)
@@ -871,6 +876,13 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             if (clearFirst) await(control.clearCaptureRequestOptions(), ::apply) else apply()
         }
         if (cancelFocus) await(c.cameraControl.cancelFocusAndMetering(), ::clearAndApply) else clearAndApply()
+    }
+
+    /** Revalidate a rendered action; a new session must earn its own API receipt and preview readiness. */
+    fun recoverControls(expectedEpoch: Int) {
+        if (!controlRecovery.canReconnect(expectedEpoch)) return
+        event("CONTROL_RECOVERY requested; reconnecting current camera/mode, confirmation still required")
+        bind()
     }
 
     fun bind() {

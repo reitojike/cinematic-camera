@@ -77,7 +77,7 @@ fun CaptureStatusBar(
             captureStatusChips(input).forEach { chip -> StatusChip(chip, rotation, horizontal) }
         }
         TextButton(onClick = onSettings, enabled = settingsEnabled, modifier = Modifier.size(44.dp), contentPadding = PaddingValues(8.dp)) {
-            Icon(painterResource(android.R.drawable.ic_menu_preferences), contentDescription = "撮影設定",
+            Icon(painterResource(R.drawable.ic_settings), contentDescription = "撮影設定",
                 tint = if (settingsSelected) CaptureChromeTone.WARNING.color() else ChromeText,
                 modifier = Modifier.size(24.dp).graphicsLayer { rotationZ = rotation })
         }

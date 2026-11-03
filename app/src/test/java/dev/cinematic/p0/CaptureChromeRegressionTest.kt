@@ -78,28 +78,18 @@ class CaptureChromeRegressionTest {
         assertEquals(listOf(2), received)
     }
 
-    @Test fun keyRailKeepsAllSixInEqualRowsAtNarrowAndLargeTextWidths() {
-        for ((width, fontScale) in listOf(320f to 1f, 480f to 1.3f, 800f to 2f)) {
-            val rows = captureKeyRows(width, fontScale)
-            assertEquals(listOf(3, 3), rows.map { it.size })
-            assertEquals(CaptureKey.entries.toList(), rows.flatten())
-        }
-        for ((width, fontScale) in listOf(600f to 1f, 780f to 1.3f, 1200f to 2f)) {
-            val rows = captureKeyRows(width, fontScale)
-            assertEquals(listOf(6), rows.map { it.size })
-            assertEquals(CaptureKey.entries.toList(), rows.flatten())
-        }
+    @Test fun keyRailKeepsSixKeysInOneRowAndUsesOnlyVisualShutterAbbreviation() {
+        val rows = captureKeyRows()
+        assertEquals(listOf(6), rows.map { it.size })
+        assertEquals(CaptureKey.entries.toList(), rows.single())
+        assertEquals("SS", captureKeyVisualLabel(CaptureKey.SHUTTER))
+        assertEquals("ISO", captureKeyVisualLabel(CaptureKey.ISO))
+        assertEquals("SHUTTER", CaptureKey.SHUTTER.name)
     }
 
-    @Test fun shortPreviewReservesRulerSpaceAndKeepsAllKeysInOneRow() {
-        val rows = captureKeyRows(320f, 2f, 240f)
-        assertEquals(listOf(6), rows.map { it.size })
-        assertEquals(CaptureKey.entries.toList(), rows.flatten())
-        assertEquals(136f, captureKeyMaxHeight(240f, rows.size, true), 0f)
-        val taller = captureKeyRows(320f, 1f, 300f)
-        assertEquals(listOf(3, 3), taller.map { it.size })
-        assertEquals(98f, captureKeyMaxHeight(300f, taller.size, true), 0f)
+    @Test fun keyRailReservesSpaceForRulerInShortPreview() {
+        assertEquals(136f, captureKeyMaxHeight(240f, 1, true), 0f)
+        assertEquals(196f, captureKeyMaxHeight(300f, 1, true), 0f)
         assertEquals(0f, captureKeyMaxHeight(80f, 1, true), 0f)
     }
-
 }

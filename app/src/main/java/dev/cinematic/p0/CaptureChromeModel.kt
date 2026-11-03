@@ -216,11 +216,11 @@ fun captureStatusChips(input: CaptureChromeInput): List<CaptureStatusChip> = bui
 /** Retain the first valid AUTO observation as the editor's starting choice. */
 internal fun captureAutoRulerSeed(seed: ManualExposure?, fresh: ManualExposure?): ManualExposure? = seed ?: fresh
 
-/** Keep equal-width controls visible while giving larger text room on narrower windows. */
-internal fun captureKeyRows(widthDp: Float, fontScale: Float, previewHeightDp: Float = Float.POSITIVE_INFINITY): List<List<CaptureKey>> {
-    val columns = if (previewHeightDp >= 300f && widthDp < 600f * fontScale.coerceAtLeast(1f)) 3 else 6
-    return CaptureKey.entries.chunked(columns)
-}
+/** Six keys share one horizontal row at every orientation. */
+internal fun captureKeyRows(): List<List<CaptureKey>> = listOf(CaptureKey.entries.toList())
+
+/** The compact visual label keeps the full control name for accessibility. */
+internal fun captureKeyVisualLabel(key: CaptureKey): String = if (key == CaptureKey.SHUTTER) "SS" else key.name
 
 /** Reserve room for the ruler while giving every key row the same maximum height. */
 internal fun captureKeyMaxHeight(previewHeightDp: Float, rowCount: Int, rulerOpen: Boolean): Float =

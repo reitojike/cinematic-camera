@@ -2,10 +2,14 @@ package dev.cinematic.p0
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 private val SensorText = Color(0xFFE4E6E8)
@@ -20,6 +24,49 @@ fun sensorControlColor(tone: SensorControlTone): Color = when (tone) {
     SensorControlTone.EDITING, SensorControlTone.PENDING -> SensorAmber
     SensorControlTone.ACCEPTED -> SensorAccepted
     SensorControlTone.FAILED, SensorControlTone.UNKNOWN -> SensorFailed
+}
+
+internal fun evZeroShortcutSupported(range: IntRange?, step: Double?): Boolean =
+    range != null && 0 in range && step != null && step.isFinite() && step > 0.0
+
+/** Recheck session/capture ownership at the click, including changes since the last composition. */
+internal fun dispatchSensorShortcut(enabled: Boolean, canSelect: () -> Boolean, select: () -> Unit): Boolean {
+    if (!enabled || !canSelect()) return false
+    select()
+    return true
+}
+
+/** Direct index 0 request through the same live path as the ruler; no detent iteration. */
+@Composable
+fun ExposureZeroAction(
+    selectedIndex: Int?, range: IntRange?, step: Double?, enabled: Boolean, onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier, textModifier: Modifier = Modifier, horizontal: Boolean = false,
+    canSelect: () -> Boolean = { true },
+) {
+    val supported = evZeroShortcutSupported(range, step)
+    val available = enabled && supported && selectedIndex != 0
+    TextButton(onClick = { dispatchSensorShortcut(available, canSelect) { onSelect(0) } },
+        enabled = available, modifier = modifier.heightIn(min = 44.dp).semantics {
+            contentDescription = if (supported) "EVを0に戻す。実測は診断で確認" else "EV 0への復帰非対応"
+        }, contentPadding = PaddingValues(horizontal = 8.dp)) {
+        Text(if (horizontal) "0" else if (supported) "0に戻す" else "EV非対応", textModifier, fontSize = 12.sp)
+    }
+}
+
+/** Null releases the MF override; this requests autofocus without claiming that focus was reached. */
+@Composable
+fun FocusAutofocusAction(
+    selectedFocus: Float?, autofocusSupported: Boolean, enabled: Boolean, onAutofocus: () -> Unit,
+    modifier: Modifier = Modifier, textModifier: Modifier = Modifier, horizontal: Boolean = false,
+    canSelect: () -> Boolean = { true },
+) {
+    val available = enabled && autofocusSupported && selectedFocus != null
+    TextButton(onClick = { dispatchSensorShortcut(available, canSelect, onAutofocus) },
+        enabled = available, modifier = modifier.heightIn(min = 44.dp).semantics {
+            contentDescription = if (autofocusSupported) "AFに戻す。合焦の実測結果とは別" else "AF非対応"
+        }, contentPadding = PaddingValues(horizontal = 8.dp)) {
+        Text(if (horizontal) "AF" else if (autofocusSupported) "AFに戻す" else "AF非対応", textModifier, fontSize = 12.sp)
+    }
 }
 
 /** AF and MF lens-unit choices use the same live selection path; no display text is sent back. */
