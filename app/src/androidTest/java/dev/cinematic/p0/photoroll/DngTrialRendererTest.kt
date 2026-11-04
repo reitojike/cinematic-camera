@@ -236,9 +236,49 @@ class DngTrialRendererTest {
         assertEquals(0, stages)
     }
 
-    private fun withOriginal(action: (PhotoRollOriginal) -> Unit) {
+    @Test fun maximumPortraitTrialCancelsBeforeBitmapAndNextRequestWorks() =
+        withOriginal(syntheticDng(width = 1024, height = 768, orientation = 6)) { original ->
+            val renderer = StageClearTrialRenderer(context.contentResolver) { resources }
+            val stages = mutableListOf<PhotoRollRenderStage>()
+            val request = PhotoRollRenderRequest(original, mode = renderer.mode, maxEdge = renderer.maxEdge,
+                onStage = { stages += it })
+            val rendered = renderer.render(request, CancellationSignal())
+            assertTrue("512px trial did not complete: $rendered", rendered is PhotoRollRenderResult.Preview)
+            val preview = rendered as PhotoRollRenderResult.Preview
+            try {
+                assertEquals(PhotoRollPreviewMode.STAGE_CLEAR_TRIAL, preview.mode)
+                assertEquals(384, preview.bitmap.width)
+                assertEquals(512, preview.bitmap.height)
+                assertEquals(Bitmap.Config.ARGB_8888, preview.bitmap.config)
+                assertTrue(preview.bitmap.colorSpace!!.isSrgb)
+                assertEquals(listOf(PhotoRollRenderStage.DECODE, PhotoRollRenderStage.INPUTS,
+                    PhotoRollRenderStage.BASE, PhotoRollRenderStage.LOOK, PhotoRollRenderStage.DISPLAY), stages)
+            } finally { preview.bitmap.recycle() }
+
+            // Cancel after the real R7/Look work, before display encoding can return a Bitmap.
+            val signal = CancellationSignal()
+            stages.clear()
+            try {
+                renderer.render(request.copy(onStage = {
+                    stages += it
+                    if (it == PhotoRollRenderStage.DISPLAY) signal.cancel()
+                }), signal)
+                fail("Expected display-stage cancellation")
+            } catch (_: java.util.concurrent.CancellationException) { }
+            assertEquals(PhotoRollRenderStage.DISPLAY, stages.last())
+            val recovered = renderer.render(request.copy(maxEdge = 64, onStage = {}), CancellationSignal())
+            assertTrue("Next trial did not complete: $recovered", recovered is PhotoRollRenderResult.Preview)
+            val next = recovered as PhotoRollRenderResult.Preview
+            try {
+                assertEquals(PhotoRollPreviewMode.STAGE_CLEAR_TRIAL, next.mode)
+                assertEquals(48, next.bitmap.width)
+                assertEquals(64, next.bitmap.height)
+                DngContentVerifier.verify(original.fingerprint, { context.contentResolver.openInputStream(original.uri)!! })
+            } finally { next.bitmap.recycle() }
+        }
+
+    private fun withOriginal(bytes: ByteArray = syntheticDng(), action: (PhotoRollOriginal) -> Unit) {
         val resolver = context.contentResolver
-        val bytes = syntheticDng()
         val uri = resolver.insert(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, "synthetic-trial-${System.nanoTime()}.dng")
             put(MediaStore.Images.Media.MIME_TYPE, "image/x-adobe-dng")
@@ -252,8 +292,8 @@ class DngTrialRendererTest {
         } finally { check(resolver.delete(uri, null, null) == 1) { "Test-only pending row cleanup failed" } }
     }
 
-    /** Minimal 32x24 uncompressed Bayer DNG; all identity/calibration and samples are synthetic. */
-    private fun syntheticDng(): ByteArray {
+    /** Uncompressed Bayer DNG; default bytes stay 32x24/orientation 1. All metadata/samples are synthetic. */
+    private fun syntheticDng(width: Int = 32, height: Int = 24, orientation: Int = 1): ByteArray {
         fun shorts(vararg values: Int) = ByteBuffer.allocate(values.size * 2).order(ByteOrder.LITTLE_ENDIAN)
             .apply { values.forEach { putShort(it.toShort()) } }.array()
         fun longs(vararg values: Int) = ByteBuffer.allocate(values.size * 4).order(ByteOrder.LITTLE_ENDIAN)
@@ -263,9 +303,9 @@ class DngTrialRendererTest {
         fun short(tag: Int, vararg values: Int) { entries += Entry(tag, 3, values.size, shorts(*values)) }
         fun long(tag: Int, value: Int) { entries += Entry(tag, 4, 1, longs(value)) }
         fun ascii(tag: Int, value: String) { entries += Entry(tag, 2, value.length + 1, (value + '\u0000').toByteArray()) }
-        long(256, 32); long(257, 24); short(258, 16); short(259, 1); short(262, 32803)
+        long(256, width); long(257, height); short(258, 16); short(259, 1); short(262, 32803)
         ascii(271, "Synthetic"); ascii(272, "Bayer fixture")
-        long(273, 0); short(274, 1); short(277, 1); long(278, 24); long(279, 32 * 24 * 2)
+        long(273, 0); short(274, orientation); short(277, 1); long(278, height); long(279, width * height * 2)
         short(33421, 2, 2)
         entries += Entry(33422, 1, 4, byteArrayOf(0, 1, 1, 2))
         entries += Entry(50706, 1, 4, byteArrayOf(1, 4, 0, 0))
@@ -276,7 +316,7 @@ class DngTrialRendererTest {
         entries.sortBy { it.tag }
         val start = 8 + 2 + 12 * entries.size + 4
         val rawOffset = start + entries.sumOf { if (it.bytes.size > 4) it.bytes.size else 0 }
-        val buffer = ByteBuffer.allocate(rawOffset + 32 * 24 * 2).order(ByteOrder.LITTLE_ENDIAN)
+        val buffer = ByteBuffer.allocate(rawOffset + width * height * 2).order(ByteOrder.LITTLE_ENDIAN)
         buffer.put('I'.code.toByte()).put('I'.code.toByte()).putShort(42).putInt(8).putShort(entries.size.toShort())
         var extra = start
         for (entry in entries) {
@@ -288,7 +328,7 @@ class DngTrialRendererTest {
             }
         }
         buffer.putInt(0).position(rawOffset)
-        repeat(24) { y -> repeat(32) { x -> buffer.putShort((164 + (x * 65 + y * 25) % 3500).toShort()) } }
+        repeat(height) { y -> repeat(width) { x -> buffer.putShort((164 + (x * 65 + y * 25) % 3500).toShort()) } }
         return buffer.array()
     }
 }
