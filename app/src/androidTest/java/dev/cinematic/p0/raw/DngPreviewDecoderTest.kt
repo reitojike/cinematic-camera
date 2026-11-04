@@ -71,6 +71,16 @@ class DngPreviewDecoderTest {
         assertError("DNG_LIMIT") { native(file.file, 8) }
     }
 
+    @Test fun rejectsNonSquareDefaultScaleBeforeGeometryExpansion() {
+        fixture(scaleX = 10, scaleY = 1).use { assertError("DNG_UNSUPPORTED") { native(it.file, 1024) } }
+        fixture(scaleX = 1, scaleY = 10).use { assertError("DNG_UNSUPPORTED") { native(it.file, 1024) } }
+        fixture(scaleX = 2, scaleY = 2).use {
+            val result = native(it.file, 1024)
+            assertEquals(16, result.width)
+            assertEquals(12, result.height)
+        }
+    }
+
     @Test fun developsOneSynthetic12MpFrameAtPreviewSize() = fixture(width = 4000, height = 3000).use { file ->
         val start = SystemClock.elapsedRealtimeNanos()
         val result = native(file.file, 1024)
@@ -103,6 +113,7 @@ class DngPreviewDecoderTest {
     private fun fixture(
         orientation: Int = 1, validDng: Boolean = true, width: Int = 32, height: Int = 24,
         widthTag: Int = width, heightTag: Int = height, cameraWb: Boolean = true,
+        scaleX: Int = 1, scaleY: Int = 1,
     ): Fixture {
         fun shorts(vararg values: Int) = ByteBuffer.allocate(values.size * 2).order(ByteOrder.LITTLE_ENDIAN)
             .apply { values.forEach { putShort(it.toShort()) } }.array()
@@ -120,6 +131,7 @@ class DngPreviewDecoderTest {
         entries += Entry(33422, 1, 4, byteArrayOf(0, 1, 1, 2))
         if (validDng) entries += Entry(50706, 1, 4, byteArrayOf(1, 4, 0, 0))
         short(50713, 1, 1); long(50714, 64); long(50717, 4095)
+        entries += Entry(50718, 5, 2, longs(scaleX, 1, scaleY, 1))
         // XYZ to camera RGB; a simple, invertible synthetic calibration.
         entries += Entry(50721, 10, 9, longs(1, 1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 1, 0, 1, 0, 1, 1, 1))
         if (cameraWb) entries += Entry(50728, 5, 3, longs(1, 1, 1, 1, 1, 1))

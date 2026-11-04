@@ -63,6 +63,11 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal) {
     const int sourceWidth = sizes.width, sourceHeight = sizes.height;
     const uint64_t count = static_cast<uint64_t>(sizes.raw_width) * sizes.raw_height;
     if (!count || count > kMaxRawPixels) fail("DNG_LIMIT");
+    // DefaultScale can otherwise amplify an accepted RAW during LibRaw's stretch().
+    // First preview route supports square pixels and no Fuji diagonal-layout expansion.
+    if (!std::isfinite(sizes.pixel_aspect) || sizes.pixel_aspect != 1.0 || raw.is_fuji_rotated() ||
+        !sizes.width || !sizes.height || sizes.width > sizes.raw_width || sizes.height > sizes.raw_height)
+        fail("DNG_UNSUPPORTED");
     // First route is single-frame three-colour Bayer DNG; no thumbnails or arbitrary RAW formats.
     if (!identity.dng_version || identity.raw_count != 1 || identity.colors != 3 ||
         identity.filters == 0 || identity.filters == 9 || identity.is_foveon) fail("DNG_UNSUPPORTED");
@@ -73,6 +78,7 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal) {
 
     auto& params = raw.imgdata.params;
     params.half_size = 1;
+    params.use_fuji_rotate = 0; // No geometry expansion; EXIF orientation is applied by make_mem_image.
     params.output_color = 1; // LibRaw linear sRGB/D65, not camera RGB or R7 base.
     params.output_bps = 16;
     params.gamm[0] = params.gamm[1] = 1.0;

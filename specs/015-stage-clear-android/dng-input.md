@@ -10,8 +10,9 @@
   恒久権限・共有保存・端末撮影・原本変更・恒久的DNGコピー・外部送信を追加しない。
 - workerで1件だけ受け付ける。同時要求はBUSY、キャンセルはCANCELLEDとし、失敗後の次要求を妨げない。
   呼出側が表示要求の世代とlifecycleを管理し、古い結果を表示しない。ここではqueueや撮影hookを増やさない。
-- 最初はseekableな通常ファイルdescriptor、64MiB以下、16MP以下、単一フレーム・3色Bayer DNGのみ。
+- 最初はseekableな通常ファイルdescriptor、64MiB以下、16MP以下、正方画素・単一フレーム・3色Bayer DNGのみ。
   pipe/クラウドstream・他RAW・X-Trans・Foveon・複数フレーム・camera WB不足は明示的に失敗する。
+  DefaultScaleによる非正方画素とFuji斜交配置は現像前に拒否し、geometryの拡張も無効化する。
   拡張子やMIMEだけでDNGと判定しない。破損を示すLibRaw data errorも成功にしない。
 - LibRaw half-sizeでセンサーから現像し、向きを適用した後、線形域の面積平均で指定長辺以下へ縮小する。
   上限1024、拡大しない。gamma=1、16bit sRGB/D65出力を65535で除したRGB Float32。
@@ -70,7 +71,7 @@ PCの`r7_final.render`が行うP2/I1/S2/E2/K1等も未適用であり、R7 base�
 ## 検証とタスク
 
 `DngPreviewDecoderTest`は端末で生成する非写真の合成Bayer DNGを使う。写真fixtureをGitへ入れない。
-原本hash保持、half-size寸法、線形面積平均、向き、非DNG/WB欠落/過大寸法/過大bytes/pipe/キャンセルの拒否と再実行、
+原本hash保持、half-size寸法、線形面積平均、向き、非正方DefaultScale、非DNG/WB欠落/過大寸法/過大bytes/pipe/キャンセルの拒否と再実行、
 12MP→1024の単発処理を確認する。測る時間はdecode全体、VmHWMはprocess全体の累積high-waterで、
 nativeだけのpeakやPixel性能へ読み替えない。
 
