@@ -26,3 +26,10 @@
 - [x] T010 BOX中間・BILINEAR復元の合成全画素CSVとPC再照合を追加し、fixture変更時のPC CIを保証する（FR-009、SC-004）。
 - [x] T011 純KotlinのFloatPlane、PC互換ぼかしとRGB経路、入力保持/不正入力/境界テストを実装する（FR-007/008/009）。
 - [x] T012 PC/Androidの機械検証・秘密除外を行い、Draft PRを作成し独立レビューを得る（SC-005）。最終headのCI/canonical/独立再確認はPRへ記録し、mergeは別承認。
+
+## Phase 5: 段1のにじみ（独立PR、T007の一部）
+
+- [x] T013 PCの段1・skin weight・強度0の境界と保存/URIからの分離を定義する（FR-010/011/012）。
+- [x] T014 PC定数生成と肌色重み/段1の合成全画素fixture・再照合を追加する（FR-013、SC-006）。
+- [x] T015 OKLab共通計算を共有し、段1を純Kotlinへ移植して既存保護段/ぼかしの互換性も検証する（FR-010/011/012、SC-006）。
+- [ ] T016 PC/Android検証・秘密除外、Draft PRと独立レビューを完了する（SC-007）。最終headのCI/canonical/独立再確認はPRへ記録し、mergeは別承認。
