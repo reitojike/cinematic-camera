@@ -7,6 +7,13 @@ import java.io.OutputStream
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.StandardOpenOption
+import java.security.MessageDigest
+import java.util.concurrent.Callable
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import org.junit.Assert.*
 import org.junit.Assume.assumeNoException
 import org.junit.Rule
@@ -279,6 +286,114 @@ class RawCaptureStoreTest {
         assertThrows(IOException::class.java) { fixture.store.readReceipt() }
         assertArrayEquals(jpeg, outside.readBytes())
     }
+
+    @Test fun originalFingerprintPersistsThroughLateJpegAndRecreation() {
+        val fixture = fixture()
+        fixture.store.create(pair)
+        val raw = fixture.store.openOutput(0, RawOutput.DNG)
+        raw.write(dng)
+        raw.close()
+        fixture.store.received(0, raw)
+        val verified = fixture.store.verifyOriginal(1)
+        val expected = OriginalFingerprint(4, sha256(dng))
+        assertEquals(expected, verified.originalFingerprint)
+        val preview = fixture.store.openOutput(2, RawOutput.JPEG)
+        preview.write(jpeg)
+        preview.close()
+        assertEquals(expected, fixture.store.received(2, preview).originalFingerprint)
+        val restarted = RawCaptureStore(fixture.root, fixture.id, fixture.storage)
+        assertEquals(expected, restarted.recoverAfterProcessDeath()!!.originalFingerprint)
+        fixture.assertBytes(RawOutput.DNG, dng)
+        fixture.assertBytes(RawOutput.JPEG, jpeg)
+    }
+
+    @Test fun verificationRequiresRecordedDngAndStopsBeforeCommittingOnCancelOrStaleRevision() {
+        val fixture = fixture()
+        fixture.store.create(pair)
+        assertThrows(IOException::class.java) { fixture.store.verifyOriginal(0) }
+        val raw = fixture.store.openOutput(0, RawOutput.DNG)
+        raw.write(dng)
+        raw.close()
+        fixture.store.received(0, raw)
+        val prior = fixture.storage.contents!!.copyOf()
+        assertThrows(CaptureJournalConflict::class.java) { fixture.store.verifyOriginal(0) }
+        assertThrows(DngVerificationStopped::class.java) { fixture.store.verifyOriginal(1) { true } }
+        assertArrayEquals(prior, fixture.storage.contents)
+        fixture.assertBytes(RawOutput.DNG, dng)
+    }
+
+    @Test fun fingerprintCommitFailuresKeepFilesAndResolveByReadingActualJournal() {
+        for (fault in listOf("before", "after")) {
+            val fixture = fixture(fault)
+            fixture.store.create(setOf(RawOutput.DNG))
+            val raw = fixture.store.openOutput(0, RawOutput.DNG)
+            raw.write(dng)
+            raw.close()
+            fixture.store.received(0, raw)
+            fixture.storage.fault = fault
+            assertThrows(IOException::class.java) { fixture.store.verifyOriginal(1) }
+            fixture.storage.fault = "none"
+            val observed = fixture.store.readReceipt()!!
+            if (fault == "before") assertNull(observed.originalFingerprint)
+            else assertEquals(OriginalFingerprint(4, sha256(dng)), observed.originalFingerprint)
+            val verified = fixture.store.verifyOriginal(observed.revision)
+            assertEquals(2L, verified.revision)
+            assertEquals(OriginalFingerprint(4, sha256(dng)), verified.originalFingerprint)
+            fixture.assertBytes(RawOutput.DNG, dng)
+        }
+    }
+
+    @Test fun sameSizeChangeCannotReplacePreviouslyVerifiedOriginalFingerprint() {
+        val fixture = fixture()
+        fixture.store.create(setOf(RawOutput.DNG))
+        val raw = fixture.store.openOutput(0, RawOutput.DNG)
+        raw.write(dng)
+        raw.close()
+        fixture.store.received(0, raw)
+        fixture.store.verifyOriginal(1)
+        val prior = fixture.storage.contents!!.copyOf()
+        val changed = dng.copyOf().also { it[0] = 99 }
+        fixture.file(RawOutput.DNG).writeBytes(changed)
+        assertThrows(DngContentChanged::class.java) { fixture.store.verifyOriginal(2) }
+        assertArrayEquals(prior, fixture.storage.contents)
+        fixture.assertBytes(RawOutput.DNG, changed)
+    }
+
+    @Test fun hashingDoesNotHoldStoreLockAndStaleHashResultCannotCommit() {
+        val fixture = fixture()
+        fixture.store.create(pair)
+        val raw = fixture.store.openOutput(0, RawOutput.DNG)
+        val preview = fixture.store.openOutput(0, RawOutput.JPEG)
+        raw.write(dng)
+        raw.close()
+        preview.write(jpeg)
+        preview.close()
+        fixture.store.received(0, raw)
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val first = AtomicBoolean(true)
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val hashing = executor.submit(Callable {
+                fixture.store.verifyOriginal(1) {
+                    if (first.compareAndSet(true, false)) {
+                        entered.countDown()
+                        check(release.await(5, TimeUnit.SECONDS))
+                    }
+                    false
+                }
+            })
+            assertTrue(entered.await(5, TimeUnit.SECONDS))
+            val callback = executor.submit(Callable { fixture.store.received(1, preview) })
+            assertEquals(2L, callback.get(5, TimeUnit.SECONDS).revision)
+            release.countDown()
+            val failure = assertThrows(ExecutionException::class.java) { hashing.get(5, TimeUnit.SECONDS) }
+            assertTrue(failure.cause is CaptureJournalConflict)
+            assertNull(fixture.store.readReceipt()!!.originalFingerprint)
+        } finally { release.countDown(); executor.shutdownNow() }
+    }
+
+    private fun sha256(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
     private fun fixture(id: String = "capture-1", fault: String = "none"): Fixture {
         val root = temporary.newFolder("root-$id")

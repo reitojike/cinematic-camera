@@ -155,7 +155,7 @@ class CaptureJournalTest {
         CaptureJournal(id, file).create(pair)
         val good = file.contents!!.copyOf()
         val badChecksum = good.copyOf().also { it[10] = (it[10].toInt() xor 1).toByte() }
-        val badVersion = withDigest(good.dropLast(32).toByteArray().also { it[7] = 2 })
+        val badVersion = withDigest(good.dropLast(32).toByteArray().also { it[7] = 3 })
         val trailing = withDigest(good.dropLast(32).toByteArray() + byteArrayOf(0))
         for (bad in listOf(badChecksum, badVersion, trailing, byteArrayOf(0), ByteArray(4097))) {
             file.contents = bad
@@ -230,6 +230,66 @@ class CaptureJournalTest {
             assertEquals(1L, journal.read()!!.revision)
             assertEquals(1, journal.read()!!.receivedBytes.size)
         } finally { executor.shutdownNow() }
+    }
+
+    @Test fun versionOneReceiptIsReadWithoutWritesAndUpgradedWithOriginalFingerprint() {
+        // Frozen v1 layout: completed RAW-only receipt, revision 7, 3-byte DNG, no JPEG.
+        val payload = ByteBuffer.allocate(35 + id.length)
+            .putInt(0x4343524a).putInt(1).put(id.length.toByte()).put(id.toByteArray(Charsets.US_ASCII))
+            .putLong(7).put(1.toByte()).put(2.toByte()).putLong(3).putLong(-1).array()
+        val file = MemoryJournalFile().also { it.contents = withDigest(payload) }
+        val journal = CaptureJournal(id, file)
+        assertNull(journal.read()!!.originalFingerprint)
+        assertEquals(0, file.writes)
+        val fingerprint = OriginalFingerprint(3, "a".repeat(64))
+        val updated = journal.recordOriginalFingerprint(7, fingerprint)
+        assertEquals(8L, updated.revision)
+        assertEquals(CaptureReceiptPhase.FILES_RECEIVED, updated.phase)
+        assertEquals(fingerprint, CaptureJournal(id, file).read()!!.originalFingerprint)
+        assertEquals(2, ByteBuffer.wrap(file.contents!!).getInt(4))
+    }
+
+    @Test fun originalFingerprintCannotBeReplacedAndSurvivesInterruptAndLateJpeg() {
+        val file = MemoryJournalFile()
+        val journal = CaptureJournal(id, file)
+        val fingerprint = OriginalFingerprint(3, "a".repeat(64))
+        journal.create(pair)
+        assertThrows(IllegalArgumentException::class.java) { journal.recordOriginalFingerprint(0, fingerprint) }
+        journal.received(0, RawOutput.DNG, 3)
+        assertThrows(IllegalArgumentException::class.java) { journal.recordOriginalFingerprint(1, OriginalFingerprint(4, "a".repeat(64))) }
+        journal.recordOriginalFingerprint(1, fingerprint)
+        journal.interrupt(2)
+        val late = journal.received(3, RawOutput.JPEG, 5)
+        assertEquals(fingerprint, late.originalFingerprint)
+        assertEquals(fingerprint, CaptureJournal(id, file).recoverAfterProcessDeath()!!.originalFingerprint)
+        val prior = file.contents!!.copyOf()
+        assertEquals(4L, journal.recordOriginalFingerprint(4, fingerprint).revision)
+        assertThrows(CaptureJournalConflict::class.java) { journal.recordOriginalFingerprint(1, fingerprint) }
+        assertThrows(CaptureJournalConflict::class.java) {
+            journal.recordOriginalFingerprint(4, OriginalFingerprint(3, "b".repeat(64)))
+        }
+        assertArrayEquals(prior, file.contents)
+    }
+
+    @Test fun invalidFingerprintFlagTruncationAndMissingDngArePreservedWithoutWrites() {
+        val file = MemoryJournalFile()
+        val journal = CaptureJournal(id, file)
+        journal.create(pair)
+        journal.received(0, RawOutput.DNG, 3)
+        journal.recordOriginalFingerprint(1, OriginalFingerprint(3, "a".repeat(64)))
+        val payload = file.contents!!.dropLast(32).toByteArray()
+        val invalid = listOf(
+            payload.copyOf().also { it[it.size - 33] = 2 },
+            payload.copyOf(payload.size - 1),
+            payload.copyOf().also { ByteBuffer.wrap(it).putLong(19 + id.length, -1) },
+        )
+        for (bad in invalid) {
+            file.contents = withDigest(bad)
+            val writes = file.writes
+            assertThrows(IOException::class.java) { journal.recordOriginalFingerprint(2, OriginalFingerprint(3, "a".repeat(64))) }
+            assertEquals(writes, file.writes)
+            assertArrayEquals(withDigest(bad), file.contents)
+        }
     }
 
     private fun withDigest(payload: ByteArray): ByteArray =

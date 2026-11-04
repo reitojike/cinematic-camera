@@ -12,7 +12,7 @@ import java.nio.file.attribute.BasicFileAttributes
  * Unconnected capture-local storage. One live store/writer per capture, on an IO executor.
  * root is trusted app-private storage; journalStorage must address this capture under that root.
  * The injected opener must create exclusively without following links (production default below).
- * This class never deletes, moves, publishes, hashes or decodes media.
+ * This class never deletes, moves, publishes or decodes media.
  */
 internal class RawCaptureStore(
     private val root: File,
@@ -85,6 +85,27 @@ internal class RawCaptureStore(
     fun interrupt(expectedRevision: Long): CaptureReceipt {
         current(expectedRevision)
         return journal.interrupt(expectedRevision)
+    }
+
+    /** Establish/recheck local byte identity before handoff; heavy reads never hold the store lock. */
+    fun verifyOriginal(expectedRevision: Long, shouldStop: () -> Boolean = { false }): CaptureReceipt {
+        val (receipt, file) = synchronized(this) {
+            val current = current(expectedRevision)
+            if (RawOutput.DNG !in current.receivedBytes) throw IOException("DNG has not been received")
+            current to File(checkedDirectory(), RawOutput.DNG.fileName)
+        }
+        val openReadOnly = {
+            checkedDirectory()
+            Files.newInputStream(file.toPath(), StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)
+        }
+        val fingerprint = receipt.originalFingerprint?.let {
+            DngContentVerifier.verify(it, openReadOnly, shouldStop)
+        } ?: DngContentVerifier.identify(receipt.receivedBytes.getValue(RawOutput.DNG), openReadOnly, shouldStop)
+        if (shouldStop()) throw DngVerificationStopped() // Caller code runs outside the update lock.
+        return synchronized(this) {
+            current(expectedRevision) // Rechecks fixed paths, sizes and revision after the read/close.
+            journal.recordOriginalFingerprint(expectedRevision, fingerprint)
+        }
     }
 
     /** Only in a new process after previous writers are gone; no file scanning or repair. */
