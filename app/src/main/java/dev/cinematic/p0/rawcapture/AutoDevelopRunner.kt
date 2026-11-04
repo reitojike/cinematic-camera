@@ -165,12 +165,13 @@ internal class AutoDevelopRunner(
             record = journal.publishing(record.revision)
         }
         if (record.phase == AutoJobPhase.PUBLISHING) {
+            if (!allowPublication()) return result(AutoRunStatus.PUBLICATION_PENDING, record)
             val owner = try { publication ?: backend.publication(record) { !stopped() }.also { publication = it } }
             catch (_: DngContentChanged) { return result(AutoRunStatus.HELD, journal.hold(record.revision, AutoJobReason.CONTENT_CHANGED)) }
             try {
                 owner.releaseResources()
                 if (stopped()) return result(AutoRunStatus.PUBLICATION_PENDING, record)
-                val phase = owner.advance(::stopped)
+                val phase = owner.advance { stopped() || !allowPublication() }
                 if (owner.hasUnreleasedResources) return result(AutoRunStatus.RESOURCES_HELD, record)
                 when (phase) {
                     JpegPublicationPhase.PUBLISHED -> record = journal.published(record.revision)

@@ -36,6 +36,7 @@ class ManualDevelopQueueTest {
         var unavailable = false
         var deleted = false
         var failClose = false
+        var publicationPhase = JpegPublicationPhase.PUBLISHED
         var onRender: () -> Unit = {}
         var onConfirm: () -> Unit = {}
         val queue = AutoDevelopQueue(io, admission, { request ->
@@ -62,7 +63,7 @@ class ManualDevelopQueueTest {
                 return object : AutoDevelopPublication {
                     override val hasUnreleasedResources = false
                     override fun releaseResources() {}
-                    override fun advance(shouldStop: () -> Boolean): JpegPublicationPhase { publishes++; return JpegPublicationPhase.PUBLISHED }
+                    override fun advance(shouldStop: () -> Boolean): JpegPublicationPhase { publishes++; return publicationPhase }
                     override fun confirmPublished(shouldStop: () -> Boolean): JpegPublicationRecord {
                         confirms++; onConfirm()
                         if (deleted) throw IOException("public row deleted")
@@ -182,5 +183,60 @@ class ManualDevelopQueueTest {
         handle.retry(); handle.requestStop(); f.io.drain()
         assertEquals(1, f.starts)
         assertEquals(0, f.publicationOwners)
+    }
+
+    @Test fun aNewStartCannotReviveACancelledQueuedSaveIntent() {
+        val f = Fixture()
+        val handle = f.prepare()
+        handle.start(observations); f.io.drain()
+        val cancelledSave = handle.publish(observations)
+        handle.requestStop()
+        handle.start(observations)
+        f.io.drain()
+        assertEquals(0, f.publicationOwners)
+        assertEquals(AutoJobPhase.RENDERED, f.phase(handle))
+        assertTrue(cancelledSave.isCompletedExceptionally)
+    }
+
+    @Test fun aNewStartCannotReviveACancelledQueuedConfirmation() {
+        val f = Fixture()
+        val handle = f.prepare()
+        handle.start(observations); f.io.drain()
+        handle.publish(observations); f.io.drain()
+        val cancelled = handle.confirmPublished(observations) { false }
+        handle.requestStop()
+        handle.start(observations)
+        f.io.drain()
+        assertTrue(cancelled.isCompletedExceptionally)
+        assertEquals(0, f.confirms)
+    }
+
+    @Test fun aNewStartCannotReviveACancelledQueuedRetry() {
+        val f = Fixture()
+        val handle = f.prepare()
+        f.onRender = { handle.requestStop() }
+        handle.start(observations); f.io.drain()
+        assertEquals(AutoJobPhase.RETRYABLE, f.phase(handle))
+        f.onRender = {}
+        val cancelled = handle.retry()
+        handle.requestStop(); handle.start(observations); f.io.drain()
+        assertTrue(cancelled.isCompletedExceptionally)
+        assertEquals(AutoJobPhase.RETRYABLE, f.phase(handle))
+        assertEquals(1, f.starts)
+    }
+
+    @Test fun cancelledPendingPublicationNeedsANewSaveIntentAndReusesItsOwner() {
+        val f = Fixture()
+        val handle = f.prepare()
+        handle.start(observations); f.io.drain()
+        f.publicationPhase = JpegPublicationPhase.PUBLISHING
+        handle.publish(observations); f.io.drain()
+        assertEquals(AutoJobPhase.PUBLISHING, f.phase(handle)); assertEquals(1, f.publishes)
+        handle.requestStop(); handle.start(observations); f.io.drain()
+        assertEquals(1, f.publishes)
+        f.publicationPhase = JpegPublicationPhase.PUBLISHED
+        handle.publish(observations); f.io.drain()
+        assertEquals(AutoJobPhase.PUBLISHED, f.phase(handle))
+        assertEquals(2, f.publishes); assertEquals(1, f.publicationOwners); assertEquals(1, f.starts)
     }
 }

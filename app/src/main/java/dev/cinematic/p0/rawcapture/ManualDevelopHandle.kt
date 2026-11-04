@@ -1,31 +1,37 @@
 package dev.cinematic.p0.rawcapture
 
 import java.util.concurrent.CompletableFuture
-import java.util.concurrent.atomic.AtomicBoolean
+
+/** Process-local invocation authority, independent of durable edit generation. No IO under this lock. */
+internal class ManualDevelopControl(initiallyRequested: Boolean) {
+    class Ticket internal constructor()
+    private var epoch = Ticket()
+    private var requested = initiallyRequested
+    @Synchronized fun begin(): Ticket { requested = true; return epoch }
+    @Synchronized fun stop() { requested = false; epoch = Ticket() }
+    @Synchronized fun isRequested() = requested
+    @Synchronized fun accepts(ticket: Ticket?) = requested && epoch === ticket
+}
 
 /** Opaque retained connection to the queue's sole generation and publication owner. No file/factory API.
  * Futures acknowledge metadata/status, not resource release. PUBLISHED status is historical only. */
 internal class ManualDevelopHandle internal constructor(private val queue: AutoDevelopQueue, val request: AutoDevelopRequest,
-    private val requested: AtomicBoolean) {
+    private val control: ManualDevelopControl) {
     val quality get() = request.quality
     fun start(observations: AutoDevelopConditions): CompletableFuture<AutoDevelopRecord> {
-        requested.set(true)
-        return queue.startManual(request, observations)
+        return queue.startManual(request, observations, control.begin())
     }
     fun status() = queue.manualStatus(request)
     /** A separate explicit user Save action after RENDERED. Does not regenerate the JPEG. */
     fun publish(observations: AutoDevelopConditions): CompletableFuture<AutoDevelopRecord> {
-        requested.set(true)
-        return queue.publishManual(request, observations)
+        return queue.publishManual(request, observations, control.begin())
     }
-    fun requestStop() { requested.set(false); queue.stopManual(request) }
+    fun requestStop() { control.stop(); queue.stopManual(request) }
     fun retry(): CompletableFuture<AutoDevelopRecord> {
-        requested.set(true) // Intent precedes enqueue; a later stop must remain false on the IO worker.
-        return queue.retry(request.captureId, request.generation)
+        return queue.retryManual(request, control.begin())
     }
     /** Only this fresh same-owner result may supply a URI to the user's Open action. */
     fun confirmPublished(observations: AutoDevelopConditions, shouldStop: () -> Boolean): CompletableFuture<JpegPublicationRecord> {
-        requested.set(true)
-        return queue.confirmManual(request, observations, shouldStop)
+        return queue.confirmManual(request, observations, control.begin(), shouldStop)
     }
 }
