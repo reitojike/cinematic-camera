@@ -12,7 +12,7 @@
 
 ## Phase 3: 検証とレビュー
 
-- [ ] T005 PC/Androidチェック・秘密除外検査を行い、#78へ関連するDraft PRを作り独立レビューを得る（SC-003）。
+- [x] T005 PC/Androidチェック・秘密除外検査を行い、#78へ関連するDraft PRを作り独立レビューを得る（SC-003）。最終headのCI/canonical reviewはPRで確認し、mergeは別承認。
 
 ## #78全体の後続（今回の完了に含めない）
 
