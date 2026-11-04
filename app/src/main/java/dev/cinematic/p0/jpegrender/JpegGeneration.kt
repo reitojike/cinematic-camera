@@ -72,7 +72,7 @@ internal data class JpegControls(
         repeat(image.pixelCount) { p ->
             require(foundationRoi[p] in 0f..1f)
             if (faces[p] > .5f) hasFace = true
-            if (faceState == RenderedFaceState.VERIFIED_NONE) require(faces[p] == 0f && foundationRoi[p] == 0f)
+            if (faceState == RenderedFaceState.VERIFIED_NONE) require(faces[p] == 0f)
         }
         require(faceState != RenderedFaceState.VERIFIED_FACES || hasFace) { "Verified faces need an aligned protection mask" }
     }

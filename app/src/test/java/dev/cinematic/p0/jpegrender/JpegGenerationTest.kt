@@ -25,6 +25,14 @@ class JpegGenerationTest {
         assertThrows(IllegalArgumentException::class.java) { controls.copy(faces = FaceMask(1, 1, floatArrayOf(0f))).validate(image, policy) }
     }
 
+    @Test fun noDetectedFacesCanStillUseIndependentFoundationSkinRoi() {
+        val f = Fixture(foundationWeight = .75f)
+        val generated = f.attempt.render { false }
+        assertEquals(RenderedFaceState.VERIFIED_NONE, generated.render.face)
+        assertEquals(1, f.outputOpens)
+        assertFalse(f.attempt.hasUnreleasedResources)
+    }
+
     @Test fun writesClosesRechecksAndBindsMeasuredBytesToFixedRequest() {
         val f = Fixture()
         val result = f.attempt.render { false }
@@ -118,13 +126,14 @@ class JpegGenerationTest {
     }
 
     private fun image() = LinearSrgbImage(4, 4, FloatArray(48) { .2f })
-    private fun controls(image: LinearSrgbImage, face: RenderedFaceState = RenderedFaceState.VERIFIED_NONE) = JpegControls(
-        policy, 0.0, FloatPlane(image.width, image.height, FloatArray(image.pixelCount)),
+    private fun controls(image: LinearSrgbImage, face: RenderedFaceState = RenderedFaceState.VERIFIED_NONE, foundationWeight: Float = 0f) = JpegControls(
+        policy, 0.0, FloatPlane(image.width, image.height, FloatArray(image.pixelCount) { foundationWeight }),
         FaceMask(image.width, image.height, FloatArray(image.pixelCount)), face, RenderedExposureState.SUPPORTED,
     )
 
     private inner class Fixture(
         face: RenderedFaceState = RenderedFaceState.VERIFIED_NONE,
+        foundationWeight: Float = 0f,
         targetGeneration: Long = 1,
         codecSuccess: Boolean = true,
         corruptRead: Boolean = false,
@@ -158,7 +167,7 @@ class JpegGenerationTest {
             override fun load(source: SharedOriginalReference, longEdge: Int, shouldStop: () -> Boolean) = JpegFrame(image(), 8, 8, true)
         }, object : JpegControlsProvider {
             override val contract = policy.schema
-            override fun prepare(image: LinearSrgbImage, policy: RenderRecipeSnapshot, shouldStop: () -> Boolean) = controls(image, face)
+            override fun prepare(image: LinearSrgbImage, policy: RenderRecipeSnapshot, shouldStop: () -> Boolean) = controls(image, face, foundationWeight)
         }, {
                 sourceOpens++
                 object : FilterInputStream((if (changeSourceOnSecondRead && sourceOpens == 2) "modified source!".toByteArray() else original).inputStream()) {
