@@ -46,7 +46,11 @@ class ManualDevelopInstrumentationTest {
             val allowed = AutoDevelopConditions(true, false, false, false, true, true, true, true)
             DevelopExecution.updateConditions(allowed)
             val trial = AndroidAutoDevelopQueue.preparePrivateTrial(context, source).join().also { handle = it }
-            trial.start(allowed).join()
+            val beforeRender = DevelopExecution.reserveCapture()
+            try {
+                trial.start(allowed).join()
+                assertEquals(PrivateTrialPhase.PREPARED, trial.status().join().phase)
+            } finally { DevelopExecution.releaseCapture(beforeRender) }
             val ready = trial.status().join()
             assertEquals(PrivateTrialPhase.READY, ready.phase)
             assertEquals(AutoRenderQuality.PRIVATE_TRIAL_1024, ready.request.quality)
@@ -117,6 +121,7 @@ class ManualDevelopInstrumentationTest {
             assertThrows(java.util.concurrent.CompletionException::class.java) { next.start(allowed).join() }
             assertNull(AndroidAtomicJournalStorage(File(candidate, "renders"), trial.request.generation.toString(),
                 CaptureJournalFile.JPEG_PUBLICATION).read(JpegPublicationCodec.MAX_BYTES))
+            DngContentVerifier.verify(fp, { resolver.openInputStream(uri)!! })
         } finally {
             handle?.requestStop()
             check(resolver.delete(uri, null, null) == 1)
