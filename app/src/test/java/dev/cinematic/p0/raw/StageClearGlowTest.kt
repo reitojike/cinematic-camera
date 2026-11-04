@@ -6,7 +6,8 @@ import org.junit.Test
 
 class StageClearGlowTest {
     @Test fun skinWeightsAndStageOneMatchEveryPcPixel() {
-        val lines = requireNotNull(javaClass.getResourceAsStream("/stage_clear_glow_v1.csv"))
+        val lines = java.util.zip.GZIPInputStream(requireNotNull(
+            javaClass.getResourceAsStream("/stage_clear_glow_v1.csv.gz")))
             .bufferedReader().use { it.readLines() }.filterNot { it.startsWith("#") }
         var next = 0
         var cases = 0
