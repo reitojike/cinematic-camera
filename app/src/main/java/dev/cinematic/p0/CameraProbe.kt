@@ -1481,7 +1481,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                         val allCallbacksAt = SystemClock.elapsedRealtime()
                         // CameraX has finished every file. Publish together off the UI thread.
                         mediaIo.execute {
-                            var photoRollSaveClosed = false
+                            var publication: PhotoPublisher? = null
                             try {
                                 val mediaWorkStart = SystemClock.elapsedRealtime()
                                 sources.forEach { source ->
@@ -1505,9 +1505,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                                     }
                                 }
                                 val photos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                    PhotoPublisher(AndroidImageStore(context.applicationContext.contentResolver)).publish(sources)
+                                    PhotoPublisher(AndroidImageStore(context.applicationContext.contentResolver)).also { publication = it }.publish(sources)
                                 } else throw IllegalStateException("MediaStore saving requires Android 10+")
-                                photoRollSaveClosed = true
                                 val publishedAt = SystemClock.elapsedRealtime()
                                 main.execute {
                                     log.write("CAPTURE_TIMING token=$token allFileCallbacksAfterAppRequestMs=${allCallbacksAt - appCaptureStart} ioQueueMs=${mediaWorkStart - allCallbacksAt} metadataAndPublishWorkMs=${publishedAt - mediaWorkStart} appRequestToPublishedMs=${publishedAt - appCaptureStart} publishToUiNotificationMs=${SystemClock.elapsedRealtime() - publishedAt}; app stages only, not sensor shutter lag")
@@ -1521,7 +1520,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                                     if (current) finishStillPhoto(true)
                                 }
                             } catch (e: Exception) { main.execute { failed(e) } }
-                            finally { clean(staging); if (photoRollSaveClosed) photoRollCaptureClosed.set(true) }
+                            finally { clean(staging); if (publication?.resourcesClosed != false) photoRollCaptureClosed.set(true) }
                         }
                     } catch (e: Exception) { fail(e) }
                 }
