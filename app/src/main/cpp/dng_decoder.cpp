@@ -9,6 +9,7 @@
 #include <new>
 #include <stdexcept>
 #include <vector>
+#include "w1_trial.h"
 
 namespace {
 constexpr uint64_t kMaxFileBytes = 64ULL * 1024 * 1024;
@@ -36,8 +37,8 @@ void check(int result) {
     fail("DNG_UNSUPPORTED");
 }
 
-jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal) {
-    if (fd < 0 || longEdge < 1 || longEdge > 1024 || !signal) fail("DNG_UNSUPPORTED");
+jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMode) {
+    if (fd < 0 || longEdge < 1 || longEdge > 1024 || !signal || (wbMode != 0 && wbMode != 1)) fail("DNG_UNSUPPORTED");
     Cancellation cancel{env, signal, env->GetMethodID(env->GetObjectClass(signal), "isCanceled", "()Z")};
     if (!cancel.isCancelled || cancel.cancelled()) fail("DNG_CANCELLED");
     struct stat file{};
@@ -54,10 +55,23 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal) {
     }
 
     // Construct after encoded: LibRaw releases all references before the snapshot is destroyed.
+    cinematic::W1Metadata metadata(encoded.size());
     LibRaw raw(LIBRAW_OPTIONS_NO_DATAERR_CALLBACK);
+    if (wbMode == 1) {
+        raw.set_exifparser_handler(cinematic::W1Metadata::capture, &metadata);
+        raw.imgdata.params.use_camera_matrix = 1;
+    }
     raw.imgdata.rawparams.max_raw_memory_mb = 128;
     raw.set_progress_handler(progress, &cancel);
-    check(raw.open_buffer(encoded.data(), encoded.size()));
+    const int opened = raw.open_buffer(encoded.data(), encoded.size());
+    check(opened); // Preserve LibRaw cancellation/memory/source failures over partial metadata errors.
+    std::array<float, 3> requestedWb{};
+    int observedTags = -1; // UNKNOWN in the unchanged as-shot route, where no callback is installed.
+    if (wbMode == 1) {
+        requestedWb = metadata.requestedWb();
+        observedTags = metadata.unappliedTags();
+    }
+    if (cancel.cancelled()) fail("DNG_CANCELLED");
     const auto& identity = raw.imgdata.idata;
     const auto& sizes = raw.imgdata.sizes;
     const int sourceWidth = sizes.width, sourceHeight = sizes.height;
@@ -71,10 +85,12 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal) {
     // First route is single-frame three-colour Bayer DNG; no thumbnails or arbitrary RAW formats.
     if (!identity.dng_version || identity.raw_count != 1 || identity.colors != 3 ||
         identity.filters == 0 || identity.filters == 9 || identity.is_foveon) fail("DNG_UNSUPPORTED");
-    // Missing camera WB may trigger LibRaw's automatic fallback even with use_auto_wb=0.
-    for (int c = 0; c < 3; ++c)
-        if (!std::isfinite(raw.imgdata.color.cam_mul[c]) || raw.imgdata.color.cam_mul[c] <= .00001f)
-            fail("DNG_UNSUPPORTED");
+    if (wbMode == 0) {
+        // Missing camera WB may trigger LibRaw's automatic fallback even with use_auto_wb=0.
+        for (int c = 0; c < 3; ++c)
+            if (!std::isfinite(raw.imgdata.color.cam_mul[c]) || raw.imgdata.color.cam_mul[c] <= .00001f)
+                fail("DNG_UNSUPPORTED");
+    }
 
     auto& params = raw.imgdata.params;
     params.half_size = 1;
@@ -82,8 +98,14 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal) {
     params.output_color = 1; // LibRaw linear sRGB/D65, not camera RGB or R7 base.
     params.output_bps = 16;
     params.gamm[0] = params.gamm[1] = 1.0;
-    params.use_camera_wb = 1;
+    params.use_camera_wb = wbMode == 0 ? 1 : 0;
     params.use_auto_wb = 0;
+    if (wbMode == 1) {
+        params.user_mul[0] = requestedWb[0];
+        params.user_mul[1] = 1.f;
+        params.user_mul[2] = requestedWb[2];
+        params.user_mul[3] = 1.f;
+    }
     params.no_auto_bright = 1;
     params.no_auto_scale = 0;
     params.bright = 1.f;
@@ -96,6 +118,7 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal) {
     params.med_passes = 0;
     check(raw.unpack());
     if (raw.error_count()) fail("DNG_UNSUPPORTED");
+    if (wbMode == 1) cinematic::validateW1Processing(raw.imgdata.rawdata.color, requestedWb);
     check(raw.dcraw_process());
     if (raw.error_count()) fail("DNG_UNSUPPORTED");
     int error = 0;
@@ -142,15 +165,16 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal) {
     if (env->ExceptionCheck()) return nullptr;
     jclass result = env->FindClass("dev/cinematic/p0/raw/NativeDngPixels");
     if (!result) return nullptr;
-    jmethodID constructor = env->GetMethodID(result, "<init>", "(IIII[F)V");
+    jmethodID constructor = env->GetMethodID(result, "<init>", "(IIII[FIFFFI)V");
     if (!constructor) return nullptr;
-    return env->NewObject(result, constructor, width, height, sourceWidth, sourceHeight, output);
+    return env->NewObject(result, constructor, width, height, sourceWidth, sourceHeight, output,
+                          wbMode, requestedWb[0], requestedWb[1], requestedWb[2], observedTags);
 }
 } // namespace
 
 extern "C" JNIEXPORT jobject JNICALL
-Java_dev_cinematic_p0_raw_NativeDngDecoder_decode(JNIEnv* env, jobject, jint fd, jint longEdge, jobject signal) {
-    try { return decodeDng(env, fd, longEdge, signal); }
+Java_dev_cinematic_p0_raw_NativeDngDecoder_decode(JNIEnv* env, jobject, jint fd, jint longEdge, jobject signal, jint wbMode) {
+    try { return decodeDng(env, fd, longEdge, signal, wbMode); }
     catch (const std::bad_alloc&) {
         if (!env->ExceptionCheck()) env->ThrowNew(env->FindClass("java/io/IOException"), "DNG_MEMORY");
     } catch (const std::exception& error) {
