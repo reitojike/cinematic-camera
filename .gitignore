@@ -21,6 +21,8 @@ device-evidence/
 *.jpeg
 *.mp4
 *.log
+/.local-deps/
+**/.cxx/
 
 # PC RAW PoC: all originals, derivatives, manifests and environments stay local.
 /tools/raw_baseline/.private/
