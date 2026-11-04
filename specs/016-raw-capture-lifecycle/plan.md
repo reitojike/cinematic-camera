@@ -366,3 +366,26 @@ render前の要求保存や実process deathからの自動現像再開の実装�
 
 全段階で最終headの必須CI、canonical `@codex review`、独立明示OK、thread0を確認し、mergeは別承認。
 詳細な故障点は[quickstart.md](quickstart.md)。最初の設計に画素処理や試験用の大規模基盤を入れない。
+
+## 手動統合の実装境界
+
+新しいqueue層やpublication factoryは作らず、既存AutoDevelopQueue/Runner/Backendを共用する。
+`ManualDevelopRequests`はsource全参照のSHA-256由来IDと単調generationを割り当てるmetadata allocatorで、
+latest選択を`manual-request.bin`に、各immutable要求/attemptを既存の世代台帳に保存する。
+最新選択commitの成否不明中は同IDの旧世代をfenceし、新しいprepareが照合できるまで公開させない。
+prepareは描画を開始せず、start/publish/retryを既存IO ownerへ渡す。UIはFuture受領を完了/closeと扱わない。
+
+AutoDevelopCodec版2は実出力寸法・sRGB/向き・byte数と、rendererが検査した顔/EV状態を保存する。
+版1のfull-auto記録は読めるが、版1から手動品質を捏造しない。pre-render手動要求のprofile/顔/EVはUNKNOWN/NOT_RUNのまま、
+成功receiptの観測結果と区別する。FINAL要求は従来どおり全寸法・既知profile/顔/EVと完全一致が必要である。
+
+`BoundedJpegRendererAdapter`は#127のJpegGenerationAttemptと同attemptのcreateOutput/openOutputReadをつなぐ。
+`AndroidOwnedJpegFrames`は同じ既存native as-shot decoderをbackend所有のread-only FDから呼び、
+FD close失敗を強参照で保持する。新しい画素処理・SDK・権限を追加しない。native入口は共通slot所有中だけ使う。
+production登録は空で、固定recipeに対応する実controlsを明示enrollするまで初回試用の保存を有効化しない。
+
+`DevelopExecution.coordinator`はpreview/manual/autoが共用するprocess ownerである。
+interactive側は実行直前の資源観測でcommon条件を更新し、自分のrenderer capability付きでtryStartObservedする。
+最新common条件が停止/未知なら古いjob snapshotで開始しない。枠は実資源close後だけcompleteする。
+queueが内部で枠を取るmanual処理をpreviewの枠内でawaitしない。legacy preview decoderのclose不明は
+成功ackへ補完せず、UI接続側にも所有/解放の検証を要求する。全体の撮影自動投入・起動列挙・実機合格は依然残件である。

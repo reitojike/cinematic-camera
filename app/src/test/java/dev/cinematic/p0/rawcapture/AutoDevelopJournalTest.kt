@@ -54,7 +54,7 @@ class AutoDevelopJournalTest {
         journal.prepare(request())
         val original = storage.bytes!!.clone()
         val payload = original.copyOfRange(0, original.size - 32)
-        ByteBuffer.wrap(payload).putInt(4, 2)
+        ByteBuffer.wrap(payload).putInt(4, 3)
         storage.bytes = payload + MessageDigest.getInstance("SHA-256").digest(payload)
         val unknown = storage.bytes!!.clone()
         assertThrows(IOException::class.java) { journal.read() }
@@ -76,6 +76,16 @@ class AutoDevelopJournalTest {
         assertThrows(CaptureJournalConflict::class.java) { journal.start(4) }
         assertThrows(CaptureJournalConflict::class.java) { journal.hold(4, AutoJobReason.RENDER_FAILED) }
         assertEquals(AutoJobPhase.PUBLISHED, journal.read()!!.phase)
+    }
+    @Test fun legacyVersionOneFullOriginalRecordRemainsReadableWithoutInventingObservations() {
+        val record = AutoDevelopRecord(request())
+        val encoded = AutoDevelopCodec.encode(record)
+        // v1 ended at reason; v2 appends the optional observation flag for this no-output record.
+        val legacyPayload = encoded.copyOfRange(0, encoded.size - 33)
+        ByteBuffer.wrap(legacyPayload).putInt(4, 1)
+        val legacy = legacyPayload + MessageDigest.getInstance("SHA-256").digest(legacyPayload)
+        assertEquals(record, AutoDevelopCodec.decode(legacy))
+        assertNull(AutoDevelopCodec.decode(legacy).observed)
     }
     private class FaultStorage : AtomicJournalStorage {
         var bytes: ByteArray? = null

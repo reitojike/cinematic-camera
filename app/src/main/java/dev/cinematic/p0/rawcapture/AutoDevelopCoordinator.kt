@@ -13,16 +13,21 @@ internal class AutoDevelopCoordinator {
     class Attempt internal constructor()
     class CaptureReservation internal constructor()
 
-    private class Active(val attempt: Attempt, var stopRequested: Boolean = false)
+    private class Active(val attempt: Attempt, val observed: Boolean = false, var stopRequested: Boolean = false)
 
     private var conditions = AutoDevelopConditions()
+    private var conditionsObserved = false
     private var active: Active? = null
     private val captures = mutableSetOf<CaptureReservation>()
 
     @Synchronized
     fun updateConditions(value: AutoDevelopConditions) {
         conditions = value
-        if (AutoDevelopPolicy.blockers(value).isNotEmpty()) active?.stopRequested = true
+        conditionsObserved = true
+        // Job-local renderer availability must not cancel an interactive job with another capability.
+        val current = active
+        val common = if (current?.observed == true) value.copy(rendererAvailable = true) else value
+        if (AutoDevelopPolicy.blockers(common).isNotEmpty()) current?.stopRequested = true
     }
 
     /** Never waits for the admitted worker to stop or close its resources. */
@@ -48,6 +53,14 @@ internal class AutoDevelopCoordinator {
             return null
         }
         return Attempt().also { active = Active(it) }
+    }
+
+    /** Interactive caller supplies fresh observations including its own renderer capability.
+     * The caller must keep checking observations and cancellation while it owns resources. */
+    @Synchronized fun tryStartObserved(observations: AutoDevelopConditions): Attempt? {
+        if (active != null || captures.isNotEmpty() || AutoDevelopPolicy.blockers(observations).isNotEmpty() ||
+            (conditionsObserved && AutoDevelopPolicy.blockers(conditions.copy(rendererAvailable = true)).isNotEmpty())) return null
+        return Attempt().also { active = Active(it, observed = true) }
     }
 
     /** Stop is latched for the current attempt; it is not resource-release acknowledgement. */

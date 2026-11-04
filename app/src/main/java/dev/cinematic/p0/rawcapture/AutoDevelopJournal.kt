@@ -19,6 +19,7 @@ internal data class AutoDevelopRecord(
     val attemptCount: Int = 0,
     val outputFingerprint: OriginalFingerprint? = null,
     val reason: AutoJobReason = AutoJobReason.NONE,
+    val observed: AutoRenderReceipt? = null,
 ) {
     init {
         require(revision >= 0 && attemptCount >= 0)
@@ -29,10 +30,14 @@ internal data class AutoDevelopRecord(
         require((outputFingerprint != null) == (phase in setOf(AutoJobPhase.RENDERED, AutoJobPhase.PUBLISHING, AutoJobPhase.PUBLISHED) ||
             (phase == AutoJobPhase.HELD && outputFingerprint != null)))
         require(outputFingerprint == null || attemptId != null)
+        require(observed == null || (outputFingerprint != null && request.accepts(observed) && observed.output.bytes == outputFingerprint.bytes))
+        require(!request.boundedManual || outputFingerprint == null || observed != null)
     }
     fun completed(): CompletedRender {
         val fingerprint = requireNotNull(outputFingerprint)
-        return request.completed(JpegOutputDescription(request.width, request.height, 1, "sRGB", fingerprint.bytes))
+        val receipt = observed
+        return if (receipt != null) request.completed(receipt.output, receipt.face, receipt.exposure)
+        else request.completed(JpegOutputDescription(request.width, request.height, 1, "sRGB", fingerprint.bytes))
     }
 }
 
@@ -60,11 +65,11 @@ internal class AutoDevelopJournal(
         return persist(current.copy(revision = next(current), phase = AutoJobPhase.RENDERING,
             attemptId = attemptFactory(), attemptCount = current.attemptCount + 1, reason = AutoJobReason.NONE))
     }
-    @Synchronized fun rendered(revision: Long, fingerprint: OriginalFingerprint): AutoDevelopRecord {
+    @Synchronized fun rendered(revision: Long, fingerprint: OriginalFingerprint, observed: AutoRenderReceipt? = null): AutoDevelopRecord {
         val current = current(revision)
         if (current.phase != AutoJobPhase.RENDERING) throw CaptureJournalConflict()
         JpegOutputDescription(current.request.width, current.request.height, 1, "sRGB", fingerprint.bytes)
-        return persist(current.copy(revision = next(current), phase = AutoJobPhase.RENDERED, outputFingerprint = fingerprint))
+        return persist(current.copy(revision = next(current), phase = AutoJobPhase.RENDERED, outputFingerprint = fingerprint, observed = observed))
     }
     @Synchronized fun publishing(revision: Long) = advance(revision, AutoJobPhase.RENDERED, AutoJobPhase.PUBLISHING)
     @Synchronized fun published(revision: Long) = advance(revision, AutoJobPhase.PUBLISHING, AutoJobPhase.PUBLISHED)
@@ -80,7 +85,9 @@ internal class AutoDevelopJournal(
     }
     @Synchronized fun retry(revision: Long): AutoDevelopRecord {
         val current = current(revision)
-        if (current.phase != AutoJobPhase.RETRYABLE) throw CaptureJournalConflict()
+        val reselect = current.request.boundedManual && current.phase == AutoJobPhase.HELD &&
+            current.reason == AutoJobReason.SOURCE_UNAVAILABLE && current.attemptId == null && current.outputFingerprint == null
+        if (current.phase != AutoJobPhase.RETRYABLE && !reselect) throw CaptureJournalConflict()
         return persist(current.copy(revision = next(current), phase = AutoJobPhase.QUEUED, attemptId = null, reason = AutoJobReason.NONE))
     }
     /** Call only when rebuilding the process owner, never while a live attempt/close is outstanding. */
@@ -109,7 +116,7 @@ internal class AutoDevelopJournal(
 internal object AutoDevelopCodec {
     const val MAX_BYTES = 4096
     private const val MAGIC = 0x43434144 // CCAD; independent of receipt and JPEG publication.
-    private const val VERSION = 1
+    private const val VERSION = 2
     fun encode(record: AutoDevelopRecord): ByteArray {
         val buffer = ByteArrayOutputStream()
         DataOutputStream(buffer).use { out ->
@@ -124,6 +131,12 @@ internal object AutoDevelopCodec {
             out.writeBoolean(record.attemptId != null); record.attemptId?.let(out::writeUTF)
             out.writeBoolean(record.outputFingerprint != null); record.outputFingerprint?.let { fp(out, it) }
             out.writeInt(record.reason.ordinal)
+            out.writeBoolean(record.observed != null)
+            record.observed?.let {
+                out.writeInt(it.output.width); out.writeInt(it.output.height); out.writeInt(it.output.orientation)
+                out.writeUTF(it.output.color); out.writeLong(it.output.bytes)
+                out.writeInt(it.face.ordinal); out.writeInt(it.exposure.ordinal)
+            }
         }
         val payload = buffer.toByteArray()
         return (payload + MessageDigest.getInstance("SHA-256").digest(payload)).also {
@@ -138,7 +151,9 @@ internal object AutoDevelopCodec {
         }
         try {
             return DataInputStream(ByteArrayInputStream(payload)).use { input ->
-                if (input.readInt() != MAGIC || input.readInt() != VERSION) throw IOException("Unknown auto-develop schema")
+                if (input.readInt() != MAGIC) throw IOException("Unknown auto-develop schema")
+                val version = input.readInt()
+                if (version !in 1..VERSION) throw IOException("Unknown auto-develop schema")
                 val id = text(input, 64); val generation = input.readLong()
                 val uri = text(input, 1024); val fingerprint = fp(input); val grant = enumValue<OriginalGrant>(input.readInt())
                 val source = SharedOriginalReference(uri, fingerprint, grant)
@@ -149,8 +164,12 @@ internal object AutoDevelopCodec {
                 val attempt = if (flag(input)) text(input, 32) else null
                 val output = if (flag(input)) fp(input) else null
                 val reason = enumValue<AutoJobReason>(input.readInt())
+                val observed = if (version >= 2 && flag(input)) AutoRenderReceipt(request,
+                    JpegOutputDescription(input.readInt(), input.readInt(), input.readInt(), text(input, 32), input.readLong()),
+                    enumValue(input.readInt()), enumValue(input.readInt())) else null
+                if (version == 1 && request.quality == AutoRenderQuality.MANUAL_BOUNDED_1024_PRELIMINARY) throw IOException("Invalid legacy quality")
                 if (input.available() != 0) throw IOException("Trailing auto-develop data")
-                AutoDevelopRecord(request, revision, phase, attempt, count, output, reason)
+                AutoDevelopRecord(request, revision, phase, attempt, count, output, reason, observed)
             }
         } catch (e: IllegalArgumentException) { throw IOException("Invalid auto-develop fields", e) }
     }
