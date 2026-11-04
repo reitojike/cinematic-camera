@@ -14,7 +14,7 @@ internal class PrivateTrialDelivery<T : Closeable>(private val value: T, private
     }
     fun claim(): T? {
         val accepted = synchronized(this) {
-            if (state == State.PENDING && control.accepts(ticket)) { state = State.CLAIMED; true } else false
+            if (state == State.PENDING && control.canClaim(ticket)) { state = State.CLAIMED; true } else false
         }
         if (accepted) { control.releasePreview(this); return value }
         close()

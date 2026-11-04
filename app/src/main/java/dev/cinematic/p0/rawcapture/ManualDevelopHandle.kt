@@ -8,6 +8,7 @@ internal class ManualDevelopControl(initiallyRequested: Boolean) {
     private var epoch = Ticket()
     private var requested = initiallyRequested
     private var pendingPreview: PrivateTrialDelivery<*>? = null
+    private var previewFenced = false
     @Synchronized fun begin(): Ticket { requested = true; return epoch }
     fun stop() {
         val pending = synchronized(this) { requested = false; epoch = Ticket(); pendingPreview }
@@ -15,9 +16,11 @@ internal class ManualDevelopControl(initiallyRequested: Boolean) {
     }
     @Synchronized fun isRequested() = requested
     @Synchronized fun accepts(ticket: Ticket?) = requested && epoch === ticket
+    @Synchronized fun canClaim(ticket: Ticket?) = accepts(ticket) && !previewFenced
+    @Synchronized fun fencePreview(value: Boolean) { previewFenced = value }
     @Synchronized fun hasPendingPreview() = pendingPreview != null
     @Synchronized fun holdPreview(delivery: PrivateTrialDelivery<*>, ticket: Ticket): Boolean {
-        if (!accepts(ticket) || pendingPreview != null) return false
+        if (!canClaim(ticket) || pendingPreview != null) return false
         pendingPreview = delivery
         return true
     }

@@ -172,3 +172,13 @@ PREVIEW adapterを拒否し、原本不変・JPEG公開0・実資源解放後の
 
 原本消失・仮JPEGの共有露出・重複公開・撮影の待ち増加やフリーズがあれば該当接続を停止する。
 アンインストール/データ消去は内部ファイルを失うため、この検証で既存ユーザーデータを消去しない。
+
+## Private trialの部品検証とUIへ残る確認
+
+- 先行契約compile RED後、全JVM540件・failure/error0（Windows既存skip3）、lint/両ABI app/test APK成功。
+- 隔離API37でprivate factory自身の合成3MP DNG→768×1024を検証。同attemptのfresh表示、software sRGB、全byte/hash、
+  原本不変、共有publication台帳0、生成前/再読込時のcapture予約、future取消・未claim取消・世代変更を確認する。
+- allocator停止中とcommit応答喪失後の旧claimは各native REDを確認し、claim fence/epoch補正後に同じcaseでGREEN。
+  claimed後UI所有、CLOSING中claim拒否、close故障の所有保持/ack再試行は専用JVMで確認する。
+- 完成用routeをprivate試験の代用にせず、private1件と既存9件のnative10件を分けて記録する。
+- UIの実選択・表示・背景化・撮影復帰、対応端末の実DNG/画質/性能、OS kill/電源断はこの合成検証の合格に含めない。

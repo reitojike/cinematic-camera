@@ -50,7 +50,7 @@ internal data class AutoDevelopRequest(
             receipt.face == face && receipt.exposure == exposure)
     fun completed(output: JpegOutputDescription, observedFace: RenderedFaceState = face,
         observedExposure: RenderedExposureState = exposure): CompletedRender {
-        check(!boundedTrial) { "Private trial cannot become CompletedRender" }
+        check(quality != AutoRenderQuality.PRIVATE_TRIAL_1024) { "Private trial cannot become CompletedRender" }
         return CompletedRender(
         RenderedJpegRequest(captureId, generation, source, recipe, output), rendererContract,
         RenderedResultKind.COMPLETE_STAGE_CLEAR, observedFace, observedExposure,

@@ -111,7 +111,7 @@ internal class AndroidAutoDevelopBackend(
     }
     override fun publication(record: AutoDevelopRecord, isCurrent: () -> Boolean): AutoDevelopPublication {
         checkRequest(record.request)
-        if (request.boundedTrial) throw IOException("Private trial cannot acquire a publication owner")
+        if (request.quality == AutoRenderQuality.PRIVATE_TRIAL_1024) throw IOException("Private trial cannot acquire a publication owner")
         if (!supports(record.request)) throw IOException("Final renderer contract is not enrolled")
         val attemptId = requireNotNull(record.attemptId)
         publisher?.let { if (publishedAttempt != attemptId) throw CaptureJournalConflict(); return it }

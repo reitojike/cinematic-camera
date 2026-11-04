@@ -46,7 +46,11 @@ class ManualDevelopInstrumentationTest {
             val allowed = AutoDevelopConditions(true, false, false, false, true, true, true, true)
             DevelopExecution.updateConditions(allowed)
             val trial = AndroidAutoDevelopQueue.preparePrivateTrial(context, source).join().also { handle = it }
-            trial.start(allowed).join()
+            val beforeRender = DevelopExecution.reserveCapture()
+            try {
+                trial.start(allowed).join()
+                assertEquals(PrivateTrialPhase.PREPARED, trial.status().join().phase)
+            } finally { DevelopExecution.releaseCapture(beforeRender) }
             val ready = trial.status().join()
             assertEquals(PrivateTrialPhase.READY, ready.phase)
             assertEquals(AutoRenderQuality.PRIVATE_TRIAL_1024, ready.request.quality)
@@ -74,6 +78,7 @@ class ManualDevelopInstrumentationTest {
             assertEquals(ready.fingerprint, same.status.fingerprint)
             same.close()
             // Force future cancellation before its queued readback; rejected delivery must close.
+            val whileSelecting = trial.readPreview(allowed) { false }.join()
             val entered = java.util.concurrent.CountDownLatch(1)
             val release = java.util.concurrent.CountDownLatch(1)
             val blockedPrepare = AndroidAutoDevelopQueue.get(context).preparePrivateTrial(id) {
@@ -82,8 +87,12 @@ class ManualDevelopInstrumentationTest {
                 journal.read()!!.request
             }
             check(entered.await(5, java.util.concurrent.TimeUnit.SECONDS))
-            val abandoned = trial.readPreview(allowed) { false }
-            try { assertTrue(abandoned.cancel(false)) } finally { release.countDown() }
+            try {
+                val whilePreparing = whileSelecting.claim()
+                try { assertNull(whilePreparing) } finally { whilePreparing?.close() }
+                val abandoned = trial.readPreview(allowed) { false }
+                assertTrue(abandoned.cancel(false))
+            } finally { release.countDown(); blockedPrepare.handle { _, _ -> Unit }.join() }
             blockedPrepare.join()
             val afterAbandon = trial.readPreview(allowed) { false }.join().claim()!!
             afterAbandon.close()
@@ -92,14 +101,27 @@ class ManualDevelopInstrumentationTest {
                 CaptureJournalFile.JPEG_PUBLICATION).read(JpegPublicationCodec.MAX_BYTES))
             DngContentVerifier.verify(fp, { resolver.openInputStream(uri)!! })
             val stale = trial.readPreview(allowed) { false }.join()
+            val selected = AndroidAtomicJournalStorage(root, id, CaptureJournalFile.MANUAL_REQUEST)
+            val acknowledgementLost = object : AtomicJournalStorage {
+                override fun read(maxBytes: Int) = selected.read(maxBytes)
+                override fun replace(contents: ByteArray) { selected.replace(contents); throw java.io.IOException("Synthetic commit acknowledgement lost") }
+            }
+            val unknown = AndroidAutoDevelopQueue.get(context).preparePrivateTrial(id) {
+                ManualDevelopRequests(source, acknowledgementLost).prepare(JpegGenerationRecipe.trial().snapshot.copy(payload =
+                    JpegGenerationRecipe.trial().snapshot.payload + ";synthetic-new-policy"))
+            }
+            assertThrows(java.util.concurrent.CompletionException::class.java) { unknown.join() }
+            val staleClaim = stale.claim()
+            try { assertNull(staleClaim) } finally { staleClaim?.close() }
             val completeRecipe = JpegGenerationRecipe(AndroidAsShotJpegFrames.CONTRACT, RenderRecipeSnapshot("synthetic-unregistered-v1", "fixed"))
             val next = AndroidAutoDevelopQueue.prepareManual(context, source, completeRecipe).join()
-            assertEquals(trial.request.generation + 1, next.request.generation)
+            assertEquals(trial.request.generation + 2, next.request.generation)
             assertNull(stale.claim())
             assertThrows(java.util.concurrent.CompletionException::class.java) { trial.readPreview(allowed) { false }.join() }
             assertThrows(java.util.concurrent.CompletionException::class.java) { next.start(allowed).join() }
             assertNull(AndroidAtomicJournalStorage(File(candidate, "renders"), trial.request.generation.toString(),
                 CaptureJournalFile.JPEG_PUBLICATION).read(JpegPublicationCodec.MAX_BYTES))
+            DngContentVerifier.verify(fp, { resolver.openInputStream(uri)!! })
         } finally {
             handle?.requestStop()
             check(resolver.delete(uri, null, null) == 1)
