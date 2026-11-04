@@ -14,6 +14,7 @@ internal data class PhotoRollRenderRequest(
     val strength: Float = 0.5f,
     val maxEdge: Int = 1024,
     val mode: PhotoRollPreviewMode = PhotoRollPreviewMode.STAGE_CLEAR,
+    val onStage: (PhotoRollRenderStage) -> Unit = {},
 )
 
 internal sealed interface PhotoRollRenderResult {
@@ -25,7 +26,8 @@ internal sealed interface PhotoRollRenderResult {
 /**
  * Called serially off the UI thread, only while this screen is foreground.
  * Validate actual DNG structure/camera/metadata and honor cancellation between stages.
- * Unknown face/exposure/input support must return Unavailable, never invented defaults.
+ * STAGE_CLEAR must reject unknown face/exposure/input support, never invent defaults.
+ * Diagnostic trial modes must explicitly label unresolved inputs and disabled face protection.
  * Do not write, copy, delete or publish an original or a JPEG here.
  * Preview must be software sRGB, correctly oriented and bounded by request.maxEdge.
  * Cancellation is a request; the serial permit remains held until render returns.
@@ -33,6 +35,7 @@ internal sealed interface PhotoRollRenderResult {
 internal interface PhotoRollRenderer {
     val mode: PhotoRollPreviewMode get() = PhotoRollPreviewMode.STAGE_CLEAR
     val maxSourceBytes: Long get() = PhotoRollRepository.MAX_SOURCE_BYTES
+    val maxEdge: Int get() = 1024
     fun render(request: PhotoRollRenderRequest, cancellation: CancellationSignal): PhotoRollRenderResult
 }
 
