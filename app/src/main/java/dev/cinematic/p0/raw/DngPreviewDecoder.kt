@@ -22,6 +22,7 @@ internal object DngPreviewDecoder {
         uri: Uri,
         cancellation: CancellationSignal,
         longEdge: Int = 1024,
+        whiteBalanceMode: DngWhiteBalanceMode = DngWhiteBalanceMode.AS_SHOT,
     ): DngPreviewResult {
         require(longEdge in 1..1024) { "Preview long edge must be within 1..1024" }
         check(Looper.myLooper() != Looper.getMainLooper()) { "DNG decode requires a worker thread" }
@@ -31,12 +32,13 @@ internal object DngPreviewDecoder {
             if (uri.scheme != "content") return DngPreviewResult.Failed(DngPreviewFailure.SOURCE)
             if (!NativeDngDecoder.available) return DngPreviewResult.Failed(DngPreviewFailure.UNAVAILABLE)
             val decoded = resolver.openFileDescriptor(uri, "r", cancellation)?.use { source ->
-                NativeDngDecoder.decode(source.fd, longEdge, cancellation)
+                NativeDngDecoder.decode(source.fd, longEdge, cancellation, whiteBalanceMode.ordinal)
             } ?: return DngPreviewResult.Failed(DngPreviewFailure.SOURCE)
             cancellation.throwIfCanceled()
             return DngPreviewResult.Ready(
                 LinearSrgbImage(decoded.width, decoded.height, decoded.pixels),
                 decoded.sourceWidth, decoded.sourceHeight,
+                decoded.whiteBalance,
             )
         } catch (_: OperationCanceledException) {
             return DngPreviewResult.Failed(DngPreviewFailure.CANCELLED)
@@ -49,6 +51,7 @@ internal object DngPreviewDecoder {
                     "DNG_LIMIT" -> DngPreviewFailure.LIMIT
                     "DNG_UNSUPPORTED" -> DngPreviewFailure.UNSUPPORTED
                     "DNG_MEMORY" -> DngPreviewFailure.MEMORY
+                    "DNG_W1_METADATA" -> DngPreviewFailure.UNSUPPORTED
                     else -> DngPreviewFailure.SOURCE
                 },
             )
@@ -68,11 +71,32 @@ internal sealed interface DngPreviewResult {
         val preliminaryLinearSrgb: LinearSrgbImage,
         val sourceWidth: Int,
         val sourceHeight: Int,
+        val whiteBalance: DngWhiteBalanceSummary = DngWhiteBalanceSummary.asShot(),
     ) : DngPreviewResult
     data class Failed(val reason: DngPreviewFailure) : DngPreviewResult
 }
 
 internal enum class DngPreviewFailure { BUSY, CANCELLED, SOURCE, LIMIT, UNSUPPORTED, MEMORY, UNAVAILABLE }
+
+internal enum class DngWhiteBalanceMode { AS_SHOT, W1_ONLY_TRIAL }
+internal enum class DngInputQuality { AS_SHOT_PRELIMINARY, W1_ONLY_PRELIMINARY }
+
+/** Requested pre-normalization LibRaw user_mul, not the eventual internal scale. */
+internal data class DngRequestedUserWb(val red: Float, val green: Float, val blue: Float)
+
+/** Nullable presence means UNKNOWN, not absent. No Pixel profile stages are implemented here. */
+internal data class DngWhiteBalanceSummary(
+    val quality: DngInputQuality,
+    val requestedUserWb: DngRequestedUserWb?,
+    val forwardMatrixPresent: Boolean?,
+    val lookTablePresent: Boolean?,
+    val opcodeList2Present: Boolean?,
+) {
+    val pixelProfileApplied: Boolean get() = false
+    companion object {
+        fun asShot() = DngWhiteBalanceSummary(DngInputQuality.AS_SHOT_PRELIMINARY, null, null, null, null)
+    }
+}
 
 @Keep
 internal class NativeDngPixels(
@@ -81,10 +105,22 @@ internal class NativeDngPixels(
     val sourceWidth: Int,
     val sourceHeight: Int,
     val pixels: FloatArray,
-)
+    private val wbMode: Int,
+    private val requestedRed: Float,
+    private val requestedGreen: Float,
+    private val requestedBlue: Float,
+    private val observedTags: Int,
+) {
+    val whiteBalance: DngWhiteBalanceSummary get() = if (wbMode == 0) DngWhiteBalanceSummary.asShot() else
+        DngWhiteBalanceSummary(
+            DngInputQuality.W1_ONLY_PRELIMINARY,
+            DngRequestedUserWb(requestedRed, requestedGreen, requestedBlue),
+            observedTags and 1 != 0, observedTags and 2 != 0, observedTags and 4 != 0,
+        )
+}
 
 @Keep
 internal object NativeDngDecoder {
     val available: Boolean = try { System.loadLibrary("cinematic_dng"); true } catch (_: UnsatisfiedLinkError) { false }
-    external fun decode(fd: Int, longEdge: Int, cancellation: CancellationSignal): NativeDngPixels
+    external fun decode(fd: Int, longEdge: Int, cancellation: CancellationSignal, wbMode: Int = 0): NativeDngPixels
 }

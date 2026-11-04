@@ -19,7 +19,7 @@ target_compile_features(raw PUBLIC cxx_std_17)
 # Android zlib only. No JPEG/LCMS/RawSpeed/DNG SDK/GPL demosaic packs/OpenMP.
 target_link_libraries(raw PUBLIC z)
 
-add_library(cinematic_dng SHARED dng_decoder.cpp)
+add_library(cinematic_dng SHARED dng_decoder.cpp w1_trial.cpp)
 target_compile_options(cinematic_dng PRIVATE -Wall -Wextra -Werror -fvisibility=hidden)
 # Keep static LibRaw/C++ runtime symbols private to this JNI boundary.
 target_link_options(cinematic_dng PRIVATE "-Wl,--exclude-libs,ALL")
