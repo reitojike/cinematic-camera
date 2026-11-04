@@ -79,6 +79,7 @@ internal class PhotoRollJpegSave private constructor(
 }
 
 internal fun unavailableJpegSaveMessage(mode: PhotoRollPreviewMode): String = when (mode) {
+    PhotoRollPreviewMode.PRIVATE_TRIAL -> "縮小試験JPEGはアプリ内表示のみです。共有写真への保存は無効です"
     PhotoRollPreviewMode.STAGE_CLEAR_TRIAL -> "長辺512以下の試験画像は、完成JPEGとして保存できません"
     PhotoRollPreviewMode.DNG_TRIAL -> "この画像はルック未適用の試験表示です。完成JPEGとしては保存できません"
     PhotoRollPreviewMode.STAGE_CLEAR -> "完成JPEGの生成・保存経路はまだ接続されていません"

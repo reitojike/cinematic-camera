@@ -19,6 +19,7 @@ internal data class PhotoRollRenderRequest(
     val strength: Float = 0.5f,
     val maxEdge: Int = 1024,
     val mode: PhotoRollPreviewMode = PhotoRollPreviewMode.STAGE_CLEAR,
+    val explicitRetry: Boolean = false,
     val onStage: (PhotoRollRenderStage) -> Unit = {},
 )
 
