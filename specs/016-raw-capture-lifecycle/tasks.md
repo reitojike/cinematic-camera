@@ -1,16 +1,16 @@
 # Tasks: RAW撮影後の保全と自動現像
 
 **Input**: [spec.md](spec.md) / [plan.md](plan.md) / [contracts.md](contracts.md)。
-状態は設計と実装を区別する。公開Issue/PR、CI、canonical reviewは承認待ち/未取得。
+状態は設計と実装を区別する。[保存専用Issue #89](https://github.com/reitojike/cinematic-camera/issues/89)で追跡する。
 以下のアプリ実装はすべて後続PR。パスの`main`/`test`は`app/src/<種別>/java/dev/cinematic/p0/`を基準とする。
 
 ## Phase 1: Setup・設計PR
 
-- [x] T001 `specs/015-raw-capture-lifecycle/spec.md`にUS/FR/SCと既存Issueとの境界を定義する。
-- [x] T002 `specs/015-raw-capture-lifecycle/plan.md`/`contracts.md`に保全・再開・公開・#78契約を定義する。
+- [x] T001 `specs/016-raw-capture-lifecycle/spec.md`にUS/FR/SCと既存Issueとの境界を定義する。
+- [x] T002 `specs/016-raw-capture-lifecycle/plan.md`/`contracts.md`に保全・再開・公開・#78契約を定義する。
 - [x] T003 `.specify/memory/constitution.md`と`specs/002-live-capture/plan.md`へJPEG公開方針の変更を明記する。
-- [x] T004 `specs/015-raw-capture-lifecycle/quickstart.md`に故障点と受入方法を対応付ける。
-- [ ] T005 `specs/015-raw-capture-lifecycle/`を対象に保存専用Issueと設計Draft PRを公開し、#78担当とファイル/契約境界を合意する。
+- [x] T004 `specs/016-raw-capture-lifecycle/quickstart.md`に故障点と受入方法を対応付ける。
+- [ ] T005 `specs/016-raw-capture-lifecycle/`を対象に#89の設計Draft PRを公開し、#78担当とファイル/契約境界を合意する。
 
 ## Phase 2: 共通基盤・独立policy PR
 
@@ -44,8 +44,8 @@
 
 ## Phase 5: 検証・収束
 
-- [ ] T021 [US1] [US2] `specs/015-raw-capture-lifecycle/quickstart.md`の実機手順を本人操作で確認し、#78/保存専用Issueへ非公開素材を含まない検証要約を記録する（SC-001〜004）。
-- [ ] T022 `specs/015-raw-capture-lifecycle/tasks.md`の実装/実機状態を更新し、各PRの最終headでlint/unit/build、canonical、独立明示OK、thread0を確認する。mergeは別承認。
+- [ ] T021 [US1] [US2] `specs/016-raw-capture-lifecycle/quickstart.md`の実機手順を本人操作で確認し、#78/保存専用Issueへ非公開素材を含まない検証要約を記録する（SC-001〜004）。
+- [ ] T022 `specs/016-raw-capture-lifecycle/tasks.md`の実装/実機状態を更新し、各PRの最終headでlint/unit/build、canonical、独立明示OK、thread0を確認する。mergeは別承認。
 
 ## Dependencies & Implementation Strategy
 

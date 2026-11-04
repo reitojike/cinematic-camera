@@ -31,8 +31,8 @@
 
 | 担当 | 変更場所 | 今回触れない場所 |
 |---|---|---|
-| 保存設計/基盤 | `specs/015-raw-capture-lifecycle/`、将来`app/src/{main,test}/java/dev/cinematic/p0/rawcapture/` | `tools/raw_baseline/`、#78の比較fixture/画素処理 |
-| #78移植 | 画素処理とPC比較の専用ファイル。実配置は移植側が決める | 保存台帳・MediaStore・CameraProbeへの接続 |
+| 保存設計/基盤 | `specs/016-raw-capture-lifecycle/`、将来`app/src/{main,test}/java/dev/cinematic/p0/rawcapture/` | `tools/raw_baseline/`、#78の比較fixture/画素処理 |
+| #78移植 | `specs/015-stage-clear-android/`、`dev.cinematic.p0.raw`とPC比較の専用ファイル（PR #88） | 保存台帳・MediaStore・CameraProbeへの接続 |
 | 後続の統合PR | CameraProbeから新保存経路へ1か所ずつ接続、必要なpolicy呼出し | 既存JPEG単独/動画/設定制御 |
 
 これは提案境界。#78側の合意前に共有DTOや画素処理namespaceを作らない。

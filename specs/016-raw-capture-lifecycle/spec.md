@@ -7,8 +7,9 @@
 **Status**: Draft・設計のみ。merge前は現行保存経路を変更しない。
 
 **Input**: 撮影優先、DNG非破壊、仮JPEGは内部のみ、現像成功後のJPEGを共有カメラロールへ公開する合意。
-関連: [#78](https://github.com/reitojike/cinematic-camera/issues/78)、[014 handoff](../014-stage-clear-v1/handoff.md)。
-保存専用Issueは公開承認待ち。既存Issueの範囲を拡大した扱いにはしない。
+関連: [保存専用Issue #89](https://github.com/reitojike/cinematic-camera/issues/89)、
+[#78](https://github.com/reitojike/cinematic-camera/issues/78)、[014 handoff](../014-stage-clear-v1/handoff.md)。
+既存Issueの範囲を拡大した扱いにはしない。
 
 ## User Scenarios & Testing
 
