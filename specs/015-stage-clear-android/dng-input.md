@@ -30,8 +30,12 @@ PIEXで埋め込みJPEGを選ぶ場合があり、DNG SDKのrenderも最終sRGB�
 これは公開ソースからの判断であり、Pixel搭載codecの実測ではない。
 
 PC側はrawpy/LibRawを使うため、DNGを独自にparse/demosaicせず、公式LibRaw 0.22.3の限定構成を採る。
-CDDL-1.0を選択し、改変なしの固定ソースURLとSHA-256、COPYRIGHT、CDDL、DCBのBSD noticeをAPK assetsへ含める。
-取得はTLS検証とhash照合を有効にしたCMake FetchContentで、ソース改変や未固定branch参照をしない。
+CDDL-1.0を選択し、公式未改変アーカイブを`third_party/libraw/`に保持してソース提供をupstreamだけに依存させない。
+CMake FetchContentはローカルアーカイブのhashを照合して展開し、ソース改変や未固定branch参照をしない。
+COPYRIGHT、CDDL、DCB BSD、Adobe由来部分のMIT通知、NDK r29のtoolchain NOTICEと取得案内をAPK assetsへ含める。
+LibRawはJNI共有ライブラリへ**静的**に取り込まれ、NDKのC++ runtimeも静的リンクする。
+実ELFのDT_NEEDEDはAndroid提供のlibz/libm/libdl/libc。ソース/リンク/通知/再ビルドは
+[保持ソースの案内](../../third_party/libraw/README.md)で追跡する。
 依存はNDK 29.0.14206865 / CMake 3.22.1、Android system zlib。
 外部JPEG/LCMS/RawSpeed/DNG SDK/X3FTOOLS/OpenMP/追加demosaic packは有効にしない。
 arm64-v8a（Pixel）とx86_64（合成検証）のみをビルドする。

@@ -1,0 +1,4 @@
+{
+    global: Java_dev_cinematic_p0_raw_NativeDngDecoder_decode;
+    local: *;
+};

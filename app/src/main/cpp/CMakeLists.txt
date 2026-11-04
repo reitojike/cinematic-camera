@@ -2,10 +2,9 @@ cmake_minimum_required(VERSION 3.22.1)
 project(cinematic_dng LANGUAGES CXX)
 
 include(FetchContent)
-# Unmodified official release. CDDL-1.0 selected; notices and source URL ship in assets.
+# Unmodified official release retained in the repository. CDDL-1.0 selected.
 FetchContent_Declare(libraw
-    URL https://www.libraw.org/data/LibRaw-0.22.3.tar.gz
-    TLS_VERIFY TRUE
+    URL "${CMAKE_CURRENT_LIST_DIR}/../../../../third_party/libraw/LibRaw-0.22.3.tar.gz"
     URL_HASH SHA256=789f3c33466210a1a0907f747a97c715d21bbf4af712f257fcbbd90111b227e4)
 FetchContent_GetProperties(libraw)
 if(NOT libraw_POPULATED)
@@ -21,5 +20,9 @@ target_compile_features(raw PUBLIC cxx_std_17)
 target_link_libraries(raw PUBLIC z)
 
 add_library(cinematic_dng SHARED dng_decoder.cpp)
-target_compile_options(cinematic_dng PRIVATE -Wall -Wextra -Werror)
+target_compile_options(cinematic_dng PRIVATE -Wall -Wextra -Werror -fvisibility=hidden)
+# Keep static LibRaw/C++ runtime symbols private to this JNI boundary.
+target_link_options(cinematic_dng PRIVATE "-Wl,--exclude-libs,ALL")
+target_link_options(cinematic_dng PRIVATE "-Wl,--version-script=${CMAKE_CURRENT_LIST_DIR}/dng.exports")
+set_property(TARGET cinematic_dng APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/dng.exports")
 target_link_libraries(cinematic_dng PRIVATE raw)
