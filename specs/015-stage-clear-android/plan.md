@@ -122,3 +122,13 @@ PCから定数と合成fixtureを生成する。11場面×強度0/.5/1で単体�
 新fixtureは標準gzipで可逆圧縮し、PC/Python・JVMの標準ライブラリで展開する。再照合は解凍後の同じ画素値を対象とし、
 縮小・ケース削除で行数を減らさない。PC CIのpathsにも定数とgzip fixtureを追加する。
 段4/5・全renderer、DNG/R7、保存URI、実機の画質・時間・peakは後続として区別する。
+
+### PC再生成の丸め境界
+
+Orton再生成はCI run #69でHDR値約4.64に3.338e-6（Float32で7 ULP）の差が出た。
+同じ画素処理の他runでは差0、ローカルでもCPU最適化を切り替えると末尾の値が変わるため、
+runner依存の演算丸めが原因と推定する。原因を単一命令まで断定せず、暫定の回帰基準として扱う。
+PC再生成の全画素差を診断に出し、Ortonの再照合だけをmax(2e-6, 8 Float32 ULP)で比較する。
+絶対値2以下は従来の2e-6床を維持し、約4.64での9 ULP差やSDRで床を超える差・非有限値は拒否するテストを置く。
+これはgolden画素・Kotlinの2e-5境界・製品処理を変えるものではない。数値の完全一致を永続目的にせず、
+意図的な検証境界の変更と失敗証拠をPRで明示する。NumPyの[CPU dispatch](https://numpy.org/doc/stable/reference/simd/build-options.html)も参照。
