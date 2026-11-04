@@ -2,6 +2,7 @@ package dev.cinematic.p0.photoroll
 
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.CancellationSignal
 import dev.cinematic.p0.rawcapture.OriginalFingerprint
 
 /** A checked shared original. Open only with ContentResolver's read-only stream/FD APIs. */
@@ -12,27 +13,30 @@ internal data class PhotoRollRenderRequest(
     val lookVersion: String = "stage-clear-v1",
     val strength: Float = 0.5f,
     val maxEdge: Int = 1024,
+    val mode: PhotoRollPreviewMode = PhotoRollPreviewMode.STAGE_CLEAR,
 )
 
 internal sealed interface PhotoRollRenderResult {
     /** Display preview only, not a full-resolution JPEG or publication receipt. */
-    data class Preview(val bitmap: Bitmap) : PhotoRollRenderResult
+    data class Preview(val bitmap: Bitmap, val mode: PhotoRollPreviewMode) : PhotoRollRenderResult
     data class Unavailable(val reason: String) : PhotoRollRenderResult
 }
 
 /**
  * Called serially off the UI thread, only while this screen is foreground.
- * Validate actual DNG structure/camera/metadata and honor shouldStop between stages.
+ * Validate actual DNG structure/camera/metadata and honor cancellation between stages.
  * Unknown face/exposure/input support must return Unavailable, never invented defaults.
  * Do not write, copy, delete or publish an original or a JPEG here.
  * Preview must be software sRGB, correctly oriented and bounded by request.maxEdge.
  * Cancellation is a request; the serial permit remains held until render returns.
  */
-internal fun interface PhotoRollRenderer {
-    fun render(request: PhotoRollRenderRequest, shouldStop: () -> Boolean): PhotoRollRenderResult
+internal interface PhotoRollRenderer {
+    val mode: PhotoRollPreviewMode get() = PhotoRollPreviewMode.STAGE_CLEAR
+    val maxSourceBytes: Long get() = PhotoRollRepository.MAX_SOURCE_BYTES
+    fun render(request: PhotoRollRenderRequest, cancellation: CancellationSignal): PhotoRollRenderResult
 }
 
 internal object UnconnectedPhotoRollRenderer : PhotoRollRenderer {
-    override fun render(request: PhotoRollRenderRequest, shouldStop: () -> Boolean) =
+    override fun render(request: PhotoRollRenderRequest, cancellation: CancellationSignal) =
         PhotoRollRenderResult.Unavailable("DNG現像処理は接続準備中です。原本の確認まで利用できます")
 }
