@@ -3,3 +3,7 @@
 gradlew text eol=lf
 *.yml text eol=lf
 *.jar binary
+
+# Synthetic regression data is generated; keep review focused on code and generators.
+app/src/test/resources/stage_clear_*.csv linguist-generated=true
+app/src/test/resources/stage_clear_*.csv.gz binary linguist-generated=true

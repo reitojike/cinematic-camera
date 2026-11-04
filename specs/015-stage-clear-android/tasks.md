@@ -56,6 +56,13 @@
 - [x] T028 純Kotlin実装と単体/段1→3・入力保持/不正入力の検証を行い、既存goldenも維持する（SC-010）。
 - [x] T029 PC/Android検証・公開検査、Draft PRと独立レビューを完了する（SC-011）。最終headのCI/canonical/独立再確認をPRへ記録し、mergeは別承認。
 
+## Phase 9: 既存合成fixtureの保存形式（#98）
+
+- [x] T030 Issueの重複を確認し、可逆圧縮/生成属性と対象外をIssue・spec/planへ定義する（FR-021/022）。
+- [x] T031 Git blobをgzipへ変換し、解凍bytes/SHA-256一致を確認する。PC/JVM読込・生成・CI pathsを更新する。
+- [x] T032 一時CLI再生成→展開/再照合、既存PC/JVM全画素と属性・公開検査を検証する（SC-012）。
+- [x] T033 独立レビュー・公開検査と別Draft PRの準備を完了する（SC-013）。最終headのCI/canonical/独立再確認をPRへ記録し、mergeは別承認。
+
 ## Phase 10: 段4/5とR7 baseからの組立て（T007）
 
 - [x] T034 段4/5・R7 base入力の全段組立て・顔減光時の再実行境界を定義する（FR-023/024/025）。

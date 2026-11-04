@@ -5,33 +5,35 @@ on:
     paths:
       - 'tools/raw_baseline/**'
       - 'app/src/main/java/dev/cinematic/p0/raw/StageClearV1.kt'
-      - 'app/src/test/resources/stage_clear_protections_v1.csv'
-      - 'app/src/test/resources/stage_clear_blur_v1.csv'
+      - 'app/src/test/resources/stage_clear_protections_v1.csv.gz'
+      - 'app/src/test/resources/stage_clear_blur_v1.csv.gz'
       - 'app/src/main/java/dev/cinematic/p0/raw/StageClearGlowV1.kt'
-      - 'app/src/test/resources/stage_clear_glow_v1.csv'
+      - 'app/src/test/resources/stage_clear_glow_v1.csv.gz'
       - 'app/src/main/java/dev/cinematic/p0/raw/StageClearMistV1.kt'
-      - 'app/src/test/resources/stage_clear_mist_v1.csv'
+      - 'app/src/test/resources/stage_clear_mist_v1.csv.gz'
       - 'app/src/main/java/dev/cinematic/p0/raw/StageClearOrtonV1.kt'
       - 'app/src/test/resources/stage_clear_orton_v1.csv.gz'
       - 'app/src/main/java/dev/cinematic/p0/raw/StageClearCharacterV1.kt'
       - 'app/src/test/resources/stage_clear_character_v1.csv.gz'
       - '.github/workflows/raw-baseline.yml'
+      - '.gitattributes'
   push:
     branches: [main]
     paths:
       - 'tools/raw_baseline/**'
       - 'app/src/main/java/dev/cinematic/p0/raw/StageClearV1.kt'
-      - 'app/src/test/resources/stage_clear_protections_v1.csv'
-      - 'app/src/test/resources/stage_clear_blur_v1.csv'
+      - 'app/src/test/resources/stage_clear_protections_v1.csv.gz'
+      - 'app/src/test/resources/stage_clear_blur_v1.csv.gz'
       - 'app/src/main/java/dev/cinematic/p0/raw/StageClearGlowV1.kt'
-      - 'app/src/test/resources/stage_clear_glow_v1.csv'
+      - 'app/src/test/resources/stage_clear_glow_v1.csv.gz'
       - 'app/src/main/java/dev/cinematic/p0/raw/StageClearMistV1.kt'
-      - 'app/src/test/resources/stage_clear_mist_v1.csv'
+      - 'app/src/test/resources/stage_clear_mist_v1.csv.gz'
       - 'app/src/main/java/dev/cinematic/p0/raw/StageClearOrtonV1.kt'
       - 'app/src/test/resources/stage_clear_orton_v1.csv.gz'
       - 'app/src/main/java/dev/cinematic/p0/raw/StageClearCharacterV1.kt'
       - 'app/src/test/resources/stage_clear_character_v1.csv.gz'
       - '.github/workflows/raw-baseline.yml'
+      - '.gitattributes'
   workflow_dispatch:
 
 permissions:

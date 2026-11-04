@@ -133,6 +133,15 @@ runnerによる末尾差の原因は未断定。失敗runと最大差・採否�
 PCとKotlinが各々固定goldenに2e-5以内でも、両者を直接比較した差が必ず2e-5以内になるという保証ではない。
 これらは暫定の移植回帰であり、最終の雰囲気/印象や実機性能の受入条件ではない。
 
+## 既存合成fixtureの可逆圧縮（#98、移植と別PR）
+
+既存4 CSVの作業ツリー上の改行ではなく、Git blob bytesをgzipへ変換する。解凍後のbyte/SHA-256一致を検証する。
+Pythonはgzip.compress(mtime=0)/decompress、JVMはGZIPInputStreamで同じデータを読み、全画素の照合方法・境界は維持する。
+exporter --writeの一時出力を展開して生成textと照合し、既存check_exportsも通す。生成textはUTF-8/LF。
+.gitattributesで生成CSV/gzipをlinguist-generatedとして扱い、gzipはbinaryにする。定数や手書きコードは折りたたまない。
+PC CI pathsはgzip resourceと属性を監視する。ケース削除・寸法縮小・新依存・runtime変更は含めない。
+#96で追加したOrton gzipは変更せず、既存4件を別Draft PRで検証する。mainへのmergeは別承認。
+
 ## 段4/5とR7 baseからの組立て
 
 `StageClearCharacter`がvignetteとvibrance、`StageClearLook.renderFromBase`が既存各段の組立てだけを担当する。
