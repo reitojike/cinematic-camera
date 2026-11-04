@@ -9,6 +9,17 @@ internal object StageClearColor {
     private val labToLms = StageClearV1.LAB_TO_LMS
     private val lmsToRgb = StageClearV1.LMS_TO_RGB
 
+    /** Orton's display-domain transfer deliberately clips; shoulder's unbounded transfer is separate. */
+    fun linearToUnit(value: Float): Float {
+        val v = value.coerceIn(0f, 1f)
+        return if (v <= .0031308f) 12.92f * v else 1.055f * v.pow(1f / 2.4f) - .055f
+    }
+
+    fun unitToLinear(value: Float): Float {
+        val v = value.coerceIn(0f, 1f)
+        return if (v <= .04045f) v / 12.92f else ((v + .055f) / 1.055f).pow(2.4f)
+    }
+
     fun toLab(image: LinearSrgbImage, i: Int, out: FloatArray) {
         val red = image[i]
         val green = image[i + 1]
