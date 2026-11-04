@@ -67,7 +67,8 @@ private val Rec = Color(0xFFE5483B)
 
 @Composable
 fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureOrientation, requestPermission: () -> Unit,
-    record: () -> Unit, export: () -> Unit, reportPending: Boolean, exit: () -> Unit) {
+    record: () -> Unit, export: () -> Unit, reportPending: Boolean, exit: () -> Unit,
+    openPhotos: () -> Unit, photosPending: Boolean, capture: () -> Unit) {
     val hapticView = LocalView.current
     var editor by remember { mutableStateOf(CaptureEditor(epoch = probe.currentEpoch)) }
     var panel by remember { mutableStateOf(CapturePanel.NONE) }
@@ -90,8 +91,8 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
     val stillPresentation = stillExposure?.presentation()
     val ownsCapture = stillExposure?.ownsCapture == true
     val recoveryRequired = stillPresentation?.recoveryRequired == true
-    val unlocked = !probe.busy && !probe.recordingBusy && !ownsCapture
-    val exposureEditable = probe.canSelectExposure
+    val unlocked = !photosPending && !probe.busy && !probe.recordingBusy && !ownsCapture
+    val exposureEditable = !photosPending && probe.canSelectExposure
     val animatedAngle by animateFloatAsState(orientation.uiAngle, tween(250), label = "capture-elements")
     val captureReady = unlocked && probe.bound && probe.controlReady && probe.sharedSaveSupported && (stillExposure == null || stillExposure.canCapture)
     val receipt = probe.controlReceipt
@@ -326,12 +327,14 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                     if (panel == CapturePanel.DIAGNOSTICS) return@shutter
                     val before = ShutterPressState(probe.mode, probe.photoStage, probe.recordingStage)
                     if (probe.recordingStage in setOf(RecordingStage.STARTING, RecordingStage.RECORDING)) probe.stopRecording()
-                    else if (probe.mode == CaptureMode.STILL) { if (editor.dirty) notice = "受付値で撮影・未適用の編集は保持"; probe.capture() }
+                    else if (probe.mode == CaptureMode.STILL) { if (editor.dirty) notice = "受付値で撮影・未適用の編集は保持"; capture() }
                     else record()
                     val after = ShutterPressState(probe.mode, probe.photoStage, probe.recordingStage)
                     if (shutterPressAccepted(before, after)) hapticView.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY, 0)
                 }, mode = { if (panel != CapturePanel.DIAGNOSTICS && unlocked) { editor = editor.close(); probe.selectMode(if (probe.mode == CaptureMode.STILL) CaptureMode.CINE else CaptureMode.STILL) } },
-                placeholder = { if (panel != CapturePanel.DIAGNOSTICS) notice = "最新写真ビューアは未実装です。端末のギャラリーで確認してください" })
+                photosEnabled = !photosPending && dev.cinematic.p0.photoroll.canOpenPhotoRoll(probe.busy, probe.recordingBusy,
+                    ownsCapture, recoveryRequired || probe.controlReceipt.phase == ControlPhase.UNKNOWN),
+                openPhotos = { if (panel != CapturePanel.DIAGNOSTICS) { editor = editor.close(); openPhotos() } })
         }
         if (panel == CapturePanel.DIAGNOSTICS) Box(Modifier.fillMaxSize().background(Ink)) {
             Box(Modifier.matchParentSize().blockPanelBackground())
@@ -486,10 +489,15 @@ private fun exposureKeyValue(key: CaptureKey, probe: CameraProbe, refreshGenerat
         refreshGeneration.let { SystemClock.elapsedRealtime() }, probe.exposureChoices, captureTarget = if (probe.bound) logicalCaptureTarget(probe.currentEpoch,
             probe.controlReceipt, probe.liveExposureTarget, probe.stillExposure?.target, probe.appliedExposure) else null)
 
-@Composable private fun CaptureBar(probe: CameraProbe, ready: Boolean, interactable: Boolean, shutter: () -> Unit, mode: () -> Unit, placeholder: () -> Unit) {
+@Composable private fun CaptureBar(probe: CameraProbe, ready: Boolean, interactable: Boolean, shutter: () -> Unit, mode: () -> Unit,
+    photosEnabled: Boolean, openPhotos: () -> Unit) {
     Row(Modifier.fillMaxWidth().height(CaptureLayout.CAPTURE_RAIL.dp).background(Ink).padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-            Box(Modifier.size(52.dp).border(1.dp, Muted, RoundedCornerShape(6.dp)).clickable(enabled = interactable && !probe.busy && !probe.recordingBusy, onClick = placeholder), contentAlignment = Alignment.Center) { Text("写真\n未実装", modifier = Modifier.sensorRotation(), fontSize = 11.sp, textAlign = TextAlign.Center, color = Muted) }
+            Box(Modifier.size(52.dp).alpha(if (photosEnabled) 1f else .4f).border(1.dp, Muted, RoundedCornerShape(6.dp))
+                .clickable(enabled = interactable && photosEnabled, role = Role.Button, onClick = openPhotos), contentAlignment = Alignment.Center) {
+                Icon(androidx.compose.ui.res.painterResource(android.R.drawable.ic_menu_gallery), "写真一覧を開く",
+                    Modifier.size(28.dp).sensorRotation(), tint = Muted)
+            }
         }
         CaptureShutter(chromeInput(probe, ready, interactable), shutter, rotation = LocalCaptureAngle.current)
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {

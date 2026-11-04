@@ -8,6 +8,7 @@
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@drawable/ic_probe" android:label="Cinematic Camera Probe"
         android:theme="@android:style/Theme.Material.Light.NoActionBar" android:supportsRtl="true">
+        <activity android:name=".photoroll.PhotoRollActivity" android:exported="false" />
         <activity android:name=".MainActivity" android:exported="true" android:screenOrientation="portrait">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
