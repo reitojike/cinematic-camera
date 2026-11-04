@@ -18,6 +18,17 @@ Android CIは既存の`:app:lintDebug :app:testDebugUnitTest :app:assembleDebug 
 8観測値の全6561組合せ、同時start、撮影予約とのrace、旧/別ownerの完了、停止要求後の未解放、
 worker例外とcoordinator再生成を状態として検証する。実CameraX・native中断・台帳/ファイルIOの故障注入とは別である。
 
+受領台帳（T009・T011の台帳側）の限定テストは以下。backendのcommit前/後の失敗、readback失敗/不一致、
+破損/未知版/不正field/サイズ超過、revision競合、再生成、root/sidecar pathを人工metadataで検証する。
+
+```text
+./gradlew :app:testDebugUnitTest --tests "dev.cinematic.p0.rawcapture.CaptureJournal*" --no-daemon
+```
+
+symlinkを作れないWindowsではredirectテストだけをskipと記録し、Linux CIで確認する。
+JVMテストは標準AndroidAtomicFileの動作をmockで合格にせず、注入backendと純pathだけを検証する。
+実端末のAtomicFile、実DNG/仮JPEGの保全、撮影との接続、共有原本の引渡しは別の未実施項目として残す。
+
 | 故障/操作点 | 確認する結果 | 要件 |
 |---|---|---|
 | RAW/JPEG callbackの逆順・重複・片方失敗・timeout/late | 成功分保全、未完了を昇格しない、旧callbackで現在UIを変更しない | FR-001/002/006 |
