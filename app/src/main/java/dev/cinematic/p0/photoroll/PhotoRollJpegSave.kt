@@ -6,6 +6,8 @@ import dev.cinematic.p0.rawcapture.JpegPublicationRecord
 import dev.cinematic.p0.rawcapture.OriginalFingerprint
 import dev.cinematic.p0.rawcapture.RendererPublicationContract
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 internal enum class PhotoRollSavePhase { READY, SAVING, PUBLISHED, UNCONFIRMED, HOLD }
 internal data class PhotoRollSaveSnapshot(val phase: PhotoRollSavePhase, val uri: String? = null)
@@ -20,8 +22,9 @@ internal class PhotoRollJpegSave private constructor(
     private val isCurrent: () -> Boolean,
 ) {
     private val running = AtomicBoolean(false)
-    @Volatile private var current = PhotoRollSaveSnapshot(PhotoRollSavePhase.READY)
-    val snapshot get() = current
+    private val state = MutableStateFlow(PhotoRollSaveSnapshot(PhotoRollSavePhase.READY))
+    val snapshots = state.asStateFlow()
+    val snapshot get() = state.value
     val width get() = render.request.output.width
     val height get() = render.request.output.height
 
@@ -31,14 +34,15 @@ internal class PhotoRollJpegSave private constructor(
 
     /** Also used immediately before opening a published result; reuses and rechecks the same publisher. */
     fun advance(shouldStop: () -> Boolean): PhotoRollSaveSnapshot {
-        if (!running.compareAndSet(false, true)) return current
+        // A contender has not rechecked anything. Never return another call's published receipt.
+        if (!running.compareAndSet(false, true)) return PhotoRollSaveSnapshot(PhotoRollSavePhase.SAVING)
         try {
-            if (current.phase == PhotoRollSavePhase.HOLD) return current
-            current = PhotoRollSaveSnapshot(PhotoRollSavePhase.SAVING)
+            if (snapshot.phase == PhotoRollSavePhase.HOLD) return snapshot
+            state.value = PhotoRollSaveSnapshot(PhotoRollSavePhase.SAVING)
             val stopped = { shouldStop() || !isCurrent() }
             if (stopped()) return unconfirmed()
             val record = publisher.advance(stopped)
-            current = when {
+            state.value = when {
                 stopped() -> PhotoRollSaveSnapshot(PhotoRollSavePhase.UNCONFIRMED)
                 record.render != render || record.target.captureId != render.request.captureId ||
                     record.target.generation != render.request.generation -> PhotoRollSaveSnapshot(PhotoRollSavePhase.HOLD)
@@ -47,13 +51,13 @@ internal class PhotoRollJpegSave private constructor(
                 record.phase == JpegPublicationPhase.UNKNOWN -> PhotoRollSaveSnapshot(PhotoRollSavePhase.HOLD)
                 else -> PhotoRollSaveSnapshot(PhotoRollSavePhase.UNCONFIRMED)
             }
-            return current
+            return snapshot
         } catch (_: Exception) { return unconfirmed() }
         catch (_: OutOfMemoryError) { return unconfirmed() }
         finally { running.set(false) }
     }
 
-    private fun unconfirmed() = PhotoRollSaveSnapshot(PhotoRollSavePhase.UNCONFIRMED).also { current = it }
+    private fun unconfirmed() = PhotoRollSaveSnapshot(PhotoRollSavePhase.UNCONFIRMED).also { state.value = it }
 
     companion object {
         /** Validation precedes factory invocation: trial/unsupported inputs cannot allocate a public operation. */

@@ -57,6 +57,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
     var renderStage by remember { mutableStateOf<PhotoRollRenderStage?>(null) }
     var jpegSave by remember { mutableStateOf<PhotoRollJpegSave?>(null) }
     var saveSnapshot by remember { mutableStateOf<PhotoRollSaveSnapshot?>(null) }
+    var savePending by remember { mutableStateOf(false) }
     val saveScope = rememberCoroutineScope()
     val context = LocalContext.current
     val cancellationOwner = remember { PhotoRollWorkOwner<CancellationSignal> { it.cancel() } }
@@ -69,6 +70,16 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(jpegSave, selection.ticket, lifecycleOwner) {
+        val operation = jpegSave ?: return@LaunchedEffect
+        val ticket = selection.ticket ?: return@LaunchedEffect
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            operation.snapshots.collect { value ->
+                if (selectedUri == ticket.source && selection.ticket == ticket &&
+                    selection.phase == PhotoRollPhase.DISPLAYED && jpegSave === operation) saveSnapshot = value
+            }
+        }
+    }
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_PAUSE) { cancellationOwner.cancel(); preview = null; selection = selection.pause() }
@@ -81,6 +92,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         preview = null
         jpegSave = null
         saveSnapshot = null
+        savePending = false
         val source = selectedUri
         if (source == null) {
             val ticket = Any()
@@ -216,7 +228,8 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                 if (selection.phase == PhotoRollPhase.DISPLAYED) {
                     val owner = jpegSave
                     val saved = saveSnapshot
-                    Text(if (owner == null) unavailableJpegSaveMessage(renderer.mode) else when (saved?.phase) {
+                    Text(if (owner == null) unavailableJpegSaveMessage(renderer.mode)
+                        else if (savePending) "同じJPEG保存操作を確認中…" else when (saved?.phase) {
                         PhotoRollSavePhase.READY -> "完成JPEG ${owner.width}×${owner.height} を共有写真へ保存できます"
                         PhotoRollSavePhase.SAVING -> "同じJPEG保存操作を確認中…"
                         PhotoRollSavePhase.PUBLISHED -> "前回のJPEG公開を確認しました。開く前にもう一度照合します"
@@ -224,17 +237,17 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                         PhotoRollSavePhase.HOLD -> "保存先の状態を判断できないため停止しました。保存済みとは扱いません"
                         null -> "JPEG保存の準備を確認できません"
                     }, style = MaterialTheme.typography.bodySmall)
-                    TextButton(enabled = foreground && owner != null && saved?.phase in setOf(
+                    TextButton(enabled = foreground && !savePending && owner != null && saved?.phase in setOf(
                         PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED, PhotoRollSavePhase.UNCONFIRMED),
                         onClick = {
-                            if (saveSnapshot?.phase !in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED,
+                            if (savePending || saveSnapshot?.phase !in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED,
                                     PhotoRollSavePhase.UNCONFIRMED)) return@TextButton
                             val operation = jpegSave ?: return@TextButton
                             val ticket = selection.ticket ?: return@TextButton
                             val openAfterCheck = saveSnapshot?.phase == PhotoRollSavePhase.PUBLISHED
                             val cancellation = CancellationSignal()
                             cancellationOwner.begin(cancellation)
-                            saveSnapshot = PhotoRollSaveSnapshot(PhotoRollSavePhase.SAVING)
+                            savePending = true
                             saveScope.launch {
                                 val job = currentCoroutineContext()
                                 try {
@@ -243,7 +256,6 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                                     } }
                                     if (!cancellation.isCanceled && job.isActive && selectedUri == ticket.source &&
                                         selection.ticket == ticket && selection.phase == PhotoRollPhase.DISPLAYED && jpegSave === operation) {
-                                        saveSnapshot = result
                                         if (openAfterCheck && result.phase == PhotoRollSavePhase.PUBLISHED && result.uri != null) {
                                             try {
                                                 context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(result.uri), "image/jpeg")
@@ -251,9 +263,12 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                                             } catch (_: Exception) { notice = "保存したJPEGを開けませんでした。対応する写真アプリを確認してください" }
                                         }
                                     }
-                                } finally { cancellationOwner.finish(cancellation) }
+                                } finally {
+                                    if (selection.ticket == ticket && jpegSave === operation) savePending = false
+                                    cancellationOwner.finish(cancellation)
+                                }
                             }
-                        }) { Text(when (saved?.phase) {
+                        }) { Text(if (savePending) "保存確認中…" else when (saved?.phase) {
                             PhotoRollSavePhase.PUBLISHED -> "保存したJPEGを開く"
                             PhotoRollSavePhase.UNCONFIRMED -> "同じ保存を確認"
                             PhotoRollSavePhase.SAVING -> "保存確認中…"
