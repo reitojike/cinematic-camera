@@ -2,7 +2,7 @@
 
 **Input**: [spec.md](spec.md) / [plan.md](plan.md) / [contracts.md](contracts.md)。
 状態は設計と実装を区別する。[保存専用Issue #89](https://github.com/reitojike/cinematic-camera/issues/89)で追跡する。
-以下のアプリ実装はすべて後続PR。パスの`main`/`test`は`app/src/<種別>/java/dev/cinematic/p0/`を基準とする。
+各項目の実装状態と実機確認を分ける。パスの`main`/`test`は`app/src/<種別>/java/dev/cinematic/p0/`を基準とする。
 
 ## Phase 1: Setup・設計PR
 
@@ -16,9 +16,11 @@
 
 **独立検証**: 撮影/録画/未知状態ではstartしない。新予約とstartの競合を直列化する。
 
-- [ ] T006 `main/rawcapture/AutoDevelopPolicy.kt`に開始条件と未知値の抑止を実装する（FR-005）。
-- [ ] T007 `main/rawcapture/AutoDevelopCoordinator.kt`に撮影予約・単一attempt・協調停止/解放の区別を実装する（FR-005/006）。
-- [ ] T008 `test/rawcapture/AutoDevelopPolicyTest.kt`/`AutoDevelopCoordinatorTest.kt`で条件組合せ、旧完了、再開、予約raceを検証する（SC-003）。
+- [x] T006 `main/rawcapture/AutoDevelopPolicy.kt`に開始条件と未知値の抑止を実装する（FR-005）。
+- [x] T007 `main/rawcapture/AutoDevelopCoordinator.kt`に撮影予約・単一attempt・協調停止/解放の区別を実装する（FR-005/006）。
+- [x] T008 `test/rawcapture/AutoDevelopPolicyTest.kt`/`AutoDevelopCoordinatorTest.kt`で条件組合せ、旧完了、再開、予約raceを検証する（SC-003）。
+
+この3項目は未接続のprocess-local制御だけ。T009以降の保存/引渡し/原本参照、実機SC-003の応答確認は未完了。
 
 ## Phase 3: US1・保全PRと撮影接続PR
 
