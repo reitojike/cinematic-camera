@@ -12,7 +12,8 @@ brightness E2 -> crispness K1 -> WB W1, all at a fixed exposure) and a face mask
 5. Highlight shoulder from display 0.80. Always on.
 
 Strength 1 is the look the user approved in round 10j; 0 keeps only the round-7 colour base and
-the protections (3-5). The face mask comes from a detector outside this module (YuNet on PC,
+the protections (3-5). The default is 0.5 (user decision in Issue #86 after comparing 0 / 0.5 /
+0.75 / 1 on phone and PC); each photo can be edited anywhere within 0..1. The face mask comes from a detector outside this module (YuNet on PC,
 ML Kit in the app), so this module needs no OpenCV and is covered by CI tests.
 """
 from __future__ import annotations
@@ -33,7 +34,8 @@ VERSION = "stage-clear-v1"
 GLOW = cd.STANDARD  # bloom/halation B1 + diffusion D1 (round 10c/10d)
 VIGNETTE = .35
 VIBRANCE = cb.VIBRANCE  # .35
-STRENGTHS = (0., .5, 1.)  # comparison points; the default is decided by the user
+DEFAULT_STRENGTH = .5  # user decision (Issue #86); edits move it within 0..1
+STRENGTHS = (0., .5, 1.)  # golden test points
 
 
 def scaled_glow(strength: float) -> dict:
@@ -56,7 +58,7 @@ def iconic_layer(glowed: np.ndarray, skin: np.ndarray, faces: np.ndarray, streng
     return h.skin_chroma_cap(out, faces, knee, slope, lift, .24)
 
 
-def render(base: np.ndarray, faces: np.ndarray, strength: float = 1.) -> tuple[np.ndarray, dict]:
+def render(base: np.ndarray, faces: np.ndarray, strength: float = DEFAULT_STRENGTH) -> tuple[np.ndarray, dict]:
     """Stage Clear at `strength` (0..1) from the round-7 base and a soft face mask (0..1)."""
     if not 0 <= strength <= 1:
         raise ValueError("strength must be within 0..1")

@@ -166,9 +166,9 @@ py -3.15 -m venv tools/raw_baseline/.venv-py315-diag
 
 | ファイル | 内容 | 環境 |
 |---|---|---|
-| `stage_clear.py` | Stage Clear v1。入力は第7回の土台と顔マスク。強度0〜1（既定1） | 通常（顔検出なし） |
+| `stage_clear.py` | Stage Clear v1。入力は第7回の土台と顔マスク。強度0〜1（既定0.5、#86） | 通常（顔検出なし） |
 | `test_stage_clear.py`、`golden/stage_clear_v1.json` | 合成ステージ画像の強度別の期待値と、強度1が第10回と一致することの確認 | 通常（CI） |
-| `r11_stage_clear.py` | 照明条件別に基準処理と強度0/0.5/1を同じ原本・同じ露出で並べる非公開ページ。本アプリのPixel 9a DNGも含む | 診断専用（顔検出） |
+| `r11_stage_clear.py` | 照明条件別に基準処理と強度0/0.5/0.75/1を同じ原本・同じ露出で並べる非公開ページ。本アプリのPixel 9a DNGも含む | 診断専用（顔検出） |
 
 - goldenは処理を意図して変えるときだけ`python test_stage_clear.py --write-golden`で更新し、`stage_clear.VERSION`も上げる。
 - 照明条件の振り分けは顔以外の照明の色と、顔と背景の明るさの差による目安。暗所・高感度は手元の素材の最高ISOで代用している。

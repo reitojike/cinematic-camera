@@ -92,6 +92,13 @@ class StageClearTests(unittest.TestCase):
         display = hi.encode(sc.render(image, faces, 0.)[0] @ hi.r.LUMA)
         self.assertLess(float(display[regions["white"]].max()), 1.)
 
+    def test_default_strength_is_half(self):
+        image, faces, _ = scene()
+        self.assertEqual(sc.DEFAULT_STRENGTH, .5)
+        out, info = sc.render(image, faces)
+        self.assertEqual(info["strength"], .5)
+        np.testing.assert_array_equal(out, sc.render(image, faces, .5)[0])
+
     def test_strength_range(self):
         image, faces, _ = scene()
         for bad in (-.1, 1.1):

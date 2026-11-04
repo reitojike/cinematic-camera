@@ -1,12 +1,12 @@
-"""Private round-11 check (Issue #77): Stage Clear v1 at strength 0 / 0.5 / 1 per lighting condition.
+"""Private round-11 check (Issues #77, #86): Stage Clear v1 at strength 0 / 0.5 / 0.75 / 1 per lighting condition.
 
 Photos: the five tuning scenes, the 24 round-8 photos (exposure matched to the user's edit, as
 before) and this app's own Pixel 9a DNGs (automatic exposure; shot in a dark room lit by a monitor
 showing red, blue and purple, so they stand in for stage light but are not a stage). Each photo is
 put in one lighting condition (S01-S05) from the round-7 base, faces excluded; S06 lists the
 highest-ISO photos separately. Per photo: the baseline (round-5 "clear" tone, as-shot white
-balance, same exposure), Stage Clear 0 / 0.5 / 1, and the user's edit or the app's JPEG.
-Diagnostic only; nothing here sets the default strength.
+balance, same exposure), Stage Clear 0 / 0.5 / 0.75 / 1, and the user's edit or the app's JPEG.
+Diagnostic only; the default strength lives in stage_clear.DEFAULT_STRENGTH.
 """
 from __future__ import annotations
 
@@ -38,9 +38,10 @@ PER_CONDITION = 3  # camera photos per condition (all Pixel photos are shown)
 HIGH_ISO = 3200  # the highest ISO in the material at hand; no darker stage material yet
 CONDITIONS = {"S01": "中立光（色の弱い照明）", "S02": "赤い光（赤・橙）", "S03": "青い光", "S04": "紫・マゼンタ",
               "S05": "スポット・逆光（明るい顔と暗い背景）", "S06": f"暗所・高感度（ISO {HIGH_ISO}、手元の素材の最高）"}
-COLUMNS = (("base", "基準処理（第5回の階調・撮影時WB）"), ("s0", "Stage Clear 0"), ("s05", "Stage Clear 0.5"),
+COLUMNS = (("base", "基準処理（第5回の階調・撮影時WB）"), ("s0", "Stage Clear 0"), ("s05", "Stage Clear 0.5（既定）"), ("s075", "Stage Clear 0.75"),
            ("s1", "Stage Clear 1（第10回の確定形）"), ("ref", "本人の編集／アプリのJPEG"))
-TOGGLE = {"base": "s1", "s0": "base", "s05": "s0", "s1": "s05", "ref": "s1"}
+TOGGLE = {"base": "s1", "s0": "base", "s05": "s0", "s075": "s05", "s1": "s075", "ref": "s1"}
+COMPARED = (("s0", 0.), ("s05", .5), ("s075", .75), ("s1", 1.))
 
 
 def iso(dng: Path, jpeg: Path | None) -> int | None:
@@ -98,7 +99,7 @@ def develop(decoded: np.ndarray, plain: np.ndarray, scene: dict, look: dict, cho
     images = {"base": r.foundation(plain, np.zeros(plain.shape[:2], dtype=np.float32),
                                    scene["base_ev"] + sk.BRIGHTNESS_LEVELS[choice["brightness"]], look)}
     infos = {}
-    for key, strength in (("s0", 0.), ("s05", .5), ("s1", 1.)):
+    for key, strength in COMPARED:
         images[key], infos[key] = sc.render(base, faces, strength)
     return images, dict(light_features(base, faces), faces=len(boxes)), infos
 
@@ -110,10 +111,10 @@ def page(out: Path, rows: list[dict]) -> None:
         .replace("画像をタップで標準と切り替え", "画像をタップで隣の強度と切り替え")
     names = dict(COLUMNS)
     parts = [html, "<main><div class='intro'><h1>第11回 Stage Clear の強度（照明条件別）</h1>",
-             "<p>同じ原本・同じ露出で、基準処理と Stage Clear の強度 0／0.5／1 を並べた。"
+             "<p>同じ原本・同じ露出で、基準処理と Stage Clear の強度 0／0.5／0.75／1 を並べた。"
              "強度で変わるのは、にじみ（光源の広がり・ハレーション・薄いディフューズ）、ブラックミスト・Orton、周辺減光、彩度。"
              "顔の赤みの抑え、顔が飛ぶ写真だけ暗くする処理、ハイライトをなだらかにする処理は、どの強度でも同じにかかる。"
-             "強度0は第7回の色の土台だけ、1は第10回で決めた最終形。</p>",
+             "強度0は第7回の色の土台だけ、1は第10回で決めた最終形。既定は0.5（#86）。</p>",
              "<p>照明条件は顔以外の照明の色と、顔と背景の明るさの差から自動で分けた（目安）。暗所・高感度は ISO で別に並べた。"
              "Pixel 9a の写真は、暗い部屋でモニタの赤・青・紫の光を当てた試し撮りで、本物のステージではない。露出は自動。</p>",
              "<p>画像を押すと大きく表示します。タップするたびに一つ前の強度と切り替わります（基準処理と編集は強度1と切り替え）。</p></div>"]
@@ -216,7 +217,7 @@ def main(argv: list[str] | None = None) -> int:
                 for suffix in ("", "-s"):
                     (out / f"{row['tag']}-{col}{suffix}.jpg").unlink(missing_ok=True)
     (out.parent / f"{out.name}-record.json").write_text(json.dumps(
-        {"environment": b.versions(), "version": sc.VERSION, "strengths": sc.STRENGTHS, "photos": rows},
+        {"environment": b.versions(), "version": sc.VERSION, "strengths": [s for _, s in COMPARED], "default_strength": sc.DEFAULT_STRENGTH, "photos": rows},
         ensure_ascii=False, indent=1), encoding="utf-8")
     if any(b.digest(p) != hh for p, hh in before.items()):
         raise SystemExit("ERROR SOURCE_CHANGED")
