@@ -9,6 +9,15 @@
 Android CIは既存の`:app:lintDebug :app:testDebugUnitTest :app:assembleDebug --no-daemon`を維持。
 設計PRはリンク/要件対応/差分検査とCIで確認し、故障テストが実行されたとは報告しない。
 
+未接続の開始制御（T006〜T008）は以下で限定実行できる（Windowsでは`./gradlew`を`.\gradlew.bat`へ置換）。
+
+```text
+./gradlew :app:testDebugUnitTest --tests "dev.cinematic.p0.rawcapture.*" --no-daemon
+```
+
+8観測値の全6561組合せ、同時start、撮影予約とのrace、旧/別ownerの完了、停止要求後の未解放、
+worker例外とcoordinator再生成を状態として検証する。実CameraX・native中断・台帳/ファイルIOの故障注入とは別である。
+
 | 故障/操作点 | 確認する結果 | 要件 |
 |---|---|---|
 | RAW/JPEG callbackの逆順・重複・片方失敗・timeout/late | 成功分保全、未完了を昇格しない、旧callbackで現在UIを変更しない | FR-001/002/006 |
