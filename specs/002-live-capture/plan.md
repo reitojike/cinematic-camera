@@ -138,7 +138,7 @@ WB/MF/anti-bandingの手動上書きUI、フリッカー解消アルゴリズム
 
 ## Stage Clear評価設計（P1）
 
-この評価設計に沿ったPC基準の比較と、ユーザーが選んだv1の定義（既定の強度1）は[014 Stage Clear v1](../014-stage-clear-v1/plan.md)に置く。
+この評価設計に沿ったPC基準の比較と、ユーザーが選んだv1の定義（既定の強度0.5）は[014 Stage Clear v1](../014-stage-clear-v1/plan.md)に置く。
 
 ### サンプル提案
 
