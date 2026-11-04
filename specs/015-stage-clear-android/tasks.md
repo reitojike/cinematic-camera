@@ -54,4 +54,4 @@
 - [x] T026 Ortonの段2量の受渡し・display転送/明部fade・肌保護・負値/HDR境界を定義する（FR-018/019）。
 - [x] T027 PC定数生成と可逆gzipの合成全画素fixture、PC再照合を追加する（FR-020）。
 - [x] T028 純Kotlin実装と単体/段1→3・入力保持/不正入力の検証を行い、既存goldenも維持する（SC-010）。
-- [ ] T029 PC/Android検証、公開検査、最終headのcanonical/独立レビューを行いDraft PRで報告する（SC-011）。mergeは別承認。
+- [x] T029 PC/Android検証・公開検査、Draft PRと独立レビューを完了する（SC-011）。最終headのCI/canonical/独立再確認をPRへ記録し、mergeは別承認。
