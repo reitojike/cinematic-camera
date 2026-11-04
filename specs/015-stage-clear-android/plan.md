@@ -122,3 +122,20 @@ PCから定数と合成fixtureを生成する。11場面×強度0/.5/1で単体�
 新fixtureは標準gzipで可逆圧縮し、PC/Python・JVMの標準ライブラリで展開する。再照合は解凍後の同じ画素値を対象とし、
 縮小・ケース削除で行数を減らさない。PC CIのpathsにも定数とgzip fixtureを追加する。
 段4/5・全renderer、DNG/R7、保存URI、実機の画質・時間・peakは後続として区別する。
+
+## 段4/5とR7 baseからの組立て
+
+`StageClearCharacter`がvignetteとvibrance、`StageClearLook.renderFromBase`が既存各段の組立てだけを担当する。
+周辺減光は画素中心と縦横比を使ったsmoothstep、彩度は既存OKLab共通計算と画素ごとの小scratchを再利用する。
+画像全体のOKLab配列や新依存を足さない。strength0でもPCにあるvibranceのOKLab往復は現行回帰の対象とする。
+
+rendererは元baseのskinを保持し、glowの後に既存Protections.finishへ段2〜5の純粋なclosureを渡す。
+顔減光時の再実行・常時cap/shoulderは既存保護段を再利用する。返値は画像とfaceCutFactorで、DNG入力APIとはしない。
+保存URIの寿命やI/Oは持ち込まず、原本・仮JPEG・完成JPEGの保存側へ接続しない。
+合成fixtureは単体の周辺減光/彩度と、base/顔マスクからの全段出力・顔係数を持つ。
+既存の部品goldenも維持し、全段数値回帰の成立をDNG現像・最終画質・12MP性能の成立に置き換えない。
+
+非clampの段4/5中間出力は大きいHDR値でも検証する。既存ケースを縮小/削除せず、
+中間値はatol=2e-5 + rtol=2e-6、全段最終出力は既存atol=2e-5/rtol=0、入力列は2e-6で固定goldenへ比較する。
+合成のHDR値約13.88でKotlinの中間最大差は約3.24e-5となるため、絶対誤差のみでHDRの桁を過剰に固定しない。
+これらの境界は暫定の移植回帰で、PC/Androidそれぞれの固定golden比較を直接の両者間誤差保証に置き換えない。
