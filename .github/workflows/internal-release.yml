@@ -79,7 +79,9 @@ jobs:
               | if test("^<!-- cinematic-internal-release: versionCode=[1-9][0-9]* certSha256=[0-9a-fA-F]{64} -->$")
                 then capture("versionCode=(?<code>[1-9][0-9]*) certSha256=(?<cert>[0-9a-fA-F]{64})")
                 else error("Internal release metadata is invalid") end
-              | if (.cert | ascii_upcase) == $pin then (.code | tonumber)
+              | if (.cert | ascii_upcase) == $pin then (.code | tonumber
+                  | if . >= 1 and . <= 2100000000 and . == floor then .
+                    else error("Historical versionCode is outside the Android range") end)
                 else error("Historical internal signer does not match the public pin") end]
             | max // 0' "$RUNNER_TEMP/cinematic-internal-releases.json")
           if (( RELEASE_VERSION_CODE <= previous_code )); then
