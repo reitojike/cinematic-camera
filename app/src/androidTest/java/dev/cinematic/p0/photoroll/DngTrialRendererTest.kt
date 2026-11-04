@@ -148,6 +148,7 @@ class DngTrialRendererTest {
         val preview = result as PhotoRollRenderResult.Preview
         try {
             assertEquals(PhotoRollPreviewMode.DNG_TRIAL, preview.mode)
+            assertNull(preview.jpegSave)
             assertEquals(16, preview.bitmap.width)
             assertEquals(12, preview.bitmap.height)
             assertEquals(Bitmap.Config.ARGB_8888, preview.bitmap.config)
@@ -189,6 +190,7 @@ class DngTrialRendererTest {
         ) as PhotoRollRenderResult.Preview
         try {
             assertEquals(PhotoRollPreviewMode.STAGE_CLEAR_TRIAL, result.mode)
+            assertNull(result.jpegSave)
             assertEquals(listOf(PhotoRollRenderStage.DECODE, PhotoRollRenderStage.INPUTS, PhotoRollRenderStage.BASE,
                 PhotoRollRenderStage.LOOK, PhotoRollRenderStage.DISPLAY), stages)
             assertEquals(16, result.bitmap.width)
