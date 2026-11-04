@@ -84,4 +84,6 @@ nativeだけのpeakやPixel性能へ読み替えない。
 
 合成用エミュレーターを明示してAPKを入れ、`am instrument`または対象を限定した`connectedDebugAndroidTest`を実行する。
 実機へ自動インストールしない。Android CIはnative両ABIとtest APKのbuildまでで、instrumentationの実行とは区別する。
+test manifestは先頭にAndroidJUnitRunnerを置き、後続の既存DngHandoffInstrumentationも保持する。
+AGPのrunner指定で既存登録を上書きしないことを実APKで確認し、handoff smokeはspec016の隔離opt-inで別途起動する。
 Draft PRのCI/canonical/独立レビューとmerge承認は既存運用に従う。未実行・外部操作の拒否は成功にしない。

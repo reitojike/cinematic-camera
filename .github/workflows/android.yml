@@ -37,6 +37,13 @@ jobs:
           cache-provider: basic
       - name: lint・unit・debug build
         run: ./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
+      - name: DNG test runner登録を確認
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump xmltree app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk AndroidManifest.xml > "$RUNNER_TEMP/cinematic-test-manifest.txt"
+          grep -F '"androidx.test.runner.AndroidJUnitRunner"' "$RUNNER_TEMP/cinematic-test-manifest.txt"
+          grep -F '"dev.cinematic.p0.rawcapture.DngHandoffInstrumentation"' "$RUNNER_TEMP/cinematic-test-manifest.txt"
       - name: APKの署名・識別子・ハッシュを記録
         shell: bash
         run: |
