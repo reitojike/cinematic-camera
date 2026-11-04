@@ -60,7 +60,7 @@ US1の故障テストと#78の合成golden比較は別ファイルで並行可�
 - [ ] T023 [US1] `main/rawcapture/RawCaptureStore.kt`に共有原本確認後だけの一時DNG解放、lease、削除失敗とdeathからの再開を実装する（FR-001/003）。
 - [ ] T024 [US1] `test/rawcapture/RawCaptureStoreTest.kt`に同サイズ破損、解放の全故障点、正常時共有1/内部0、仮JPEG非削除を追加する（SC-001）。
 - [ ] T025 [US2] `main/rawcapture/SharedOriginalAccess.kt`にread-only URI、hash照合、原本不在/変更/権限失効の区別と再関連付け契約を実装する（FR-010/011）。
-- [ ] T026 [US2] `test/rawcapture/SharedOriginalAccessTest.kt`で外部移動/削除/同サイズ改変/失効/選択取消/別内容再選択/台帳消失を検証する（SC-005）。
+- [ ] T026 [US2] `test/rawcapture/SharedOriginalAccessTest.kt`で開始/公開直前に検知できる外部移動/削除/同サイズ改変/失効と、選択取消/別内容再選択/台帳消失を検証する。最終照合後の非排他的な外部操作は別の限界として記録する（SC-005）。
 
 T023〜024はT012〜013と同じ保全/公開PRで実施し、T014の撮影接続より前に完了する。
 T025〜026はT016〜020より前の参照基盤。標準pickerのUI実装は#81等の後続だが、この参照/権限契約なしに

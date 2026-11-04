@@ -37,6 +37,7 @@ process death後の再起動では旧processの所有attemptを無効化し、�
 
 アプリのread leaseは外部アプリの変更/削除を防がない。最終照合と削除を跨ぐ外部操作に原子的保証はなく、
 共有原本の消失まで保護するバックアップではない。恒久二重保存を避ける合意の限界として扱う。
+原本照合とJPEG公開も一括transactionではなく、最終照合後の外部操作について検知前公開を排除できない。
 
 ## 原本参照の再取得と外部変更
 
@@ -44,7 +45,7 @@ process death後の再起動では旧processの所有attemptを無効化し、�
   共有原本はread-only FD/streamで開き、処理開始・JPEG公開前に照合する。途中のreadエラーやhash不一致は公開しない。
 - 自分の新規MediaStore原本を開く場合と、再インストール後や本人選択で開く場合の権限を分ける。
   旧インストールの所有やpersistable grantが残るとは仮定しない。本人選択のread grantだけを使い、必要ならpersistする。
-- `SOURCE_UNAVAILABLE`（削除/移動/権限失効/volume不在）と`SOURCE_CHANGED`（同じURIでも別内容）で現像を止める。
+- 開始/公開直前の検証で`SOURCE_UNAVAILABLE`（削除/移動/権限失効/volume不在）と`SOURCE_CHANGED`（同じURIでも別内容）を検知したら現像・公開を止める。
   見つからないことを削除と断定せず、再選択・アクセス再取得を案内する。同名の別DNGへ自動でrecipeを適用しない。
 - 再選択したURIが同じhashなら既存台帳のrecipeと再関連付けできる。hashが異なる場合は別原本として本人に示す。
   再インストール等で台帳/recipeそのものがなければ新規編集となり、過去設定・仮JPEG・出力との対応を復元済みとは扱わない。
