@@ -27,7 +27,20 @@ worker例外とcoordinator再生成を状態として検証する。実CameraX�
 
 symlinkを作れないWindowsではredirectテストだけをskipと記録し、Linux CIで確認する。
 JVMテストは標準AndroidAtomicFileの動作をmockで合格にせず、注入backendと純pathだけを検証する。
-実端末のAtomicFile、実DNG/仮JPEGの保全、撮影との接続、共有原本の引渡しは別の未実施項目として残す。
+実端末のAtomicFile、実DNG/仮JPEGの端末上の保全、撮影との接続、共有原本の引渡しは別の未実施項目として残す。
+
+実ファイル保全部品（T010・T011のファイル部分）は次の限定テストで検証する。
+
+```text
+./gradlew :app:testDebugUnitTest --tests "dev.cinematic.p0.rawcapture.RawCaptureStoreTest" --no-daemon
+```
+
+人工byte列の実一時ファイルにopen/部分write/flush/close失敗と台帳commit前後の失敗を与え、
+成功済み形式と途中ファイルのバイト列が保たれることを比較する。JPEG先行、RAWのみ、重複通知、旧revision、
+異なるstoreのhandle、未close/close失敗、未記録ファイルを伴う再生成、記録済みファイルの欠落/サイズ変更、
+既存directory/fileの非再利用・symlink拒否を含む。symlink権限のないWindowsは当該検証をskipと記録しLinux CIで確認する。
+この再生成は実process killではなく、台帳backendは注入したもの。CameraX接続、端末IO/fsync/電源断、DNG decode、
+同サイズ改変のhash検出、共有引渡し/一時DNG解放、カメラロールの公開件数はこのテストの合格範囲に含めない。
 
 | 故障/操作点 | 確認する結果 | 要件 |
 |---|---|---|
