@@ -108,6 +108,27 @@ adb -s <isolated-emulator> shell am instrument -w -e isolated true dev.cinematic
 最終照合後からJPEG公開までの外部操作は非排他的な限界として別記録し、検知前の公開0件をテストの合格条件にしない。
 既存PhotoPublisher/JPEG単独/動画/設定の回帰suiteも実行する。
 
+## 完成JPEG公開境界の限定検証
+
+完成JPEG公開境界は`RenderedJpegPublicationTest`/`RenderedJpegFilesTest`で限定検証する。
+全公開phaseのcommit前/後/readback失敗、insert/publish応答喪失、部分copy/readback改変、
+未実行顔/診断露出/試験表示/未知renderer-schema組の拒否、recipe/source/世代の変更拒否、
+原本の開始時/公開直前の不在・改変、失敗close保持、公開済み行の非再作成を確認する。
+JVMのJPEG byte列はprotocol fixtureでありdecode有効性を主張しない。
+
+使い捨てemulatorだけで次の明示選択テストを実行できる。
+
+```text
+adb -s <isolated-emulator> shell am instrument -w -e isolated true -e class dev.cinematic.p0.rawcapture.RenderedJpegInstrumentationTest dev.cinematic.p0.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+`RenderedJpegInstrumentationTest`はgoldfish/ranchu・API29以上・isolated指定を要求する。
+プログラム生成の16x12 sRGB JPEGで標準decode/向き・切断拒否を検証し、合成DNG byte列とJPEGだけを
+新規MediaStore行へ作る。native publish後の応答喪失から同URI/同内容を採用し、original/private JPEG不変と
+自分の共有JPEGの削除後に再作成されないことを確認する。同操作のfactory共有とproducer close待ちも検証する。
+最後に今回insertしたURIと固有private directoryだけを除去する。既存写真/本人の端末/既存AVDへ実行しない。
+標準codecの成立・隔離APIのsmokeであり、実DNG現像、画作り、実process kill/電源断、Pixel実機性能の合格ではない。
+
 ## Pixel 9aの後続検証（本人の操作）
 
 1. 本人が許可したDNGで#78の比較基準/有効性を確認し、強度0/0.5/1、向き/寸法/色管理を分けて比べる。

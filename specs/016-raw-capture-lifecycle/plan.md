@@ -290,6 +290,44 @@ WorkManagerは今回採用しない。永続要求と画素処理の停止能力
 
 ## PR分割と検証
 
+### 完成JPEGの公開境界（T018・T019の先行部分）
+
+`RecoverablePhotoPublisher`はrenderer成功receiptと完成private JPEGを受け取り、DNG台帳とは別の
+`JpegPublicationJournal`で`captureId:RENDERED:generation`を保持する。`renders/<generation>/output.jpg`と
+`jpeg-publication.bin`だけを使い、DNG・仮JPEGの保存先/cleanupへ渡さない。
+台帳は4KiB上限・明示版・checksum・CAS・commit readbackを持ち、insert前のtoken、共有URI、
+入力DNG URI/hash/権限由来、renderer契約名、recipe schema/固定payload、完成JPEG検査結果を保存する。
+recipe payloadはUTF-8 1KiB以下のrenderer所有snapshotであり、publisherはその画作りの意味を解釈しない。
+renderer契約名とrecipe schemaの組を明示登録した場合だけ受理し、試験表示、顔NOT_RUN/FAILED、
+露出DIAGNOSTIC/UNKNOWNでは公開処理を開始しない。今回の実装ではproduction契約を登録しない。
+
+Android adapterは新規出力をCREATE_NEWで作り、producerのwrite/close失敗では公開を拒否する。
+`AndroidRenderedJpegOperation.get`がprocess内の同じ操作を共有し、別factoryからwriter/AtomicFileの
+単一所有を迂回できないようにする。publisherを保持したまま失敗closeを再試行し、未解放中は追加IOへ進めない。
+公開済み/不明な操作を新しいtokenや台帳でやり直さず、公開済み行の削除・rollback・自動再作成もしない。
+停止/世代照合callbackは統合側の権威ある状態を参照し、統合側が予約と世代変更を直列化する。
+現段階は同期IOの境界であり、自動schedulerやCameraProbe/編集UIへは接続しない。
+
+JPEGは同じencoded byte列からhash・全体長・JPEG MIME・寸法・向き・sRGBを検査する。
+標準ImageDecoderのpartial decodeを拒否しEOIも要求する。向き未指定（frameworkはUNDEFINED/0で返す）は通常向きとして扱い、
+EXIF回転を必要とする出力は拒否する。encoded長32MiB、辺32768、100MP、検査用bitmap最大64x64を上限とする。
+encoded bufferは複製分もメモリを使い、標準codec呼出し中の即時cancelは保証しない。撮影/メモリ/熱の
+admissionと実測は接続前に必要である。ImageDecoderがsRGBと認識したことを検査し、PC JPEG codecの
+quality/subsampling/embedded ICCの一致やStage Clearの画素golden一致をこの境界の合格には含めない。
+コピー先は全byte readback/hashで同じ検査済み内容と確認してからpendingを解除する。
+開始時と公開直前のDNG全byte再照合で不在/読取不能/改変なら停止し、原本の書換えAPIを持たない。
+最終照合とMediaStore公開は非原子的であり、直後の外部変更/削除を排除する保証はしない。
+
+T016のrenderer別recipe確定/現像要求列挙、T017の自動実行、T020の実renderer統合、T025/026の
+参照状態分類・再選択UIと権限復旧は未完了である。完成receiptの永続化は公開の再開用であり、
+render前の要求保存や実process deathからの自動現像再開の実装とは区別する。
+
+標準APIの根拠: [ImageDecoder](https://developer.android.com/reference/android/graphics/ImageDecoder)、
+[ImageInfo](https://developer.android.com/reference/android/graphics/ImageDecoder.ImageInfo)、
+[partial decode](https://developer.android.com/reference/android/graphics/ImageDecoder.OnPartialImageListener)、
+[ExifInterface](https://developer.android.com/reference/android/media/ExifInterface)。
+未指定orientationの0補完は[公式framework実装](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/media/java/android/media/ExifInterface.java)の`addDefaultValuesForCompatibility`で確認する。
+
 1. **設計PR**: 本spec/plan/contracts/tasks/検証案と原則IV・002の方針更新。アプリ変更なし。
 2. **policy PR**: `rawcapture/AutoDevelopPolicy.kt`/`AutoDevelopCoordinator.kt`と対応JUnit。
    開始条件と未知値、撮影予約race、旧完了・例外・再生成を合成検証。撮影へ未接続。

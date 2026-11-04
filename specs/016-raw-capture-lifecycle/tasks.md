@@ -63,6 +63,13 @@ Pixelの実撮影callback、実DNG decode、実OS kill/電源断、撮影応答/
 - [ ] T019 [US2] `test/rawcapture/AutoDevelopIntegrationTest.kt`で出力検査、旧generation、公開commit後の応答喪失、ユーザー削除後の非再作成を検証する（SC-001/002/003）。
 - [ ] T020 [US2] `main/rawcapture/RendererAdapter.kt`で成立した#78のrendererを接続する。顔/露出不明は未対応として止め、仮の値で公開しない（FR-009）。
 
+T018/T019の先行部分は`RenderedJpeg`成功receipt、`JpegPublicationJournal`、`RecoverablePhotoPublisher`と
+Android検査/MediaStore adapterで実装する。固定recipe payload/source/世代/出力検査を公開台帳へ保持し、
+fake providerによる各commit故障・応答喪失・古い世代・出力/原本改変・非再作成を検証する。
+これは未接続の完成出力公開境界であり、T016のrender前の要求保存/列挙やT017/T020の自動現像成立を意味しない。
+renderer契約とrecipe schemaの明示登録、既知の顔/露出成功が必要で、production契約はまだ登録しない。
+T018/T019全体のcheckboxは統合とnative検証の状況に合わせて更新する。
+
 ## Phase 5: 検証・収束
 
 - [ ] T021 [US1] [US2] `specs/016-raw-capture-lifecycle/quickstart.md`の実機手順を本人操作で確認し、#78/保存専用Issueへ非公開素材を含まない検証要約を記録する（SC-001〜005、FR-012）。
