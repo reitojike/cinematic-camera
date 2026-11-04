@@ -123,12 +123,12 @@ PCから定数と合成fixtureを生成する。11場面×強度0/.5/1で単体�
 縮小・ケース削除で行数を減らさない。PC CIのpathsにも定数とgzip fixtureを追加する。
 段4/5・全renderer、DNG/R7、保存URI、実機の画質・時間・peakは後続として区別する。
 
-### PC再生成の丸め境界
+### 固定goldenへのPC再照合
 
-Orton再生成はCI run #69でHDR値約4.64に3.338e-6（Float32で7 ULP）の差が出た。
-同じ画素処理の他runでは差0、ローカルでもCPU最適化を切り替えると末尾の値が変わるため、
-runner依存の演算丸めが原因と推定する。原因を単一命令まで断定せず、暫定の回帰基準として扱う。
-PC再生成の全画素差を診断に出し、Ortonの再照合だけをmax(2e-6, 8 Float32 ULP)で比較する。
-絶対値2以下は従来の2e-6床を維持し、約4.64での9 ULP差やSDRで床を超える差・非有限値は拒否するテストを置く。
-これはgolden画素・Kotlinの2e-5境界・製品処理を変えるものではない。数値の完全一致を永続目的にせず、
-意図的な検証境界の変更と失敗証拠をPRで明示する。NumPyの[CPU dispatch](https://numpy.org/doc/stable/reference/simd/build-options.html)も参照。
+Orton単体/累積出力のPC再生成も、SC-010の既存2e-5（rtol=0）で同じ固定goldenと比較する。
+入力列（base/skin/misted）は従来2e-6を維持し、段2は独立exportでも検証する。定数/metadata/形状と全画素比較を維持し、非有限値は拒否する。
+従来のPC出力検査2e-6より緩くなるため、2e-6超〜2e-5以内のPC再生成差に対する検出力は下がる。
+これは意図的な検証境界の整合であり、golden画素・Kotlin境界・製品処理を変えない。独自ULP基準やCPU固定は導入しない。
+runnerによる末尾差の原因は未断定。失敗runと最大差・採否根拠はPRへ記録する。NumPyの[CPU dispatch](https://numpy.org/doc/stable/reference/simd/build-options.html)も参照。
+PCとKotlinが各々固定goldenに2e-5以内でも、両者を直接比較した差が必ず2e-5以内になるという保証ではない。
+これらは暫定の移植回帰であり、最終の雰囲気/印象や実機性能の受入条件ではない。
