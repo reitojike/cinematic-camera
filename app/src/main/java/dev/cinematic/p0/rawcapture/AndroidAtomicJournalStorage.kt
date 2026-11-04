@@ -8,15 +8,19 @@ import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.LinkOption
 
+internal enum class CaptureJournalFile(val fileName: String) { RECEIPT("receipt.bin"), DNG_PUBLICATION("dng-publication.bin") }
+
 /** Pure path validation; root must be a trusted app-private directory supplied by the caller. */
 internal object CaptureJournalPaths {
-    fun receiptFile(root: File, captureId: String): File {
+    fun receiptFile(root: File, captureId: String): File = journalFile(root, captureId, CaptureJournalFile.RECEIPT)
+
+    fun journalFile(root: File, captureId: String, kind: CaptureJournalFile): File {
         requireCaptureId(captureId)
         val directory = File(root.canonicalFile, captureId)
         if (Files.isSymbolicLink(directory.toPath()) || directory.canonicalFile != directory) {
             throw IOException("Capture directory is redirected")
         }
-        val file = File(directory, "receipt.bin")
+        val file = File(directory, kind.fileName)
         listOf(file, File(file.path + ".new"), File(file.path + ".bak")).forEach {
             if (Files.isSymbolicLink(it.toPath()) || it.canonicalFile != it) {
                 throw IOException("Capture journal path is redirected")
@@ -26,9 +30,13 @@ internal object CaptureJournalPaths {
     }
 }
 
-/** One CaptureJournal/writer per capture. AtomicFile does not provide inter-writer locking. */
-internal class AndroidAtomicJournalStorage(private val root: File, private val captureId: String) : AtomicJournalStorage {
-    private val file = CaptureJournalPaths.receiptFile(root, captureId)
+/** One journal/writer per capture and file kind. AtomicFile does not provide inter-writer locking. */
+internal class AndroidAtomicJournalStorage(
+    private val root: File,
+    private val captureId: String,
+    private val kind: CaptureJournalFile = CaptureJournalFile.RECEIPT,
+) : AtomicJournalStorage {
+    private val file = CaptureJournalPaths.journalFile(root, captureId, kind)
     private val atomic = AtomicFile(file)
 
     override fun read(maxBytes: Int): ByteArray? {
@@ -78,6 +86,6 @@ internal class AndroidAtomicJournalStorage(private val root: File, private val c
     }
 
     private fun checkPath() {
-        if (CaptureJournalPaths.receiptFile(root, captureId) != file) throw IOException("Capture journal root changed")
+        if (CaptureJournalPaths.journalFile(root, captureId, kind) != file) throw IOException("Capture journal root changed")
     }
 }

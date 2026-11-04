@@ -41,7 +41,10 @@ T010も撮影/起動走査へ未接続のstream保全部品。未知ファイル
 
 T012/T013前段として`DngContentVerifier`と`RawCaptureStore.verifyOriginal`で全byteのsize/SHA-256、
 任意fingerprintの版2台帳commit・版1読取り移行、内容readback照合と停止/IO/close/CAS/commit失敗を実装・人工データで検証。
-初回hash以前の同サイズ改変やDNG decode有効性は証明しない。MediaStore/共有URI/公開・共有原本確立/一時DNG解放は未実装のため両項目は未完了。
+初回hash以前の同サイズ改変やDNG decode有効性は証明しない。
+insert部分は`DngPublicationJournal`/`DngInsertCoordinator`/`MediaStoreDngPendingRows`に分離し、公開intentのreadback後だけinsert、
+pending行の所有/期待metadata照合、URI記録と不明時の非再insertを実装。`DngInsertRecoveryTest`で故障台帳/fake providerの中断・復旧を検証。
+実adapterは端末未検証。byte copy/close/readbackからの公開、共有原本確立/一時DNG解放は未実装のため両項目は未完了。
 - [ ] T014 [US1] 別の接続PRで`main/CameraProbe.kt`の新RAW保存だけを接続し、既存cleanup/timeout/late-callbackを形式別保全へ切替える（FR-001/002/003/005/008）。
 - [ ] T015 [US1] `test/rawcapture/RawCaptureIntegrationTest.kt`で部分成功/重複/late/世代隔離、busy解除とDNG共有成否の分離を検証する（SC-001/003）。
 
