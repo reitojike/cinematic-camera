@@ -24,7 +24,7 @@ class DngHandoffInstrumentation : Instrumentation() {
     override fun onStart() {
         val result = Bundle()
         try {
-            check(isolated && (Build.FINGERPRINT.startsWith("generic") || Build.FINGERPRINT.contains("emulator")))
+            check(isolated && Build.HARDWARE in setOf("goldfish", "ranchu"))
             check(Build.VERSION.SDK_INT >= 29)
             smoke()
             result.putString("handoff_smoke", "PASS")

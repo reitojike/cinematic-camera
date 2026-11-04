@@ -63,7 +63,7 @@ read/出力close失敗では未解放handleを保持し、内容不一致とclos
 人工byte列は有効DNGではなく、この結果をdecode・実MediaStore・OS kill・電源断・撮影中性能の合格に数えない。
 
 標準`Instrumentation`の`DngHandoffInstrumentation`は依存追加なしでnative AtomicFile/MediaStoreのbyte手順を確認する。
-空の使い捨てemulatorだけで実行し、`isolated=true`とemulator fingerprintを要求する。本人の端末や既存AVDへ実行しない。
+空の使い捨てemulatorだけで実行し、`isolated=true`と標準emulator hardware（goldfish/ranchu）を要求する。本人の端末や既存AVDへ実行しない。
 debug app/test APKをそのemulatorだけにinstall後、serialを明示して次を実行する（`<isolated-emulator>`を対象serialへ置換）。
 
 ```text
