@@ -19,7 +19,7 @@ internal class DngTrialRenderer(
         cancellation.throwIfCanceled()
         resources().blockedReason()?.let { return PhotoRollRenderResult.Unavailable(it) }
         return try { when (val decoded = DngPreviewDecoder.decode(resolver, request.original.uri, cancellation, request.maxEdge)) {
-            is DngPreviewResult.Failed -> PhotoRollRenderResult.Unavailable(failureMessage(decoded.reason))
+            is DngPreviewResult.Failed -> PhotoRollRenderResult.Unavailable(dngPreviewFailureMessage(decoded.reason))
             is DngPreviewResult.Ready -> {
                 val image = decoded.preliminaryLinearSrgb
                 val pixels = TrialDisplayPixels.encode(image, request.maxEdge) { cancellation.isCanceled }
@@ -28,10 +28,11 @@ internal class DngTrialRenderer(
                 if (cancellation.isCanceled) { bitmap.recycle(); cancellation.throwIfCanceled() }
                 PhotoRollRenderResult.Preview(bitmap, mode)
             }
-        } } catch (_: OutOfMemoryError) { PhotoRollRenderResult.Unavailable(failureMessage(DngPreviewFailure.MEMORY)) }
+        } } catch (_: OutOfMemoryError) { PhotoRollRenderResult.Unavailable(dngPreviewFailureMessage(DngPreviewFailure.MEMORY)) }
     }
+}
 
-    private fun failureMessage(reason: DngPreviewFailure) = when (reason) {
+internal fun dngPreviewFailureMessage(reason: DngPreviewFailure) = when (reason) {
         DngPreviewFailure.BUSY -> "別のDNGを処理しています。処理が終了してから再試行してください"
         DngPreviewFailure.CANCELLED -> "DNGの試験表示を中断しました"
         DngPreviewFailure.SOURCE -> "原本を読み取れません。Filesから選び直してください"
@@ -39,5 +40,4 @@ internal class DngTrialRenderer(
         DngPreviewFailure.UNSUPPORTED -> "このDNGの形式や撮影情報にはまだ対応していません"
         DngPreviewFailure.MEMORY -> "DNGの処理メモリが不足しました。他のアプリを閉じて再試行してください"
         DngPreviewFailure.UNAVAILABLE -> "DNGデコード機能を利用できません"
-    }
 }

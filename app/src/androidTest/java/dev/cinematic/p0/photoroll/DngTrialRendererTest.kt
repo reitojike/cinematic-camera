@@ -179,6 +179,61 @@ class DngTrialRendererTest {
         assertTrue((wrongMode as PhotoRollRenderResult.Unavailable).reason.contains("Stage Clear"))
     }
 
+    @Test fun selectedContentUriRunsRealR7AndLookWithExplicitTrialMode() = withOriginal { original ->
+        val stages = mutableListOf<PhotoRollRenderStage>()
+        val renderer = StageClearTrialRenderer(context.contentResolver) { resources }
+        val request = PhotoRollRenderRequest(original, mode = renderer.mode, maxEdge = renderer.maxEdge, onStage = { stages += it })
+        val result = renderer.render(request, CancellationSignal()) as PhotoRollRenderResult.Preview
+        val plain = DngTrialRenderer(context.contentResolver) { resources }.render(
+            PhotoRollRenderRequest(original, mode = PhotoRollPreviewMode.DNG_TRIAL), CancellationSignal(),
+        ) as PhotoRollRenderResult.Preview
+        try {
+            assertEquals(PhotoRollPreviewMode.STAGE_CLEAR_TRIAL, result.mode)
+            assertEquals(listOf(PhotoRollRenderStage.DECODE, PhotoRollRenderStage.INPUTS, PhotoRollRenderStage.BASE,
+                PhotoRollRenderStage.LOOK, PhotoRollRenderStage.DISPLAY), stages)
+            assertEquals(16, result.bitmap.width)
+            assertEquals(12, result.bitmap.height)
+            assertEquals(Bitmap.Config.ARGB_8888, result.bitmap.config)
+            assertTrue(result.bitmap.colorSpace!!.isSrgb)
+            val looked = IntArray(16 * 12)
+            val asShot = IntArray(16 * 12)
+            result.bitmap.getPixels(looked, 0, 16, 0, 0, 16, 12)
+            plain.bitmap.getPixels(asShot, 0, 16, 0, 0, 16, 12)
+            assertFalse(looked.contentEquals(asShot))
+            assertTrue(looked.any { (it and 0xffffff) != 0 })
+            DngContentVerifier.verify(original.fingerprint, { context.contentResolver.openInputStream(original.uri)!! })
+        } finally { result.bitmap.recycle(); plain.bitmap.recycle() }
+    }
+
+    @Test fun stageCancellationStopsLookAndAllowsNextNativeRequest() = withOriginal { original ->
+        val renderer = StageClearTrialRenderer(context.contentResolver) { resources }
+        val signal = CancellationSignal()
+        val stages = mutableListOf<PhotoRollRenderStage>()
+        val request = PhotoRollRenderRequest(original, mode = renderer.mode, maxEdge = renderer.maxEdge, onStage = {
+            stages += it
+            if (it == PhotoRollRenderStage.BASE) signal.cancel()
+        })
+        try { renderer.render(request, signal); fail("Expected stage cancellation") }
+        catch (_: java.util.concurrent.CancellationException) { }
+        assertEquals(PhotoRollRenderStage.BASE, stages.last())
+        val result = renderer.render(request.copy(onStage = {}), CancellationSignal()) as PhotoRollRenderResult.Preview
+        result.bitmap.recycle()
+        DngContentVerifier.verify(original.fingerprint, { context.contentResolver.openInputStream(original.uri)!! })
+    }
+
+    @Test fun stageClearRejectsUnknownResourcesAndUnsupportedControlsBeforeDecode() = withOriginal { original ->
+        var stages = 0
+        val renderer = StageClearTrialRenderer(context.contentResolver) { resources }
+        val request = PhotoRollRenderRequest(original, mode = renderer.mode, maxEdge = renderer.maxEdge, onStage = { stages++ })
+        for (invalid in listOf(request.copy(mode = PhotoRollPreviewMode.STAGE_CLEAR), request.copy(maxEdge = 513),
+            request.copy(strength = Float.NaN), request.copy(strength = 1f), request.copy(lookVersion = "unknown"))) {
+            assertTrue(renderer.render(invalid, CancellationSignal()) is PhotoRollRenderResult.Unavailable)
+        }
+        val blocked = StageClearTrialRenderer(context.contentResolver) { resources.copy(thermalStatus = null) }
+        assertTrue(blocked.render(request, CancellationSignal()) is PhotoRollRenderResult.Unavailable)
+        assertEquals(0, stages)
+    }
+
     private fun withOriginal(action: (PhotoRollOriginal) -> Unit) {
         val resolver = context.contentResolver
         val bytes = syntheticDng()
