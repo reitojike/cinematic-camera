@@ -1,12 +1,12 @@
 # 検証案: RAW保存と自動現像
 
-この設計段階では以下は実装前の受入手順。アプリが自動現像対応済みとは扱わない。
+保存基盤の機械テストと、未接続部分の受入手順を区別する。アプリが自動現像対応済みとは扱わない。
 素材は非公開の一時領域で扱い、画像/URI/原metadata/端末識別情報をGit/Issue/PR/CIへ入れない。
 
 ## 機械的な検証
 
 後続基盤はfake storage/rendererと人工バイト列で検証し、既存JUnit suiteへ追加する。
-Android CIは既存の`:app:lintDebug :app:testDebugUnitTest :app:assembleDebug --no-daemon`を維持。
+Android CIは既存のlint/unit/debug buildに`:app:assembleDebugAndroidTest`を加え、試験APKもcompileする。CIでemulator試験は実行しない。
 設計PRはリンク/要件対応/差分検査とCIで確認し、故障テストが実行されたとは報告しない。
 
 未接続の開始制御（T006〜T008）は以下で限定実行できる（Windowsでは`./gradlew`を`.\gradlew.bat`へ置換）。
@@ -46,7 +46,7 @@ JVMテストは標準AndroidAtomicFileの動作をmockで合格にせず、注�
 `dev.cinematic.p0.rawcapture.*`の限定実行で検証する。既知SHA-256 vector、短い/長い/同サイズ異内容、short read、
 read/open/close失敗、協調停止、64KiB上限、版1から版2、fingerprint上書き拒否とcommit応答喪失を含む。
 hashを停止callbackで待機させ、その間に別threadのJPEG受領を完了させて、hash結果の古いrevisionがcommitされないことを確認する。
-初回hashより前の同サイズ変更、URI所有/pending/公開済み、reader lease・共有原本確立/一時DNG解放、実process kill/電源断は未検証。
+この前段suite単独では初回hashより前の同サイズ変更、URI所有/pending/公開済み、reader lease・共有原本確立/一時DNG解放、実process kill/電源断は未検証。
 
 pending行の確保・URI記録は`DngInsertRecoveryTest`で限定実行できる。fault backend/fake providerを用い、
 intent/URI commit前後・readback失敗、insert応答前の中断を`Error`と再生成で模擬し、insert回数と同じURIを確認する。
@@ -54,6 +54,26 @@ intent/URI commit前後・readback失敗、insert応答前の中断を`Error`と
 未知版/破損/読取不能な台帳は例外で原状停止し、UNKNOWNを上書き記録せずprovider APIも呼ばないことを確認する。
 native MediaStoreのinsert/queryはJVMで実行せず、API 29/30以降のpending検索・列/owner可視性・volumeの実動作は端末検証として残す。
 このsuiteのROW_RECORDEDをcopy完了・公開完了・共有原本確立の合格としない。既存写真を削除・移動する端末試験は行わない。
+
+`DngHandoffTest`は実一時ファイルとfake providerを使用し、人工DNG byte列/仮JPEGのままcopyから解放まで実行する。
+7つの進行phaseそれぞれで台帳commit前/後/readback失敗を注入し、再生成後も同URI・insert最大1・原本少なくとも一方を確認する。
+部分write、内容改変、pending解除の失敗/無応答/応答喪失、reader lease、所有予約、削除前後の応答喪失、公開原本の外部不在/変更を含む。
+read/出力close失敗では未解放handleを保持し、内容不一致とclose失敗の複合故障でも追加IOへ進まないことを確認する。
+成功時は共有1・内部DNG0・仮JPEG不変、公開済みの外部削除後も自動再作成0を確認する。
+人工byte列は有効DNGではなく、この結果をdecode・実MediaStore・OS kill・電源断・撮影中性能の合格に数えない。
+
+標準`Instrumentation`の`DngHandoffInstrumentation`は依存追加なしでnative AtomicFile/MediaStoreのbyte手順を確認する。
+空の使い捨てemulatorだけで実行し、`isolated=true`と標準emulator hardware（goldfish/ranchu）を要求する。本人の端末や既存AVDへ実行しない。
+debug app/test APKをそのemulatorだけにinstall後、serialを明示して次を実行する（`<isolated-emulator>`を対象serialへ置換）。
+
+```text
+adb -s <isolated-emulator> shell am instrument -w -e isolated true dev.cinematic.p0.test/dev.cinematic.p0.rawcapture.DngHandoffInstrumentation
+```
+
+合成byteを新規の固有撮影IDへ保存し、native公開の後で応答喪失を注入する。再生成後に同URI採用・原本一致・内部DNG0・
+仮JPEG不変・共有1を確認し、今回作成した合成rowだけを再照合後に削除して非再作成を確認する。
+結果は`handoff_smoke=PASS`または失敗stage/例外型だけとし、URI/端末識別/写真を出力しない。
+エミュレータAPIの確認はPixel実機/有効DNG/全API互換/実process kill/電源断の合格と分ける。
 
 | 故障/操作点 | 確認する結果 | 要件 |
 |---|---|---|

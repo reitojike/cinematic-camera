@@ -11,10 +11,12 @@ import android.os.Bundle
 import android.provider.MediaStore
 import androidx.annotation.RequiresApi
 import java.io.IOException
+import java.io.InputStream
+import java.io.OutputStream
 
-/** Unconnected API-29+ adapter: insert pending + metadata reads only; never copy/update/delete. */
+/** Unconnected API-29+ adapter. Writes only its verified pending operation; never deletes a shared row. */
 @RequiresApi(29)
-internal class MediaStoreDngPendingRows(context: Context) : DngPendingRows {
+internal class MediaStoreDngPendingRows(context: Context) : DngHandoffRows {
     private val resolver = context.applicationContext.contentResolver
     private val packageName = context.applicationContext.packageName
     private val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
@@ -40,6 +42,45 @@ internal class MediaStoreDngPendingRows(context: Context) : DngPendingRows {
         val rows = query(Uri.parse(uri), null, null)
         if (rows.size > 1) throw IOException("Ambiguous DNG row URI")
         return rows.singleOrNull()
+    }
+
+    override fun openRead(target: DngPublicationTarget, uri: String, pending: Boolean): InputStream {
+        checkRow(target, uri, pending)
+        return resolver.openInputStream(Uri.parse(uri)) ?: throw IOException("DNG read stream unavailable")
+    }
+
+    override fun openOutput(target: DngPublicationTarget, uri: String): OutputStream {
+        checkRow(target, uri, true)
+        // Metadata check and FD open cannot atomically exclude external/privileged changes.
+        return resolver.openOutputStream(Uri.parse(uri), "wt") ?: throw IOException("DNG write stream unavailable")
+    }
+
+    override fun publish(target: DngPublicationTarget, uri: String) {
+        checkRow(target, uri, true)
+        val values = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+        val selection = "${MediaStore.MediaColumns.IS_PENDING}=? AND ${MediaStore.MediaColumns.OWNER_PACKAGE_NAME}=? AND " +
+            "${MediaStore.MediaColumns.DISPLAY_NAME}=? AND ${MediaStore.MediaColumns.RELATIVE_PATH}=? AND " +
+            "${MediaStore.MediaColumns.MIME_TYPE}=? AND ${MediaStore.MediaColumns.VOLUME_NAME}=?" +
+            if (Build.VERSION.SDK_INT >= 30) " AND ${MediaStore.MediaColumns.IS_TRASHED}=0" else ""
+        val selectionArgs = arrayOf("1", packageName, target.displayName, target.relativePath, target.mimeType, target.volume)
+        val updated = if (Build.VERSION.SDK_INT >= 30) {
+            resolver.update(Uri.parse(uri), values, Bundle().apply {
+                putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE)
+                putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_EXCLUDE)
+                putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
+                putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, selectionArgs)
+            })
+        } else {
+            @Suppress("DEPRECATION")
+            val includingPending = MediaStore.setIncludePending(Uri.parse(uri))
+            resolver.update(includingPending, values, selection, selectionArgs)
+        }
+        if (updated != 1) throw IOException("DNG pending update unconfirmed")
+    }
+
+    private fun checkRow(target: DngPublicationTarget, uri: String, pending: Boolean) {
+        val row = inspect(uri) ?: throw IOException("DNG row unavailable")
+        if (row.uri != uri || !target.accepts(row, pending)) throw IOException("DNG row identity or ownership changed")
     }
 
     private fun query(uri: Uri, selection: String?, selectionArgs: Array<String>?): List<DngPendingRow> {
