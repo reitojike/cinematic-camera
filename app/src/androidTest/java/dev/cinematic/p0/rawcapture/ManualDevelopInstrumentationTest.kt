@@ -92,9 +92,21 @@ class ManualDevelopInstrumentationTest {
                 CaptureJournalFile.JPEG_PUBLICATION).read(JpegPublicationCodec.MAX_BYTES))
             DngContentVerifier.verify(fp, { resolver.openInputStream(uri)!! })
             val stale = trial.readPreview(allowed) { false }.join()
+            val selected = AndroidAtomicJournalStorage(root, id, CaptureJournalFile.MANUAL_REQUEST)
+            val acknowledgementLost = object : AtomicJournalStorage {
+                override fun read(maxBytes: Int) = selected.read(maxBytes)
+                override fun replace(contents: ByteArray) { selected.replace(contents); throw java.io.IOException("Synthetic commit acknowledgement lost") }
+            }
+            val unknown = AndroidAutoDevelopQueue.get(context).preparePrivateTrial(id) {
+                ManualDevelopRequests(source, acknowledgementLost).prepare(JpegGenerationRecipe.trial().snapshot.copy(payload =
+                    JpegGenerationRecipe.trial().snapshot.payload + ";synthetic-new-policy"))
+            }
+            assertThrows(java.util.concurrent.CompletionException::class.java) { unknown.join() }
+            val staleClaim = stale.claim()
+            try { assertNull(staleClaim) } finally { staleClaim?.close() }
             val completeRecipe = JpegGenerationRecipe(AndroidAsShotJpegFrames.CONTRACT, RenderRecipeSnapshot("synthetic-unregistered-v1", "fixed"))
             val next = AndroidAutoDevelopQueue.prepareManual(context, source, completeRecipe).join()
-            assertEquals(trial.request.generation + 1, next.request.generation)
+            assertEquals(trial.request.generation + 2, next.request.generation)
             assertNull(stale.claim())
             assertThrows(java.util.concurrent.CompletionException::class.java) { trial.readPreview(allowed) { false }.join() }
             assertThrows(java.util.concurrent.CompletionException::class.java) { next.start(allowed).join() }

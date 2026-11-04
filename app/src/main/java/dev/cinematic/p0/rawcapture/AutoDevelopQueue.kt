@@ -92,15 +92,21 @@ internal class AutoDevelopQueue(
     private fun prepareInteractive(captureId: String, allocate: () -> AutoDevelopRequest): AutoDevelopRequest {
         requireCaptureId(captureId)
         manualFences.add(captureId)
-        val request = try { allocate() } catch (failure: Throwable) {
+        try {
+            val request = allocate()
+            require(request.interactive && request.captureId == captureId && captureId == ManualDevelopRequests.identity(request.source))
+            resourceOwner?.takeIf { it.first.captureId == captureId && it.first.generation < request.generation }?.second?.requestStop()
+            accept(request, enabled = false)
+            manualFences.remove(captureId)
+            return request
+        } catch (failure: Throwable) {
+            // The fence must cover a preview already returned through a completed future as well.
+            jobs.filterKeys { it.captureId == captureId }.values.forEach { job ->
+                try { job.control.stop() } catch (cleanup: Throwable) { if (cleanup !== failure) failure.addSuppressed(cleanup) }
+            }
             resourceOwner?.takeIf { it.first.captureId == captureId }?.second?.requestStop()
             throw failure
         }
-        require(request.interactive && request.captureId == captureId && captureId == ManualDevelopRequests.identity(request.source))
-        resourceOwner?.takeIf { it.first.captureId == captureId && it.first.generation < request.generation }?.second?.requestStop()
-        accept(request, enabled = false)
-        manualFences.remove(captureId)
-        return request
     }
     internal fun startManual(request: AutoDevelopRequest, observations: AutoDevelopConditions,
         ticket: ManualDevelopControl.Ticket): CompletableFuture<AutoDevelopRecord> {

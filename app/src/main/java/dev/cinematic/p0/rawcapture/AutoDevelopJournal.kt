@@ -32,10 +32,10 @@ internal data class AutoDevelopRecord(
         require(outputFingerprint == null || attemptId != null)
         require(observed == null || (outputFingerprint != null && request.accepts(observed) && observed.output.bytes == outputFingerprint.bytes))
         require(!request.interactive || outputFingerprint == null || observed != null)
-        require(!request.boundedTrial || phase !in setOf(AutoJobPhase.PUBLISHING, AutoJobPhase.PUBLISHED))
+        require(request.quality != AutoRenderQuality.PRIVATE_TRIAL_1024 || phase !in setOf(AutoJobPhase.PUBLISHING, AutoJobPhase.PUBLISHED))
     }
     fun completed(): CompletedRender {
-        check(!request.boundedTrial) { "Private trial has no completed publication result" }
+        check(request.quality != AutoRenderQuality.PRIVATE_TRIAL_1024) { "Private trial has no completed publication result" }
         val fingerprint = requireNotNull(outputFingerprint)
         val receipt = observed
         return if (receipt != null) request.completed(receipt.output, receipt.face, receipt.exposure)
@@ -74,7 +74,7 @@ internal class AutoDevelopJournal(
         return persist(current.copy(revision = next(current), phase = AutoJobPhase.RENDERED, outputFingerprint = fingerprint, observed = observed))
     }
     @Synchronized fun publishing(revision: Long): AutoDevelopRecord {
-        if (current(revision).request.boundedTrial) throw CaptureJournalConflict()
+        if (current(revision).request.quality == AutoRenderQuality.PRIVATE_TRIAL_1024) throw CaptureJournalConflict()
         return advance(revision, AutoJobPhase.RENDERED, AutoJobPhase.PUBLISHING)
     }
     @Synchronized fun published(revision: Long) = advance(revision, AutoJobPhase.PUBLISHING, AutoJobPhase.PUBLISHED)
