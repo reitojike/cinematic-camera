@@ -27,6 +27,9 @@ internal class RawCaptureStore(
         )
     },
     private val deleteOriginalFile: (File) -> Boolean = { Files.deleteIfExists(it.toPath()) },
+    private val openOriginalInput: (File) -> InputStream = { file ->
+        Files.newInputStream(file.toPath(), StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)
+    },
 ) {
     private val directory = requireNotNull(CaptureJournalPaths.receiptFile(root, captureId).parentFile)
     private val journal = CaptureJournal(captureId, journalStorage)
@@ -90,6 +93,16 @@ internal class RawCaptureStore(
         return journal.received(expectedRevision, handle.format, closedFileSize(handle.format))
     }
 
+    /** Callback commit races with background fingerprint commit; re-read and update under one store lock. */
+    @Synchronized
+    fun receivedCurrent(handle: RawCaptureOutput): CaptureReceipt {
+        require(handles[handle.format] === handle) { "Foreign capture output" }
+        if (!handle.closedSuccessfully()) throw IOException("Capture output did not close successfully")
+        val current = readReceipt() ?: throw CaptureJournalConflict()
+        if (handle.format in current.receivedBytes) return current // Historical receipt after local DNG release.
+        return journal.received(current.revision, handle.format, closedFileSize(handle.format))
+    }
+
     /** Request-level interruption does not close a stream or release another writer. */
     @Synchronized
     fun interrupt(expectedRevision: Long): CaptureReceipt {
@@ -99,12 +112,16 @@ internal class RawCaptureStore(
 
     /** Establish/recheck local byte identity before handoff; heavy reads never hold the store lock. */
     fun verifyOriginal(expectedRevision: Long, shouldStop: () -> Boolean = { false }): CaptureReceipt {
+        return verifyOriginalTracked(expectedRevision, { it }, shouldStop)
+    }
+
+    internal fun verifyOriginalTracked(expectedRevision: Long, ownRead: (InputStream) -> InputStream, shouldStop: () -> Boolean): CaptureReceipt {
         val receipt = synchronized(this) {
             val current = current(expectedRevision)
             if (RawOutput.DNG !in current.receivedBytes) throw IOException("DNG has not been received")
             current
         }
-        val openReadOnly = { openOriginalReader() }
+        val openReadOnly = { ownRead(openOriginalReader()) }
         val fingerprint = receipt.originalFingerprint?.let {
             DngContentVerifier.verify(it, openReadOnly, shouldStop)
         } ?: DngContentVerifier.identify(receipt.receivedBytes.getValue(RawOutput.DNG), openReadOnly, shouldStop)
@@ -158,7 +175,7 @@ internal class RawCaptureStore(
         }
         if (owner != null && releaseOwner !== owner) throw IOException("Foreign original release reservation")
         if (receipt.receivedBytes[RawOutput.DNG] != closedFileSize(RawOutput.DNG)) throw IOException("DNG receipt mismatch")
-        val stream = Files.newInputStream(File(checkedDirectory(), RawOutput.DNG.fileName).toPath(), StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)
+        val stream = openOriginalInput(File(checkedDirectory(), RawOutput.DNG.fileName))
         originalReaders++
         return object : FilterInputStream(stream) {
             private var released = false

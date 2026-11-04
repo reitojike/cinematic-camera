@@ -11,7 +11,7 @@
 
 - 単一Android app、既存Kotlin/CameraX 1.6.2/標準MediaStoreを維持。新依存は今回追加しない。
 - Pixel 9a/API 29以上を共有保存の先行対象とし、API 28の現行非対応表示を広げない。
-- 一時DNG・仮JPEG・台帳は`noBackupFilesDir/raw-captures/<captureId>/`、1撮影1台帳を`AtomicFile`で更新する候補。
+- 一時DNG・仮JPEG・台帳は`noBackupFilesDir/raw-captures/<captureId>/`へ固定し、撮影ごとの小さい台帳を`AtomicFile`で更新する。
   共有への引渡し確認後のDNGはここに恒久保存せず、共有URIの原本1つを参照する。
 - 台帳・ファイル・MediaStoreを横断する原子transactionはない。単一writerと照合による復旧が必要。
 - テストは既存JUnit、fault injection、最終headのAndroid CI。実画像の非公開検証は合成テストと分ける。
@@ -27,9 +27,9 @@
 
 ## 現行との差と所有境界
 
-`CameraProbe.captureFiles`はcache stagingでRAW/JPEG callbackを待ち、`PhotoPublisher.publish(sources)`で
-両方を公開する。callback失敗、terminalな遅延callback、公開終了finallyにcleanupがある。
-`PhotoPublisher`は複数行のうち公開済みの行もcatchのrollback対象にする。これは新しい復旧契約に流用しない。
+従来の`CameraProbe.captureFiles`はcache stagingでRAW/JPEG callbackを待ち、両方を公開してcleanupしていた。
+RAW/RAW+JPEGは下記の永続stream保全へ切り替える。JPEG単独は既存`PhotoPublisher`の経路を維持する。
+`PhotoPublisher`の公開済み行も含むrollbackとstaging cleanupを、RAWの復旧/一時解放へ流用しない。
 
 | 担当 | 変更場所 | 今回触れない場所 |
 |---|---|---|
@@ -96,7 +96,7 @@ pathは専用root内に解決できる相対参照だけを受理し、壊れた
   原本照合と一時削除/JPEG公開も原子的ではない。最終照合後の外部操作による消失や、検知前のJPEG公開、
   共有前のアンインストールまで防げるとは主張しない。
 
-### 撮影未接続の受領台帳（T009・T011の台帳部分）
+### 受領台帳（T009・T011の台帳部分）
 
 `CaptureJournal`の受領部分は撮影ID、revision、期待形式（DNGまたはDNG+JPEG）、形式別の受領byte数、
 `CAPTURING`/`INTERRUPTED`/`FILES_RECEIVED`だけを保存する。これはcallbackとcloseを呼出側が確認したという
@@ -109,7 +109,7 @@ pathは専用root内に解決できる相対参照だけを受理し、壊れた
 
 内部pathは信頼できるapp-private rootから`<captureId>/receipt.bin`を組み立て、IDはASCII英数字/`_`/`-`の
 1〜64字に限定する。root配下のcapture directory、base/`.new`/`.bak`のredirectを拒否する。
-入力文字列の絶対pathを台帳へ保存しない。rootの選択は将来のapp側が`noBackupFilesDir/raw-captures`へ固定する責務であり、
+入力文字列の絶対pathを台帳へ保存しない。`AndroidRawCaptureQueue`がrootを`noBackupFilesDir/raw-captures`へ固定し、
 外部から任意rootを受け取らない。実DNG/仮JPEGのpathと書込み検証はT010の別責務。
 
 1 process・1撮影につき1つのjournal/writerを保持し、同じinstanceの更新を直列化する。複数instance/process間の排他は提供しない。
@@ -123,7 +123,7 @@ process death後は`CAPTURING`だけを`INTERRUPTED`に更新し、記録済み�
 書込み中に失敗したら`failWrite`、`finishWrite`呼出後は結果不明としてrollbackせず扱う。
 このadapterの実端末でのfsync/容量不足/電源断確認は、fake backendの故障注入テストとは別に残す。
 
-### 撮影未接続の実ファイル保全（T010・T011のファイル部分）
+### 実ファイル保全（T010・T011のファイル部分）
 
 `RawCaptureStore`は信頼できる内部rootと撮影IDを受け取り、撮影ごとのdirectoryを排他的に新規作成する。
 directory作成後・台帳commit前に失敗しても、そのdirectoryを空という理由で再利用しない。
@@ -142,8 +142,8 @@ root・撮影directory・台帳sidecar・両media pathのredirectを拒否する
 未記録ファイルを長さから受領済みへ昇格せず、空/途中/未確認ファイルも削除しない。
 台帳commit失敗/応答喪失後は同じ閉鎖handleと再読したrevisionで照合し、ファイルを作り直さない。
 
-同期IOは撮影優先のIO executorで使う契約。アプリからのroot固定、CameraX stream/callback adapter、起動時のdirectory走査、
-実際の撮影busy解除は未接続。全バイトhash、共有引渡し/一時DNG解放は下記の別処理、DNG decodeは別担当である。
+同期IOは撮影優先のIO executorで使う契約。アプリの固定root、CameraX stream/callback、foreground走査と撮影busyは下記で接続する。
+全バイトhash、共有引渡し/一時DNG解放は下記の別処理、DNG decodeは別担当である。
 stream closeとJVM上の再生成テストを、実端末のfsync/電源断・OS kill試験の合格に置き換えない。
 
 ### 共有引渡し前の内容識別と読戻し照合（T012/T013の前段）
@@ -208,8 +208,34 @@ commitの応答喪失ではその呼出し内で削除せず、復旧で台帳�
 再生成時も台帳をbindし、永続release pending以後の通常reader禁止を再構築する。仮JPEG/別撮影/共有行は削除APIへ渡さない。
 共有先検証と一時削除は外部アプリに対する原子transactionではない。
 
-appのroot/kind選択・撮影/起動走査へは未接続。JVMでは実一時ファイル、fake provider、故障台帳でphaseごとの前後/readback失敗、
+この引渡し部品単独のJVM検証では実一時ファイル、fake provider、故障台帳でphaseごとの前後/readback失敗、
 copy/read/close、公開応答喪失、解放予約、削除前後の応答喪失を検証する。OS kill・電源断とPixel実撮影の合格には数えない。
+
+### RAW撮影接続（T014/T015）
+
+新しいRAW/RAW+JPEGだけを`noBackupFilesDir/raw-captures`の専用streamへ接続する。JPEG単独と動画は既存経路を使う。
+固定版CameraX 1.6.2の提供OutputStreamは呼出側がcloseする。success callbackで該当streamを正常closeし、
+受領台帳をcommitした後にだけ受領済みとする。エラー/中断で既存cleanupを呼ばず、未確認/途中ファイルもその撮影内に保持する。
+CameraX内部で完成ファイルを生成する一時領域や、その前のsensor処理は変更しない。アプリは提供streamへの出力以降を保全し、
+callback前のファイル完成やprocess kill前の受領成功を推定しない。
+request errorでcloseした後に正しいlate successが来た場合も、その形式の正常closeと台帳で保全し、撮影全体を成功へ昇格しない。
+
+`AndroidRawCaptureQueue`の1 process所有者が撮影ごとのstore/journal/coordinatorを保持し、Activity再生成で並立させない。
+準備は専用executor、close/受領台帳は2 thread pool上の撮影別serial queue、復旧走査は別低優先executorとする。
+hash/copy/公開は別の単一handoff IOへ分離し、初回hashのreadも失敗closeを保持・再試行可能にする。
+callbackの正常closeはlock外で行い、続く最新receipt再読と受領commitは`receivedCurrent`の短いstore lock内で行う。
+初回hashの最終fingerprint commitと同じ排他境界を使い、途中でrevisionが進んでもlate受領を取りこぼさない。
+未解放readerがある間は単一attemptの所有を維持して追加IOを止める。blocked closeで次のprepareをqueue上で塞がない。
+foreground ownerが0の間、撮影/録画・Finalize/設定準備・rebind・未解放writerがある間はhandoffを新規開始しない。
+予約とhandoff admissionを同じ短いlockで直列化し、開始済みattemptへの停止はlatchする。blockedなprovider IOの即時停止は保証しない。
+全形式の受領台帳commitを撮影busy解除の基準にし、共有保存結果は後から別通知する。旧epoch/別撮影の通知で現在UIを変更しない。
+foreground復帰では固定root内だけを走査し、既存のlive所有者を再生成しない。旧processのCAPTURINGはINTERRUPTEDへ戻すが、
+未記録ファイルをサイズだけで受領済みとせず、既知DNGだけ共有引渡しを再開する。UNKNOWNは自動解除しない。
+準備の期限は撮影未開始として止め、issued後の期限は結果不明としてUI待ちを解除してもcontrol所有を保持する。
+実writerのclose前にhandoff予約を解放せず、Stop/late terminal callbackで復旧する。AUTOのlate全受領はcontrol readinessを戻し、
+manualは既存のpreview再受付/実測を待つ。`RawCapturePresentation`は新要求の設定準備開始から通知所有者を切り替え、
+前撮影の共有通知で現在の表示を上書きしない。queueは弱いobserverだけを保持する。
+rendererは接続せず、自動現像の有効化やPixel実機の合格はこの接続PRの範囲に含めない。
 
 ## 撮影優先と自動現像
 
@@ -221,7 +247,7 @@ copy/read/close、公開応答喪失、解放予約、削除前後の応答喪�
 - cancelは協調的。非協調decodeをFuture.cancelだけで停止済みとみなさない。cameraを開く操作から残る
   CPU/IO競合は実測対象。許容できなければ自動開始条件を狭めるか、分離方式を別判断し、実機有効化を止める。
 - 背景化では開始禁止/協調停止し、次のforegroundで台帳を再走査。OS kill中の完了や即時の背景現像は保証しない。
-- 初期PR群はカメラへ未接続、rendererも未登録とし、製品の自動現像は有効化しない。
+- 保存queueの撮影優先と下記の現像開始policyは別。rendererは未登録で、製品の自動現像は有効化しない。
 
 ### 未接続の開始制御の契約（T006〜T008）
 
@@ -254,7 +280,8 @@ attempt/予約は参照identityで識別し、別coordinatorや旧attemptの完�
   [MediaColumns](https://developer.android.com/reference/android/provider/MediaStore.MediaColumns#OWNER_PACKAGE_NAME): pendingの明示検索とowner不明時の停止を使う。
 - [Files](https://developer.android.com/reference/java/nio/file/Files): 固定pathの新規作成に`CREATE_NEW`を明示し、既存ファイルの上書きを避ける。
   [CameraX OutputFileOptions](https://developer.android.com/reference/androidx/camera/core/ImageCapture.OutputFileOptions.Builder)の
-  stream入力へ渡すadapterは後続でclose/callback所有を確認して接続する。
+  stream入力へ接続し、[固定版1.6.2の公式source](https://dl.google.com/dl/android/maven2/androidx/camera/camera-core/1.6.2/camera-core-1.6.2-sources.jar)の
+  `FileUtil`で提供streamをcloseしないことを確認した。callerのcloseと形式別callbackを別々に確認する。
 - [Photo Picker](https://developer.android.com/training/data-storage/shared/photo-picker)と
   [SAF](https://developer.android.com/training/data-storage/shared/documents-files): 本人選択のread grantを用いる。
   persistableでも移動/削除等でアクセスを失い得る。DNGを必ず選べることや設定復元の保証とは分ける。

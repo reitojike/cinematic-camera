@@ -46,8 +46,12 @@ insert部分は`DngPublicationJournal`/`DngInsertCoordinator`/`MediaStoreDngPend
 pending行の所有/期待metadata照合、URI記録と不明時の非再insertを実装。`DngInsertRecoveryTest`で故障台帳/fake providerの中断・復旧を検証。
 copy前のintent、入出力close後の読戻し、公開応答喪失の同URI採用、共有確認、解放intentと固定一時DNG削除を実装。
 fault台帳/fake providerと人工byte列の実一時ファイルで検証し、API/実画像/OS kill/電源断と撮影接続の合格には数えない。
-- [ ] T014 [US1] 別の接続PRで`main/CameraProbe.kt`の新RAW保存だけを接続し、既存cleanup/timeout/late-callbackを形式別保全へ切替える（FR-001/002/003/005/008）。
-- [ ] T015 [US1] `test/rawcapture/RawCaptureIntegrationTest.kt`で部分成功/重複/late/世代隔離、busy解除とDNG共有成否の分離を検証する（SC-001/003）。
+- [x] T014 [US1] `main/CameraProbe.kt`の新RAW保存を`RawCaptureSession`/`RawCaptureQueue`へ接続し、既存cleanup/timeout/late-callbackを形式別保全へ切替える（FR-001/002/003/005/008）。
+- [x] T015 [US1] `test/rawcapture/RawCaptureSessionTest.kt`/`RawCaptureQueueTest.kt`/`RawCapturePresentationTest.kt`/`RawHandoffAdmissionTest.kt`で部分成功/重複/late/所有隔離、busy解除と共有成否の分離を検証する（SC-001/003）。
+
+T014/T015はCameraX provided streamと形式別callbackへの接続、および人工byte列での保存/通知/予約・復旧検証。
+Pixelの実撮影callback、実DNG decode、実OS kill/電源断、撮影応答/熱/容量の端末上の合格はT011/T021に残す。
+自動現像rendererと現像JPEG公開はまだ接続しない。
 
 ## Phase 4: US2・公開拡張PRと#78統合PR
 

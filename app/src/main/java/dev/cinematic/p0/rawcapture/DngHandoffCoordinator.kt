@@ -193,7 +193,7 @@ internal class DngHandoffCoordinator(
 }
 
 /** Retains failed closes for retry. A thrown close never decrements the live resource count. */
-private class DngIoResources {
+internal class DngIoResources {
     private val count = AtomicInteger(0)
     private val resources = mutableListOf<Resource>()
     val hasOpenResources get() = count.get() != 0
