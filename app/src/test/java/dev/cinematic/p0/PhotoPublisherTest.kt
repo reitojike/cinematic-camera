@@ -14,6 +14,26 @@ class PhotoPublisherTest {
     private fun source(name: String, format: PhotoFormat, bytes: ByteArray = byteArrayOf(0, 1, -1, 7)) =
         PhotoSource(temp.newFile(name).also { it.writeBytes(bytes) }, format)
 
+    @Test fun insertFailureHasNoOutstandingStreams() {
+        val publisher = PhotoPublisher(Store().apply { createFailureAt = 0 })
+        assertThrows(PhotoPublishException::class.java) { publisher.publish(listOf(source("insert.jpg", PhotoFormat.JPEG))) }
+        assertTrue(publisher.resourcesClosed)
+    }
+
+    @Test fun writeFailureWithSuccessfulClosesReleasesCaptureResources() {
+        val publisher = PhotoPublisher(Store().apply { writeFailure = true })
+        assertThrows(PhotoPublishException::class.java) { publisher.publish(listOf(source("write.jpg", PhotoFormat.JPEG))) }
+        assertTrue(publisher.resourcesClosed)
+    }
+
+    @Test fun failedCloseRetainsUnknownResourcesAndRejectsReuse() {
+        val publisher = PhotoPublisher(Store().apply { closeFailure = true })
+        val sources = listOf(source("close.jpg", PhotoFormat.JPEG))
+        assertThrows(PhotoPublishException::class.java) { publisher.publish(sources) }
+        assertFalse(publisher.resourcesClosed)
+        assertThrows(IllegalStateException::class.java) { publisher.publish(sources) }
+    }
+
     private class Store : ImageStore {
         data class Row(val name: String, val mime: String, val path: String,
             val bytes: ByteArrayOutputStream = ByteArrayOutputStream(), var closed: Boolean = false)
