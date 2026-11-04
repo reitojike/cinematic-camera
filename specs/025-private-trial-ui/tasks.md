@@ -1,7 +1,7 @@
 # タスク
 
 - [x] T001: #89/#129でprivate-trialと完成保存の責務を分け、他担当の契約を照合する
-- [ ] T002: 撮影側の実観測・owner保持とresource条件bridgeを実装し検証する
+- [x] T002: 撮影側の実観測・owner保持とresource条件bridgeを実装し検証する
 - [ ] T003: 共通facadeの予約・停止・実解放へ接続する
 - [ ] T004: private-trial専用handle/fresh readbackを画面へ接続する
 - [ ] T005: 低解像度・顔保護なし・暫定入力、停止/失敗/再試行と選択変更を表示する
