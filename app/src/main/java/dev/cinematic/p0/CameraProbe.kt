@@ -37,6 +37,7 @@ import java.io.File
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import dev.cinematic.p0.rawcapture.AndroidRawCaptureQueue
 import dev.cinematic.p0.rawcapture.RawCaptureNotice
 import dev.cinematic.p0.rawcapture.RawCaptureObserver
@@ -44,6 +45,9 @@ import dev.cinematic.p0.rawcapture.RawCaptureTicket
 import dev.cinematic.p0.rawcapture.RawOutput
 import dev.cinematic.p0.rawcapture.DngPublicationPhase
 import dev.cinematic.p0.rawcapture.RawCapturePresentation
+import dev.cinematic.p0.photoroll.AndroidPhotoRollCameraObservations
+import dev.cinematic.p0.photoroll.PhotoRollCameraSnapshot
+import dev.cinematic.p0.photoroll.PhotoRollCameraPriority
 
 @androidx.annotation.OptIn(markerClass = [androidx.camera.camera2.interop.ExperimentalCamera2Interop::class])
 class CameraProbe(private val context: Context, private val owner: LifecycleOwner) {
@@ -198,6 +202,17 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     val recordingAudioAmplitude get() = cine.audioAmplitude
     val recordingAudioState get() = cine.audioState
     private var activeCaptureToken: String? = null
+    private var photoRollHostMayStart = false
+    private val photoRollPriority = PhotoRollCameraPriority()
+    private var photoRollRebind: Boolean? = false
+    private var photoRollProviderPending = false
+    private var photoRollCloseAcknowledged = false
+    private val photoRollCameraOwner = AndroidPhotoRollCameraObservations.register {
+        PhotoRollCameraSnapshot(recordingBusy, photoRollRebind,
+            photoRollHostMayStart || photoRollProviderPending,
+            activeCaptureToken != null || activeRawTicket != null || stillExposure?.ownsCapture == true ||
+                exposureOperationPending || controlOperation.token != null)
+    }
     val sharedSaveSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
     val selectedReport get() = reports.find { it.id == selectedId }
     init {
@@ -246,6 +261,10 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     }
 
     private fun refreshRawAdmission() {
+        if (closed) {
+            if (photoRollCloseAcknowledged && !recordingBusy) photoRollCameraOwner.close()
+            else if (!photoRollCloseAcknowledged) photoRollCameraOwner.holdUnknown()
+        }
         if (closed && !recordingBusy && !bound) rawCameraOwner?.close()
         else rawCameraOwner?.update(busy || recordingBusy || exposureOperationPending || activeCaptureToken != null ||
             controlOperation.token != null || stillExposure?.ownsCapture == true || (bound && !controlReady))
@@ -464,11 +483,13 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
 
     fun initialize(previewView: PreviewView) {
         view = previewView
+        photoRollProviderPending = true
+        photoRollRebind = true
         try {
             reports = CameraReports.read(context, log::write)
             val future = ProcessCameraProvider.getInstance(context)
             future.addListener({
-                if (closed) return@addListener
+                if (closed) { photoRollProviderPending = false; return@addListener }
                 try {
                     provider = future.get()
                     val available = provider!!.availableCameraInfos
@@ -490,9 +511,10 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                     if (savedId.isNotEmpty() && savedId != selectedId) log.write("CAMERA_FALLBACK requested=$savedId unavailable; applied=$selectedId; saved request retained")
                     format = preferences.text("format/$selectedId", ImageCapture.OUTPUT_FORMAT_JPEG.toString()).toIntOrNull() ?: ImageCapture.OUTPUT_FORMAT_JPEG
                     bind()
-                } catch (e: Exception) { error("initialize", e) }
+                } catch (e: Exception) { photoRollRebind = null; error("initialize", e) }
+                finally { photoRollProviderPending = false }
             }, main)
-        } catch (e: Exception) { error("capability enumeration", e) }
+        } catch (e: Exception) { photoRollProviderPending = false; photoRollRebind = null; error("capability enumeration", e) }
     }
 
     private fun captureBlocksControl(): Boolean {
@@ -624,7 +646,13 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             }
         }.also { controlHandler.postDelayed(it, budget) }
     }
+    /** Called before Activity lifecycle can restart CameraX. Deferred binds are not active work. */
+    fun onHostStarting() {
+        if (!closed) { photoRollPriority.starting(); photoRollHostMayStart = true }
+    }
+
     fun onForeground() {
+        onHostStarting()
         rawCameraOwner?.foreground(true)
         rawQueue?.onForeground()
         refreshRawAdmission()
@@ -679,6 +707,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         event("MICROPHONE permission=$granted${if (granted) "" else "; recording not started; grant permission or explicitly select audio off"}")
     }
     fun onBackground() {
+        photoRollHostMayStart = false
+        photoRollPriority.background()
         rawCameraOwner?.foreground(false)
         cine.stop("activity background; no background recording")
         if (mode == CaptureMode.STILL && (bound || stillExposure != null || exposureOperationPending)) {
@@ -937,12 +967,14 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
 
     fun bind() {
         if (busy || recordingBusy || closed) return
+        if (!photoRollHostMayStart) { pendingForegroundBind = true; photoRollRebind = false; return }
         val p = provider ?: return
         val id = selectedId ?: run { event("UNSUPPORTED no CameraX camera"); return }
         val previewView = view ?: return
         val retryIntent = liveControlIntent.takeIf { liveIntentKey == exposureKey() }
+        photoRollRebind = true
         rawCameraOwner?.update(true)
-        try { clearRetainedInterop() } catch (failure: Exception) { error("bind: held Interop clear", failure); return }
+        try { clearRetainedInterop() } catch (failure: Exception) { photoRollRebind = null; error("bind: held Interop clear", failure); return }
         clearStillExposure(); invalidateControl(); clearLiveExposure()
         lastPreviewMinFrameNs = null
         val generation = ++epoch
@@ -1170,7 +1202,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             // Explicitly clear them and wait for acceptance before enabling capture.
             setExposure(remember = restoreForThisBind != null, restoreSaved = true, bindRestore = restoreForThisBind,
                 bindResume = resumeForThisBind)
-        } catch (e: Exception) { stillExposure = stillExposure?.unknown("bind failed: ${e.message}"); error("bind id=$id mode=$mode format=${formatName(format)} (see selection/fallback log)", e) }
+            photoRollRebind = false
+        } catch (e: Exception) { photoRollRebind = null; stillExposure = stillExposure?.unknown("bind failed: ${e.message}"); error("bind id=$id mode=$mode format=${formatName(format)} (see selection/fallback log)", e) }
     }
 
     fun stop() {
@@ -1178,6 +1211,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         stopPreview()
     }
     private fun stopPreview() {
+        photoRollRebind = true
         rawPresentation.invalidate()
         activeRawTicket?.let { rawQueue?.interrupt(it) }; activeRawTicket = null
         pendingBindControls.clear()
@@ -1202,8 +1236,9 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         try {
             camera?.cameraInfo?.cameraState?.removeObservers(owner)
             provider?.unbindAll(); camera = null; imageCapture = null; cineSession = null; bound = false
+            photoRollRebind = false
             desired = "AUTO (unbound)"; event("Preview stopped")
-        } catch (e: Exception) { error("stop", e) }
+        } catch (e: Exception) { photoRollRebind = null; error("stop", e) }
     }
 
     fun setExposureAuto() = switchToAuto(false)
@@ -1380,6 +1415,9 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         val captureFormat = format
         val captureSettings = stillExposure?.captureTarget
         var cameraRequestIssued = false
+        var photoRollCameraXIssued = false
+        val photoRollCaptureClosed = AtomicBoolean(false)
+        AndroidPhotoRollCameraObservations.holdCaptureUntil { photoRollCaptureClosed.get() }
         busy = true; activeCaptureToken = token; photoStage = PhotoStage.CAPTURING
         lastFailure = null
         var staging = emptyList<File>()
@@ -1421,7 +1459,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             val callback = object : ImageCapture.OnImageSavedCallback {
                 private fun fail(e: Exception) {
                     if (!callbacks.fail()) { log.write("CAPTURE_LATE_CALLBACK_ERROR token=$token afterAppRequestMs=${SystemClock.elapsedRealtime() - appCaptureStart} ${e.javaClass.simpleName}"); return }
-                    mediaIo.execute { clean(staging) }
+                    mediaIo.execute { clean(staging); if (!photoRollCameraXIssued) photoRollCaptureClosed.set(true) }
                     failed(e)
                 }
                 override fun onImageSaved(result: ImageCapture.OutputFileResults) {
@@ -1443,6 +1481,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                         val allCallbacksAt = SystemClock.elapsedRealtime()
                         // CameraX has finished every file. Publish together off the UI thread.
                         mediaIo.execute {
+                            var publication: PhotoPublisher? = null
                             try {
                                 val mediaWorkStart = SystemClock.elapsedRealtime()
                                 sources.forEach { source ->
@@ -1466,7 +1505,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                                     }
                                 }
                                 val photos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                    PhotoPublisher(AndroidImageStore(context.applicationContext.contentResolver)).publish(sources)
+                                    PhotoPublisher(AndroidImageStore(context.applicationContext.contentResolver)).also { publication = it }.publish(sources)
                                 } else throw IllegalStateException("MediaStore saving requires Android 10+")
                                 val publishedAt = SystemClock.elapsedRealtime()
                                 main.execute {
@@ -1481,7 +1520,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                                     if (current) finishStillPhoto(true)
                                 }
                             } catch (e: Exception) { main.execute { failed(e) } }
-                            finally { clean(staging) }
+                            finally { clean(staging); if (publication?.resourcesClosed != false) photoRollCaptureClosed.set(true) }
                         }
                     } catch (e: Exception) { fail(e) }
                 }
@@ -1495,13 +1534,14 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                 armPhotoDeadline(token)
             }
             log.write("CAPTURE_SINGLE_ISSUED token=$token preparationAfterAppRequestMs=${SystemClock.elapsedRealtime() - appCaptureStart}; output callback time logged separately")
+            photoRollCameraXIssued = true
             when (captureFormat) {
                 ImageCapture.OUTPUT_FORMAT_RAW_JPEG -> capture.takePicture(options(raw), options(jpeg), main, callback)
                 ImageCapture.OUTPUT_FORMAT_RAW -> capture.takePicture(options(raw), main, callback)
                 else -> capture.takePicture(options(jpeg), main, callback)
             }
         } catch (e: Exception) {
-            mediaIo.execute { clean(staging) }
+            mediaIo.execute { clean(staging); if (!photoRollCameraXIssued) photoRollCaptureClosed.set(true) }
             failed(e)
         }
     }
@@ -1513,6 +1553,9 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         val pair = format == ImageCapture.OUTPUT_FORMAT_RAW_JPEG
         val captureSettings = stillExposure?.captureTarget
         var issued = false
+        val photoRollCallbacksFinished = AtomicBoolean(true) // No CameraX request until explicitly issued below.
+        val photoRollExpected = if (pair) setOf(RawOutput.DNG, RawOutput.JPEG) else setOf(RawOutput.DNG)
+        val photoRollReceived = mutableSetOf<RawOutput>() // CameraX callbacks and observation run on main.
         val presentation = rawPresentation.request(token) ?: rawPresentation.begin(token, captureSettings != null)
         busy = true; activeCaptureToken = token; photoStage = PhotoStage.CAPTURING
         lastFailure = null
@@ -1543,7 +1586,11 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                                     else -> null
                                 }
                                 if (output == null) queue.interrupt(ticket, IllegalArgumentException("Unexpected RAW output format"))
-                                else queue.received(ticket, output)
+                                else {
+                                    photoRollReceived += output
+                                    if (photoRollReceived.containsAll(photoRollExpected)) photoRollCallbacksFinished.set(true)
+                                    queue.received(ticket, output)
+                                }
                             }
                             override fun onError(exception: ImageCaptureException) = queue.interrupt(ticket, exception)
                         }
@@ -1568,6 +1615,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                                 queue.interrupt(ticket)
                             }
                         }.also { controlHandler.postDelayed(it, budget) }
+                        photoRollCallbacksFinished.set(false)
                         if (pair) capture.takePicture(options(RawOutput.DNG), options(RawOutput.JPEG), main, callback)
                         else capture.takePicture(options(RawOutput.DNG), main, callback)
                         log.write("RAW_CAPTURE_ISSUED pair=$pair targetRotation=${outputOrientation.applied}; callbacks/receipts separate from shared handoff")
@@ -1620,11 +1668,20 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             }
         }.also { controlHandler.postDelayed(it, preparationBudget) }
         try {
-            activeRawTicket = queue.prepare(token, if (pair) setOf(RawOutput.DNG, RawOutput.JPEG) else setOf(RawOutput.DNG), observer)
+            val ticket = queue.prepare(token, photoRollExpected, observer)
+            activeRawTicket = ticket
+            // Keep only ticket/atomic state, never the Activity or its observer, in this process lease.
+            AndroidPhotoRollCameraObservations.holdCaptureUntil {
+                photoRollCallbacksFinished.get() && ticket.writerReleased.get()
+            }
         } catch (failure: Exception) { failed(failure) }
     }
 
     fun close() {
+        photoRollHostMayStart = false
+        photoRollPriority.background()
+        photoRollRebind = true
+        photoRollCloseAcknowledged = false
         rawPresentation.invalidate()
         activeRawTicket?.let { rawQueue?.interrupt(it) }; activeRawTicket = null
         rawObserver = null
@@ -1638,8 +1695,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         try { removeThermalListener?.invoke(); removeThermalListener = null }
         catch (failure: Exception) { log.write("THERMAL_REMOVE_ERROR ${failure.message}") }
         try { clearRetainedInterop() } catch (failure: Exception) { log.write("CLOSE_INTEROP_CLEAR_FAILED " + failure.message) }
-        try { camera?.cameraInfo?.cameraState?.removeObservers(owner); provider?.unbindAll() }
-        catch (e: Exception) { log.write("ERROR close ${e.javaClass.simpleName}: ${e.message}") }
+        try { camera?.cameraInfo?.cameraState?.removeObservers(owner); provider?.unbindAll(); photoRollCloseAcknowledged = true }
+        catch (e: Exception) { photoRollRebind = null; log.write("ERROR close ${e.javaClass.simpleName}: ${e.message}") }
         bound = false
         refreshRawAdmission()
     }
