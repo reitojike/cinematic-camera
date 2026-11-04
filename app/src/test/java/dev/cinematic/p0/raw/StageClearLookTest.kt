@@ -7,6 +7,7 @@ import org.junit.Test
 class StageClearLookTest {
     private var largestToleranceRatio = 0f
     private var maximumFullError = 0f
+    private val diagnostics = mutableMapOf<String, Pair<Float, String>>()
 
     @Test fun stagesFourFiveAndCompleteLookMatchEveryPcPixel() {
         val lines = java.util.zip.GZIPInputStream(requireNotNull(
@@ -53,6 +54,12 @@ class StageClearLookTest {
             maximumError = maxOf(maximumError, compare("$name stages4-5", character,
                 StageClearCharacter.render(stage3, strength).copyPixels(), 2e-6f))
             val base = LinearSrgbImage(width, height, basePixels)
+            val originalSkin = StageClearGlow.skinWeight(base)
+            val composedStage3 = StageClearOrton.render(StageClearMist.render(StageClearGlow.render(base, strength),
+                originalSkin, strength), originalSkin)
+            observe("stages1-3", "$name/$strength", stage3Pixels, composedStage3.copyPixels())
+            maximumError = maxOf(maximumError, compare("$name/$strength stages1-5", character,
+                StageClearCharacter.render(composedStage3, strength).copyPixels(), 2e-5f))
             val faces = FaceMask(width, height, facePixels)
             val result = StageClearLook.renderFromBase(base, faces, strength)
             maximumError = maxOf(maximumError, compare("$name stages1-8", full, result.image.copyPixels()))
@@ -66,6 +73,7 @@ class StageClearLookTest {
         assertEquals(45, cases)
         assertEquals(13740, pixels)
         println("PC stages4-5/full cases=$cases; pixels=$pixels; maximum absolute error=$maximumError; full maximum error=$maximumFullError; tolerance ratio=$largestToleranceRatio")
+        println("Cumulative diagnostics: $diagnostics")
         assertTrue("Full comparison ratio $largestToleranceRatio", largestToleranceRatio <= 1f)
     }
 
@@ -102,8 +110,20 @@ class StageClearLookTest {
         }
     }
 
+    private fun observe(stage: String, label: String, expected: FloatArray, actual: FloatArray) {
+        assertEquals(label, expected.size, actual.size)
+        for (i in expected.indices) {
+            assertTrue("$label channel $i must be finite", actual[i].isFinite())
+            val error = abs(expected[i] - actual[i])
+            if (error > (diagnostics[stage]?.first ?: -1f)) {
+                diagnostics[stage] = error to "$label channel=$i expected=${expected[i]} actual=${actual[i]}"
+            }
+        }
+    }
+
     private fun compare(label: String, expected: FloatArray, actual: FloatArray, relativeTolerance: Float = 0f): Float {
         assertEquals(label, expected.size, actual.size)
+        if (label.endsWith("stages1-5")) observe("stages1-5", label, expected, actual)
         var maximum = 0f
         for (i in expected.indices) {
             val error = abs(expected[i] - actual[i])
