@@ -30,14 +30,14 @@ class PhotoRollJpegSaveTest {
             uri = if (phase == JpegPublicationPhase.UNKNOWN) null else "content://media/external_primary/images/media/9")
 
     private fun prepare(current: () -> Boolean = { true }, publisher: () -> PhotoRollJpegPublisher) =
-        PhotoRollJpegSave.prepare(source.uri, source.fingerprint, PhotoRollPreviewMode.STAGE_CLEAR,
+        PhotoRollJpegSave.prepare(source, PhotoRollPreviewMode.STAGE_CLEAR,
             render, supported, current, publisher)
 
     @Test fun trialModesAreRejectedBeforeCreatingAnyPublisher() {
         var factories = 0
         for (mode in listOf(PhotoRollPreviewMode.DNG_TRIAL, PhotoRollPreviewMode.STAGE_CLEAR_TRIAL)) {
             try {
-                PhotoRollJpegSave.prepare(source.uri, source.fingerprint, mode, render, supported, { true }) {
+                PhotoRollJpegSave.prepare(source, mode, render, supported, { true }) {
                     factories++; PhotoRollJpegPublisher { record() }
                 }
                 fail("Trial must not create a JPEG operation")
@@ -54,13 +54,13 @@ class PhotoRollJpegSaveTest {
             render.copy(rendererContract = "unknown"),
             render.copy(request = render.request.copy(recipe = RenderRecipeSnapshot("unknown", "synthetic"))))) {
             try {
-                PhotoRollJpegSave.prepare(source.uri, source.fingerprint, PhotoRollPreviewMode.STAGE_CLEAR,
+                PhotoRollJpegSave.prepare(source, PhotoRollPreviewMode.STAGE_CLEAR,
                     candidate, supported, { true }) { factories++; PhotoRollJpegPublisher { record() } }
                 fail("Unsupported completion must be rejected")
             } catch (_: IOException) { }
         }
         try {
-            PhotoRollJpegSave.prepare(source.uri, source.fingerprint, PhotoRollPreviewMode.STAGE_CLEAR,
+            PhotoRollJpegSave.prepare(source, PhotoRollPreviewMode.STAGE_CLEAR,
                 render, emptySet(), { true }) { factories++; PhotoRollJpegPublisher { record() } }
             fail("No production contracts are enabled by default")
         } catch (_: IOException) { }
@@ -69,10 +69,11 @@ class PhotoRollJpegSaveTest {
 
     @Test fun differentOriginalIsRejectedBeforeFactoryAndBindingIsExact() {
         var factories = 0
-        for ((uri, fingerprint) in listOf(source.uri + "0" to source.fingerprint,
-            source.uri to source.fingerprint.copy(sha256 = "3".repeat(64)))) {
+        for (different in listOf(source.copy(uri = source.uri + "0"),
+            source.copy(fingerprint = source.fingerprint.copy(sha256 = "3".repeat(64))),
+            source.copy(grant = OriginalGrant.USER_SELECTED))) {
             try {
-                PhotoRollJpegSave.prepare(uri, fingerprint, PhotoRollPreviewMode.STAGE_CLEAR, render, supported, { true }) {
+                PhotoRollJpegSave.prepare(different, PhotoRollPreviewMode.STAGE_CLEAR, render, supported, { true }) {
                     factories++; PhotoRollJpegPublisher { record() }
                 }
                 fail("Different original must not get a save operation")
@@ -80,9 +81,10 @@ class PhotoRollJpegSaveTest {
         }
         assertEquals(0, factories)
         val owner = prepare { PhotoRollJpegPublisher { record() } }
-        assertTrue(owner.matches(source.uri, source.fingerprint, PhotoRollPreviewMode.STAGE_CLEAR))
-        assertFalse(owner.matches(source.uri, source.fingerprint, PhotoRollPreviewMode.STAGE_CLEAR_TRIAL))
-        assertFalse(owner.matches(source.uri + "0", source.fingerprint, PhotoRollPreviewMode.STAGE_CLEAR))
+        assertTrue(owner.matches(source, PhotoRollPreviewMode.STAGE_CLEAR))
+        assertFalse(owner.matches(source, PhotoRollPreviewMode.STAGE_CLEAR_TRIAL))
+        assertFalse(owner.matches(source.copy(uri = source.uri + "0"), PhotoRollPreviewMode.STAGE_CLEAR))
+        assertFalse(owner.matches(source.copy(grant = OriginalGrant.USER_SELECTED), PhotoRollPreviewMode.STAGE_CLEAR))
     }
 
     @Test fun lostAcknowledgementAndOpenRecheckReuseOnePublisher() {

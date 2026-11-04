@@ -20,7 +20,7 @@ internal fun preparePhotoRollJpegSave(
     supportedContracts: Set<RendererPublicationContract>,
     isCurrent: () -> Boolean,
 ): PhotoRollJpegSave = PhotoRollJpegSave.prepare(
-    original.uri.toString(), original.fingerprint, mode, render, supportedContracts, isCurrent,
+    original.reference, mode, render, supportedContracts, isCurrent,
 ) {
     val operation = AndroidRenderedJpegOperation.get(context, render.request.captureId, render.request.generation)
     val publisher = operation.publisher(render, supportedContracts, isCurrent)

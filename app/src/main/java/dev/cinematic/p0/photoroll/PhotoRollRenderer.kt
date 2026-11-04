@@ -4,9 +4,14 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.CancellationSignal
 import dev.cinematic.p0.rawcapture.OriginalFingerprint
+import dev.cinematic.p0.rawcapture.OriginalGrant
+import dev.cinematic.p0.rawcapture.SharedOriginalReference
 
 /** A checked shared original. Open only with ContentResolver's read-only stream/FD APIs. */
-internal data class PhotoRollOriginal(val uri: Uri, val fingerprint: OriginalFingerprint)
+internal data class PhotoRollOriginal(val uri: Uri, val fingerprint: OriginalFingerprint, val grant: OriginalGrant) {
+    /** Selection origin only. This never grants or persists provider permissions. */
+    val reference get() = SharedOriginalReference(uri.toString(), fingerprint, grant)
+}
 
 internal data class PhotoRollRenderRequest(
     val original: PhotoRollOriginal,

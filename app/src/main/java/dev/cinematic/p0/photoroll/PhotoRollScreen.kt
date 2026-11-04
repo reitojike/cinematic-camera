@@ -94,6 +94,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         saveSnapshot = null
         savePending = false
         val source = selectedUri
+        val selectedFromFiles = fromFiles
         if (source == null) {
             val ticket = Any()
             loadingTicket = ticket
@@ -118,7 +119,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         try {
             val result = withContext(Dispatchers.IO) {
                 photoRollWork.withPermit {
-                    val original = repository.check(Uri.parse(source), fromFiles, shouldStop, renderer.maxSourceBytes)
+                    val original = repository.check(Uri.parse(source), selectedFromFiles, shouldStop, renderer.maxSourceBytes)
                     withContext(Dispatchers.Main) { selection = selection.rendering(ticket) }
                     val request = PhotoRollRenderRequest(original, mode = renderer.mode, maxEdge = renderer.maxEdge,
                         onStage = { stage -> requestScope.launch(Dispatchers.Main) {
@@ -133,7 +134,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                             throw PhotoRollSourceFailure("表示用画像の寸法・色空間を確認できません。現像を停止しました")
                         }
                         repository.verify(original, shouldStop)
-                        if (rendered.jpegSave?.matches(source, original.fingerprint, rendered.mode) == false) {
+                        if (rendered.jpegSave?.matches(original.reference, rendered.mode) == false) {
                             throw PhotoRollSourceFailure("保存結果が選択した原本と一致しないため停止しました")
                         }
                     }
