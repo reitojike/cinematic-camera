@@ -117,7 +117,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         try {
             val result = withContext(Dispatchers.IO) {
                 run {
-                    val original = repository.check(Uri.parse(source), selectedFromFiles, shouldStop, renderer.maxSourceBytes)
+                    val original = renderer.checkOriginal(repository, Uri.parse(source), selectedFromFiles, cancellation)
                     withContext(Dispatchers.Main) { selection = selection.rendering(ticket) }
                     val request = PhotoRollRenderRequest(original, mode = renderer.mode, maxEdge = renderer.maxEdge,
                         explicitRetry = retryThisRequest, onStage = { stage -> requestScope.launch(Dispatchers.Main) {
@@ -131,7 +131,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                             bitmap.colorSpace?.isSrgb != true) {
                             throw PhotoRollSourceFailure("表示用画像の寸法・色空間を確認できません。現像を停止しました")
                         }
-                        repository.verify(original, shouldStop)
+                        if (rendered.mode != PhotoRollPreviewMode.PRIVATE_TRIAL) repository.verify(original, shouldStop)
                         if (rendered.jpegSave?.matches(original.reference, rendered.mode) == false) {
                             throw PhotoRollSourceFailure("保存結果が選択した原本と一致しないため停止しました")
                         }

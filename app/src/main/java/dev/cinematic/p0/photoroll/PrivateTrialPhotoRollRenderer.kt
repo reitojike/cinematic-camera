@@ -19,6 +19,10 @@ internal class PrivateTrialPhotoRollRenderer(context: Context, private val resou
     override val mode = PhotoRollPreviewMode.PRIVATE_TRIAL
     override val maxEdge = JpegGenerationRecipe.MAX_EDGE
     override val maxSourceBytes = 64L * 1024 * 1024
+    override fun checkOriginal(repository: PhotoRollRepository, uri: android.net.Uri, fromFiles: Boolean, cancellation: CancellationSignal) =
+        PhotoRollOriginalChecks.run(resources, cancellation) { readers, stop ->
+            repository.check(uri, fromFiles, stop, maxSourceBytes, readers)
+        }
 
     override fun render(request: PhotoRollRenderRequest, cancellation: CancellationSignal): PhotoRollRenderResult {
         require(request.mode == mode && request.lookVersion == "stage-clear-v1" && request.strength == .5f && request.maxEdge == maxEdge)

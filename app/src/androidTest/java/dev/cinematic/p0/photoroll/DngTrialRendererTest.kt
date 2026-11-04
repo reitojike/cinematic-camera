@@ -42,6 +42,43 @@ class DngTrialRendererTest {
     private val resources = PhotoRollResources(true, 0, false, PhotoRollResources.REQUIRED_AVAILABLE_BYTES)
     private var queueObserver: RawCaptureObserver? = null
 
+    @Test fun cancelledSourceReadKeepsCommonSlotUntilReadAndCloseActuallyFinish() {
+        val ready = PhotoRollResources(true, 0, false, 1024L * 1024 * 1024,
+            PhotoRollCameraSnapshot(false, false, false, false), true, true)
+        val conditions = ready.developConditions(true)
+        DevelopExecution.updateConditions(conditions)
+        val entered = CountDownLatch(1); val finishRead = CountDownLatch(1)
+        val closing = CountDownLatch(1); val finishClose = CountDownLatch(1)
+        val failure = AtomicReference<Throwable?>()
+        val signal = CancellationSignal()
+        val worker = Thread {
+            try {
+                PhotoRollOriginalChecks.run({ ready }, signal) { reader, _ ->
+                    reader.open { object : java.io.InputStream() {
+                        override fun read(): Int { entered.countDown(); check(finishRead.await(15, TimeUnit.SECONDS)); return -1 }
+                        override fun close() { closing.countDown(); check(finishClose.await(15, TimeUnit.SECONDS)) }
+                    } }.use { it.read() }
+                }
+            } catch (error: Throwable) { failure.set(error) }
+        }.apply { isDaemon = true; start() }
+        try {
+            assertTrue(entered.await(15, TimeUnit.SECONDS))
+            signal.cancel()
+            assertNull(DevelopExecution.tryStartObserved(conditions))
+            finishRead.countDown()
+            assertTrue(closing.await(15, TimeUnit.SECONDS))
+            val camera = DevelopExecution.reserveCapture() // Priority does not wait for the blocked close.
+            DevelopExecution.releaseCapture(camera)
+            assertNull(DevelopExecution.tryStartObserved(conditions))
+            finishClose.countDown()
+            worker.join(15_000)
+            assertFalse(worker.isAlive)
+            assertNull(failure.get())
+            val next = requireNotNull(DevelopExecution.tryStartObserved(conditions))
+            DevelopExecution.completeAfterResourcesClosed(next)
+        } finally { finishRead.countDown(); finishClose.countDown(); worker.join(15_000) }
+    }
+
     /** Real shared-original→retained private JPEG→fresh readback→UI display copy, without camera capture. */
     @Test fun privateTrialRendererReopensSameArtifactWithoutPublishingOrRecyclingDisplay() = withOriginal { original ->
         val resolver = context.contentResolver
@@ -49,8 +86,8 @@ class DngTrialRendererTest {
         val ready = PhotoRollResources(true, 0, false, 1024L * 1024 * 1024,
             PhotoRollCameraSnapshot(false, false, false, false), true, true)
         DevelopExecution.updateConditions(ready.developConditions(true))
-        val checked = PhotoRollRepository(resolver, context.packageName).check(original.uri, false, { false }, 64L * 1024 * 1024)
         val renderer = PrivateTrialPhotoRollRenderer(context) { ready }
+        val checked = renderer.checkOriginal(PhotoRollRepository(resolver, context.packageName), original.uri, false, CancellationSignal())
         val request = PhotoRollRenderRequest(checked, mode = renderer.mode, maxEdge = renderer.maxEdge)
         val before = sharedJpegCount()
         val first = renderer.render(request, CancellationSignal()) as PhotoRollRenderResult.Preview
@@ -86,8 +123,8 @@ class DngTrialRendererTest {
         val ready = PhotoRollResources(true, 0, false, 1024L * 1024 * 1024,
             PhotoRollCameraSnapshot(false, false, false, false), true, true)
         DevelopExecution.updateConditions(ready.developConditions(true))
-        val checked = PhotoRollRepository(resolver, context.packageName).check(original.uri, false, { false }, 64L * 1024 * 1024)
         val renderer = PrivateTrialPhotoRollRenderer(context) { ready }
+        val checked = renderer.checkOriginal(PhotoRollRepository(resolver, context.packageName), original.uri, false, CancellationSignal())
         val signal = CancellationSignal()
         val request = PhotoRollRenderRequest(checked, mode = renderer.mode, maxEdge = renderer.maxEdge,
             onStage = { if (it == PhotoRollRenderStage.TRIAL_READBACK) signal.cancel() })
