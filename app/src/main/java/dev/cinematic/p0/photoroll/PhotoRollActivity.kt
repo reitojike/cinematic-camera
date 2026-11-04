@@ -24,8 +24,8 @@ class PhotoRollActivity : ComponentActivity() {
         }
     }
 
-    override fun onResume() { super.onResume(); foreground = true }
-    override fun onPause() { foreground = false; super.onPause() }
+    override fun onResume() { super.onResume(); foreground = true; resourceObserver.foreground(true) }
+    override fun onPause() { foreground = false; resourceObserver.foreground(false); super.onPause() }
     override fun onStart() { super.onStart(); resourceObserver.start() }
     override fun onStop() { resourceObserver.stop(); super.onStop() }
 }

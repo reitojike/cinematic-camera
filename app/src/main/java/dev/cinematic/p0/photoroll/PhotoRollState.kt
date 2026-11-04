@@ -13,7 +13,28 @@ internal enum class PhotoRollRenderStage(val label: String) {
 
 internal data class PhotoRollResources(
     val camerasIdle: Boolean?, val thermalStatus: Int?, val lowMemory: Boolean?, val availableBytes: Long?,
+    val camera: PhotoRollCameraSnapshot = PhotoRollCameraSnapshot(),
+    val foreground: Boolean? = null,
+    val privateStorageAllowed: Boolean? = null,
 ) {
+    fun developConditions(rendererAvailable: Boolean?) = dev.cinematic.p0.rawcapture.AutoDevelopConditions(
+        foreground = foreground,
+        cameraSessionInUse = when {
+            camerasIdle == false || camera.cameraMayStart == true || camera.captureInProgress == true -> true
+            camerasIdle == true && camera.cameraMayStart == false && camera.captureInProgress == false -> false
+            else -> null
+        },
+        recordingOrFinalizing = camera.recordingOrFinalizing,
+        rebindInProgress = camera.rebindInProgress,
+        thermalAllowed = thermalStatus?.takeIf { it in 0..6 }?.let { it < 3 },
+        storageAllowed = privateStorageAllowed,
+        rendererAvailable = rendererAvailable,
+        memoryBudgetConfirmed = when {
+            lowMemory == true || availableBytes?.let { it < JPEG_REQUIRED_AVAILABLE_BYTES } == true -> false
+            lowMemory == false && availableBytes != null -> true
+            else -> null
+        },
+    )
     fun blockedReason(): String? = when {
         camerasIdle != true -> "カメラの解放を確認できません。撮影を終了してから再試行してください"
         thermalStatus == null || thermalStatus !in 0..6 -> "端末の温度状態を確認できません"
@@ -22,7 +43,11 @@ internal data class PhotoRollResources(
             "試験表示に必要な空きメモリを確認できません。他のアプリを閉じて再試行してください"
         else -> null
     }
-    companion object { const val REQUIRED_AVAILABLE_BYTES = 384L * 1024 * 1024 }
+    companion object {
+        const val REQUIRED_AVAILABLE_BYTES = 384L * 1024 * 1024
+        // Conservative admission heuristic for the bounded JPEG path, not a measured performance claim.
+        const val JPEG_REQUIRED_AVAILABLE_BYTES = 512L * 1024 * 1024
+    }
 }
 
 /** Main-thread owner. Cancellation requests do not claim a worker has released its permit. */

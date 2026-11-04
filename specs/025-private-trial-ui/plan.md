@@ -1,0 +1,9 @@
+# 実装と検証
+
+CameraProbeごとのopaque ownerをprocess registryへ登録する。main threadで現在のcine.busy、provider/bind/unbindの明示状態、カメラ再開の可能性、撮影/制御所有を一括取得する。複数ownerはtrue優先、null保持、ownerなしは不明。失敗closeのownerはActivity参照を落として不明を保持し、正常close後でもFinalizeの完了前に除去しない。取得失敗/期限超過をfalseへ変換しない。
+
+PhotoRollResourceObserverの全カメラavailability、温度・メモリ、前景状態、私有保存先StatFsと組み合わせる。512px表示の従来条件と、1024px JPEG用の暫定512MiB空きメモリ/64MiB私有空きの開始目安を区別する。これは実測性能・作業完了の保証ではなく、IO失敗は別途停止する。rendererAvailableはjob別に供給し、空のauto catalogをpreview不可の理由にしない。
+
+共通facadeの撮影予約・観測更新・token停止/実解放と、private-trial handleの状態/再試行/fresh readbackへ接続する。完成用ManualDevelopHandleへtrialを流さず、公開ownerをUIへ渡さない。独立実装されたdecoder/FD所有やqueueをphotorollへ複製しない。
+
+純粋unitで所有者の再生成・遅いFinalize・不明保持・古いownerの重複完了、観測欠落・ハードウェアidleだけでの誤開始拒否を検証する。実接続後は合成Androidで同じprivate出力の表示・原本不変・中断/再試行を確認する。lint/unit/app/test APK、最新headのCI/canonical/独立レビュー/thread0とmain CIを取得する。Pixel画質・実機操作は別確認。
