@@ -44,7 +44,9 @@ class DngW1TrialTest {
     }
 
     @Test fun appliesUserWbWithoutCameraOverrideAndLeavesDefaultAsShotUntouched() {
-        val metadata = case("neutral-4")
+        // Keep colour calibration constant when the independent reference changes WB.
+        // Dual-matrix interpolation itself is covered by the 22 PC coefficient cases.
+        val metadata = case("neutral-4").apply { put("cm2", getJSONArray("cm1")) }
         fixture(metadata).use { file ->
             val implicit = ParcelFileDescriptor.open(file.file, ParcelFileDescriptor.MODE_READ_ONLY).use {
                 NativeDngDecoder.decode(it.fd, 1024, CancellationSignal())

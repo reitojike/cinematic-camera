@@ -38,7 +38,8 @@ PCのPixel FM/LookTable/GainMap、crop・全解像度AHD・BaselineExposure等�
 
 公開合成metadataをPC関数へ渡してrequested WBを生成し、Androidで同じmetadataの人工DNGを作る。
 WB係数は事前定義の`abs 2e-5 + rel 2e-6`で照合する（Float32 user_mul境界の回帰用、画質合格ではない）。
-適用経路はrequested係数の逆数を別DNGのAsShotNeutralへ符号化して照合する。分母100万の有理数と16bit出力の差だけを`8/65535`以内で検査する。
+適用経路はCM1/CM2を同一に固定し、requested係数の逆数を別DNGのAsShotNeutralへ符号化して照合する。
+色calibrationを固定したWB経路の検査であり、PCの全色処理一致ではない。分母100万の有理数と16bit出力の差だけを`8/65535`以内で検査する。
 XY/Neutral、単灯/二灯/順序反転、tint、補間端点、欠落/重複/型/個数/分母/範囲/非有限/特異/IFD/AB/CC/探索域を検証する。
 W1係数がcamera WBで上書きされないこと、cam_mul不足でも検証したW1で成功すること、既定出力不変、
 FM/Look/OpcodeList2存在時の部分処理由来、原本hash保持・cancel・失敗後再実行を確認する。
