@@ -47,7 +47,7 @@ FM/Look/OpcodeList2存在時の部分処理由来、原本hash保持・cancel・
 - [x] W101 Issue/PC公開コード/LibRaw APIと限定契約を確認する。
 - [x] W102 公開合成PC fixtureと再照合を追加する。
 - [x] W103 bounded callback・PC WB計算・opt-in/immutable由来を追加する。
-- [ ] W104 既存native8件とW1合成試験、PC/lint/unit/両ABI/test APK、秘密除外を確認する。
+- [x] W104 既存native8件とW1合成試験、PC/lint/unit/両ABI/test APK、秘密除外を確認する。
 - [ ] W105 最終headの独立レビュー・実CI/canonicalを確認する。公開/mergeは親の承認範囲に従う。
 
 参照: [DNG 1.7.1 Chapter 6](https://helpx.adobe.com/content/dam/help/en/camera-raw/digital-negative/jcr_content/root/content/flex/items/position/position-par/download_section_733958301/download-1/DNG_Spec_1_7_1_0.pdf)、
