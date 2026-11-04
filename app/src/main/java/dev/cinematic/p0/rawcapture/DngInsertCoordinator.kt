@@ -26,8 +26,11 @@ internal class DngInsertCoordinator(private val journal: DngPublicationJournal, 
     fun advance(): DngPublicationRecord {
         val current = journal.read() ?: throw IOException("Publication has not been prepared")
         return when (current.phase) {
-            DngInsertPhase.UNKNOWN -> current
-            DngInsertPhase.PREPARED -> {
+            DngPublicationPhase.UNKNOWN -> current
+            DngPublicationPhase.COPYING, DngPublicationPhase.BYTES_COMPLETE, DngPublicationPhase.PUBLISHING,
+            DngPublicationPhase.PUBLISHED, DngPublicationPhase.SHARED_READY,
+            DngPublicationPhase.LOCAL_RELEASE_PENDING, DngPublicationPhase.SHARED_ONLY -> current
+            DngPublicationPhase.PREPARED -> {
                 val inserting = journal.markInserting(current.revision) // Must read back before issuing insert.
                 val uri = try { rows.insert(inserting.target) }
                 catch (_: Exception) { return journal.markUnknown(inserting.revision, null) }
@@ -37,14 +40,14 @@ internal class DngInsertCoordinator(private val journal: DngPublicationJournal, 
                 if (row == null || row.uri != uri || !inserting.target.accepts(row)) journal.markUnknown(inserting.revision, uri)
                 else journal.recordRow(inserting.revision, uri)
             }
-            DngInsertPhase.INSERTING -> {
+            DngPublicationPhase.INSERTING -> {
                 val candidates = try { rows.find(current.target) }
                 catch (_: Exception) { return journal.markUnknown(current.revision, null) }
                 val row = candidates.singleOrNull()
                 if (row == null || !current.target.accepts(row)) journal.markUnknown(current.revision, null)
                 else journal.recordRow(current.revision, row.uri)
             }
-            DngInsertPhase.ROW_RECORDED -> {
+            DngPublicationPhase.ROW_RECORDED -> {
                 val uri = requireNotNull(current.uri)
                 val row = try { rows.inspect(uri) }
                 catch (_: Exception) { return journal.markUnknown(current.revision, uri) }
