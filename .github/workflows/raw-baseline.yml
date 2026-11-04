@@ -1,0 +1,38 @@
+name: PC RAW checks
+
+on:
+  pull_request:
+    paths:
+      - 'tools/raw_baseline/**'
+      - '.github/workflows/raw-baseline.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/raw_baseline/**'
+      - '.github/workflows/raw-baseline.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15.2'
+          architecture: x64
+      - name: 固定wheelを専用環境へ導入
+        shell: pwsh
+        run: |
+          python -m venv tools/raw_baseline/.venv-py315
+          .\tools\raw_baseline\.venv-py315\Scripts\python.exe -m pip --isolated install --index-url https://pypi.org/simple --require-hashes --only-binary=:all: -r tools/raw_baseline/requirements-win-py315.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          .\tools\raw_baseline\.venv-py315\Scripts\python.exe -m pip check
+          exit $LASTEXITCODE
+      - name: 合成・CLI・再現性テスト（実素材なし）
+        shell: pwsh
+        run: .\tools\raw_baseline\.venv-py315\Scripts\python.exe -m unittest discover -s tools/raw_baseline -p test_*.py -v

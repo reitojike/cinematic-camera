@@ -23,6 +23,8 @@ P1 Stage Clear → P2共通ルック/previewと残る2ルック → P3非破壊�
 | 共有 | Android SharesheetはP3。独自SNS連携・バックエンドは導入しない |
 | 対象 | Pixel 9aのみを先行。固定絞りは表示、WB/AF-MF/AE時EV/fpsは能力と実測を前提にする |
 
+**後続RAW現像UX（採用方針）**: 撮影時は軽量な近似look previewを使い、RAW原本と選択look情報を保存して重い自動現像を開始しない。ギャラリーでは表示対象だけ画面サイズのlook適用画像を必要時生成・キャッシュし、明示書き出しでフル解像度の高品質現像を行う。撮影画面へ戻ると閲覧現像の新規開始を抑止し、停止／優先制御で撮影応答性を受け入れ条件にする。縮小表示でもRAW decode負荷は残り、即時停止可能性や実コストは実測前に保証しない。既存JPEG/MP4を削除せずRAW専用化もしない。previewは明るさ・色傾向の近似で、NR・細部・飽和復元の厳密一致は保証しない。選択後処理・cancel・原本／派生／look版対応・撮影時look ID/version保存の具体化は後続の最小設計とし、写真一覧／閲覧現像はUI #47と[PC基準PoC](../010-p1a-raw-baseline/spec.md)へ実装しない。手動現像しないと閲覧できない方式や撮影直後のフル現像queueは採用しない。
+
 ## Constitution Check
 
 - 既存P0の範囲・ACは[001 spec](../001-p0-camera-probe/spec.md)のまま。新方針による遡及変更なし。
@@ -135,6 +137,8 @@ PowerManagerのthermal statusを観測し、SEVERE以上では録画停止/Final
 WB/MF/anti-bandingの手動上書きUI、フリッカー解消アルゴリズム、実機のAF/熱/画質評価はこの単位へ抱き込まない。
 
 ## Stage Clear評価設計（P1）
+
+この評価設計に沿ったPC基準の比較と、ユーザーが選んだv1の定義（既定の強度1）は[014 Stage Clear v1](../014-stage-clear-v1/plan.md)に置く。
 
 ### サンプル提案
 
