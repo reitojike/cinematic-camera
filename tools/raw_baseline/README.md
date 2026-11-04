@@ -132,6 +132,34 @@ py -3.15 -m venv tools/raw_baseline/.venv-py315-diag
 & $rawPython tools/raw_baseline/r9_app.py --app $appDngFolder --google $googleRawFolder --r5 $round5Folder --output $newPrivateOutput
 ```
 
+## 第10回のアイコニック層（r10*.py）
+
+[Issue #75](https://github.com/reitojike/cinematic-camera/issues/75)の検討用CLI。第7回の確定ルックの上に、写真の個性を出す層と、汎用性の確認で見つかった顔の赤み・白飛びへの対策を重ねる。確定形は`r10j_final.py`の`final_render`にまとめた。
+
+| スクリプト | 内容 | 環境 |
+|---|---|---|
+| `r10_iconic.py` | にじみ（ブルーム＋ハレーション、全体のディフュージョン）と粒子の比較 | 通常 |
+| `r10b_extreme.py` | 振り切った個性のルックの比較（肌の色相は保護） | 通常 |
+| `r10c_glow.py` | にじみの強さの段階の比較。標準は「ブルーム＋ハレーション＋弱いディフュージョン」 | 通常 |
+| `r10d_character.py` | 標準のにじみの上に控えめな個性ルックを重ねる比較。比較ページの共通部分もここに置く | 通常 |
+| `r10e_portrait.py` | 人物向けの効果（ブラック・ミスト、オートン、周辺減光など）の比較 | 通常 |
+| `r10f_combo.py` | 好みの効果の組み合わせと、白飛びが多い写真でにじみを弱める自動調整 | 通常 |
+| `r10g_generalize.py` | 選んだ組み合わせを第8回の汎用性確認の写真へかける | 通常 |
+| `r10h_refine.py` | 顔の赤みの抑え（検出した顔の範囲だけで肌の彩度に上限）とオートンの調整 | 診断専用（顔検出） |
+| `r10i_highlights.py` | 白飛びの抑え（明るい部分をなだらかに白へ寄せ、顔が飛ぶ写真だけ全体を暗く） | 診断専用（顔検出） |
+| `r10j_final.py` | 確定形`final_render`と、元画像→シンプルな補正→ルック適用→最終形の通し確認 | 診断専用（顔検出） |
+
+確定形の処理順は、第7回の土台 → 標準のにじみ → 顔が白飛びする写真だけ露出を下げる（最大0.7EV） → ブラック・ミスト＋オートン＋周辺減光＋彩度（明るい写真ではにじみを自動で弱める） → 検出した顔の範囲だけ肌の彩度に上限 → 明るい部分をなだらかに白へ寄せる。
+
+- 顔検出はPCでの評価用の代わりで、[OpenCV Zoo](https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet)のYuNet（`face_detection_yunet_2023mar.onnx`、SHA-256 `8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4`、MIT license）を使う。モデルはリポジトリに含めず、各自で取得して`--face-model`で渡す。Androidでは Camera2/CameraX の顔情報や ML Kit を想定し、検出できない顔（マイクや髪で隠れた顔など）は自動では補正されない。
+- 白飛びが気になった写真でも、RAWのセンサー飽和はほぼなかった。白飛びは現像（露出、光を足す効果、出力時の切り捨て）で起きていたため、現像側で抑えている。
+- 露出は第8回と同じく本人の編集の明るさに合わせたもので、アプリの測光（顔で測り、なければ中央）との組み合わせは未検証。しきい値はこれまでの写真で決めた仮の値。
+- 比較ページは非公開のArtifactとして公開する。写真、撮影情報、写真ごとの数値はリポジトリに入れない。
+
+```powershell
+& $diagPython tools/raw_baseline/r10j_final.py --livepicture $livepictureFolder --r5 $round5Folder --r8 $round8Folder --face-model $yunetModel --output $newPrivateOutput
+```
+
 ## 公式根拠とlicense
 
 - [rawpy 0.28.0 PyPI](https://pypi.org/project/rawpy/0.28.0/)、[Params API](https://letmaik.github.io/rawpy/api/rawpy.Params.html)、[LibRaw output parameters](https://www.libraw.org/docs/API-datastruct.html)。処理条件はCLI実装で固定しmanifestに記録する。
