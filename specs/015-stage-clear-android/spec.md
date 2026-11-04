@@ -90,3 +90,10 @@
 - **SC-015**: 最終headのPC/Android CI・canonical/独立レビューをDraft PRへ記録する。#78のDNG/R7・実機残件を閉じず、mergeは別承認。
 
 - **FR-026**: 表示用rendererの`shouldStop`を全段呼出しへ渡せるようにし、開始前・肌重み/段1後・段2後・段3後・段4/5後・顔減光再実行・返却前で停止を確認する。停止はCancellationExceptionで伝え、旧結果を返さない。処理中kernelの即時中断や撮影応答の実測保証とはしない。
+
+## 次の小縦切り: R7共通土台（#78、plan境界B）
+
+- **R7-FR-001**: 公開共通recipeを正本とし、P2→I1 local tone→foundation→vibrance→K1→S2を純Kotlinへ移植する。外部base EVとfoundation skin ROIを必須入力とし、写真別設定・例外を含めない。E2 .6と共通ev .3の加算境界を明記する。
+- **R7-FR-002**: local toneのBOX→BICUBICと92/50百分位をPC互換にする。既存BOX/BILINEAR・既存Stage Clearの版とgoldenを維持する。入力を変更せず、gamut mappingやWB近似は追加しない。
+- **R7-FR-003**: 公開共通設定と合成ROIを既存`r7_final.render`にも渡し、6段とlog baseの全画素fixtureを生成する。ゼロROIと後段の検出顔マスクを混同しない。WB W1・Pixel profile/decode・露出推定・実ROI供給・画面/保存は別途検証する。
+- **R7-SC-001**: 7ケース4908画素のlog baseと各段を絶対誤差2e-5以内（rtol=0、暫定移植回帰境界）で比較する。外部露出、入力保持、ROI形状/値、非有限EVと無効gainの拒否も検証し、実写画質/端末性能の合格とは区別する。詳細は[r7-base.md](r7-base.md)。

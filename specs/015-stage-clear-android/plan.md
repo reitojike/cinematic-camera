@@ -24,11 +24,13 @@ layerには同じ寸法を要求する。呼出側が強度0.5やskin weightを�
 | 境界 | 入力と出力 | 今回の証拠 / 次の確認 |
 |---|---|---|
 | A DNG decode | センサー値→WB・demosaic・camera/XYZ変換→線形sRGB/D65 | 未実装。PC decodeの設定・crop・WB・解像度を揃えて独立比較する。JPEGやBitmapの暗黙色変換で代用しない |
-| B R7土台 | 線形sRGB→R7確定の色・明るさ・肌 | 未移植。一般共通値と非公開の写真別露出・例外を分ける。後者を公開しない |
+| B R7土台 | 線形sRGB→R7確定の色・明るさ・肌 | 純Kotlinの共通recipeと合成全画素比較。実入力のprofile/WB、外部露出・skin ROIの供給は別境界。写真別露出・例外を公開しない |
 | C 段1〜5 | R7 base→glow→mist/Orton/vignette/vibrance | 未移植。Pillow BOX/bilinearと座標・丸めの一致を先に調べる。顔減光時の再計算境界だけ今回用意 |
 | D 段6〜8 | C出力→顔cap・顔減光→shoulder | 今回の全画素合成golden、90百分位はNumPy既定のlinear補間、faces > .5・50画素以上 |
 | E 出力 | display-referred linear sRGB→gamut/transfer/量子化 | 未実装。shoulderはdisplay輝度で計算するが出力は線形RGB。8bit画像の比較と混同しない |
 | F 端末 | 実DNG・表示用/全解像度 | Pixel 9a未測定。PC並列比較、時間、peak memory、撮影中キャンセル/再開等の応答確認を別途実施 |
+
+境界Bの純粋なR7実装・公開共通recipe・入力ROI/露出・WB未接続の契約は[r7-base.md](r7-base.md)を参照。
 
 段Dは入力の正しい由来を証明しない。既存`golden/stage_clear_v1.json`は領域平均と顔係数のみ。
 今回の合成CSVも段D限定であり、DNGや全Stage Clearの合格に読み替えない。
