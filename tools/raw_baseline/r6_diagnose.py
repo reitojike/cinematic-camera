@@ -154,12 +154,14 @@ def bradford(src_xy: np.ndarray, dst_xy: np.ndarray) -> np.ndarray:
 
 
 def profile_weight(cct: float, tags: dict) -> float:
+    """Weight of ColorMatrix1/ForwardMatrix1, interpolated in inverse CCT and clamped.
+
+    Order-independent: DNGs may list the warm (A) or the daylight illuminant first.
+    """
     t1, t2 = ILLUMINANT_CCT[tags["illum1"][0]], ILLUMINANT_CCT[tags["illum2"][0]]
-    if cct <= t1:
+    if t1 == t2:
         return 1.
-    if cct >= t2:
-        return 0.
-    return (1 / cct - 1 / t2) / (1 / t1 - 1 / t2)
+    return float(np.clip((1 / cct - 1 / t2) / (1 / t1 - 1 / t2), 0, 1))
 
 
 def neutral_white(tags: dict, neutral: np.ndarray) -> tuple[np.ndarray, float]:
