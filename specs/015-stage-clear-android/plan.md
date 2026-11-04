@@ -1,5 +1,7 @@
 # Implementation Plan: PC保護処理とKotlinの比較境界
 
+表示用の診断露出・明示foundation ROIの純粋境界は[preview-inputs.md](preview-inputs.md)を参照（#113）。
+
 **Issue**: #78 / **Branch**: `feat/issue-78-stage-clear-kotlin`
 
 ## 設計と判断

@@ -1,5 +1,7 @@
 # Feature Specification: Stage Clear Android移植の最初の縦切り
 
+R7試験表示用の診断露出・明示ROI・NOT_RUN契約は[preview-inputs.md](preview-inputs.md)で分けて扱う（#113）。
+
 **Issue**: [#78](https://github.com/reitojike/cinematic-camera/issues/78)
 **Status**: 提案。#78全体の完了ではない。
 **Input**: [PC基準の引き継ぎ](../014-stage-clear-v1/handoff.md)、同spec/plan、PCコード。
