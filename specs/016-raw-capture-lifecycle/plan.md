@@ -96,6 +96,33 @@ pathは専用root内に解決できる相対参照だけを受理し、壊れた
   原本照合と一時削除/JPEG公開も原子的ではない。最終照合後の外部操作による消失や、検知前のJPEG公開、
   共有前のアンインストールまで防げるとは主張しない。
 
+### 撮影未接続の受領台帳（T009・T011の台帳部分）
+
+`CaptureJournal`の版1は撮影ID、revision、期待形式（DNGまたはDNG+JPEG）、形式別の受領byte数、
+`CAPTURING`/`INTERRUPTED`/`FILES_RECEIVED`だけを保存する。これはcallbackとcloseを呼出側が確認したという
+記録であり、ファイル存在やDNG decode・元バイト列のSHA-256・共有保存の成功を証明しない。
+実ファイルの受領確認はT010、hashと共有原本への引渡しはT012以降、recipe/公開状態の拡張は後続の版で扱う。
+
+台帳は4KiB上限の固定レイアウト、magic/明示schema版/台帳payloadのSHA-256で破損を検出する。
+台帳digestはDNGのhashや改ざん防止署名ではない。未知版・余剰データ・不正field・別撮影IDは読取エラーとし、
+上書き/自動初期化しない。版の拡張時は旧台帳の移行を別途検証し、未知fieldを読み捨てて書き戻さない。
+
+内部pathは信頼できるapp-private rootから`<captureId>/receipt.bin`を組み立て、IDはASCII英数字/`_`/`-`の
+1〜64字に限定する。root配下のcapture directory、base/`.new`/`.bak`のredirectを拒否する。
+入力文字列の絶対pathを台帳へ保存しない。rootの選択は将来のapp側が`noBackupFilesDir/raw-captures`へ固定する責務であり、
+外部から任意rootを受け取らない。実DNG/仮JPEGのpathと書込み検証はT010の別責務。
+
+1 process・1撮影につき1つのjournal/writerを保持し、同じinstanceの更新を直列化する。複数instance/process間の排他は提供しない。
+更新時は再読してexpected revisionを照合する。重複の同一受領は書込み不要、異なるbyte数や旧revisionは競合として止める。
+書込みAPIが返った後も全台帳byte列を読戻し確認してから成功を返す。commit後に応答を失った場合は再読して状態を確認し、
+旧revisionで上書きしたり、commit済みかもしれない内容をrollbackしない。
+process death後は`CAPTURING`だけを`INTERRUPTED`に更新し、記録済み受領を保持する。
+中断後の正しい遅延callbackはその形式の受領を保全できるが、中断表示を自動で成功へ昇格させない。
+
+`AndroidAtomicJournalStorage`は標準AtomicFileを使用し、readは上限付き、肯定的な不在だけをnullとする。
+書込み中に失敗したら`failWrite`、`finishWrite`呼出後は結果不明としてrollbackせず扱う。
+このadapterの実端末でのfsync/容量不足/電源断確認は、fake backendの故障注入テストとは別に残す。
+
 ## 撮影優先と自動現像
 
 - 開始条件をすべてANDにする: foreground、camera session未使用、capture/record/finalize/rebindなし、
@@ -146,7 +173,8 @@ WorkManagerは今回採用しない。永続要求と画素処理の停止能力
 1. **設計PR**: 本spec/plan/contracts/tasks/検証案と原則IV・002の方針更新。アプリ変更なし。
 2. **policy PR**: `rawcapture/AutoDevelopPolicy.kt`/`AutoDevelopCoordinator.kt`と対応JUnit。
    開始条件と未知値、撮影予約race、旧完了・例外・再生成を合成検証。撮影へ未接続。
-3. **保全PR**: `rawcapture/CaptureJournal.kt`/`RawCaptureStore.kt`と故障テスト。CameraProbeへ未接続。
+3. **保全PR**: 受領台帳`CaptureJournal.kt`/`AndroidAtomicJournalStorage.kt`と、実ファイルを扱う
+   `RawCaptureStore.kt`をさらに小さいPRへ分け、各故障テストを追加する。CameraProbeへ未接続。
 4. **公開PR**: `rawcapture/RecoverablePhotoPublisher.kt`/`SharedOriginalAccess.kt`と故障テスト。
    1行ずつの照合、共有DNGへの引渡し、一時DNG解放とread-only参照を実装。既存publisherを置換しない。
 5. **撮影接続PR**: 新RAW撮影だけを切替え、形式別callback/timeout/epoch/preview復帰/原本保全を検証。

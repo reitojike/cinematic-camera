@@ -26,9 +26,13 @@
 
 **独立検証**: rendererなしでRAW/仮JPEGを保全でき、形式別部分失敗と再起動で成功分が残る。
 
-- [ ] T009 [US1] `main/rawcapture/CaptureJournal.kt`に版つき台帳と単一writer・root内参照検証を実装する（FR-001/006/008）。
+- [x] T009 [US1] `main/rawcapture/CaptureJournal.kt`に版つき受領台帳と単一instance writer・root内の台帳path検証を実装する（FR-001/006/008）。
 - [ ] T010 [US1] `main/rawcapture/RawCaptureStore.kt`に形式別完了と中断時の保全を実装する（FR-001/002）。
 - [ ] T011 [US1] `test/rawcapture/CaptureJournalTest.kt`/`RawCaptureStoreTest.kt`でclose/commit失敗・death・未知schema・不正pathを故障注入する（SC-001）。
+
+T011の台帳側はfake backendのwrite/read失敗・commit応答喪失・破損・未知版・CAS競合・中断復旧と純pathを検証。
+RawCaptureStoreの実ファイルclose/保全と、AndroidAtomicFileの実端末障害検証は未完了のためT011全体は未完了。
+T009は受領metadataのみ。DNG有効性、共有コピー完全性、原本引渡し/解放、recipe/公開状態は後続項目。
 - [ ] T012 [US1] `main/rawcapture/RecoverablePhotoPublisher.kt`でDNGの1行公開、readback/hash一致、共有原本への引渡しを実装する（FR-003/007）。
 - [ ] T013 [US1] `test/rawcapture/RecoverablePhotoPublisherTest.kt`でinsert応答前、URI記録、copy/close/pending解除/readback/解放台帳の故障を検証する（SC-001/002）。
 - [ ] T014 [US1] 別の接続PRで`main/CameraProbe.kt`の新RAW保存だけを接続し、既存cleanup/timeout/late-callbackを形式別保全へ切替える（FR-001/002/003/005/008）。
