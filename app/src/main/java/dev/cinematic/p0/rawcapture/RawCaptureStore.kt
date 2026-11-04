@@ -1,7 +1,9 @@
 package dev.cinematic.p0.rawcapture
 
 import java.io.File
+import java.io.FilterInputStream
 import java.io.IOException
+import java.io.InputStream
 import java.io.OutputStream
 import java.nio.file.Files
 import java.nio.file.LinkOption
@@ -12,7 +14,8 @@ import java.nio.file.attribute.BasicFileAttributes
  * Unconnected capture-local storage. One live store/writer per capture, on an IO executor.
  * root is trusted app-private storage; journalStorage must address this capture under that root.
  * The injected opener must create exclusively without following links (production default below).
- * This class never deletes, moves, publishes or decodes media.
+ * Only a bound handoff reservation may release this capture's fixed temporary DNG.
+ * No shared image, provisional JPEG or other capture is moved/deleted.
  */
 internal class RawCaptureStore(
     private val root: File,
@@ -23,11 +26,15 @@ internal class RawCaptureStore(
             file.toPath(), StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS,
         )
     },
+    private val deleteOriginalFile: (File) -> Boolean = { Files.deleteIfExists(it.toPath()) },
 ) {
     private val directory = requireNotNull(CaptureJournalPaths.receiptFile(root, captureId).parentFile)
     private val journal = CaptureJournal(captureId, journalStorage)
     private val handles = mutableMapOf<RawOutput, RawCaptureOutput>()
     private var createdHere = false
+    private var handoffJournal: DngPublicationJournal? = null
+    private var originalReaders = 0
+    private var releaseOwner: Any? = null
 
     /** A failed creation also reserves the directory; never reuse even an empty orphan. */
     @Synchronized
@@ -53,7 +60,10 @@ internal class RawCaptureStore(
         if (!Files.readAttributes(directory.toPath(), BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS).isDirectory) {
             throw IOException("Capture directory is unavailable")
         }
+        val handoff = handoffRecord(receipt)
+        val localOptional = handoff?.phase in setOf(DngPublicationPhase.SHARED_READY, DngPublicationPhase.LOCAL_RELEASE_PENDING, DngPublicationPhase.SHARED_ONLY)
         receipt.receivedBytes.forEach { (format, expectedBytes) ->
+            if (format == RawOutput.DNG && localOptional && !originalExists()) return@forEach
             if (closedFileSize(format) != expectedBytes) throw IOException("Recorded capture file size changed")
         }
         return receipt
@@ -89,15 +99,12 @@ internal class RawCaptureStore(
 
     /** Establish/recheck local byte identity before handoff; heavy reads never hold the store lock. */
     fun verifyOriginal(expectedRevision: Long, shouldStop: () -> Boolean = { false }): CaptureReceipt {
-        val (receipt, file) = synchronized(this) {
+        val receipt = synchronized(this) {
             val current = current(expectedRevision)
             if (RawOutput.DNG !in current.receivedBytes) throw IOException("DNG has not been received")
-            current to File(checkedDirectory(), RawOutput.DNG.fileName)
+            current
         }
-        val openReadOnly = {
-            checkedDirectory()
-            Files.newInputStream(file.toPath(), StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)
-        }
+        val openReadOnly = { openOriginalReader() }
         val fingerprint = receipt.originalFingerprint?.let {
             DngContentVerifier.verify(it, openReadOnly, shouldStop)
         } ?: DngContentVerifier.identify(receipt.receivedBytes.getValue(RawOutput.DNG), openReadOnly, shouldStop)
@@ -114,6 +121,94 @@ internal class RawCaptureStore(
         if (handles.isNotEmpty()) throw IOException("Cannot recover a live capture writer")
         readReceipt() // Stop on missing/changed recorded files before mutating the journal.
         return journal.recoverAfterProcessDeath()
+    }
+
+    /** Bind once before exposing this process-scoped store. Persistent release phases gate new readers. */
+    @Synchronized
+    fun handoffSource(publication: DngPublicationJournal): DngHandoffSource {
+        require(handoffJournal == null || handoffJournal === publication) { "Different live handoff journal" }
+        handoffJournal = publication
+        return object : DngHandoffSource {
+            override fun receipt(): CaptureReceipt = synchronized(this@RawCaptureStore) { handoffReceipt() }
+            override fun openOriginal(): InputStream = openOriginalReader()
+            override fun reserveRelease(record: DngPublicationRecord): DngOriginalRelease = reserveOriginalRelease(record)
+        }
+    }
+
+    private fun handoffRecord(receipt: CaptureReceipt): DngPublicationRecord? = handoffJournal?.read()?.also {
+        if (it.target.captureId != captureId || it.fingerprint != receipt.originalFingerprint) throw IOException("Handoff source mismatch")
+    }
+
+    /** Receipt metadata and auxiliary JPEG only; local DNG absence is possible after release/death. */
+    private fun handoffReceipt(): CaptureReceipt {
+        checkedDirectory()
+        val receipt = journal.read() ?: throw IOException("Capture receipt unavailable")
+        handoffRecord(receipt)
+        receipt.receivedBytes[RawOutput.JPEG]?.let { if (closedFileSize(RawOutput.JPEG) != it) throw IOException("Provisional JPEG changed") }
+        return receipt
+    }
+
+    @Synchronized
+    private fun openOriginalReader(owner: Any? = null): InputStream {
+        if (releaseOwner != null && releaseOwner !== owner) throw IOException("Original release is reserved")
+        val receipt = handoffReceipt()
+        val phase = handoffRecord(receipt)?.phase
+        if (owner == null && phase in setOf(DngPublicationPhase.LOCAL_RELEASE_PENDING, DngPublicationPhase.SHARED_ONLY)) {
+            throw IOException("Original has moved to shared storage")
+        }
+        if (owner != null && releaseOwner !== owner) throw IOException("Foreign original release reservation")
+        if (receipt.receivedBytes[RawOutput.DNG] != closedFileSize(RawOutput.DNG)) throw IOException("DNG receipt mismatch")
+        val stream = Files.newInputStream(File(checkedDirectory(), RawOutput.DNG.fileName).toPath(), StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)
+        originalReaders++
+        return object : FilterInputStream(stream) {
+            private var released = false
+            @Synchronized override fun close() {
+                if (released) return
+                super.close()
+                released = true
+                synchronized(this@RawCaptureStore) { originalReaders-- }
+            }
+        }
+    }
+
+    @Synchronized
+    private fun reserveOriginalRelease(record: DngPublicationRecord): DngOriginalRelease {
+        val receipt = handoffReceipt()
+        require(record.target.captureId == captureId && record.fingerprint == receipt.originalFingerprint) { "Foreign original release" }
+        if (handoffJournal?.read() != record || record.phase !in setOf(DngPublicationPhase.SHARED_READY, DngPublicationPhase.LOCAL_RELEASE_PENDING)) {
+            throw CaptureJournalConflict()
+        }
+        if (releaseOwner != null || originalReaders != 0 || handles[RawOutput.DNG]?.isReleased() == false) throw IOException("Original references remain active")
+        val token = Any()
+        releaseOwner = token
+        return object : DngOriginalRelease {
+            private fun checkOwner() { if (releaseOwner !== token) throw IOException("Original release reservation expired") }
+            override fun exists(): Boolean = synchronized(this@RawCaptureStore) { checkOwner(); originalExists() }
+            override fun openOriginal(): InputStream = openOriginalReader(token)
+            override fun deleteOriginal(record: DngPublicationRecord) = synchronized(this@RawCaptureStore) {
+                require(record.target.captureId == captureId && record.fingerprint == receipt.originalFingerprint) { "Foreign original release" }
+                checkOwner()
+                if (record.phase != DngPublicationPhase.LOCAL_RELEASE_PENDING || handoffJournal?.read() != record) throw CaptureJournalConflict()
+                if (originalReaders != 0 || handles[RawOutput.DNG]?.isReleased() == false) throw IOException("Original references remain active")
+                if (originalExists()) {
+                    if (closedFileSize(RawOutput.DNG) != record.fingerprint.bytes) throw DngContentChanged()
+                    deleteOriginalFile(File(checkedDirectory(), RawOutput.DNG.fileName))
+                }
+                if (!Files.notExists(File(checkedDirectory(), RawOutput.DNG.fileName).toPath(), LinkOption.NOFOLLOW_LINKS)) {
+                    throw IOException("Temporary original still exists")
+                }
+            }
+            override fun close() = synchronized(this@RawCaptureStore) { if (releaseOwner === token) releaseOwner = null }
+        }
+    }
+
+    private fun originalExists(): Boolean {
+        val file = File(checkedDirectory(), RawOutput.DNG.fileName)
+        if (Files.notExists(file.toPath(), LinkOption.NOFOLLOW_LINKS)) return false
+        if (!Files.readAttributes(file.toPath(), BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS).isRegularFile) {
+            throw IOException("Original is not a regular file")
+        }
+        return true
     }
 
     private fun current(expectedRevision: Long): CaptureReceipt {
@@ -166,6 +261,8 @@ internal class RawCaptureOutput internal constructor(val format: RawOutput, priv
 
     @Synchronized
     internal fun closedSuccessfully(): Boolean = closed && !failed
+
+    @Synchronized internal fun isReleased(): Boolean = closed
 
     private inline fun writing(action: () -> Unit) {
         if (closed || failed) throw IOException("Capture output is closed or failed")

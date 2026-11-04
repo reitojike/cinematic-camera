@@ -8,7 +8,10 @@ import java.io.IOException
 import java.security.MessageDigest
 import java.util.UUID
 
-internal enum class DngInsertPhase(val code: Int) { PREPARED(0), INSERTING(1), ROW_RECORDED(2), UNKNOWN(3) }
+internal enum class DngPublicationPhase(val code: Int) {
+    PREPARED(0), INSERTING(1), ROW_RECORDED(2), UNKNOWN(3), COPYING(4), BYTES_COMPLETE(5),
+    PUBLISHING(6), PUBLISHED(7), SHARED_READY(8), LOCAL_RELEASE_PENDING(9), SHARED_ONLY(10),
+}
 
 /** Version-1 target is immutable, including metadata persisted before insert. */
 internal data class DngPublicationTarget(val captureId: String, val token: String) {
@@ -22,8 +25,8 @@ internal data class DngPublicationTarget(val captureId: String, val token: Strin
     val mimeType get() = "image/x-adobe-dng"
     val displayName get() = "CINEMATIC_${captureId}_$token.dng"
 
-    fun accepts(row: DngPendingRow): Boolean = isDngRowUri(row.uri) && row.ownedByApp &&
-        row.pending == true && row.trashed == false && row.displayName == displayName && row.volume == volume &&
+    fun accepts(row: DngPendingRow, pending: Boolean = true): Boolean = isDngRowUri(row.uri) && row.ownedByApp &&
+        row.pending == pending && row.trashed == false && row.displayName == displayName && row.volume == volume &&
         row.relativePath == relativePath && row.mimeType == mimeType
 }
 
@@ -36,14 +39,14 @@ internal data class DngPublicationRecord(
     val target: DngPublicationTarget,
     val revision: Long,
     val fingerprint: OriginalFingerprint,
-    val phase: DngInsertPhase,
+    val phase: DngPublicationPhase,
     val uri: String? = null,
 ) {
     init {
         require(revision >= 0) { "Negative publication revision" }
         require(uri == null || isDngRowUri(uri)) { "Invalid DNG row URI" }
-        require(phase != DngInsertPhase.ROW_RECORDED || uri != null) { "Missing recorded URI" }
-        require(phase !in setOf(DngInsertPhase.PREPARED, DngInsertPhase.INSERTING) || uri == null) { "Premature URI" }
+        require(phase !in DngPublicationPhase.entries.filter { it == DngPublicationPhase.ROW_RECORDED || it.code >= 4 } || uri != null) { "Missing recorded URI" }
+        require(phase !in setOf(DngPublicationPhase.PREPARED, DngPublicationPhase.INSERTING) || uri == null) { "Premature URI" }
     }
 }
 
@@ -72,23 +75,23 @@ internal class DngPublicationJournal(
             if (it.fingerprint != fingerprint) throw CaptureJournalConflict()
             return it // Never regenerate an existing token or reset UNKNOWN.
         }
-        return persist(DngPublicationRecord(DngPublicationTarget(captureId, tokenFactory()), 0, fingerprint, DngInsertPhase.PREPARED))
+        return persist(DngPublicationRecord(DngPublicationTarget(captureId, tokenFactory()), 0, fingerprint, DngPublicationPhase.PREPARED))
     }
 
     @Synchronized
     fun markInserting(expectedRevision: Long): DngPublicationRecord {
         val current = current(expectedRevision)
-        if (current.phase != DngInsertPhase.PREPARED) throw CaptureJournalConflict()
-        return persist(current.copy(revision = next(current), phase = DngInsertPhase.INSERTING))
+        if (current.phase != DngPublicationPhase.PREPARED) throw CaptureJournalConflict()
+        return persist(current.copy(revision = next(current), phase = DngPublicationPhase.INSERTING))
     }
 
     @Synchronized
     fun recordRow(expectedRevision: Long, uri: String): DngPublicationRecord {
         require(isDngRowUri(uri)) { "Invalid DNG row URI" }
         val current = current(expectedRevision)
-        if (current.phase == DngInsertPhase.ROW_RECORDED && current.uri == uri) return current
-        if (current.phase != DngInsertPhase.INSERTING) throw CaptureJournalConflict()
-        return persist(current.copy(revision = next(current), phase = DngInsertPhase.ROW_RECORDED, uri = uri))
+        if (current.phase == DngPublicationPhase.ROW_RECORDED && current.uri == uri) return current
+        if (current.phase != DngPublicationPhase.INSERTING) throw CaptureJournalConflict()
+        return persist(current.copy(revision = next(current), phase = DngPublicationPhase.ROW_RECORDED, uri = uri))
     }
 
     @Synchronized
@@ -96,9 +99,24 @@ internal class DngPublicationJournal(
         val current = current(expectedRevision)
         if (current.uri != null && uri != null && current.uri != uri) throw CaptureJournalConflict()
         val retainedUri = current.uri ?: uri
-        if (current.phase == DngInsertPhase.UNKNOWN && current.uri == retainedUri) return current
-        if (current.phase !in setOf(DngInsertPhase.INSERTING, DngInsertPhase.ROW_RECORDED)) throw CaptureJournalConflict()
-        return persist(current.copy(revision = next(current), phase = DngInsertPhase.UNKNOWN, uri = retainedUri))
+        if (current.phase == DngPublicationPhase.UNKNOWN && current.uri == retainedUri) return current
+        if (current.phase !in setOf(DngPublicationPhase.INSERTING, DngPublicationPhase.ROW_RECORDED,
+                DngPublicationPhase.COPYING, DngPublicationPhase.BYTES_COMPLETE, DngPublicationPhase.PUBLISHING)) throw CaptureJournalConflict()
+        return persist(current.copy(revision = next(current), phase = DngPublicationPhase.UNKNOWN, uri = retainedUri))
+    }
+
+    @Synchronized fun markCopying(revision: Long) = advance(revision, DngPublicationPhase.ROW_RECORDED, DngPublicationPhase.COPYING)
+    @Synchronized fun markBytesComplete(revision: Long) = advance(revision, DngPublicationPhase.COPYING, DngPublicationPhase.BYTES_COMPLETE)
+    @Synchronized fun markPublishing(revision: Long) = advance(revision, DngPublicationPhase.BYTES_COMPLETE, DngPublicationPhase.PUBLISHING)
+    @Synchronized fun markPublished(revision: Long) = advance(revision, DngPublicationPhase.PUBLISHING, DngPublicationPhase.PUBLISHED)
+    @Synchronized fun markSharedReady(revision: Long) = advance(revision, DngPublicationPhase.PUBLISHED, DngPublicationPhase.SHARED_READY)
+    @Synchronized fun markLocalReleasePending(revision: Long) = advance(revision, DngPublicationPhase.SHARED_READY, DngPublicationPhase.LOCAL_RELEASE_PENDING)
+    @Synchronized fun markSharedOnly(revision: Long) = advance(revision, DngPublicationPhase.LOCAL_RELEASE_PENDING, DngPublicationPhase.SHARED_ONLY)
+
+    private fun advance(revision: Long, from: DngPublicationPhase, to: DngPublicationPhase): DngPublicationRecord {
+        val current = current(revision)
+        if (current.phase != from) throw CaptureJournalConflict()
+        return persist(current.copy(revision = next(current), phase = to))
     }
 
     private fun current(expectedRevision: Long): DngPublicationRecord {
@@ -124,7 +142,7 @@ internal class DngPublicationJournal(
 internal object DngPublicationCodec {
     const val MAX_BYTES = 4096
     private const val MAGIC = 0x4343504a // CCPJ
-    private const val VERSION = 1
+    private const val VERSION = 2
     private const val DIGEST_BYTES = 32
 
     fun encode(record: DngPublicationRecord): ByteArray {
@@ -157,7 +175,9 @@ internal object DngPublicationCodec {
         }
         try {
             return DataInputStream(ByteArrayInputStream(payload)).use { input ->
-                if (input.readInt() != MAGIC || input.readInt() != VERSION) throw IOException("Unknown publication journal format")
+                if (input.readInt() != MAGIC) throw IOException("Unknown publication journal format")
+                val version = input.readInt()
+                if (version !in 1..VERSION) throw IOException("Unknown publication journal format")
                 val target = DngPublicationTarget(text(input, 64), text(input, 32))
                 val revision = input.readLong()
                 val bytes = input.readLong()
@@ -168,7 +188,8 @@ internal object DngPublicationCodec {
                     throw IOException("Publication target metadata mismatch")
                 }
                 val code = input.readUnsignedByte()
-                val phase = DngInsertPhase.entries.singleOrNull { it.code == code } ?: throw IOException("Unknown publication phase")
+                if (version == 1 && code > 3) throw IOException("Unknown version-one publication phase")
+                val phase = DngPublicationPhase.entries.singleOrNull { it.code == code } ?: throw IOException("Unknown publication phase")
                 val uri = when (input.readUnsignedByte()) {
                     0 -> null
                     1 -> text(input, 128)

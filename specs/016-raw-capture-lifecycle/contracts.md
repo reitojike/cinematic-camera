@@ -74,11 +74,22 @@ recipeの変更でDNGの公開操作を増やさない。操作ID、ランダム
 |---|---|---|
 | `PREPARED` | まだinsert未発行。`INSERTING`を台帳commitしてから1回だけinsert | `PREPARED`への復旧では未発行が確定。commit失敗ならAPIを呼ばない |
 | `INSERTING` | insert結果のURIを台帳へ記録 | 応答前のdeathは期待名等で照合。候補なし/複数/照合不能は`UNKNOWN`。自動再insertしない |
-| `ROW_RECORDED` | URIをcommitしてから、そのpending行へコピー/close/検査 | 完成した内部sourceを保持。再開時は同じURIを照合 |
+| `ROW_RECORDED` | 同じpending URIと入力を照合し、`COPYING`を先にcommit | 完成した内部sourceを保持。commit失敗なら書込みを開始しない |
+| `COPYING` | bounded copy、全stream close、同URIの全byte readback | 完成内容一致なら再コピー不要。不一致とclose成功を確認できた未公開の自分の行だけ再コピー。読取不能/close不明は停止 |
 | `BYTES_COMPLETE` | 検査結果をcommit後、`PUBLISHING`を先にcommitしてからpendingを解除 | commit失敗なら公開APIを呼ばない |
 | `PUBLISHING` | 当該URIの状態/所有/サイズ/内容識別を確認 | pending=0で一致なら`PUBLISHED`、pending=1で完成内容一致なら同じ行のpending解除を再試行、その他は`UNKNOWN` |
-| `PUBLISHED` | 完了記録のみ | 行が後で消えても自動再作成しない。公開済み行をrollback削除しない |
+| `PUBLISHED` | 同URIの公開状態/内容を再確認し、`SHARED_READY`をcommit | 行が後で消えても自動再作成しない。公開済み行をrollback削除しない |
 | `UNKNOWN` | 自動操作を停止し、保全と要確認を示す | 元データを保持し、照合できるまで新規insert/削除/上書きをしない |
+
+実装の版2は既存の状態コード0〜3を保ち、`COPYING`以降と引渡し状態を追加する。版1は旧4状態だけを受理し、
+読取りでtoken/URIを書換えない。`PUBLISHED`以後の共有先不在/変更は既存状態を保持して例外停止し、再insertしない。
+`SHARED_ONLY`は過去の引渡し完了記録であり、現在も共有原本が存在するという照会結果ではない。
+
+`RawCaptureStore.handoffSource(journal)`で同じ公開台帳を先にbindし、1 process・1撮影につきstore/journal/coordinatorを各1つ所有する。
+通常の`openOriginalReader`と`verifyOriginal`を含む全内部DNG readerをleaseで数え、close成功まで減らさない。
+解放予約中と永続`LOCAL_RELEASE_PENDING`以後は通常readerを新規openせず、予約所有者だけが検証用readと固定DNG削除を行える。
+未解放streamがある場合、coordinatorはhandleを保持してclose再試行だけを許可し、追加IO/公開/削除へ進めない。
+process再生成時も台帳をbindしてからreaderを公開する。複数instanceを作って排他を迂回する使い方は契約外である。
 
 期待名だけで行の所有を証明しない。volume/path/MIME/アプリ所有/token/完成内容を照合し、
 外部の行や他撮影を巻き込まない。URI記録前のinsert成功とdeathをまたぐ窓も故障注入で確認する。
