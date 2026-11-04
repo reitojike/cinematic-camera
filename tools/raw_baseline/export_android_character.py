@@ -75,7 +75,7 @@ def check_exports() -> None:
             if not np.all(np.isfinite(values)):
                 raise AssertionError(f"Character nonfinite values at line {line}")
             assert_regenerated_pixels(b[1:5], a[1:5], f"character inputs line {line}", atol=2e-6)
-            np.testing.assert_allclose(np.asarray(b[5:14], float), np.asarray(a[5:14], float),
+            np.testing.assert_allclose(np.asarray(a[5:14], float), np.asarray(b[5:14], float),
                                        atol=2e-5, rtol=2e-6, equal_nan=False, err_msg=f"character intermediates line {line}")
             assert_regenerated_pixels(b[14:], a[14:], f"character final RGB line {line}")
         elif a[0] == "CASE":
