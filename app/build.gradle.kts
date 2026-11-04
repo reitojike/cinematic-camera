@@ -17,10 +17,16 @@ if (stableInternalSigning) {
 android {
     namespace = "dev.cinematic.p0"
     compileSdk = 37
+    ndkVersion = "29.0.14206865"
+    externalNativeBuild {
+        cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" }
+    }
     defaultConfig {
         applicationId = "dev.cinematic.p0"
         minSdk = 28
         targetSdk = 37
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         versionCode = providers.environmentVariable("CINEMATIC_VERSION_CODE").orNull?.toInt() ?: 10
         versionName = providers.environmentVariable("CINEMATIC_VERSION_NAME").orNull ?: "0.0.10-p05"
     }
@@ -63,4 +69,6 @@ dependencies {
     implementation("androidx.camera:camera-view:$cameraX")
     implementation("androidx.camera:camera-video:$cameraX")
     testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
 }

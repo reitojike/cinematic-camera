@@ -19,6 +19,8 @@ layerには同じ寸法を要求する。呼出側が強度0.5やskin weightを�
 
 ## 段階別の合否境界
 
+表示用DNG入力の限定実装と標準API/LibRawの選択・メモリ・R7との境界は[dng-input.md](dng-input.md)を参照。
+
 | 境界 | 入力と出力 | 今回の証拠 / 次の確認 |
 |---|---|---|
 | A DNG decode | センサー値→WB・demosaic・camera/XYZ変換→線形sRGB/D65 | 未実装。PC decodeの設定・crop・WB・解像度を揃えて独立比較する。JPEGやBitmapの暗黙色変換で代用しない |

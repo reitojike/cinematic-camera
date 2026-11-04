@@ -30,13 +30,13 @@ jobs:
       - uses: android-actions/setup-android@v4
         with:
           log-accepted-android-sdk-licenses: false
-      - name: Android SDK 37
-        run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
+      - name: Android SDK 37 and pinned native tools
+        run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0" "ndk;29.0.14206865" "cmake;3.22.1"
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
       - name: lint・unit・debug build
-        run: ./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug --no-daemon
+        run: ./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
       - name: APKの署名・識別子・ハッシュを記録
         shell: bash
         run: |
