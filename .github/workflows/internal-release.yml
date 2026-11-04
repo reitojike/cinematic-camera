@@ -34,6 +34,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: main commitと未使用tagを確認
         env:
           RELEASE_TAG: ${{ inputs.tag }}
@@ -53,6 +54,38 @@ jobs:
           fi
           git checkout --detach "$RELEASE_COMMIT"
           echo "CINEMATIC_RELEASE_COMMIT=$RELEASE_COMMIT" >> "$GITHUB_ENV"
+      - name: 過去の固定署名版より大きいversionCodeを要求
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION_CODE: ${{ github.run_number }}
+          EXPECTED_CERT_SHA256: ${{ vars.CINEMATIC_INTERNAL_CERT_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_VERSION_CODE" =~ ^[1-9][0-9]*$ ]]
+          (( RELEASE_VERSION_CODE <= 2100000000 ))
+          [[ "$EXPECTED_CERT_SHA256" =~ ^[0-9a-fA-F]{64}$ ]]
+          # Include every page and draft; an older failed run must not publish a downgrade.
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$RUNNER_TEMP/cinematic-internal-releases.json"
+          previous_code=$(jq -er --arg pin "${EXPECTED_CERT_SHA256^^}" '
+            [.[][] | select(any(.assets[]?; .name == "cinematic-camera-internal.apk")
+                or ((.body // "") | contains("<!-- cinematic-internal-release:")))
+              | (.body // "")
+              | if ([scan("<!-- cinematic-internal-release:")] | length) == 1 then .
+                else error("Internal release metadata is missing or ambiguous") end
+              | [scan("<!-- cinematic-internal-release:[^\r\n]*-->")]
+              | if length == 1 then .[0]
+                else error("Internal release metadata is missing or ambiguous") end
+              | if test("^<!-- cinematic-internal-release: versionCode=[1-9][0-9]* certSha256=[0-9a-fA-F]{64} -->$")
+                then capture("versionCode=(?<code>[1-9][0-9]*) certSha256=(?<cert>[0-9a-fA-F]{64})")
+                else error("Internal release metadata is invalid") end
+              | if (.cert | ascii_upcase) == $pin then (.code | tonumber)
+                else error("Historical internal signer does not match the public pin") end]
+            | max // 0' "$RUNNER_TEMP/cinematic-internal-releases.json")
+          if (( RELEASE_VERSION_CODE <= previous_code )); then
+            echo 'versionCodeは過去の全固定署名Releaseより大きい必要があります。古いrunの再実行ではなく新しいrunを開始してください。' >&2
+            exit 1
+          fi
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
@@ -65,6 +98,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
+          cache-disabled: true
       - name: lintと単体テスト（署名秘密を渡さない）
         run: ./gradlew :app:lintDebug :app:testDebugUnitTest --no-daemon --no-configuration-cache
       - name: 承認後の専用Environment入力を確認して鍵を復元
@@ -94,7 +128,7 @@ jobs:
           CINEMATIC_INTERNAL_STORE_PASSWORD: ${{ secrets.CINEMATIC_INTERNAL_STORE_PASSWORD }}
           CINEMATIC_INTERNAL_KEY_ALIAS: ${{ secrets.CINEMATIC_INTERNAL_KEY_ALIAS }}
           CINEMATIC_INTERNAL_KEY_PASSWORD: ${{ secrets.CINEMATIC_INTERNAL_KEY_PASSWORD }}
-        run: ./gradlew :app:assembleRelease --no-daemon --no-configuration-cache
+        run: ./gradlew :app:assembleRelease --no-daemon --no-configuration-cache --no-build-cache --no-scan
       - name: 一時署名秘密を削除（失敗時も実行）
         if: always()
         shell: bash
@@ -128,10 +162,11 @@ jobs:
           sha256sum cinematic-camera-internal.apk > SHA256SUMS.txt
           {
             printf '# Cinematic Camera internal probe\n\n'
+            printf '<!-- cinematic-internal-release: versionCode=%s certSha256=%s -->\n\n' "$RELEASE_VERSION_CODE" "$actual_cert"
             printf -- '- source main: `%s`\n' "$CINEMATIC_RELEASE_COMMIT"
             printf -- '- versionName: `%s`; versionCode: `%s`\n' "$RELEASE_TAG" "$RELEASE_VERSION_CODE"
             printf -- '- applicationId: `dev.cinematic.p0`; fixed signer SHA-256: `%s`\n' "$actual_cert"
-            printf -- '- 最初の固定署名版は旧一時debug版と署名が異なるため上書き不可。必要データを先に退避してください。\n'
+            printf -- '- 初回は旧debug版と署名が異なり上書き不可。必要データの退避を確認できるまで旧アプリを削除しないでください。設定の自動移行はありません。\n'
             printf -- '- 実機結果/未確認条件はsource commitのdocs/P0_REPORT.mdとdocs/P05_REPORT.mdを参照してください。\n'
             printf -- '- workflow: https://github.com/%s/actions/runs/%s\n' "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
           } > RELEASE_NOTES.md

@@ -109,7 +109,7 @@ think-canvasの現行internal-releaseはEnvironment・専用4Secrets・証明書
 |---|---|
 | repo / Environment | `reitojike/cinematic-camera` / `internal-release` |
 | deployment branch policy | selected branch `main` のみ。PR branchで署名秘密を使わない |
-| 専用key | 新しいPKCS12、RSA 3072 bit、仮alias `cinematic-internal`、証明書CN `Cinematic Camera Internal`。生成は承認後 |
+| 専用key | 新しいPKCS12、RSA 3072 bit、有効期間10000日、仮alias `cinematic-internal`、証明書CN `Cinematic Camera Internal`。生成は承認後 |
 | Environment Secrets | `CINEMATIC_INTERNAL_KEYSTORE_BASE64` / `CINEMATIC_INTERNAL_STORE_PASSWORD` / `CINEMATIC_INTERNAL_KEY_ALIAS` / `CINEMATIC_INTERNAL_KEY_PASSWORD` |
 | Environment公開変数 | `CINEMATIC_INTERNAL_CERT_SHA256`。承認後に作った証明書の64桁hex。現時点では値を捏造/登録しない |
 | build | `CINEMATIC_SIGNING_MODE=stable_internal` を明示した `assembleRelease --no-configuration-cache`。packageは `dev.cinematic.p0`、debuggable false |
@@ -118,6 +118,8 @@ think-canvasの現行internal-releaseはEnvironment・専用4Secrets・証明書
 default debug buildでは署名入力を要求しない。stable modeは入力不足/未知mode/configuration cache要求/ファイル欠落で停止し、
 debugへ黙ってfallbackしない。署名前のlint/unitには秘密を渡さず、鍵をrunner tempへ復元してbuild後always削除する。
 単一署名とpin/package/version/targetSdkを確認してからReleaseへ保存し、秘密をartifact/ログへ含めない。
+固定署名jobではGradle Actionsのcacheを無効化し、署名buildはbuild cache / configuration cache / Build Scanを使わない。
+checkoutの認証情報は永続化せず、Release API用tokenは必要なstepだけへ渡す。通常のDebug CIと既存debug配布は変更しない。
 
 新しい固定証明書のfingerprintは未作成で、GitHub上のEnvironment/Secrets/変数作成・固定署名workflow実行・安定更新の実機確認も未実施。
 local-onlyで既存当projectのdebug keyをfixtureとして使う場合も、それは新しい固定署名keyでも配布APKでもない。
@@ -125,11 +127,57 @@ local-onlyで既存当projectのdebug keyをfixtureとして使う場合も、�
 
 承認後はEnvironmentのmain限定policyを先に適用し、専用keyを安全にバックアップして4Secretsと公開pinを登録する。
 値をログ/コマンド引数へ出さず、正規CLIのstdin等で登録する。新しいtag/承認済みmain SHAで手動dispatchし、
-署名/ハッシュ/上書き更新を確認する。internal workflowのversionCodeはそのworkflow内のrun_numberで単調増加する。
+署名/ハッシュ/上書き更新を確認する。internal workflowのversionCodeはそのworkflow内のrun_numberを使う。
+全ページの既存Release（draftを含む）のうち`cinematic-camera-internal.apk`を持つものを照合し、
+Release本文の`<!-- cinematic-internal-release: versionCode=N certSha256=HEX -->`の最大番号以下なら署名前に停止する。
+markerを持つReleaseも資産名にかかわらず検査し、履歴の証明書SHA-256が公開pinと違う場合は停止する。
+本文のmarkerが欠落・不正・重複した場合やAPI取得失敗も停止する。旧runの再実行やworkflowの作り直しで番号が後退したら、
+既存の最大番号を越える採番方針を別途reviewする。過去の固定署名Release・APK・番号markerを削除/改変して回避しない。
 
 最初の固定署名版は現在の一時debug版と署名が異なるため、上書き更新できない。必要な写真/ログ/設定の退避と
 初回の手動移行は本人が判断する。以後も同じ鍵と増加versionCodeを維持する。端末の削除/インストールは自動実行しない。
 本Draftは夜間の通常機能merge許可だけでは取り込まず、上記の別途明示承認を待つ。
+
+### 初回移行でデータを失わないための停止条件
+
+同じapplicationIdの異なる署名への置換は通常の更新ではない。現行manifestは`allowBackup=false`で、
+cloud backup / device transferも除外しており、Androidの自動復元を移行手段として約束しない。
+旧APK・既存Release・旧アプリは準備中に削除しない。次を本人が確認できるまで初回移行を止める。
+
+1. `Pictures/Cinematic Camera/`のJPEG/DNGと`Movies/Cinematic Camera/`の動画をアプリ外の独立した保存先へコピーし、
+   件数・サイズ・hashと実際に開けることを確認する。MediaStoreへの保存とバックアップ完了は別である。
+2. アプリ専用領域の旧撮影物・`files/reports/`のログが必要なら、それぞれの取り出し可否を先に確認する。
+   検証レポートの共有は現在のログ末尾（最大128KiB）であり、全セッションの完全な書き出しではない。
+   取り出せない必要データがある場合は、旧アプリを保持して移行方法を別途検討する。
+3. `capture-probe`の端末内設定には完全なexport/import機能がない。必要な設定値を控え、手動再設定できるか確認する。
+   設定の完全保持が必須なら、現提案だけでは初回移行できない。別途移行設計が必要である。
+4. 退避が検証でき、データ消失の範囲と初回導入方法を本人が別途判断した後にだけ端末移行へ進む。
+   以後の固定署名更新でも写真・設定を保持できたか本人が実機確認する。ここでは削除/再インストールを許可されたと扱わない。
+
+### 鍵のバックアップ・復旧と配布停止
+
+鍵の生成前に、本人が保管先・管理者・復旧方法を決める。提案は、repo/ソースZIP/Actions artifact/cacheから分離した
+暗号化バックアップを独立した2か所へ置き、パスワードを鍵と別に管理すること。PKCS12とalias、公開証明書SHA-256、
+有効期限、最後に配布したversionCodeを復旧台帳へ残す。鍵やパスワードそのものをIssue/PR/会話/コマンド引数へ書かない。
+GitHub Secretsは配布用の写しであり、値を読み戻せないためバックアップの代わりにしない。
+
+登録前の復旧確認ではバックアップのコピーを保護された一時領域へ戻し、同じaliasで開けること、証明書pinが一致すること、
+ローカルの非配布fixtureを署名・検証できることを確かめる。新規の鍵/保管/復旧試験は承認後にだけ行う。
+一時コピーは試験後に削除するが、原本・バックアップ・既存配布APKは削除しない。
+
+Secretsの欠落/誤設定なら配布を止め、承認後に同じ鍵のバックアップから復旧する。pin不一致をpinの書換えで回避しない。
+鍵紛失・破損で有効なバックアップがなければ既存アプリへの継続更新はできない。新規鍵を同じ鍵として扱わず、
+別のアプリIDまたは初回移行を含む設計を本人と再検討する。漏えいが疑われた場合も署名・配布を止め、影響と対応を別途判断する。
+Play App Signingの鍵再設定や署名rotationはこの経路には導入していない。
+
+不具合版から戻す場合は、レビューした既知の正常ソースを同じ鍵・より大きなversionCodeで改めて配布する。
+旧APKへのdowngradeやデータ消去で戻さず、データ形式の後方互換性を確認できない場合は配布を止める。
+端末での初回導入、同一署名の2版間更新、写真/設定保持、復旧は未検証であり、CI成功と区別する。
+
+根拠: [Androidのアプリ署名](https://developer.android.com/studio/publish/app-signing)、
+[versionCode](https://developer.android.com/studio/publish/versioning)、
+[GitHub run_number / run_attempt](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts)、
+[Gradle Actions cache設定](https://github.com/gradle/actions/blob/main/docs/setup-gradle.md)。
 
 ## Pixel 9aで受け取る
 
