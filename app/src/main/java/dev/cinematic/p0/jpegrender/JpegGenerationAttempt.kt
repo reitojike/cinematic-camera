@@ -27,9 +27,22 @@ internal class JpegGenerationAttempt(
 
     fun releaseResources() = exclusively { resources.releaseAll()?.let { throw it }; Unit }
 
-    fun render(shouldStop: () -> Boolean): GeneratedJpeg = exclusively {
+    fun render(shouldStop: () -> Boolean): GeneratedJpeg = renderChecked(false, shouldStop) { observed, prepared ->
+        GeneratedJpeg(CompletedRender(outputRequest(observed), JpegGenerationRecipe.RENDERER,
+            RenderedResultKind.COMPLETE_STAGE_CLEAR, prepared.faceState, prepared.exposureState), observed.fingerprint)
+    }
+
+    fun renderTrial(shouldStop: () -> Boolean): TrialJpeg = renderChecked(true, shouldStop) { observed, _ ->
+        TrialJpeg(outputRequest(observed), observed.fingerprint)
+    }
+
+    private fun outputRequest(observed: JpegInspection) = RenderedJpegRequest(request.captureId, request.generation,
+        request.source, request.recipe.snapshot, observed.output)
+
+    private fun <T> renderChecked(trial: Boolean, shouldStop: () -> Boolean, finish: (JpegInspection, JpegControls) -> T): T = exclusively {
         check(!started) { "JPEG attempt is single use" }
         started = true
+        require(request.recipe.isTrial == trial) { "JPEG recipe belongs to a different entry" }
         require(target.captureId == request.captureId && target.generation == request.generation)
         require(frames.contract == request.recipe.inputContract && controls.contract == request.recipe.controls.schema)
         var failure: Throwable? = null
@@ -47,7 +60,8 @@ internal class JpegGenerationAttempt(
             require(frame.image.width <= JpegGenerationRecipe.MAX_EDGE && frame.image.height <= JpegGenerationRecipe.MAX_EDGE)
             val prepared = controls.prepare(frame.image, request.recipe.controls, stop)
             checkpoint()
-            prepared.validate(frame.image, request.recipe.controls)
+            if (trial) prepared.validateTrial(frame.image, request.recipe.controls)
+            else prepared.validate(frame.image, request.recipe.controls)
             val base = R7Base.render(frame.image, prepared.foundationRoi, prepared.externalEv, stop)
             val result = StageClearLook.renderFromBase(base, prepared.faces, request.recipe.strength, stop).image
             checkpoint()
@@ -66,9 +80,7 @@ internal class JpegGenerationAttempt(
                 observed.output.orientation != 1 || observed.output.color != "sRGB") throw IOException("JPEG readback differs from encoded output")
             verifyOriginal()
             checkpoint()
-            GeneratedJpeg(CompletedRender(RenderedJpegRequest(request.captureId, request.generation, request.source,
-                request.recipe.snapshot, observed.output), JpegGenerationRecipe.RENDERER, RenderedResultKind.COMPLETE_STAGE_CLEAR,
-                prepared.faceState, prepared.exposureState), written)
+            finish(observed, prepared)
         } catch (t: Throwable) {
             failure = t
             throw t
