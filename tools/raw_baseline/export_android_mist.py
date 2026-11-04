@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import ast
 from pathlib import Path
 
@@ -15,7 +16,7 @@ from test_stage_clear import scene
 
 ROOT = Path(__file__).resolve().parents[2]
 CONSTANTS = ROOT / "app/src/main/java/dev/cinematic/p0/raw/StageClearMistV1.kt"
-FIXTURE = ROOT / "app/src/test/resources/stage_clear_mist_v1.csv"
+FIXTURE = ROOT / "app/src/test/resources/stage_clear_mist_v1.csv.gz"
 
 
 def function(module, name):
@@ -97,7 +98,7 @@ def fixture() -> str:
 def check_exports() -> None:
     if CONSTANTS.read_text(encoding="utf-8") != constants():
         raise AssertionError("Generated mist constants differ from PC")
-    expected, actual = fixture().splitlines(), FIXTURE.read_text(encoding="utf-8").splitlines()
+    expected, actual = fixture().splitlines(), gzip.decompress(FIXTURE.read_bytes()).decode("utf-8").splitlines()
     if len(expected) != len(actual):
         raise AssertionError("Mist fixture shape changed")
     for line, (want, got) in enumerate(zip(expected, actual), 1):
@@ -119,7 +120,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.write:
         CONSTANTS.write_text(constants(), encoding="utf-8", newline="\n")
-        FIXTURE.write_text(fixture(), encoding="utf-8", newline="\n")
+        FIXTURE.write_bytes(gzip.compress(fixture().encode("utf-8"), mtime=0))
     else:
         check_exports()
     print("Wrote synthetic mist exports" if args.write else "Mist exports match PC")

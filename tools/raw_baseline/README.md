@@ -188,3 +188,16 @@ py -3.15 -m venv tools/raw_baseline/.venv-py315-diag
 
 `PC RAW checks`はWindows 2025 x64 / Python 3.15.2の専用venvに`requirements-win-py315.txt`のhash lockを入れ、合成・CLI・再現性のunitだけを実行する。実写真を取得・生成物をuploadしない。既存Android checksとは別で、成功を実DNG decodeやPixel/fp画質の証拠にしない。
 [公式setup-python](https://github.com/actions/setup-python)と[公式runner images](https://github.com/actions/runner-images)の手順に従い、checkout/setup-python v7とcontents:readのみを使う。新しいSecrets・常駐環境は追加しない。
+
+
+## Android用の合成fixture
+
+`export_android_protections.py` / `export_android_blur.py` / `export_android_glow.py` /
+`export_android_mist.py`は`--check`でPC正本との再照合、`--write`でKotlin定数（該当時）とfixtureを生成する。
+fixtureはUTF-8/LFのCSVを標準gzipで可逆圧縮し、`app/src/test/resources/stage_clear_*_v1.csv.gz`へ保存する。
+Pythonはgzip.decompress、JVMはGZIPInputStreamで展開する。圧縮bytesが違っても解凍後の全画素比較で判断し、
+ケース/寸法/誤差境界を保存形式変更のために変えない。mtimeは0、filenameは格納しない。
+
+`test_android_fixture_storage.py`が一時出力への`--write`→解凍→生成text一致→PC再照合を検証する。
+通常のPC test discoveryとAndroid unit testに含まれ、生成データはGitHubの既定差分で折りたたむ属性を付ける。
+元CSVとのbyte一致は変換PRの証拠として記録し、過去のGit blobからも照合できる。実行時の画像処理や性能の変更ではない。

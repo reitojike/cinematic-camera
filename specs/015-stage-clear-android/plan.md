@@ -122,3 +122,12 @@ PCから定数と合成fixtureを生成する。11場面×強度0/.5/1で単体�
 新fixtureは標準gzipで可逆圧縮し、PC/Python・JVMの標準ライブラリで展開する。再照合は解凍後の同じ画素値を対象とし、
 縮小・ケース削除で行数を減らさない。PC CIのpathsにも定数とgzip fixtureを追加する。
 段4/5・全renderer、DNG/R7、保存URI、実機の画質・時間・peakは後続として区別する。
+
+## 既存合成fixtureの可逆圧縮（#98、移植と別PR）
+
+既存4 CSVの作業ツリー上の改行ではなく、Git blob bytesをgzipへ変換する。解凍後のbyte/SHA-256一致を検証する。
+Pythonはgzip.compress(mtime=0)/decompress、JVMはGZIPInputStreamで同じデータを読み、全画素の照合方法・境界は維持する。
+exporter --writeの一時出力を展開して生成textと照合し、既存check_exportsも通す。生成textはUTF-8/LF。
+.gitattributesで生成CSV/gzipをlinguist-generatedとして扱い、gzipはbinaryにする。定数や手書きコードは折りたたまない。
+PC CI pathsはgzip resourceと属性を監視する。ケース削除・寸法縮小・新依存・runtime変更は含めない。
+#96のcandidateから別branch/別Draft PRを分け、#96 merge後にmainへbaseを移す。両PRのmerge承認はそれぞれ必要。
