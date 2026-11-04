@@ -1,0 +1,12 @@
+# 設計
+
+変更はphotorollとそのテストに限定し、raw/native/保存の担当ファイルを変更しない。
+
+- renderer契約に表示種別を持たせ、試験decode要求とStage Clear要求を区別する。結果種別が要求と一致したときだけ、その種別の説明と画像を表示する。
+- `CancellationSignal`を要求単位で作り、Main threadの選び直し/Back/ON_PAUSE/onDisposeからcancelを伝える。古い処理のfinallyは同じtokenだけを解放する。原本hashのshouldStopも同signalを確認する。
+- #105の`DngPreviewDecoder.decode`をworkerから呼び、64 MiB/16MP/長辺1024の制限と固定エラーを利用する。サイズ制限を原本hash前にも適用する。線形画像からIntArrayへ変換し、ソフトウェアBitmapを生成する。
+- `CameraManager.AvailabilityCallback`でcameraIdListの全logical cameraが利用可能と分かった場合だけ開始する。Activityのstart/stopで登録/解除し、未知は開始しない。callbackはCameraX sessionを操作しない。確認後の他アプリの取得まで排他する契約ではない。
+- Android 10以降でPowerManagerのSEVERE未満、ActivityManagerのlowMemory=falseかつavailMemが384 MiB以上の場合だけ試験decodeを開始する。384 MiBは64 MiB入力snapshot・128 MiB decoder内制限・小さいJava/Bitmap出力を見込んだ保守的な開始条件であり、process peakの保証や実測合格ではない。低下/高温時は次要求を止める。途中のOS reclaimや熱変化、非協調kernelの停止遅延は残る。
+- 018のprocess内単一Semaphore、原本再照合、旧ticket隔離を維持する。顔・露出・R7設定を作らず、Stage Clear APIへdecode直後の画像を渡さない。
+
+新依存/新権限なし。#105の依存を含むローカル候補で検証し、両依存のmain統合後に接続commitだけを最新mainへ適用して最終検証する。

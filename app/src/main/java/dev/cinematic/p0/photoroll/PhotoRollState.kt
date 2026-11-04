@@ -4,6 +4,29 @@ internal fun canOpenPhotoRoll(busy: Boolean, recordingBusy: Boolean, ownsCapture
     !busy && !recordingBusy && !ownsCapture && !unknown
 
 internal enum class PhotoRollPhase { EMPTY, CHECKING, RENDERING, DISPLAYED, BLOCKED, PAUSED }
+internal enum class PhotoRollPreviewMode { STAGE_CLEAR, DNG_TRIAL }
+
+internal data class PhotoRollResources(
+    val camerasIdle: Boolean?, val thermalStatus: Int?, val lowMemory: Boolean?, val availableBytes: Long?,
+) {
+    fun blockedReason(): String? = when {
+        camerasIdle != true -> "カメラの解放を確認できません。撮影を終了してから再試行してください"
+        thermalStatus == null || thermalStatus !in 0..6 -> "端末の温度状態を確認できません"
+        thermalStatus >= 3 -> "端末が高温です。冷めてから再試行してください"
+        lowMemory != false || availableBytes == null || availableBytes < REQUIRED_AVAILABLE_BYTES ->
+            "試験表示に必要な空きメモリを確認できません。他のアプリを閉じて再試行してください"
+        else -> null
+    }
+    companion object { const val REQUIRED_AVAILABLE_BYTES = 384L * 1024 * 1024 }
+}
+
+/** Main-thread owner. Cancellation requests do not claim a worker has released its permit. */
+internal class PhotoRollWorkOwner<T : Any>(private val cancelToken: (T) -> Unit) {
+    private var active: T? = null
+    fun begin(token: T) { cancel(); active = token }
+    fun cancel() { active?.let(cancelToken) }
+    fun finish(token: T) { if (active === token) active = null }
+}
 internal data class PhotoRollTicket(val generation: Long, val source: String)
 
 /** Main-thread state. A URI alone is never a completion token. */

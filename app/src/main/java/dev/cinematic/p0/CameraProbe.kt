@@ -37,10 +37,22 @@ import java.io.File
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import dev.cinematic.p0.rawcapture.AndroidRawCaptureQueue
+import dev.cinematic.p0.rawcapture.RawCaptureNotice
+import dev.cinematic.p0.rawcapture.RawCaptureObserver
+import dev.cinematic.p0.rawcapture.RawCaptureTicket
+import dev.cinematic.p0.rawcapture.RawOutput
+import dev.cinematic.p0.rawcapture.DngPublicationPhase
+import dev.cinematic.p0.rawcapture.RawCapturePresentation
 
 @androidx.annotation.OptIn(markerClass = [androidx.camera.camera2.interop.ExperimentalCamera2Interop::class])
 class CameraProbe(private val context: Context, private val owner: LifecycleOwner) {
     private val main = ContextCompat.getMainExecutor(context)
+    private val rawQueue = if (Build.VERSION.SDK_INT >= 29) AndroidRawCaptureQueue.get(context) else null
+    private val rawCameraOwner = rawQueue?.newCameraOwner()
+    private var activeRawTicket: RawCaptureTicket? = null
+    private val rawPresentation = RawCapturePresentation()
+    private var rawObserver: RawCaptureObserver? = null
     private val controlHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val controlOperation = ControlOperation()
     private val liveControls = LatestLiveControlQueue()
@@ -106,8 +118,22 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     fun consumeExposureMigrationNotice(): String? = exposureMigrationNotice.also { exposureMigrationNotice = null }
     var measured by mutableStateOf("No CaptureResult yet"); private set
     var bound by mutableStateOf(false); private set
-    var busy by mutableStateOf(false); private set
-    var controlReady by mutableStateOf(false); private set
+    private var busyValue by mutableStateOf(false)
+    var busy: Boolean
+        get() = busyValue
+        private set(value) {
+            if (value) rawCameraOwner?.update(true)
+            busyValue = value
+            if (!value) refreshRawAdmission()
+        }
+    private var controlReadyValue by mutableStateOf(false)
+    var controlReady: Boolean
+        get() = controlReadyValue
+        private set(value) {
+            if (!value) rawCameraOwner?.update(true)
+            controlReadyValue = value
+            if (value) refreshRawAdmission()
+        }
     var mode by mutableStateOf(preferences.mode()); private set
     var requestedIso by mutableStateOf("100"); private set
     var requestedMs by mutableStateOf("10"); private set
@@ -219,7 +245,12 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         } catch (failure: Exception) { log.write("THERMAL_UNAVAILABLE ${failure.message}") }
     }
 
-    private fun event(message: String) { status = message; log.write(message) }
+    private fun refreshRawAdmission() {
+        if (closed && !recordingBusy && !bound) rawCameraOwner?.close()
+        else rawCameraOwner?.update(busy || recordingBusy || exposureOperationPending || activeCaptureToken != null ||
+            controlOperation.token != null || stillExposure?.ownsCapture == true || (bound && !controlReady))
+    }
+    private fun event(message: String) { refreshRawAdmission(); status = message; log.write(message) }
     private fun clearControlDeadline() {
         controlTimeout?.let(controlHandler::removeCallbacks); controlTimeout = null
     }
@@ -594,6 +625,9 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         }.also { controlHandler.postDelayed(it, budget) }
     }
     fun onForeground() {
+        rawCameraOwner?.foreground(true)
+        rawQueue?.onForeground()
+        refreshRawAdmission()
         if (!closed && pendingForegroundBind) { pendingForegroundBind = false; busy = false; bind() }
     }
 
@@ -635,6 +669,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             event("Recording requires a visible activity; retry Record after resume"); return
         }
         if (!applyOutputOrientation()) return
+        rawCameraOwner?.update(true)
         log.write("VIDEO_ORIENTATION startRotation=${outputOrientation.applied}; fixed until completion")
         cine.start(session.recorder, audioWanted, "${session.choice.label} exposure=[$desired] overrides=[$overrides] requestedLocks=[$autoLocks]")
     }
@@ -644,6 +679,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         event("MICROPHONE permission=$granted${if (granted) "" else "; recording not started; grant permission or explicitly select audio off"}")
     }
     fun onBackground() {
+        rawCameraOwner?.foreground(false)
         cine.stop("activity background; no background recording")
         if (mode == CaptureMode.STILL && (bound || stillExposure != null || exposureOperationPending)) {
             val pendingAuto = if (runtimeTarget == RuntimeTarget.GENERAL) autoResumeTarget(operationReceipt) else null
@@ -665,6 +701,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     private fun onCineChanged() {
         if (!closed && pendingStop && !recordingBusy) { pendingStop = false; stop() }
         else if (!closed && !recordingBusy) applyOutputOrientation()
+        refreshRawAdmission()
     }
 
     fun focusCenter() {
@@ -904,6 +941,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         val id = selectedId ?: run { event("UNSUPPORTED no CameraX camera"); return }
         val previewView = view ?: return
         val retryIntent = liveControlIntent.takeIf { liveIntentKey == exposureKey() }
+        rawCameraOwner?.update(true)
         try { clearRetainedInterop() } catch (failure: Exception) { error("bind: held Interop clear", failure); return }
         clearStillExposure(); invalidateControl(); clearLiveExposure()
         lastPreviewMinFrameNs = null
@@ -1140,6 +1178,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         stopPreview()
     }
     private fun stopPreview() {
+        rawPresentation.invalidate()
+        activeRawTicket?.let { rawQueue?.interrupt(it) }; activeRawTicket = null
         pendingBindControls.clear()
         clearStillExposure()
         if (recordingBusy) { pendingStop = true; cine.stop("preview Stop"); return }
@@ -1290,10 +1330,12 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     fun capture() {
         if (busy || recordingBusy || mode != CaptureMode.STILL || !controlReady || !sharedSaveSupported) return
         val state = stillExposure
-        if (state == null) { captureFiles(); return }
+        if (state == null) { rawPresentation.invalidate(); captureFiles(); return }
         if (!state.canCapture) { event("previewの新しい受付・実測を待ってください"); return }
         val c = camera ?: return
         val token = UUID.randomUUID().toString()
+        rawPresentation.invalidate()
+        if (format == ImageCapture.OUTPUT_FORMAT_RAW || format == ImageCapture.OUTPUT_FORMAT_RAW_JPEG) rawPresentation.begin(token, true)
         photoRequestedAtMs = SystemClock.elapsedRealtime()
         stillExposure = state.beginCapture()
         val fixed = stillExposure?.captureTarget ?: return
@@ -1328,6 +1370,10 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         }
         val captureRotation = outputOrientation.applied
         val token = preparedToken ?: UUID.randomUUID().toString()
+        if (format == ImageCapture.OUTPUT_FORMAT_RAW || format == ImageCapture.OUTPUT_FORMAT_RAW_JPEG) {
+            captureRawFiles(capture, token, preparedToken != null)
+            return
+        }
         val appCaptureStart = if (preparedToken == null) SystemClock.elapsedRealtime() else photoRequestedAtMs
         val generation = epoch
         val cameraId = selectedId
@@ -1460,7 +1506,128 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         }
     }
 
+    /** RAW only: durable per-format receipt first, shared IO after capture/preview recovery. */
+    private fun captureRawFiles(capture: ImageCapture, token: String, prepared: Boolean) {
+        val queue = rawQueue ?: return
+        val generation = epoch
+        val pair = format == ImageCapture.OUTPUT_FORMAT_RAW_JPEG
+        val captureSettings = stillExposure?.captureTarget
+        var issued = false
+        val presentation = rawPresentation.request(token) ?: rawPresentation.begin(token, captureSettings != null)
+        busy = true; activeCaptureToken = token; photoStage = PhotoStage.CAPTURING
+        lastFailure = null
+        fun current() = !closed && generation == epoch && activeCaptureToken == token && rawPresentation.ownsCapture(presentation)
+        fun latest() = !closed && generation == epoch && rawPresentation.ownsSharedNotice(presentation)
+        fun failed(failure: Exception) {
+            if (!current()) { log.write("RAW_LATE_FAILURE type=${failure.javaClass.simpleName}"); return }
+            rawPresentation.failed(presentation)
+            cancelPhotoDeadline()
+            activeRawTicket = null
+            busy = false; activeCaptureToken = null; photoStage = PhotoStage.FAILED
+            lastFailure = "RAW撮影・受領を完了できません。残ったデータは保持しています"
+            event(lastFailure!!)
+            if (captureSettings != null) {
+                if (issued) finishStillPhoto(false) else failCapturePreparation("RAW出力を準備できません・撮影未開始")
+            } else { controlReady = true; applyOutputOrientation() }
+        }
+        val observer = RawCaptureObserver { ticket, notice ->
+            when (notice) {
+                is RawCaptureNotice.Prepared -> {
+                    if (!current()) queue.interrupt(ticket)
+                    else try {
+                        val callback = object : ImageCapture.OnImageSavedCallback {
+                            override fun onImageSaved(result: ImageCapture.OutputFileResults) {
+                                val output = when (result.imageFormat) {
+                                    ImageFormat.RAW_SENSOR -> RawOutput.DNG
+                                    ImageFormat.JPEG -> RawOutput.JPEG
+                                    else -> null
+                                }
+                                if (output == null) queue.interrupt(ticket, IllegalArgumentException("Unexpected RAW output format"))
+                                else queue.received(ticket, output)
+                            }
+                            override fun onError(exception: ImageCaptureException) = queue.interrupt(ticket, exception)
+                        }
+                        fun options(output: RawOutput) = ImageCapture.OutputFileOptions.Builder(notice.outputs.getValue(output)).build()
+                        if (prepared) {
+                            stillExposure = stillExposure?.singleStarted()
+                            check(stillExposure?.singleIssued == true) { "Capture settings not accepted" }
+                        }
+                        issued = true
+                        check(rawPresentation.issued(presentation)) { "RAW presentation owner changed" }
+                        cancelPhotoDeadline()
+                        val budget = controlBudgetMs(captureSettings?.plan?.capture?.exposureNs,
+                            exposureDurations.previous(selectedId), sample?.frameDurationNs)
+                        photoDeadline = Runnable {
+                            photoDeadline = null
+                            if (current()) {
+                                rawPresentation.unknown(presentation)
+                                // Unknown sensor/request completion retains control ownership until callback or Stop.
+                                stillExposure = stillExposure?.unknown("RAW撮影結果が不明です。接続停止で復旧できます")
+                                busy = false; controlReady = false; photoStage = PhotoStage.FAILED
+                                event("RAW撮影結果を確認できません。保存済みデータを保持し、接続停止で復旧できます")
+                                queue.interrupt(ticket)
+                            }
+                        }.also { controlHandler.postDelayed(it, budget) }
+                        if (pair) capture.takePicture(options(RawOutput.DNG), options(RawOutput.JPEG), main, callback)
+                        else capture.takePicture(options(RawOutput.DNG), main, callback)
+                        log.write("RAW_CAPTURE_ISSUED pair=$pair targetRotation=${outputOrientation.applied}; callbacks/receipts separate from shared handoff")
+                    } catch (failure: Exception) { queue.interrupt(ticket, failure) }
+                }
+                is RawCaptureNotice.Received -> {
+                    val receipt = notice.receipt
+                    val completion = if (current()) rawPresentation.received(presentation, receipt) else null
+                    if (completion != null) {
+                        cancelPhotoDeadline()
+                        activeRawTicket = null
+                        busy = false; activeCaptureToken = null
+                        val interrupted = completion.interrupted
+                        photoStage = if (interrupted) PhotoStage.FAILED else PhotoStage.SAVING
+                        event(if (interrupted) "中断した撮影の受領データを保全しました。DNG共有保存は別途確認します"
+                            else "RAWを受領しました。DNGを共有保存しています")
+                        finishStillPhoto(!interrupted)
+                        if (completion.restoreAutoPreview) { controlReady = true; applyOutputOrientation() }
+                    }
+                }
+                is RawCaptureNotice.Shared -> if (latest()) {
+                    if (notice.record.phase == DngPublicationPhase.SHARED_ONLY) {
+                        photoStage = if (notice.interrupted) PhotoStage.FAILED else PhotoStage.SAVED
+                        event(if (notice.interrupted) "中断した撮影のDNG原本を共有保存しました"
+                            else if (pair) "DNGを共有保存しました。撮影JPEGはアプリ内に保持しています" else "DNGを共有保存しました")
+                    } else if (notice.record.phase == DngPublicationPhase.UNKNOWN) {
+                        photoStage = PhotoStage.FAILED
+                        event("DNG共有保存を確認できません。元データを保持しています")
+                    }
+                }
+                is RawCaptureNotice.Failed -> {
+                    if (notice.stage == "shared") {
+                        if (latest()) {
+                            photoStage = PhotoStage.FAILED
+                            event("DNG共有保存を完了できません。保存データを保持し、再開を待ちます")
+                        }
+                    } else failed(notice.failure)
+                }
+            }
+        }
+        rawObserver = observer // Queue stores a weak observer, never an Activity owner.
+        cancelPhotoDeadline()
+        val preparationBudget = controlBudgetMs(captureSettings?.plan?.capture?.exposureNs,
+            exposureDurations.previous(selectedId), sample?.frameDurationNs)
+        photoDeadline = Runnable {
+            photoDeadline = null
+            if (current() && !issued) {
+                activeRawTicket?.let { queue.interrupt(it) }
+                failed(java.util.concurrent.TimeoutException("RAW output preparation timed out"))
+            }
+        }.also { controlHandler.postDelayed(it, preparationBudget) }
+        try {
+            activeRawTicket = queue.prepare(token, if (pair) setOf(RawOutput.DNG, RawOutput.JPEG) else setOf(RawOutput.DNG), observer)
+        } catch (failure: Exception) { failed(failure) }
+    }
+
     fun close() {
+        rawPresentation.invalidate()
+        activeRawTicket?.let { rawQueue?.interrupt(it) }; activeRawTicket = null
+        rawObserver = null
         stillResumeIntent.clear(); pendingForegroundBind = false
         pendingBindControls.clear()
         clearStillExposure()
@@ -1473,6 +1640,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         try { clearRetainedInterop() } catch (failure: Exception) { log.write("CLOSE_INTEROP_CLEAR_FAILED " + failure.message) }
         try { camera?.cameraInfo?.cameraState?.removeObservers(owner); provider?.unbindAll() }
         catch (e: Exception) { log.write("ERROR close ${e.javaClass.simpleName}: ${e.message}") }
+        bound = false
+        refreshRawAdmission()
     }
 
     companion object {

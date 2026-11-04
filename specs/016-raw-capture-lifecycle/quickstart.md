@@ -29,6 +29,13 @@ symlinkを作れないWindowsではredirectテストだけをskipと記録し、
 JVMテストは標準AndroidAtomicFileの動作をmockで合格にせず、注入backendと純pathだけを検証する。
 実端末のAtomicFile、実DNG/仮JPEGの端末上の保全、撮影との接続、共有原本の引渡しは別の未実施項目として残す。
 
+撮影接続の`RawCaptureSessionTest`/`RawCaptureQueueTest`/`RawCapturePresentationTest`/`RawHandoffAdmissionTest`は、
+形式別逆順/部分成功/重複/late、受領前のhash・共有IOなし、未確認fileの非昇格、process所有の非重複、foregroundだけの再開を検証する。
+期限後のAUTO late全受領による復帰、manualの既存復帰経路、新manual設定準備中の旧共有通知無効化、
+撮影予約とadmissionのrace、停止latch、初回hashのpersistent close失敗と追加IO禁止を含む。
+失敗通知を先に配送しcloseを保留したまま別撮影のprepareを実行し、UI待ちとwriter予約解放が別であることを確認する。
+queueは実CameraXやセンサーをfakeで合格にせず、既存JPEG単独/動画の回帰suiteも全実行する。
+
 実ファイル保全部品（T010・T011のファイル部分）は次の限定テストで検証する。
 
 ```text
@@ -73,6 +80,9 @@ adb -s <isolated-emulator> shell am instrument -w -e isolated true dev.cinematic
 合成byteを新規の固有撮影IDへ保存し、native公開の後で応答喪失を注入する。再生成後に同URI採用・原本一致・内部DNG0・
 仮JPEG不変・共有1を確認し、今回作成した合成rowだけを再照合後に削除して非再作成を確認する。
 結果は`handoff_smoke=PASS`または失敗stage/例外型だけとし、URI/端末識別/写真を出力しない。
+同じdriverでCameraProbeの生成/closeとアプリ用singleton queueも確認する。人工RAW+JPEGを逆順で受領し、
+撮影予約の間は初回hashなし、受領通知後に予約を解除して共有1/内部DNG0・仮JPEG不変となることをnative adapterで確認する。
+これはCameraX実撮影を行う試験ではなく、実センサーcallbackの形式・順序・期限と撮影応答はPixel検証に残す。
 エミュレータAPIの確認はPixel実機/有効DNG/全API互換/実process kill/電源断の合格と分ける。
 
 | 故障/操作点 | 確認する結果 | 要件 |
