@@ -167,6 +167,31 @@ hash中のJPEG受領などでrevisionが進んだ場合、古い結果をcommit�
 最終の協調停止確認とmetadata commitは一括transactionではなく、その後の停止を原子的に排他する保証はない。
 これは撮影優先IO executorから明示的に使う未接続部品。共有URI/公開状態、reader leaseと一時DNG解放、起動走査は後続である。
 
+### pending DNG行の確保とURI復旧（T012/T013のinsert部分）
+
+`DngPublicationJournal`は同じ撮影の`ORIGINAL`操作を`dng-publication.bin`へ保存する。
+受領台帳の`receipt.bin`とは別で、`AndroidAtomicJournalStorage`のfile kindを固定enumから選ぶ。
+defaultは従来の受領台帳のまま。両file kindのbase/`.new`/`.bak`と撮影directoryに同じpath検証を適用する。
+版1・4KiB上限・payload SHA-256、capture ID、revision、token、原本fingerprint、期待volume/path/MIME/name、
+phaseと任意URIを記録する。形式拡張で既存tokenや期待metadataを作り直さず、別途migrationを検証する。
+
+prepareは同じ撮影のhash記録済みreceiptを要求し、再prepareでも既存状態・tokenを維持する。fingerprint不一致は停止する。
+1 process・1公開操作に1つのlive journal/coordinatorを所有し、他instance/process間の排他は提供しない。
+`PREPARED`→`INSERTING`の台帳readback成功後だけ、1回insertを発行する。URI記録commit失敗/応答喪失時は再読し、
+`INSERTING`では同じ期待metadataの候補だけを照合する。候補0/複数、情報不明、URI/volume/owner/name/path/MIME/pending/trash不一致は
+`UNKNOWN`に止め、再insertや削除をしない。通常のinsert/query例外やnull応答も不明として自動停止する。
+`ROW_RECORDED`も毎回再照合し、公開済み・欠落・外部変更を新しい行で補わない。`UNKNOWN`は自動解除しない。
+
+`MediaStoreDngPendingRows`はAPI 29以上の標準Images/external_primaryへ`IS_PENDING=1`でinsertし、metadataを読むだけ。
+API 30以上は`QUERY_ARG_MATCH_PENDING=MATCH_INCLUDE`、API 29は`setIncludePending`でpendingを明示的に含める。
+owner列のnull・visibility制約・列欠落・null cursor/権限不足を安全な所有/不在と推定しない。名前/tokenだけで所有と扱わない。
+広範囲権限、fallback query、row update/deleteは追加しない。照合結果は瞬間の観測で、恒久的な書込み許可ではない。
+
+`ROW_RECORDED`はpending行の特定までで、byte書込み・共有保存成功・公開成功を表さない。
+copy/close/readback、公開と共有原本確立、一時DNG解放は未実装。将来の各書込み前にも所有/pendingを再照合する。
+appのroot/kind選択・撮影/起動走査へ未接続。JVMはfake provider/故障台帳とpathを検証し、実MediaStore adapterはcompile/lintと独立レビューまで。
+API 29/30以降のpending検索、owner visibility、volume/API実動作・OS kill・電源断は端末検証として残す。
+
 ## 撮影優先と自動現像
 
 - 開始条件をすべてANDにする: foreground、camera session未使用、capture/record/finalize/rebindなし、
@@ -206,6 +231,8 @@ attempt/予約は参照identityで識別し、別coordinatorや旧attemptの完�
   cacheの消去リスクを避ける。アンインストール/データ消去を越える原本は共有DNGで保持する。
 - [AtomicFile](https://developer.android.com/reference/android/util/AtomicFile): 小さい単位の台帳commit候補。
   Roomを先行導入せず1台帳1writerから始め、検索/transaction要件が増えた時点で再判断する。
+- [MediaStore query引数](https://developer.android.com/reference/android/provider/MediaStore#QUERY_ARG_MATCH_PENDING)と
+  [MediaColumns](https://developer.android.com/reference/android/provider/MediaStore.MediaColumns#OWNER_PACKAGE_NAME): pendingの明示検索とowner不明時の停止を使う。
 - [Files](https://developer.android.com/reference/java/nio/file/Files): 固定pathの新規作成に`CREATE_NEW`を明示し、既存ファイルの上書きを避ける。
   [CameraX OutputFileOptions](https://developer.android.com/reference/androidx/camera/core/ImageCapture.OutputFileOptions.Builder)の
   stream入力へ渡すadapterは後続でclose/callback所有を確認して接続する。

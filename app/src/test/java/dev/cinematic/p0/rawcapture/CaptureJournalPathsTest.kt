@@ -16,6 +16,9 @@ class CaptureJournalPathsTest {
         val root = temporary.newFolder("private-captures")
         val file = CaptureJournalPaths.receiptFile(root, "capture-1")
         assertEquals(File(File(root.canonicalFile, "capture-1"), "receipt.bin"), file)
+        val publication = CaptureJournalPaths.journalFile(root, "capture-1", CaptureJournalFile.DNG_PUBLICATION)
+        assertEquals(File(file.parentFile, "dng-publication.bin"), publication)
+        assertNotEquals(file, publication)
         assertFalse(file.exists())
         assertEquals(0, root.listFiles()!!.size)
     }
@@ -38,10 +41,12 @@ class CaptureJournalPathsTest {
             else throw e
         }
         assertThrows(IOException::class.java) { CaptureJournalPaths.receiptFile(root, "redirected") }
-        for ((index, name) in listOf("receipt.bin", "receipt.bin.new", "receipt.bin.bak").withIndex()) {
-            val directory = File(root, "capture-$index").also { assertTrue(it.mkdir()) }
-            Files.createSymbolicLink(File(directory, name).toPath(), File(outside, "foreign-$index").toPath())
-            assertThrows(IOException::class.java) { CaptureJournalPaths.receiptFile(root, directory.name) }
+        for (kind in CaptureJournalFile.entries) {
+            for ((index, suffix) in listOf("", ".new", ".bak").withIndex()) {
+                val directory = File(root, "capture-${kind.name}-$index").also { assertTrue(it.mkdir()) }
+                Files.createSymbolicLink(File(directory, kind.fileName + suffix).toPath(), File(outside, "foreign-${kind.name}-$index").toPath())
+                assertThrows(IOException::class.java) { CaptureJournalPaths.journalFile(root, directory.name, kind) }
+            }
         }
     }
 }

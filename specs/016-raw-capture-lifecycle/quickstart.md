@@ -48,6 +48,13 @@ read/open/close失敗、協調停止、64KiB上限、版1から版2、fingerprin
 hashを停止callbackで待機させ、その間に別threadのJPEG受領を完了させて、hash結果の古いrevisionがcommitされないことを確認する。
 初回hashより前の同サイズ変更、URI所有/pending/公開済み、reader lease・共有原本確立/一時DNG解放、実process kill/電源断は未検証。
 
+pending行の確保・URI記録は`DngInsertRecoveryTest`で限定実行できる。fault backend/fake providerを用い、
+intent/URI commit前後・readback失敗、insert応答前の中断を`Error`と再生成で模擬し、insert回数と同じURIを確認する。
+0/複数/foreign/published/trashed/metadata不一致・query失敗ではUNKNOWNとなり、次のadvanceでprovider APIを呼ばないことを確認する。
+未知版/破損/読取不能な台帳は例外で原状停止し、UNKNOWNを上書き記録せずprovider APIも呼ばないことを確認する。
+native MediaStoreのinsert/queryはJVMで実行せず、API 29/30以降のpending検索・列/owner可視性・volumeの実動作は端末検証として残す。
+このsuiteのROW_RECORDEDをcopy完了・公開完了・共有原本確立の合格としない。既存写真を削除・移動する端末試験は行わない。
+
 | 故障/操作点 | 確認する結果 | 要件 |
 |---|---|---|
 | RAW/JPEG callbackの逆順・重複・片方失敗・timeout/late | 成功分保全、未完了を昇格しない、旧callbackで現在UIを変更しない | FR-001/002/006 |
