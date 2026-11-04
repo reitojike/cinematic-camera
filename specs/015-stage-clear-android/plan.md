@@ -123,6 +123,16 @@ PCから定数と合成fixtureを生成する。11場面×強度0/.5/1で単体�
 縮小・ケース削除で行数を減らさない。PC CIのpathsにも定数とgzip fixtureを追加する。
 段4/5・全renderer、DNG/R7、保存URI、実機の画質・時間・peakは後続として区別する。
 
+### 固定goldenへのPC再照合
+
+Orton単体/累積出力のPC再生成も、SC-010の既存2e-5（rtol=0）で同じ固定goldenと比較する。
+入力列（base/skin/misted）は従来2e-6を維持し、段2は独立exportでも検証する。定数/metadata/形状と全画素比較を維持し、非有限値は拒否する。
+従来のPC出力検査2e-6より緩くなるため、2e-6超〜2e-5以内のPC再生成差に対する検出力は下がる。
+これは意図的な検証境界の整合であり、golden画素・Kotlin境界・製品処理を変えない。独自ULP基準やCPU固定は導入しない。
+runnerによる末尾差の原因は未断定。失敗runと最大差・採否根拠はPRへ記録する。NumPyの[CPU dispatch](https://numpy.org/doc/stable/reference/simd/build-options.html)も参照。
+PCとKotlinが各々固定goldenに2e-5以内でも、両者を直接比較した差が必ず2e-5以内になるという保証ではない。
+これらは暫定の移植回帰であり、最終の雰囲気/印象や実機性能の受入条件ではない。
+
 ## 既存合成fixtureの可逆圧縮（#98、移植と別PR）
 
 既存4 CSVの作業ツリー上の改行ではなく、Git blob bytesをgzipへ変換する。解凍後のbyte/SHA-256一致を検証する。
@@ -130,4 +140,4 @@ Pythonはgzip.compress(mtime=0)/decompress、JVMはGZIPInputStreamで同じデ�
 exporter --writeの一時出力を展開して生成textと照合し、既存check_exportsも通す。生成textはUTF-8/LF。
 .gitattributesで生成CSV/gzipをlinguist-generatedとして扱い、gzipはbinaryにする。定数や手書きコードは折りたたまない。
 PC CI pathsはgzip resourceと属性を監視する。ケース削除・寸法縮小・新依存・runtime変更は含めない。
-#96のcandidateから別branch/別Draft PRを分け、#96 merge後にmainへbaseを移す。両PRのmerge承認はそれぞれ必要。
+#96で追加したOrton gzipは変更せず、既存4件を別Draft PRで検証する。mainへのmergeは別承認。
