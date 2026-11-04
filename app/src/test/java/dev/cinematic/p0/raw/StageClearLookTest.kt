@@ -110,6 +110,21 @@ class StageClearLookTest {
         }
     }
 
+    @Test fun stopSignalPreventsStartingContinuingOrReturningOldWork() {
+        val pixels = FloatArray(300) { 1.4f }
+        val base = LinearSrgbImage(10, 10, pixels)
+        val faces = FaceMask(10, 10, FloatArray(100) { 1f })
+        // Entry, after mist, face-cut rerun entry, and final return boundary.
+        for (stopAt in listOf(1, 5, 8, 12)) {
+            var checks = 0
+            assertThrows(java.util.concurrent.CancellationException::class.java) {
+                StageClearLook.renderFromBase(base, faces, 0.0) { ++checks == stopAt }
+            }
+            assertEquals(stopAt, checks)
+            assertArrayEquals(pixels, base.copyPixels(), 0f)
+        }
+    }
+
     private fun observe(stage: String, label: String, expected: FloatArray, actual: FloatArray) {
         assertEquals(label, expected.size, actual.size)
         for (i in expected.indices) {

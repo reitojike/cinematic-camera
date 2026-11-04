@@ -153,3 +153,8 @@ rendererは元baseのskinを保持し、glowの後に既存Protections.finishへ
 既存fixtureのstage3Pixelsと実装の段1→3、および段1→5のworst case/強度/channel/expected/actualを診断に残し、
 差がどの経路で生じるかを分ける。最終出力の差が小さいだけで中間の正しさを証明したとは扱わない。
 既存goldenと既存段の比較境界は変更しない。PC/Android各々の固定golden比較を、直接の両者間誤差保証に置き換えない。
+
+#104の表示用PhotoRollRendererと同じ`shouldStop: () -> Boolean`を`renderFromBase`の任意引数として受ける。
+既存呼出しは既定falseで維持し、停止時は標準CancellationExceptionで呼出側へ返す。画像/原本は書き換えず、
+呼出側が世代・permit・Bitmap所有権を管理する。チェックは大きい処理の境界であり、実行中blur/colour kernelは中断しない。
+画素ループ全体の改変や追加の非同期基盤を先行導入せず、最初の表示用接続とPixelでの停止時間計測を優先する。
