@@ -25,4 +25,4 @@
 - [x] T009 PC/Pillowの座標・偶数丸め・端・Float32・軸順序を確認し、限定した契約と検証境界を定義する（FR-007/008）。
 - [x] T010 BOX中間・BILINEAR復元の合成全画素CSVとPC再照合を追加し、fixture変更時のPC CIを保証する（FR-009、SC-004）。
 - [x] T011 純KotlinのFloatPlane、PC互換ぼかしとRGB経路、入力保持/不正入力/境界テストを実装する（FR-007/008/009）。
-- [ ] T012 PC/Androidの機械検証・秘密除外を行い、Draft PRと最終headのcanonical/独立レビューまで進める（SC-005）。mergeは別承認。
+- [x] T012 PC/Androidの機械検証・秘密除外を行い、Draft PRを作成し独立レビューを得る（SC-005）。最終headのCI/canonical/独立再確認はPRへ記録し、mergeは別承認。
