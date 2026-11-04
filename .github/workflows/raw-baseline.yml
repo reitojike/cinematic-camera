@@ -9,6 +9,8 @@ on:
       - 'app/src/test/resources/stage_clear_blur_v1.csv'
       - 'app/src/main/java/dev/cinematic/p0/raw/StageClearGlowV1.kt'
       - 'app/src/test/resources/stage_clear_glow_v1.csv'
+      - 'app/src/main/java/dev/cinematic/p0/raw/StageClearMistV1.kt'
+      - 'app/src/test/resources/stage_clear_mist_v1.csv'
       - '.github/workflows/raw-baseline.yml'
   push:
     branches: [main]
@@ -19,6 +21,8 @@ on:
       - 'app/src/test/resources/stage_clear_blur_v1.csv'
       - 'app/src/main/java/dev/cinematic/p0/raw/StageClearGlowV1.kt'
       - 'app/src/test/resources/stage_clear_glow_v1.csv'
+      - 'app/src/main/java/dev/cinematic/p0/raw/StageClearMistV1.kt'
+      - 'app/src/test/resources/stage_clear_mist_v1.csv'
       - '.github/workflows/raw-baseline.yml'
   workflow_dispatch:
 
