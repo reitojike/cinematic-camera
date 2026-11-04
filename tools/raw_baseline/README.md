@@ -160,6 +160,23 @@ py -3.15 -m venv tools/raw_baseline/.venv-py315-diag
 & $diagPython tools/raw_baseline/r10j_final.py --livepicture $livepictureFolder --r5 $round5Folder --r8 $round8Folder --face-model $yunetModel --output $newPrivateOutput
 ```
 
+## Stage Clear v1（stage_clear.py、r11_stage_clear.py）
+
+[Issue #77](https://github.com/reitojike/cinematic-camera/issues/77)で、第10回の確定形を強度つきの`stage_clear.render(base, faces, strength)`にまとめた。定義・処理順・限界は[Stage Clear v1のspec/plan](../../specs/014-stage-clear-v1/plan.md)、P2/P3への引き継ぎは[handoff](../../specs/014-stage-clear-v1/handoff.md)。
+
+| ファイル | 内容 | 環境 |
+|---|---|---|
+| `stage_clear.py` | Stage Clear v1。入力は第7回の土台と顔マスク。強度0〜1（既定1） | 通常（顔検出なし） |
+| `test_stage_clear.py`、`golden/stage_clear_v1.json` | 合成ステージ画像の強度別の期待値と、強度1が第10回と一致することの確認 | 通常（CI） |
+| `r11_stage_clear.py` | 照明条件別に基準処理と強度0/0.5/1を同じ原本・同じ露出で並べる非公開ページ。本アプリのPixel 9a DNGも含む | 診断専用（顔検出） |
+
+- goldenは処理を意図して変えるときだけ`python test_stage_clear.py --write-golden`で更新し、`stage_clear.VERSION`も上げる。
+- 照明条件の振り分けは顔以外の照明の色と、顔と背景の明るさの差による目安。暗所・高感度は手元の素材の最高ISOで代用している。
+
+```powershell
+& $diagPython tools/raw_baseline/r11_stage_clear.py --livepicture $livepictureFolder --r5 $round5Folder --r8 $round8Folder --app $appDngFolder --face-model $yunetModel --output $newPrivateOutput
+```
+
 ## 公式根拠とlicense
 
 - [rawpy 0.28.0 PyPI](https://pypi.org/project/rawpy/0.28.0/)、[Params API](https://letmaik.github.io/rawpy/api/rawpy.Params.html)、[LibRaw output parameters](https://www.libraw.org/docs/API-datastruct.html)。処理条件はCLI実装で固定しmanifestに記録する。
