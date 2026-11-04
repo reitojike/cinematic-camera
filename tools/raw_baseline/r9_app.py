@@ -68,7 +68,7 @@ def paired_shots(app: Path, google: Path) -> tuple[list[tuple[Path, Path]], list
             problems.append(f"missing capture time: {jpg.name}")
     for folder_shots in (app_shots, google_shots):
         times = [capture_time(jpg) for _, jpg in folder_shots]
-        problems += [f"same capture time {t}: " + ", ".join(jpg.name for _, jpg in folder_shots if capture_time(jpg) == t)
+        problems += [f"same capture time {t}: " + ", ".join(sorted(jpg.name for _, jpg in folder_shots if capture_time(jpg) == t))
                      for t in sorted({t for t in times if t and times.count(t) > 1})]
     if not app_shots or not google_shots:
         problems.append("no DNG+JPEG pairs in one of the folders")
