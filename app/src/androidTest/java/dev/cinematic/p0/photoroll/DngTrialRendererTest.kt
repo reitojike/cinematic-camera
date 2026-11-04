@@ -11,6 +11,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.rawcapture.DngContentVerifier
+import dev.cinematic.p0.rawcapture.OriginalGrant
 import dev.cinematic.p0.rawcapture.AndroidRawCaptureQueue
 import dev.cinematic.p0.rawcapture.CaptureReceiptPhase
 import dev.cinematic.p0.rawcapture.DngPublicationPhase
@@ -100,6 +101,7 @@ class DngTrialRendererTest {
             assertTrue(repository.list(CancellationSignal()).items.any { it.uri == uri.toString() })
             val renderer = DngTrialRenderer(context.contentResolver) { resources }
             val original = repository.check(uri, false, { false }, renderer.maxSourceBytes)
+            assertEquals(OriginalGrant.APP_OWNED, original.reference.grant)
             assertEquals(done.fingerprint, original.fingerprint)
             assertEquals(fingerprint, original.fingerprint)
             val result = renderer.render(PhotoRollRenderRequest(original, mode = PhotoRollPreviewMode.DNG_TRIAL), CancellationSignal())
@@ -158,6 +160,15 @@ class DngTrialRendererTest {
             assertTrue(pixels.any { (it and 0xffffff) != 0 })
             DngContentVerifier.verify(original.fingerprint, { context.contentResolver.openInputStream(original.uri)!! })
         } finally { preview.bitmap.recycle() }
+    }
+
+    @Test fun pendingOriginalCannotBecomeAnAppOwnedControllerReference() = withOriginal { original ->
+        val repository = PhotoRollRepository(context.contentResolver, context.packageName)
+        try {
+            repository.check(original.uri, false, { false })
+            fail("A pending row must not be claimed as a shared APP_OWNED original")
+        } catch (failure: PhotoRollSourceFailure) { assertTrue(failure.userMessage.contains("公開済み")) }
+        DngContentVerifier.verify(original.fingerprint, { context.contentResolver.openInputStream(original.uri)!! })
     }
 
     @Test fun cancellationDoesNotPreventTheNextRealRequest() = withOriginal { original ->
@@ -288,7 +299,7 @@ class DngTrialRendererTest {
         try {
             resolver.openOutputStream(uri, "w")!!.use { it.write(bytes) }
             val fingerprint = DngContentVerifier.identify(bytes.size.toLong(), { resolver.openInputStream(uri)!! })
-            action(PhotoRollOriginal(uri, fingerprint))
+            action(PhotoRollOriginal(uri, fingerprint, OriginalGrant.APP_OWNED))
         } finally { check(resolver.delete(uri, null, null) == 1) { "Test-only pending row cleanup failed" } }
     }
 

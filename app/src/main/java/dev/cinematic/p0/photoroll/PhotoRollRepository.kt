@@ -9,6 +9,8 @@ import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import dev.cinematic.p0.rawcapture.DngContentVerifier
+import dev.cinematic.p0.rawcapture.OriginalGrant
+import dev.cinematic.p0.rawcapture.isDngRowUri
 
 internal data class PhotoRollItem(val uri: String, val name: String)
 internal data class PhotoRollListing(val items: List<PhotoRollItem>, val message: String? = null)
@@ -40,24 +42,38 @@ internal class PhotoRollRepository(private val resolver: ContentResolver, privat
         if (fromFiles) {
             val id = runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull()
             if (!isLocalDngDocument(uri.authority, id)) throw PhotoRollSourceFailure("Filesの「内部ストレージ」から選んでください。「最近使った項目」や外部SD・クラウドからの選択はまだ扱えません")
-        } else if (uri.authority != MediaStore.AUTHORITY || uri.pathSegments.firstOrNull() != MediaStore.VOLUME_EXTERNAL_PRIMARY) {
+        } else if (Build.VERSION.SDK_INT < 29 || !isDngRowUri(uri.toString()) ||
+            uri.pathSegments.firstOrNull() != MediaStore.VOLUME_EXTERNAL_PRIMARY) {
             throw PhotoRollSourceFailure("原本の参照を確認できません。Filesから選び直してください")
         }
         var name: String? = null
         var size: Long? = null
-        resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+        var appOwnedVerified = false
+        val columns = mutableListOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)
+        if (!fromFiles) columns += listOf(MediaStore.MediaColumns.OWNER_PACKAGE_NAME,
+            MediaStore.MediaColumns.IS_PENDING, MediaStore.MediaColumns.VOLUME_NAME)
+        val trashIndex = if (!fromFiles && Build.VERSION.SDK_INT >= 30) columns.size.also {
+            columns += MediaStore.MediaColumns.IS_TRASHED
+        } else null
+        resolver.query(uri, columns.toTypedArray(), null, null, null)?.use { cursor ->
             if (cursor.moveToFirst()) {
                 name = cursor.getString(0)
                 size = if (cursor.isNull(1)) null else cursor.getLong(1)
+                if (!fromFiles) {
+                    appOwnedVerified = cursor.getString(2) == packageName && !cursor.isNull(3) && cursor.getInt(3) == 0 &&
+                        cursor.getString(4) == MediaStore.VOLUME_EXTERNAL_PRIMARY &&
+                        (trashIndex == null || (!cursor.isNull(trashIndex) && cursor.getInt(trashIndex) == 0))
+                }
             }
         }
+        if (!fromFiles && !appOwnedVerified) throw PhotoRollSourceFailure("このアプリの公開済み原本と確認できません。Filesから選び直してください")
         if (name?.endsWith(".dng", ignoreCase = true) != true && resolver.getType(uri) != "image/x-adobe-dng")
             throw PhotoRollSourceFailure("DNGを選んでください。拡張子だけでは現像対応は確定しません")
         val bytes = size?.takeIf { it in 1..maxBytes }
             ?: throw PhotoRollSourceFailure("原本のサイズが不明、空、または${maxBytes / (1024 * 1024)} MiBを超えています。この入力はまだ扱えません")
         val fingerprint = DngContentVerifier.identify(bytes, { resolver.openInputStream(uri)
             ?: throw PhotoRollSourceFailure("原本を読み取れません。Filesから選び直してください") }, shouldStop)
-        return PhotoRollOriginal(uri, fingerprint)
+        return PhotoRollOriginal(uri, fingerprint, if (fromFiles) OriginalGrant.USER_SELECTED else OriginalGrant.APP_OWNED)
     }
 
     fun verify(original: PhotoRollOriginal, shouldStop: () -> Boolean) {
