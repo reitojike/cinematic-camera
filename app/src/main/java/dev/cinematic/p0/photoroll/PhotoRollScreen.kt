@@ -1,5 +1,6 @@
 package dev.cinematic.p0.photoroll
 
+import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.CancellationSignal
@@ -18,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -53,6 +55,10 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
     var notice by remember { mutableStateOf<String?>(null) }
     var preview by remember { mutableStateOf<Bitmap?>(null) }
     var renderStage by remember { mutableStateOf<PhotoRollRenderStage?>(null) }
+    var jpegSave by remember { mutableStateOf<PhotoRollJpegSave?>(null) }
+    var saveSnapshot by remember { mutableStateOf<PhotoRollSaveSnapshot?>(null) }
+    val saveScope = rememberCoroutineScope()
+    val context = LocalContext.current
     val cancellationOwner = remember { PhotoRollWorkOwner<CancellationSignal> { it.cancel() } }
 
     fun backToList() { cancellationOwner.cancel(); selectedUri = null; preview = null; selection = selection.clear(); retry++ }
@@ -73,6 +79,8 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
     LaunchedEffect(selectedUri, retry, lifecycleOwner) {
       lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
         preview = null
+        jpegSave = null
+        saveSnapshot = null
         val source = selectedUri
         if (source == null) {
             val ticket = Any()
@@ -87,6 +95,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
             return@repeatOnLifecycle
         }
         selection = selection.select(source)
+        notice = null
         renderStage = null
         val ticket = selection.ticket!!
         val cancellation = CancellationSignal()
@@ -112,6 +121,9 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                             throw PhotoRollSourceFailure("表示用画像の寸法・色空間を確認できません。現像を停止しました")
                         }
                         repository.verify(original, shouldStop)
+                        if (rendered.jpegSave?.matches(source, original.fingerprint, rendered.mode) == false) {
+                            throw PhotoRollSourceFailure("保存結果が選択した原本と一致しないため停止しました")
+                        }
                     }
                     rendered
                 }
@@ -119,6 +131,8 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
             if (selection.accepts(ticket)) when (result) {
                 is PhotoRollRenderResult.Preview -> {
                     preview = result.bitmap
+                    jpegSave = result.jpegSave
+                    saveSnapshot = result.jpegSave?.snapshot
                     selection = selection.finish(ticket, true, when (result.mode) {
                         PhotoRollPreviewMode.DNG_TRIAL -> "DNGの試験表示です。ルック・顔検出は未適用で、色や明るさは暫定です。JPEG保存はまだ利用できません"
                         PhotoRollPreviewMode.STAGE_CLEAR_TRIAL -> "Stage Clear v1・強度0.5の試験表示です。撮影時WBと診断用の明るさを使用。顔検出・顔保護、W1とPixel固有の色変換は未対応で、色や明るさは暫定です。JPEG保存はまだ利用できません"
@@ -199,6 +213,54 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                 },
                     Modifier.fillMaxWidth().weight(1f), contentScale = ContentScale.Fit)
                 else Spacer(Modifier.weight(1f))
+                if (selection.phase == PhotoRollPhase.DISPLAYED) {
+                    val owner = jpegSave
+                    val saved = saveSnapshot
+                    Text(if (owner == null) unavailableJpegSaveMessage(renderer.mode) else when (saved?.phase) {
+                        PhotoRollSavePhase.READY -> "完成JPEG ${owner.width}×${owner.height} を共有写真へ保存できます"
+                        PhotoRollSavePhase.SAVING -> "同じJPEG保存操作を確認中…"
+                        PhotoRollSavePhase.PUBLISHED -> "前回のJPEG公開を確認しました。開く前にもう一度照合します"
+                        PhotoRollSavePhase.UNCONFIRMED -> "保存結果を確認できません。同じ保存操作を再照合します。別のJPEGは作り直しません"
+                        PhotoRollSavePhase.HOLD -> "保存先の状態を判断できないため停止しました。保存済みとは扱いません"
+                        null -> "JPEG保存の準備を確認できません"
+                    }, style = MaterialTheme.typography.bodySmall)
+                    TextButton(enabled = foreground && owner != null && saved?.phase in setOf(
+                        PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED, PhotoRollSavePhase.UNCONFIRMED),
+                        onClick = {
+                            if (saveSnapshot?.phase !in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED,
+                                    PhotoRollSavePhase.UNCONFIRMED)) return@TextButton
+                            val operation = jpegSave ?: return@TextButton
+                            val ticket = selection.ticket ?: return@TextButton
+                            val openAfterCheck = saveSnapshot?.phase == PhotoRollSavePhase.PUBLISHED
+                            val cancellation = CancellationSignal()
+                            cancellationOwner.begin(cancellation)
+                            saveSnapshot = PhotoRollSaveSnapshot(PhotoRollSavePhase.SAVING)
+                            saveScope.launch {
+                                val job = currentCoroutineContext()
+                                try {
+                                    val result = withContext(Dispatchers.IO) { photoRollWork.withPermit {
+                                        operation.advance { cancellation.isCanceled || !job.isActive }
+                                    } }
+                                    if (!cancellation.isCanceled && job.isActive && selectedUri == ticket.source &&
+                                        selection.ticket == ticket && selection.phase == PhotoRollPhase.DISPLAYED && jpegSave === operation) {
+                                        saveSnapshot = result
+                                        if (openAfterCheck && result.phase == PhotoRollSavePhase.PUBLISHED && result.uri != null) {
+                                            try {
+                                                context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(result.uri), "image/jpeg")
+                                                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                                            } catch (_: Exception) { notice = "保存したJPEGを開けませんでした。対応する写真アプリを確認してください" }
+                                        }
+                                    }
+                                } finally { cancellationOwner.finish(cancellation) }
+                            }
+                        }) { Text(when (saved?.phase) {
+                            PhotoRollSavePhase.PUBLISHED -> "保存したJPEGを開く"
+                            PhotoRollSavePhase.UNCONFIRMED -> "同じ保存を確認"
+                            PhotoRollSavePhase.SAVING -> "保存確認中…"
+                            else -> if (owner == null) "JPEG保存は準備中" else "完成JPEGを保存"
+                        }) }
+                    notice?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                }
                 Text("原本は読み取り専用で参照します。コピー・上書き・公開は行いません", style = MaterialTheme.typography.bodySmall)
                 TextButton(enabled = foreground && selection.phase !in setOf(PhotoRollPhase.CHECKING, PhotoRollPhase.RENDERING),
                     onClick = { retry++ }) { Text("原本を確認して再試行") }

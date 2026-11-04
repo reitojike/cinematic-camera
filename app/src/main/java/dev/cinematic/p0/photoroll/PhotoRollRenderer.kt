@@ -19,7 +19,12 @@ internal data class PhotoRollRenderRequest(
 
 internal sealed interface PhotoRollRenderResult {
     /** Display preview only, not a full-resolution JPEG or publication receipt. */
-    data class Preview(val bitmap: Bitmap, val mode: PhotoRollPreviewMode) : PhotoRollRenderResult
+    data class Preview(
+        val bitmap: Bitmap,
+        val mode: PhotoRollPreviewMode,
+        /** Optional retained completed-JPEG owner; trial renderers must leave this null. */
+        val jpegSave: PhotoRollJpegSave? = null,
+    ) : PhotoRollRenderResult
     data class Unavailable(val reason: String) : PhotoRollRenderResult
 }
 
