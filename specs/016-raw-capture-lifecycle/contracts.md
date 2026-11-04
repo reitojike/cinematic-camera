@@ -52,7 +52,7 @@ process death後の再起動では旧processの所有attemptを無効化し、�
 - DNGの公開とJPEGの公開は別の画像。ギャラリーやPhoto PickerのRAW/JPEGグループ表示を保証しない。
   DNGを選べないときは標準ファイル選択へ切り替え、取得した実データのDNG対応を検証する。写真の外部送信は行わない。
 
-## #78との受け渡し（型はまだ作らない）
+## #78との受け渡し（実rendererは未登録）
 
 - 入力: `captureId`、`renderGeneration`、`attemptId`、共有原本の読み取り専用URI/FDと内容識別、固定recipe、独立した派生出力先、cancel確認口。
 - recipe: schema/renderer/baselineの識別版、`stage-clear-v1`、明示strength（初期0.5）、外部決定の露出定義、
@@ -62,6 +62,39 @@ process death後の再起動では旧processの所有attemptを無効化し、�
 - 読み取り参照は処理中保持し、アプリ側は削除・上書きしない。外部変更を排他できるとは扱わない。cancel要求と解放完了は別。
 - レシピ変更は新generation。旧attemptの結果は新generationへ採用せず、その未公開の派生出力だけを片付ける。
 - 既定値の将来変更で既存要求を変えない。同一環境・同一版の再生成を検証し、異なるCPU/GPU間のbit一致を先に約束しない。
+
+### 実行制御の内部型と所有
+
+`AutoDevelopRequest`はrender前に原本参照/recipe snapshot/schema/renderer契約、generation、原本の通常向きでの全寸法、
+品質区分、顔/露出/profileの対応状態を固定する。`RendererAdapter`は純粋な対応可否判定と、IOを開かないattempt生成だけを行う。
+`AutoRenderAttempt.render`の中だけで、供給されたread-only stream/FDと固有attemptのprivate出力を開ける。
+recipe payloadの意味は実renderer adapterの責務であり、制御側は未知schemaや未確定の顔/露出/profileを推測しない。
+decode/入力準備中に判明した未対応は`AutoRenderUnsupported`としてHELDへ、通常失敗はRETRYABLE、中断はINTERRUPTEDとして分ける。
+現在の`PhotoRollRenderer.Preview`は異なる型であり、512px試験表示を成功receiptへ変換して登録しない。
+`AutoRendererCatalog`のproduction登録は0、撮影/lifecycle/資源計測からの自動投入も未接続である。
+
+停止要求と撮影予約は`AutoDevelopCoordinator`の短いlockでlatched状態を更新し、描画/IO/closeを待たない。
+rendererへの明示停止口（native CancellationSignal等）は別のcancel executorから呼ぶ。通知自体が戻らない間も
+attemptとslotを保持する。通知をcloseと扱わず、native処理と提供FDの寿命を維持し、強制解放しない。
+停止intentはprocess内のrunner/slotを組で固定し、遅延した旧停止で次のnative attemptを取り直してcancelしない。
+停止/失敗/検査成功の完了判断はattempt IDに固定し、台帳commit確認まで保持する。物理slotの解放や新slotの取得で
+その判断を成功へ再評価しない。process death後に判断が失われたRENDERINGは既存の中断復旧に従う。
+実kernelの中断点や即時停止は保証しない。renderer.closeが成功してから提供IOを解放し、出力の検査はその後に行う。
+出力欠落/失敗latchはINVALID_OUTPUTで停止するが、実資源が閉じていれば別jobのslotを塞がない。
+
+`AutoDevelopQueue`の全submit/復旧/世代変更/公開は1つのIO executorで直列化する。
+同じ撮影の新世代のsubmitは先に旧attemptへ停止を要求する。metadataを受理しても、実行は旧ownerの資源解放まで開始しない。
+同じ要求の再配送や別撮影の投入だけで、現在の正常な処理を中断しない。
+旧世代の未解放ownerはqueueから除去せず、最新世代だけに新規作業を認める。retryはRETRYABLEに対する明示操作だけで、
+即時無限retryを行わない。RENDERED/PUBLISHINGは同じ成功attemptと公開操作を再開し、再renderやartifact差替えをしない。
+process復旧時のRENDERINGは未確認出力のままRETRYABLEへ戻し、存在/byte数だけで成功へ昇格しない。
+復旧対象一覧は全件検証した後だけqueueへ受理する。新世代の破損/未知版で復旧失敗した際に、部分的に読めた旧世代だけを実行しない。
+起動時の完全な台帳列挙とproduction条件の観測接続は後続gateであり、省略した一覧で既存jobを再開しない。
+
+manual factoryとauto backendは同じ`captureId:RENDERED:generation`について共通のprocess所有権claimを使う。
+別ownerの同じ台帳/公開操作への接続は、資源のclose後も拒否する。取消やActivity再生成で別AtomicFile writerを作らない。
+manual UIが既存auto出力を扱う統合では既存ownerへ接続し、独立した編集なら別の安定したlogical request IDを使う。
+role名を変えるだけで既存operationや成功artifactを上書きしない。このallocator/表示統合は後続の接続gateである。
 
 ## 1公開操作の状態と照合
 

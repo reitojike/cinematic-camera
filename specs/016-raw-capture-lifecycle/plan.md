@@ -290,6 +290,32 @@ WorkManagerは今回採用しない。永続要求と画素処理の停止能力
 
 ## PR分割と検証
 
+### 自動現像実行制御の先行統合（T016/T017/T019の限定部分）
+
+`AutoDevelopJournal`を既存の4KiB上限AtomicFile adapterへ追加し、capture/generationごとの
+`renders/<generation>/auto-develop.bin`に固定request・revision・phase・attempt/token・検査済み出力hashを保存する。
+明示schema/enum、checksum、CAS、commit readbackを持ち、未知版や破損を初期化しない。
+出力は`auto-attempts/<token>/renders/1/output.jpg`でCREATE_NEWし、失敗した同generationの出力を再利用しない。
+成功後は1つのattemptを公開台帳へ固定する。原本/仮JPEG/既存画像/途中出力を自動削除するAPIは追加しない。
+
+`AutoDevelopRunner`はprocessの`AutoDevelopCoordinator`を共有する。未知条件・camera session使用中・撮影予約・録画等で
+開始せず、captureはrendererの終了待ちをしない。queueのserial IO executorでメタデータと公開の世代authorityを維持し、
+native停止通知だけは専用executorへ渡す。停止通知/closeが戻らなければownerとslotを保持し、次の現像を開始しない。
+実engineのclose ack後にread-only FD/stream/private writerを解放してからJPEGを独立検査し、結果を永続化する。
+出力検査の失敗を未解放resourceと混同しない。RETRYABLEは明示retryで新attemptを作り、原本を再照合する。
+公開失敗は#118のpublisherを保持して同URIで照合し、別attemptへ切り替えない。公開済みjobは履歴であり、画像の現在の存在証明ではない。
+
+`AndroidAutoDevelopBackend`は`r`で開いたDNG descriptor/streamと専用の出力streamだけをadapterへ渡す。
+completed receiptのrequest/寸法/向き/色/FINAL区分を確認し、標準JPEG検査とhashで実データを再検査する。
+保存済みartifact hashとの一致を確認して#118の検査・公開へ渡し、manual factoryとの共通所有権claimで二重writerを拒否する。
+Android入口はprocess singleton・単一IO executorで、共有DNGのSHARED_ONLY/同URI/同hashが前提となる。
+新規の依存/権限/バックグラウンドservice/WorkManagerは導入しない。
+
+今回のproduction catalogは空のままとする。現Stage Clear試験rendererは512px/診断露出/顔NOT_RUN/未完profileであり、
+その出力をFINALに登録しない。実renderer側が全解像度・対応済みprofile/外部露出/顔入力・JPEG出力の契約を満たしてから登録する。
+撮影からの要求生成、起動時列挙、camera/lifecycle/資源条件の観測接続、render前の実recipe生成、権限復旧UI、実機性能は残件である。
+T016/T017/T020全体を実装済みと呼ばず、以下の追加taskに今回の境界と検証を分ける。
+
 ### 完成JPEGの公開境界（T018・T019の先行部分）
 
 `RecoverablePhotoPublisher`はrenderer成功receiptと完成private JPEGを受け取り、DNG台帳とは別の

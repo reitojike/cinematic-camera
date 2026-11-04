@@ -93,3 +93,13 @@ US1の故障テストと#78の合成golden比較は別ファイルで並行可�
 T023〜024はT012〜013と同じ保全/公開PRで実施し、T014の撮影接続より前に完了する。
 T025〜026はT016〜020より前の参照基盤。標準pickerのUI実装は#81等の後続だが、この参照/権限契約なしに
 再インストール後の既存DNG編集を対応済みとは扱わない。
+
+## Phase 7: 自動現像実行制御の先行統合
+
+- [x] T027 [US2] `RenderRequest.kt`/`AutoDevelopJournal.kt`で固定request・世代・attempt・close後の検査結果を永続化し、未確認出力を昇格せず復旧する（T016先行部分、FR-006/009）。
+- [x] T028 [US2] `AutoDevelopRunner.kt`/`AutoDevelopQueue.kt`で撮影優先・単一IO owner・非待機停止通知・実資源ack・明示retry・同じ成功artifactの公開再開を接続し、fault/fake renderer testsで確認する（T017/T019先行部分、FR-004/005/006/007）。
+- [x] T029 [US2] `AndroidAutoDevelopBackend.kt`/`AndroidAutoDevelopQueue.kt`と共通`JpegOperationOwners`でread-only入力・attempt出力・#118 publisher・manual/auto二重writer拒否を実装し、隔離nativeの合成JPEGで確認する（FR-001/004/007/008/010）。
+
+production renderer登録0・自動撮影接続なしを維持する。512pxの試験表示、顔NOT_RUN、診断露出、未知profileは自動公開しない。
+T016/T017/T020、T025/026の残件と実機確認をこの先行統合のcheckboxで置き換えない。
+T027〜029の検証はJVMのfault/fake rendererと、隔離API37のsynthetic adapterによるもの。実DNG decode/全解像度・色/顔の成立、実OS kill/電源断、Pixel性能の合格を含めない。

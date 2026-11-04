@@ -54,6 +54,12 @@ internal class AutoDevelopCoordinator {
     @Synchronized
     fun requestStop() { active?.stopRequested = true }
 
+    /** A delayed stop for an old owner must not cancel an unrelated newly admitted attempt. */
+    @Synchronized
+    fun requestStop(attempt: Attempt) {
+        if (active?.attempt === attempt) active?.stopRequested = true
+    }
+
     /** Unknown, completed, and foreign attempts must stop as well. */
     @Synchronized
     fun shouldStop(attempt: Attempt): Boolean {
