@@ -184,6 +184,7 @@ internal class AutoDevelopRunner(
         if (stopped() || failure is CancellationException || failure is DngVerificationStopped) {
             return journal.retryable(record.revision, AutoJobReason.INTERRUPTED)
         }
+        if (failure is AutoRenderUnsupported) return journal.hold(record.revision, AutoJobReason.UNSUPPORTED)
         if (failure != null) return journal.retryable(record.revision, AutoJobReason.RENDER_FAILED)
         val value = receipt ?: return journal.retryable(record.revision, AutoJobReason.RENDER_FAILED)
         val request = record.request

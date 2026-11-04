@@ -207,6 +207,18 @@ class AutoDevelopRunnerTest {
         }
     }
 
+    @Test fun unsupportedDetectedByTheActualRendererIsHeldAfterClosingItsInputs() {
+        val f = Fixture()
+        f.admission.updateConditions(allowed)
+        f.backend.renderUnsupported = true
+        assertEquals(AutoRunStatus.HELD, f.runner.advance().status)
+        assertEquals(AutoJobReason.UNSUPPORTED, f.journal.read()!!.reason)
+        assertTrue(f.backend.closed)
+        assertFalse(f.runner.hasUnreleasedResources)
+        assertEquals(0, f.backend.publishes)
+        assertThrows(CaptureJournalConflict::class.java) { f.journal.retry(f.journal.read()!!.revision) }
+    }
+
     @Test fun publicationAcknowledgementLossRetriesSameArtifactWithoutRerendering() {
         val f = Fixture()
         f.admission.updateConditions(allowed)
@@ -300,6 +312,7 @@ class AutoDevelopRunnerTest {
         var closed = false
         var closeFails = false
         var renderFails = false
+        var renderUnsupported = false
         var sourceChanged = false
         var publishFails = false
         var publicationCloseFails = false
@@ -324,6 +337,7 @@ class AutoDevelopRunnerTest {
                 override fun render(shouldStop: () -> Boolean): AutoRenderReceipt {
                     starts++
                     onRender()
+                    if (renderUnsupported) throw AutoRenderUnsupported()
                     if (renderFails) throw IOException("render fault")
                     return receiptChange(AutoRenderReceipt(request, JpegOutputDescription(2000, 1500, 1, "sRGB", 3)))
                 }

@@ -69,6 +69,7 @@ process death後の再起動では旧processの所有attemptを無効化し、�
 品質区分、顔/露出/profileの対応状態を固定する。`RendererAdapter`は純粋な対応可否判定と、IOを開かないattempt生成だけを行う。
 `AutoRenderAttempt.render`の中だけで、供給されたread-only stream/FDと固有attemptのprivate出力を開ける。
 recipe payloadの意味は実renderer adapterの責務であり、制御側は未知schemaや未確定の顔/露出/profileを推測しない。
+decode/入力準備中に判明した未対応は`AutoRenderUnsupported`としてHELDへ、通常失敗はRETRYABLE、中断はINTERRUPTEDとして分ける。
 現在の`PhotoRollRenderer.Preview`は異なる型であり、512px試験表示を成功receiptへ変換して登録しない。
 `AutoRendererCatalog`のproduction登録は0、撮影/lifecycle/資源計測からの自動投入も未接続である。
 

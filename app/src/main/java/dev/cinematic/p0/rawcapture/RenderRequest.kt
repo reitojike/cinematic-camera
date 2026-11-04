@@ -3,6 +3,7 @@ package dev.cinematic.p0.rawcapture
 import java.io.Closeable
 import java.io.InputStream
 import java.io.OutputStream
+import java.io.IOException
 
 internal enum class AutoRenderQuality { FINAL_ORIGINAL, PREVIEW }
 internal enum class AutoInputProfile { SUPPORTED, UNKNOWN }
@@ -37,6 +38,7 @@ internal data class AutoDevelopRequest(
 
 /** Success is only a claim until the owner closes and the independent JPEG inspector agrees. */
 internal data class AutoRenderReceipt(val request: AutoDevelopRequest, val output: JpegOutputDescription)
+internal class AutoRenderUnsupported : IOException("Renderer cannot satisfy this fixed request")
 
 /**
  * Construct without opening resources; acquire inside render, retaining every handle for close retry.
