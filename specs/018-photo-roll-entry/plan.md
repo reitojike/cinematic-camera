@@ -1,0 +1,11 @@
+# 写真一覧の設計
+
+- 別の非exported `PhotoRollActivity` を使う。MainActivityの既存onPause/onResumeとCameraX lifecycleによって撮影を離れ、Backで戻す。CameraProbe/保存/raw画素処理ファイルを変更しない。
+- `photoroll/` 配下に一覧repository、Compose画面、表示用renderer契約、純Kotlinの選択世代状態を分離する。Activityのfactoryを実renderer接続点にする。既定は明示的なUnavailableで、mock成功は製品へ組み込まない。
+- MediaStoreの公開済みDNG候補のみを最大200件表示する。API29以降はexternal_primaryかつownerを自アプリへ限定する。他アプリ/再インストール後はACTION_OPEN_DOCUMENTでread grantを取得する。primary ExternalStorageDocumentsだけを受理し、SD/remote/未知providerは取り込み未対応と表示する。MediaDocumentsのimage IDだけではSDと区別できないため未対応とし、Filesの「内部ストレージ」へ案内する。
+- OpenDocumentのMIMEは */*。DNGのMIME不整合・Filesで非表示になることを避け、選択後に候補名/sizeを確認する。read grantは当該Activityの参照にのみ使用し、恒久権限を蓄積しない。端末内にコピーしない。
+- `DngContentVerifier` を再利用し、既知の正サイズかつ上限256 MiBの入力だけを64 KiB streamで照合する。サイズ不明は保留。hashは最初の観測以後の同一性でありDNG有効性を保証しない。renderer側が構造・機種・metadataとdecode対応を判定する。
+- coroutineはActivityのRESUMED期間内で起動し、単一Semaphoreで非協調処理が終了するまで次を開始しない。背景化でticketを無効化し、provider read自体の強制停止は保証しない。結果はhash再確認後に現在ticketだけへ反映する。
+- 表示用要求はStage Clear v1、強度0.5、最大辺1024。色温度/明るさ/顔値を仮定しない。rendererは不明ならUnsupportedを返す。返却BitmapはソフトウェアsRGB、最大辺/画素数に制限し、書き出し/公開を行わない。
+
+新依存・新権限なし。MainActivity/CaptureScreen/Manifestだけに入口変更を限定する。#78 adapterの確立後はfactoryを差し替える接続PRとし、このDraftを現像機能の完成と扱わない。
