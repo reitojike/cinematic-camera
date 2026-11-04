@@ -59,6 +59,14 @@ def check_exports() -> None:
     actual = gzip.decompress(FIXTURE.read_bytes()).decode("utf-8").splitlines()
     if len(expected) != len(actual):
         raise AssertionError("Orton fixture shape changed")
+    # Diagnose cross-runner float32 drift over ALL pixels before the first assertion.
+    want_pixels = np.array([row.split(",")[1:] for row in expected if row.startswith("PIX,")], dtype=float)
+    got_pixels = np.array([row.split(",")[1:] for row in actual if row.startswith("PIX,")], dtype=float)
+    if want_pixels.shape == got_pixels.shape:
+        errors = np.abs(got_pixels - want_pixels)
+        worst = np.unravel_index(np.argmax(errors), errors.shape)
+        print(f"Orton regeneration max_abs={errors[worst]:.10g}; over_2e-6={np.count_nonzero(errors > 2e-6)}; "
+              f"worst_pixel/channel={worst}; expected={want_pixels[worst]:.10g}; got={got_pixels[worst]:.10g}")
     for line, (want, got) in enumerate(zip(expected, actual), 1):
         a, b = want.split(","), got.split(",")
         if a[0] == "PIX":
