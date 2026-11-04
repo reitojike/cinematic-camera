@@ -3,16 +3,38 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import math
 from pathlib import Path
+import struct
 
 import numpy as np
 
 import preview_inputs as oracle
 
 FIXTURE = Path(__file__).resolve().parents[2] / "app/src/test/resources/r7_preview_inputs_v1.csv.gz"
-# Chosen before PC/JVM comparisons: pure scalar EV and float32 mask migration budgets.
+# EV/ROI budgets chosen before the initial PC/JVM comparisons remain unchanged.
 EV_ATOL = 2e-6
 ROI_ATOL = 2e-6
+# Raw-statistic-only rounding budget added after the CI counterexample; see PI-SC-004.
+P97_ABS_ATOL = 2e-6
+P97_ULPS = 2
+
+
+def float32_ulp(value):
+    """Finite IEEE-754 spacing, including zero/subnormals and Float32 max (not infinity)."""
+    if not math.isfinite(value) or abs(value) > float(np.finfo(np.float32).max):
+        raise AssertionError("p97 must be finite Float32")
+    bits = struct.unpack("<I", struct.pack("<f", abs(value)))[0]
+    exponent = (bits >> 23) & 255
+    return math.ldexp(1., -149 if exponent == 0 else exponent - 150)
+
+
+def assert_p97(actual, expected):
+    """Raw diagnostic statistic only; effect EV and ROI retain their absolute budgets."""
+    # Validate both even when the absolute floor would otherwise hide NaN/Infinity.
+    float32_ulp(actual)
+    budget = max(P97_ABS_ATOL, P97_ULPS * float32_ulp(expected))
+    np.testing.assert_allclose(actual, expected, atol=budget, rtol=0, equal_nan=False)
 
 
 def scenes():
@@ -75,10 +97,10 @@ def check_exports():
             if a[:4] != b[:4] or a[6:] != b[6:]:
                 raise AssertionError(f"Preview-input metadata differs at {line}")
             np.testing.assert_allclose(float(a[4]), float(b[4]), atol=EV_ATOL, rtol=0, equal_nan=False)
-            np.testing.assert_allclose(float(a[5]), float(b[5]), atol=2e-6, rtol=0, equal_nan=False)
+            assert_p97(float(a[5]), float(b[5]))
         elif got != want:
             raise AssertionError(f"Preview-input metadata differs at {line}")
-    print("Preview-input PC exports match: EV atol=2e-6; ROI atol=2e-6; no photo data")
+    print("Preview-input PC exports match: EV/ROI atol=2e-6; raw p97 max(2e-6,2 Float32 ULP); no photo data")
 
 
 def main():

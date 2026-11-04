@@ -35,12 +35,31 @@ PCの参照境界は`tools/raw_baseline/preview_inputs.py`。式やROIを別算�
 `r7_preview_inputs_v1.csv.gz`へ可逆保存する。mtime=0、filenameなし、新しい外部データなし。
 
 - **PI-SC-001**: 比較前に決めた移植予算はEV絶対誤差2e-6、Float32 ROI全画素2e-6（rtol=0）。
-  p97にも2e-6を使う。奇数寸法、補間、中央外の明部、黒/負/HDR、EV上下clamp、最小非空中央、
+  この2予算を維持する。補助raw p97統計だけは下記PI-SC-004のFloat32丸め予算を使う。
+  奇数寸法、補間、中央外の明部、黒/負/HDR、EV上下clamp、最小非空中央、
   楕円の重なり/空/6個と長辺1024を含める。超過時は原因を直し、閾値を黙って緩和しない。
 - **PI-SC-002**: 不正な値/寸法/楕円数、開始/行/sort/返却とR7全段境界の停止、入力不変、由来とNOT_RUNを検証する。
   既存R7/Lookの全画素goldenと版は変更しない。
 - **PI-SC-003**: PC全検証、Android lint/unit/両ABI build、公開前検査、canonical/独立レビューを行う。
   合成1024×768のホスト処理時間を観測しても、Pixelの時間・peak memoryや実写受入の証拠にしない。
+- **PI-SC-004**: raw p97だけは`max(2e-6, 2 * Float32ULP(expected))`（rtol=0）。PC再生成とJVMの
+  raw統計比較に同じ契約を使い、非有限値を拒否する。ULPはIEEE exponentから有限に計算し、
+  zero/subnormalは2^-149、normalは2^(exponent-23)。Float32最大値でも許容差を無限にしない。
+  ±100の1/2ULP許容・3ULP拒否、binade境界・subnormal・最大値・非有限拒否を回帰テストに含める。
+
+### raw p97にFloat32丸め予算を設ける根拠
+
+初回のraw p97絶対差2e-6は、100でのFloat32 1ULP（7.62939453125e-6）より小さかった。
+[PC CIの反例](https://github.com/reitojike/cinematic-camera/actions/runs/41880317167/job/126750744353)では
+同じhdr-clamp入力のp97が100と100.00000762939453になり、その1ULP差だけで失敗した。
+EVは両者ともclamp後−3.6、ROIは同一であった。
+
+同じFloat32 RGB=100とLUMAで、各積和を一度だけFloat32へ丸め、G→R→BまたはG→B→Rの順で
+加算すると100.00000762939453、他の順序や当地のNumPy dotでは100を再現できる。
+これはCPU/BLAS/FMAの丸め順序で説明可能な反例であり、CIの実命令列を観測したという主張ではない。
+dotと百分位補間のFloat32丸め差を検出・制限する補助統計の回帰予算として2ULPを使う。
+あらゆる入力の数学的な誤差保証ではなく、露出結果のEV予算を広げるものでもない。
+PC正本のdot/式、golden、入力ケース、EV/ROI予算は変更しない。
 
 PI-T001: 契約と型付き入力/結果、明示ROI/診断露出を追加する。
 PI-T002: PC合成生成とJVM全画素・拒否・停止・入力保持テストを追加する。

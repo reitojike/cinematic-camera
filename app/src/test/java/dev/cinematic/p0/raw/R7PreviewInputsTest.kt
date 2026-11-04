@@ -2,6 +2,7 @@ package dev.cinematic.p0.raw
 
 import java.util.concurrent.CancellationException
 import kotlin.math.abs
+import kotlin.math.pow
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -11,7 +12,7 @@ class R7PreviewInputsTest {
             javaClass.getResourceAsStream("/r7_preview_inputs_v1.csv.gz")))
             .bufferedReader().use { it.readLines() }.filterNot { it.startsWith("#") }
         var next = 0; var cases = 0; var pixels = 0
-        var maxEv = 0.0; var maxRoi = 0f; var maxP97 = 0f
+        var maxEv = 0.0; var maxRoi = 0f; var maxP97 = 0.0
         while (next < lines.size) {
             val header = lines[next++].split(',')
             assertEquals("CASE", header[0])
@@ -32,8 +33,9 @@ class R7PreviewInputsTest {
             val evError = abs(header[4].toDouble() - result.exposure.externalBaseEv)
             assertTrue("$name EV error=$evError", evError <= 2e-6)
             maxEv = maxOf(maxEv, evError)
-            val p97Error = abs(header[5].toFloat() - result.exposure.centralP97)
-            assertTrue("$name p97 error=$p97Error", p97Error <= 2e-6f)
+            val expectedP97 = header[5].toFloat()
+            val p97Error = abs(expectedP97.toDouble() - result.exposure.centralP97.toDouble())
+            assertP97(name, expectedP97, result.exposure.centralP97)
             maxP97 = maxOf(maxP97, p97Error)
             assertEquals(header[6].toInt(), result.exposure.centralSampleCount)
             assertEquals(ellipses.size, result.explicitEllipseCount)
@@ -48,6 +50,28 @@ class R7PreviewInputsTest {
         }
         assertEquals(14, cases); assertEquals(5354, pixels)
         println("Preview inputs PC cases=$cases pixels=$pixels maxEV=$maxEv maxP97=$maxP97 maxROI=$maxRoi")
+    }
+
+    @Test fun rawP97BudgetIsFiniteAndLimitedWhileEvAndRoiRemainAbsolute() {
+        for (expected in listOf(-100f, 100f)) {
+            val ulp = Math.ulp(expected)
+            assertEquals(7.62939453125e-6, ulp.toDouble(), 0.0)
+            for (steps in 1..2) assertP97("allowed rounding", expected, expected + steps * ulp)
+            assertThrows(AssertionError::class.java) { assertP97("larger drift", expected, expected + 3f * ulp) }
+        }
+        assertP97("absolute floor", 0f, 2e-6f)
+        assertThrows(AssertionError::class.java) { assertP97("absolute drift", 0f, 2.1e-6f) }
+        for (expected in listOf(0f, Float.MIN_VALUE, java.lang.Float.MIN_NORMAL, .5f, 1f, 2f,
+            Math.nextDown(1f), Float.MAX_VALUE, -Float.MAX_VALUE)) {
+            assertTrue(p97Budget(expected).isFinite())
+            assertP97("finite IEEE boundary", expected, expected)
+        }
+        assertEquals(2.0.pow(-149), Math.ulp(Float.MIN_VALUE).toDouble(), 0.0)
+        assertEquals(2.0.pow(104), Math.ulp(Float.MAX_VALUE).toDouble(), 0.0)
+        for (bad in listOf(Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY)) {
+            assertThrows(IllegalArgumentException::class.java) { p97Budget(bad) }
+            assertThrows(AssertionError::class.java) { assertP97("nonfinite", 100f, bad) }
+        }
     }
 
     @Test fun provenanceRemainsPreliminaryAsShotAndEmptyRoiIsExplicitNotRun() {
@@ -139,4 +163,14 @@ class R7PreviewInputsTest {
     private fun constant(w: Int, h: Int, value: Float) = LinearSrgbImage(w, h, FloatArray(w * h * 3) { value })
     private fun ellipse(cx: Float = .5f, cy: Float = .5f, rx: Float = .3f, ry: Float = .4f) =
         R7PreviewInputs.FoundationEllipse(cx, cy, rx, ry)
+
+    private fun p97Budget(expected: Float): Double {
+        require(expected.isFinite())
+        return maxOf(2e-6, 2.0 * Math.ulp(expected).toDouble())
+    }
+    private fun assertP97(label: String, expected: Float, actual: Float) {
+        assertTrue("$label p97 must be finite", actual.isFinite())
+        assertTrue("$label p97 expected=$expected actual=$actual",
+            abs(expected.toDouble() - actual.toDouble()) <= p97Budget(expected))
+    }
 }
