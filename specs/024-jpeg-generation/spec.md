@@ -5,7 +5,7 @@
 共有DNGを原本として保持し、撮影・編集制御が固定した要求から、保存経路が検査できるJPEGを生成する。
 512pxの試験Bitmapを完成出力として流用しない。顔・露出の権威と公開操作は別担当の責務を維持する。
 
-## 要件
+## 完成出力の要件
 
 - FR-001: 要求はcaptureId/generation/共有原本URI・hash/固定recipeとする。出力targetは同じcaptureId/generationに属するprivate attemptで、create-only writerとreadback能力だけを渡す。原本/仮JPEG/共有領域を変更しない。
 - FR-002: v1はLibRawのas-shot暫定線形sRGB、長辺上限1024の専用縮小JPEGとする。full-res/Pixel profile一致を名乗らず、input/controlsの契約ID・上限・強度・qualityをrecipeへ記録する。既定強度0.5/quality95。実寸法はcodec検査値を返す。
@@ -23,3 +23,5 @@
 
 実機撮影・CameraX/Compose操作・full-resolution/tile/GPU、W1/顔backend/AE/Pixel profileの新実装、JPEG公開・新権限/依存・配布は対象外。
 実機残件は#78/#89で維持し、未確認を成功にしない。OOMをlargeHeap/強制GC/黙示縮小で隠さない。
+
+顔保護なしで手動確認するprivate試験出力は[#129](https://github.com/reitojike/cinematic-camera/issues/129)と[試験経路仕様](trial-output.md)で分離し、上記の完成・公開条件を緩めない。

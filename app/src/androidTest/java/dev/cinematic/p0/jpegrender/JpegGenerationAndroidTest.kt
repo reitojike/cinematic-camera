@@ -29,14 +29,19 @@ class JpegGenerationAndroidTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private val policy = RenderRecipeSnapshot("synthetic-controls-v1", "ev=0;faces=known-none")
 
-    @Test fun portraitDngThroughR7LookAndRealCodecAtMaximumBoundPreservesOriginal() {
+    @Test fun portraitDngThroughR7LookAndRealCodecAtMaximumBoundPreservesOriginal() = maximumOutput(false)
+
+    @Test fun privateTrialKeepsUnverifiedMetadataAt1024() = maximumOutput(true)
+
+    private fun maximumOutput(trial: Boolean) {
         check(Build.HARDWARE in setOf("goldfish", "ranchu")) { "Disposable emulator only" }
         withOriginal(syntheticDng(2048, 1536, 6)) { source ->
             val id = "jpeg_${UUID.randomUUID().toString().replace("-", "")}"
             val root = File(context.cacheDir, id)
             val files = RenderedJpegFiles(root, id, 1)
             try {
-                val request = JpegGenerationRequest(id, 1, source, JpegGenerationRecipe(AndroidAsShotJpegFrames.CONTRACT, policy))
+                val request = JpegGenerationRequest(id, 1, source,
+                    if (trial) JpegGenerationRecipe.trial() else JpegGenerationRecipe(AndroidAsShotJpegFrames.CONTRACT, policy))
                 val target = object : PrivateJpegTarget {
                     override val captureId = id
                     override val generation = 1L
@@ -49,14 +54,22 @@ class JpegGenerationAndroidTest {
                         policy, 0.0, FloatPlane(image.width, image.height, FloatArray(image.pixelCount)),
                         FaceMask(image.width, image.height, FloatArray(image.pixelCount)), RenderedFaceState.VERIFIED_NONE, RenderedExposureState.SUPPORTED)
                 }
-                val attempt = JpegGenerationAttempt(request, target, AndroidAsShotJpegFrames(context.contentResolver, CancellationSignal()), controls,
+                val frames = AndroidAsShotJpegFrames(context.contentResolver, CancellationSignal())
+                val attempt = JpegGenerationAttempt(request, target, frames, if (trial) AsShotNoFaceTrialControls else controls,
                     { context.contentResolver.openInputStream(android.net.Uri.parse(it.uri))!! }, AndroidSrgbJpegEncoder, AndroidJpegInspector())
                 val start = SystemClock.elapsedRealtimeNanos()
-                val generated = attempt.render { false }
-                assertEquals(768, generated.render.request.output.width)
-                assertEquals(1024, generated.render.request.output.height)
-                assertEquals(1, generated.render.request.output.orientation)
-                assertEquals("sRGB", generated.render.request.output.color)
+                val output = if (trial) {
+                    val generated = attempt.renderTrial { false }
+                    assertEquals(RenderedFaceState.NOT_RUN, generated.face)
+                    assertEquals(RenderedExposureState.DIAGNOSTIC, generated.exposure)
+                    assertEquals(RenderedResultKind.TRIAL_PREVIEW, generated.kind)
+                    assertEquals(JpegGenerationRecipe.TRIAL_SCHEMA, generated.request.recipe.schema)
+                    generated.request.output
+                } else attempt.render { false }.render.request.output
+                assertEquals(768, output.width)
+                assertEquals(1024, output.height)
+                assertEquals(1, output.orientation)
+                assertEquals("sRGB", output.color)
                 assertFalse(attempt.hasUnreleasedResources)
                 files.sealCompleted()
                 files.openRead().use { assertEquals(ExifInterface.ORIENTATION_UNDEFINED, ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, -1)) }
@@ -64,7 +77,7 @@ class JpegGenerationAndroidTest {
                 DngContentVerifier.verify(source.fingerprint, { context.contentResolver.openInputStream(android.net.Uri.parse(source.uri))!! })
                 val elapsedMs = (SystemClock.elapsedRealtimeNanos() - start) / 1_000_000.0
                 val highWater = File("/proc/self/status").useLines { lines -> lines.firstOrNull { it.startsWith("VmHWM:") } }
-                println("Synthetic3MP->1024 JPEG ms=$elapsedMs heapMax=${Runtime.getRuntime().maxMemory()} process $highWater")
+                println("Synthetic3MP->1024 JPEG trial=$trial ms=$elapsedMs heapMax=${Runtime.getRuntime().maxMemory()} process $highWater")
             } finally {
                 // Only this test's freshly allocated private directory, never an input/user path.
                 check(root.canonicalFile.parentFile == context.cacheDir.canonicalFile)
