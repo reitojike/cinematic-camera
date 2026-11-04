@@ -82,3 +82,20 @@ PCのGLOW設定・半径・合成比・暖色tintは`export_android_glow.py`か�
 [保存契約](../016-raw-capture-lifecycle/contracts.md)との境界として、後続decodeは共有領域の単一原本DNGへの読み取り専用URIを参照する。
 URIの権限・寿命・cancel/解放はdecodeアダプター側で扱い、純粋な画素処理へI/Oや恒久的DNGコピーを持ち込まない。
 仮JPEGは内部、完成JPEGの共有公開は保存側。今回URI層や保存型は追加しない。
+
+## 次の小縦切り: 段2（ブラックミストと自動強度）
+
+`StageClearMist.render(glowed, skinWeight, strength=0.5)`はブラックミスト適用後の画像と、
+後続Ortonでも再利用する`lightAddingStrength = auto_strength(glowed) * strength`を返す。
+ブラックミスト単体の境界もPCと照合し、sourceの輝度重み→.025/.07ぼかし→肌色保護→.32の追加を維持する。
+`export_android_mist.py`がPCの関数内定数・NEAR_WHITEから`StageClearMistV1.kt`と合成fixtureを生成する。
+
+自動強度の面積判定は`r10h_refine.near_white_fraction`の実コードを正とする。符号化した表示値ではなく、
+線形の`values @ LUMA > .9`である。初期のPC仕様表の「表示値」という説明から実装を推測して変更しない。
+厳密な比較とFloat32輝度計算を合成境界で検証し、epsilonやしきい値変更で合わせない。
+肌色重みはR7 baseからの`StageClearGlow.skinWeight(base)`を渡す。顔減光時にもこの重みを保持し、
+scaled glowedで自動強度と段2以降を再実行する。段2出力から自動強度を再計算するとPCと異なるため、後続には結果の値を渡す。
+
+合成fixtureは強度0/.5/1についてbase、肌色重み、PCの段1出力、ブラックミスト単体、段2出力と自動強度を持つ。
+段2単体の比較とKotlin段1→2の累積比較を分け、既存保護/ぼかし/段1goldenも維持する。
+段3以降の組立て、URI/decode、永続状態、MediaStore、撮影の開始条件には手を入れない。
