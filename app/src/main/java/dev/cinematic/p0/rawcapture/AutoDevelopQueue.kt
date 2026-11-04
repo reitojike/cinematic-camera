@@ -17,9 +17,14 @@ internal class AutoDevelopQueue(
     private val cancellationIo: Executor = AutoDevelopCancellation.io,
 ) {
     private data class Key(val captureId: String, val generation: Long)
-    private data class Job(val journal: AutoDevelopJournal, val runner: AutoDevelopRunner)
+    private class Job(val journal: AutoDevelopJournal, val runner: AutoDevelopRunner, var enabled: Boolean = true) {
+        @Volatile var observations: AutoDevelopConditions? = null
+        val requested = AtomicBoolean(enabled)
+        val publicationEnabled = AtomicBoolean(false)
+    }
     private val jobs = linkedMapOf<Key, Job>() // IO owner only; never remove a resource owner on cancel.
     private val latest = mutableMapOf<String, Long>()
+    private val manualFences = mutableSetOf<String>() // Uncertain allocation must not leave an older edit runnable.
     private val scheduled = AtomicBoolean(false)
     @Volatile private var resourceOwner: Pair<Key, AutoDevelopRunner>? = null
 
@@ -33,33 +38,99 @@ internal class AutoDevelopQueue(
         wake()
     }
     fun requestStop() { admission.requestStop(); resourceOwner?.second?.requestStop() }
+    fun stopObserved(attempt: AutoDevelopCoordinator.Attempt) {
+        val active = resourceOwner?.second ?: return
+        val target = active.stopTarget() ?: return
+        if (target.slot === attempt) active.requestStop(target)
+    }
     fun updateConditions(conditions: AutoDevelopConditions) {
         admission.updateConditions(conditions)
-        if (AutoDevelopPolicy.blockers(conditions).isNotEmpty()) resourceOwner?.second?.requestStop()
+        val active = resourceOwner?.second
+        if (active?.conditionsBlocked(conditions) == true) active.requestStop()
         wake()
     }
 
     fun submit(request: AutoDevelopRequest): CompletableFuture<AutoDevelopRecord> {
+        require(request.quality != AutoRenderQuality.MANUAL_BOUNDED_1024_PRELIMINARY) { "Use the explicit manual entry" }
         val active = resourceOwner
         if (active != null && active.first.captureId == request.captureId && active.first.generation < request.generation) {
             active.second.requestStop() // Supersession only; duplicate delivery/another capture must not cancel valid work.
         }
-        return onIo {
-            val key = Key(request.captureId, request.generation)
-            val current = latest[request.captureId]
-            if (current != null && request.generation < current) throw CaptureJournalConflict()
-            val existing = jobs[key]
-            val journal = existing?.journal ?: journalFactory(request)
-            val record = journal.prepare(request)
-            if (existing == null) {
-                latest[request.captureId] = request.generation
-                jobs[key] = Job(journal, AutoDevelopRunner(journal, admission, backendFactory(request), cancellationIo, ::wake) {
-                    latest[request.captureId] == request.generation
-                })
-            }
-            wake()
-            record
+        return onIo { accept(request) }
+    }
+    private fun accept(request: AutoDevelopRequest, enabled: Boolean = true): AutoDevelopRecord {
+        val key = Key(request.captureId, request.generation)
+        val current = latest[request.captureId]
+        if (current != null && request.generation < current) throw CaptureJournalConflict()
+        val existing = jobs[key]
+        val journal = existing?.journal ?: journalFactory(request)
+        val record = journal.prepare(request)
+        if (existing == null) {
+            latest[request.captureId] = request.generation
+            jobs[key] = Job(journal, AutoDevelopRunner(journal, admission, backendFactory(request), cancellationIo, ::wake,
+                interactive = request.boundedManual, observations = { jobs[key]?.observations },
+                allowPublication = { !request.boundedManual || jobs[key]?.publicationEnabled?.get() == true }) {
+                latest[request.captureId] == request.generation && request.captureId !in manualFences &&
+                    (!request.boundedManual || jobs[key]?.requested?.get() == true)
+            }, enabled)
         }
+        wake()
+        return record
+    }
+    /** Allocation and immutable generation acceptance share the existing IO owner. No render on prepare. */
+    fun prepareManual(captureId: String, allocate: () -> AutoDevelopRequest): CompletableFuture<ManualDevelopHandle> = onIo {
+        requireCaptureId(captureId)
+        manualFences.add(captureId)
+        val request = try { allocate() } catch (failure: Throwable) {
+            resourceOwner?.takeIf { it.first.captureId == captureId }?.second?.requestStop()
+            throw failure
+        }
+        require(request.boundedManual && request.captureId == captureId && captureId == ManualDevelopRequests.identity(request.source))
+        resourceOwner?.takeIf { it.first.captureId == captureId && it.first.generation < request.generation }?.second?.requestStop()
+        accept(request, enabled = false)
+        manualFences.remove(captureId)
+        ManualDevelopHandle(this, request, currentManual(request).requested)
+    }
+    internal fun startManual(request: AutoDevelopRequest, observations: AutoDevelopConditions): CompletableFuture<AutoDevelopRecord> = onIo {
+        val job = currentManual(request)
+        if (!job.runner.supports(request)) throw AutoRenderUnsupported()
+        job.observations = observations
+        job.enabled = true
+        (job.journal.read() ?: throw CaptureJournalConflict()).also { wake() }
+    }
+    internal fun manualStatus(request: AutoDevelopRequest): CompletableFuture<AutoDevelopRecord> = onIo {
+        currentManual(request).journal.read() ?: throw CaptureJournalConflict()
+    }
+    /** Explicit user Save intent; first publication is never implied by generation or status. */
+    internal fun publishManual(request: AutoDevelopRequest, observations: AutoDevelopConditions): CompletableFuture<AutoDevelopRecord> = onIo {
+        val job = currentManual(request)
+        val record = job.journal.read() ?: throw CaptureJournalConflict()
+        if (record.phase !in setOf(AutoJobPhase.RENDERED, AutoJobPhase.PUBLISHING, AutoJobPhase.PUBLISHED)) throw CaptureJournalConflict()
+        job.observations = observations
+        job.publicationEnabled.set(true)
+        job.enabled = true
+        record.also { wake() }
+    }
+    internal fun stopManual(request: AutoDevelopRequest) {
+        // Do not read the IO-owned map from the UI thread or stop another generation's resource owner.
+        resourceOwner?.takeIf { it.first.captureId == request.captureId && it.first.generation == request.generation }
+            ?.second?.requestStop()
+    }
+    internal fun confirmManual(request: AutoDevelopRequest, observations: AutoDevelopConditions,
+        shouldStop: () -> Boolean): CompletableFuture<JpegPublicationRecord> = onIo {
+        val job = currentManual(request)
+        job.observations = observations
+        val held = resourceOwner
+        if (held != null && held.second !== job.runner && held.second.hasUnreleasedResources) throw CaptureJournalConflict()
+        resourceOwner = Key(request.captureId, request.generation) to job.runner
+        try { job.runner.confirmPublished(shouldStop) }
+        finally { if (!job.runner.hasUnreleasedResources) resourceOwner = null }
+    }
+    private fun currentManual(request: AutoDevelopRequest): Job {
+        require(request.boundedManual)
+        val job = jobs[Key(request.captureId, request.generation)] ?: throw CaptureJournalConflict()
+        if (request.captureId in manualFences || latest[request.captureId] != request.generation || job.journal.read()?.request != request) throw CaptureJournalConflict()
+        return job
     }
     /** Rebuild only on a new process owner; a live owner's handles must never be bypassed. */
     fun restore(requests: List<AutoDevelopRequest>): CompletableFuture<Unit> = onIo {
@@ -73,9 +144,12 @@ internal class AutoDevelopQueue(
             val record = journal.recoverAfterProcessDeath() ?: throw CaptureJournalConflict()
             if (record.request != request) throw CaptureJournalConflict()
             restoredLatest[request.captureId] = maxOf(restoredLatest[request.captureId] ?: 0, request.generation)
-            restoredJobs[key] = Job(journal, AutoDevelopRunner(journal, admission, backendFactory(request), cancellationIo, ::wake) {
-                latest[request.captureId] == request.generation
-            })
+            restoredJobs[key] = Job(journal, AutoDevelopRunner(journal, admission, backendFactory(request), cancellationIo, ::wake,
+                interactive = request.boundedManual, observations = { jobs[key]?.observations },
+                allowPublication = { !request.boundedManual || jobs[key]?.publicationEnabled?.get() == true }) {
+                latest[request.captureId] == request.generation && request.captureId !in manualFences &&
+                    (!request.boundedManual || jobs[key]?.requested?.get() == true)
+            }, enabled = !request.boundedManual)
         }
         // An unreadable newer definition must not leave an older partial inventory runnable.
         latest.putAll(restoredLatest)
@@ -86,7 +160,7 @@ internal class AutoDevelopQueue(
         val job = jobs[Key(captureId, generation)] ?: throw CaptureJournalConflict()
         if (latest[captureId] != generation || job.runner.hasUnreleasedResources) throw CaptureJournalConflict()
         val current = job.journal.read() ?: throw CaptureJournalConflict()
-        job.journal.retry(current.revision).also { wake() }
+        job.journal.retry(current.revision).also { job.enabled = true; wake() }
     }
     fun wake() {
         if (!scheduled.compareAndSet(false, true)) return
@@ -95,7 +169,7 @@ internal class AutoDevelopQueue(
                 scheduled.set(false)
                 jobs.entries.forEach { (key, job) ->
                     // Old owners must still close; old generations must not start new work.
-                    if (latest[key.captureId] == key.generation || job.runner.hasUnreleasedResources) {
+                    if ((job.enabled && job.requested.get() && key.captureId !in manualFences && latest[key.captureId] == key.generation) || job.runner.hasUnreleasedResources) {
                         val held = resourceOwner
                         if (held != null && held.second !== job.runner && held.second.hasUnreleasedResources) return@forEach
                         resourceOwner = key to job.runner

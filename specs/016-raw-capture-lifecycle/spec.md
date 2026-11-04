@@ -87,3 +87,23 @@
 - 原本照合とJPEG公開は外部操作に対して原子的ではない。最終照合後に外部変更が起きた場合、検知前の公開を排除する保証はない。
 - 写真選択・再関連付けのUI実装は後続。今回定義する参照許可/検証契約は、その実装済み宣言ではない。
 - この設計だけでDNG decode・現像・実機性能が成立したとは扱わない。
+
+## 共通の手動要求・実行・公開契約（#89/#127統合）
+
+Filesで選んだread-only DNGも、撮影由来の共有DNGと同じprocessのqueue/coordinatorへ接続する。
+手動は`MANUAL_BOUNDED_1024_PRELIMINARY`であり、最大1024・as-shot暫定色・Pixel profile未検証を明示する。
+512試験Bitmapは使わず、全解像度自動現像のFINAL_ORIGINAL/SHARED_ONLY条件は維持する。
+顔NOT_RUN/FAILED、診断/未知EVを成功へ補完しない。実provider未登録では生成・公開を無効にする。
+
+保存側がsourceのURI/hash/grant全体から安定logical IDを決め、固定recipeと品質をcommit/readbackしてから
+opaque handleを返す。recipe変更は同じIDの次世代、同要求再配送・再選択・retryは同世代である。
+永続IDはURIの永続grantを意味せず、再起動後の読取不能は再選択待ちとなる。権限復旧のUIは別途必要。
+
+手動startは私有JPEG生成だけ、共有公開はRENDERED後の明示publish操作だけで行う。
+statusのPUBLISHEDは履歴であり、開くURIは同じpublication ownerのfresh readback確認からだけ取得する。
+失敗・中断でも原本/仮JPEGは変更せず、成功artifactの公開再試行で再render/再insertしない。
+
+preview/manual/autoは同じprocess coordinatorを使い、UI Semaphoreや別workerで排他を迂回しない。
+renderer対応可否はjob別、camera/foreground/thermal/storage/memoryの最新停止条件は共通である。
+古いallowed snapshotや取消済みretryの後着タスクで停止条件を上書きしない。取消/submit受領は資源解放ではない。
+native/codec/reader/writerの実closeが確認できるまで枠を保持し、確認不能なら撮影受付を待たせず現像を止める。

@@ -136,3 +136,19 @@ process再生成時も台帳をbindしてからreaderを公開する。複数ins
 DBとMediaStoreを跨ぐexactly-once保証は主張しない。不明時に自動停止することで、重複公開を避ける。
 失敗した自分の未公開pending行をcleanupする場合も、所有とpendingを再確認し、台帳へ結果を残す。
 共有原本・仮JPEGはこのcleanupへ渡さない。一時DNGの解放は上記の引渡し契約だけで行う。
+
+## 手動入口とUI接続API
+
+`AndroidAutoDevelopQueue.prepareManual(context, source, JpegGenerationRecipe)`は固定metadataのcommit/readback後に
+`CompletableFuture<ManualDevelopHandle>`を返す。UIでcaptureId/generationを作らず、grantを昇格させない。
+handleのrequest/qualityは読み取り専用。start(observations)→status()でRENDEREDを確認し、実寸法/縮小暫定品質を表示する。
+ユーザーの保存操作でpublish(observations)を呼ぶ。PUBLISHED後のOpen直前だけconfirmPublished(observations, shouldStop)を呼び、
+そのfresh結果URIを使う。statusの履歴からURIを開かず、別AndroidRenderedJpegOperationや私有JPEGのコピーを作らない。
+
+取消はhandle.requestStop()、RETRYABLEまたは未着手SOURCE_UNAVAILABLEの再選択後は明示retry()。
+source変更は別source identityとなり、失効したgrantを永続権限へ書換えない。UNKNOWN公開や改変をretryでリセットしない。
+prepare/start/status/publish/retryのfutureを待つ間にUIのpreview枠を持たない。
+
+previewは同じDevelopExecutionへfresh common観測をupdateConditionsし、job別rendererAvailableで
+tryStartObservedする。shouldStop(token)をstage境界で確認し、実native/stream close後だけDevelopExecution.completeAfterResourcesClosedする。解放時は待機queueをwakeする。
+取消/例外/Activity再生成でclose不明ownerを捨てない。現在このPRはphotorollを変更せず、UI側接続・実観測は別PRで検証する。

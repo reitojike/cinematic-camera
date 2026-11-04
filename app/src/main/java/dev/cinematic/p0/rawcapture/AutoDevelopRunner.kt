@@ -13,11 +13,13 @@ internal interface AutoDevelopPublication {
     val hasUnreleasedResources: Boolean
     fun releaseResources()
     fun advance(shouldStop: () -> Boolean): JpegPublicationPhase
+    fun confirmPublished(shouldStop: () -> Boolean): JpegPublicationRecord = throw IOException("Fresh confirmation unavailable")
 }
 internal class RecoverableAutoPublication(private val publisher: RecoverablePhotoPublisher) : AutoDevelopPublication {
     override val hasUnreleasedResources get() = publisher.hasUnreleasedResources
     override fun releaseResources() = publisher.releaseResources()
     override fun advance(shouldStop: () -> Boolean) = publisher.advance(shouldStop).phase
+    override fun confirmPublished(shouldStop: () -> Boolean) = publisher.advance(shouldStop)
 }
 
 /** Read-only original + attempt-local output. Implementations retain failed closes, not just their counts. */
@@ -42,6 +44,9 @@ internal class AutoDevelopRunner(
     private val backend: AutoDevelopBackend,
     private val cancellationIo: Executor = AutoDevelopCancellation.io,
     private val onResourcesMayClose: () -> Unit = {},
+    private val interactive: Boolean = false,
+    private val observations: () -> AutoDevelopConditions? = { null },
+    private val allowPublication: () -> Boolean = { true },
     private val isCurrent: () -> Boolean,
 ) {
     private val advancing = AtomicBoolean(false)
@@ -56,10 +61,13 @@ internal class AutoDevelopRunner(
     private var renderFailure: Throwable? = null
     private var renderAttemptId: String? = null
     private data class RenderDecision(val attemptId: String, val phase: AutoJobPhase, val reason: AutoJobReason,
-        val fingerprint: OriginalFingerprint? = null)
+        val fingerprint: OriginalFingerprint? = null, val observed: AutoRenderReceipt? = null)
     private var renderDecision: RenderDecision? = null
     private var publication: AutoDevelopPublication? = null
     val hasUnreleasedResources get() = slot != null
+    fun supports(request: AutoDevelopRequest) = request.admissible && backend.supports(request)
+    fun conditionsBlocked(conditions: AutoDevelopConditions) =
+        AutoDevelopPolicy.blockers(if (interactive) conditions.copy(rendererAvailable = true) else conditions).isNotEmpty()
 
     /** Process-local cancellation intent. A delayed caller must retain the original owner+slot pair. */
     class StopTarget internal constructor(internal val owner: AutoDevelopRunner, internal val slot: AutoDevelopCoordinator.Attempt)
@@ -117,11 +125,11 @@ internal class AutoDevelopRunner(
         if (record.phase == AutoJobPhase.PUBLISHED) return result(AutoRunStatus.PUBLISHED, record)
         if (record.phase == AutoJobPhase.HELD) return result(AutoRunStatus.HELD, record)
         if (record.phase == AutoJobPhase.RETRYABLE && slot == null) return result(AutoRunStatus.RETRYABLE, record)
-        if (!record.request.publishable || !backend.supports(record.request)) {
+        if (!supports(record.request)) {
             if (slot != null) throw IOException("Live renderer contract changed")
             return result(AutoRunStatus.HELD, journal.hold(record.revision, AutoJobReason.UNSUPPORTED))
         }
-        if (slot == null) slot = admission.tryStart() ?: return result(AutoRunStatus.BLOCKED, record)
+        if (slot == null) slot = admit() ?: return result(AutoRunStatus.BLOCKED, record)
         if (renderPending && record.phase == AutoJobPhase.RENDERING) {
             record = finishRender(record)
         } else if (record.phase == AutoJobPhase.QUEUED) {
@@ -153,7 +161,7 @@ internal class AutoDevelopRunner(
         if (record.phase == AutoJobPhase.RETRYABLE) return result(AutoRunStatus.RETRYABLE, record)
         if (record.phase == AutoJobPhase.HELD) return result(AutoRunStatus.HELD, record)
         if (record.phase == AutoJobPhase.RENDERED) {
-            if (stopped()) return result(AutoRunStatus.PUBLICATION_PENDING, record)
+            if (stopped() || !allowPublication()) return result(AutoRunStatus.PUBLICATION_PENDING, record)
             record = journal.publishing(record.revision)
         }
         if (record.phase == AutoJobPhase.PUBLISHING) {
@@ -184,7 +192,9 @@ internal class AutoDevelopRunner(
         publication?.hasUnreleasedResources != true && !backend.hasUnreleasedResources
     } catch (_: Throwable) { false }
 
-    private fun stopped() = slot?.let { admission.shouldStop(it) } != false || !isCurrent()
+    private fun admit() = if (interactive) observations()?.let(admission::tryStartObserved) else admission.tryStart()
+    private fun stopped() = slot?.let { admission.shouldStop(it) } != false || !isCurrent() ||
+        (interactive && observations()?.let { AutoDevelopPolicy.blockers(it).isNotEmpty() } != false)
     private fun closeRender(): Boolean {
         val owner = synchronized(ownership) {
             if (cancelCalls != 0) return false
@@ -201,7 +211,7 @@ internal class AutoDevelopRunner(
         return when (decision.phase) {
             AutoJobPhase.RETRYABLE -> journal.retryable(record.revision, decision.reason)
             AutoJobPhase.HELD -> journal.hold(record.revision, decision.reason)
-            AutoJobPhase.RENDERED -> journal.rendered(record.revision, requireNotNull(decision.fingerprint))
+            AutoJobPhase.RENDERED -> journal.rendered(record.revision, requireNotNull(decision.fingerprint), decision.observed)
             else -> throw CaptureJournalConflict()
         }
     }
@@ -218,15 +228,37 @@ internal class AutoDevelopRunner(
         if (failure != null) return failed()
         val value = receipt ?: return failed()
         val request = record.request
-        if (value.request != request || !value.request.publishable || value.output.width != request.width || value.output.height != request.height ||
-            value.output.orientation != 1 || value.output.color != "sRGB") return invalid()
+        if (!request.accepts(value)) return invalid()
         val inspection = try { backend.inspect(request, requireNotNull(record.attemptId), ::stopped) }
         catch (_: Exception) {
             return if (stopped()) interrupted() else invalid()
         }
         if (stopped()) return interrupted()
         if (backend.hasUnreleasedResources || inspection.output != value.output || inspection.fingerprint.bytes != value.output.bytes) return invalid()
-        return RenderDecision(renderId, AutoJobPhase.RENDERED, AutoJobReason.NONE, inspection.fingerprint)
+        return RenderDecision(renderId, AutoJobPhase.RENDERED, AutoJobReason.NONE, inspection.fingerprint, value)
+    }
+
+    /** Historical PUBLISHED is insufficient. Re-enter this same owner and #118 provider readback.
+     * Caller serializes generation changes on the same queue; failures never fabricate a result URI. */
+    fun confirmPublished(shouldStop: () -> Boolean): JpegPublicationRecord {
+        if (!advancing.compareAndSet(false, true)) throw IOException("Develop owner is active")
+        try {
+            if (attempt != null && !closeRender() || !releaseIo()) throw IOException("Develop resources remain open")
+            val record = journal.read() ?: throw CaptureJournalConflict()
+            if (record.phase != AutoJobPhase.PUBLISHED || !isCurrent() || !supports(record.request)) throw CaptureJournalConflict()
+            if (slot == null) slot = admit() ?: throw IOException("Develop execution is occupied or blocked")
+            val stop = { shouldStop() || stopped() }
+            if (stop()) throw DngVerificationStopped()
+            val owner = publication ?: backend.publication(record) { !stopped() }.also { publication = it }
+            owner.releaseResources()
+            val checked = owner.confirmPublished(stop)
+            if (stop() || owner.hasUnreleasedResources || checked.phase != JpegPublicationPhase.PUBLISHED ||
+                checked.uri == null || checked.render != record.completed()) throw IOException("Published JPEG could not be confirmed")
+            return checked
+        } finally {
+            if (attempt == null && releaseIo()) { slot?.let(admission::completeAfterResourcesClosed); slot = null }
+            advancing.set(false)
+        }
     }
     private fun result(status: AutoRunStatus, record: AutoDevelopRecord?) = AutoRunResult(status, record)
 }
