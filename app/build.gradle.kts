@@ -2,6 +2,18 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+// Draft opt-in: default debug builds require no signing inputs and remain unchanged.
+val cinematicSigningMode = providers.environmentVariable("CINEMATIC_SIGNING_MODE").orElse("ephemeral_debug").get()
+require(cinematicSigningMode in setOf("ephemeral_debug", "stable_internal")) {
+    "CINEMATIC_SIGNING_MODE must be ephemeral_debug or stable_internal"
+}
+val stableInternalSigning = cinematicSigningMode == "stable_internal"
+fun requiredSigningInput(name: String): String = providers.environmentVariable(name).orNull
+    ?.takeIf { it.isNotBlank() } ?: throw GradleException("Stable internal signing requires environment input: $name")
+if (stableInternalSigning) {
+    require(!gradle.startParameter.isConfigurationCacheRequested) { "Stable signing requires --no-configuration-cache" }
+}
 android {
     namespace = "dev.cinematic.p0"
     compileSdk = 37
@@ -13,6 +25,25 @@ android {
         versionName = providers.environmentVariable("CINEMATIC_VERSION_NAME").orNull ?: "0.0.10-p05"
     }
     buildFeatures { compose = true; buildConfig = true }
+    signingConfigs {
+        if (stableInternalSigning) {
+            create("cinematicInternal") {
+                storeFile = file(requiredSigningInput("CINEMATIC_INTERNAL_KEYSTORE_FILE")).also {
+                    require(it.isFile) { "Stable internal signing keystore is missing" }
+                }
+                storeType = "PKCS12"
+                storePassword = requiredSigningInput("CINEMATIC_INTERNAL_STORE_PASSWORD")
+                keyAlias = requiredSigningInput("CINEMATIC_INTERNAL_KEY_ALIAS")
+                keyPassword = requiredSigningInput("CINEMATIC_INTERNAL_KEY_PASSWORD")
+            }
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            isDebuggable = false
+            if (stableInternalSigning) signingConfig = signingConfigs.getByName("cinematicInternal")
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
