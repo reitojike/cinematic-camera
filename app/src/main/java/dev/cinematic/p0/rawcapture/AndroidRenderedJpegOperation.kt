@@ -101,6 +101,7 @@ internal class AndroidRenderedJpegOperation private constructor(context: Context
         require(render.request.captureId == captureId && render.request.generation == generation)
         render.requirePublishable(supportedContracts)
         files.sealCompleted()
+        JpegOperationOwners.registry.claim(app.noBackupFilesDir.canonicalPath, captureId, generation, this)
         val directory = files.generationRoot()
         val root = requireNotNull(directory.parentFile)
         val journal = JpegPublicationJournal(captureId, generation,
