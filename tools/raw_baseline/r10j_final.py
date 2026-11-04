@@ -41,6 +41,12 @@ STAGES = (("plain", "元画像（補正なし）"), ("simple", "シンプルな�
 TOGGLE = {"plain": "final", "simple": "plain", "look": "simple", "final": "look", "edited": "final"}
 
 
+def spread(items: list, count: int) -> list:
+    """Up to `count` evenly spaced items, each picked once (all of them when there are fewer)."""
+    n = min(count, len(items))
+    return [items[int((i + .5) * len(items) / n)] for i in range(n)]
+
+
 def final_render(decoded: np.ndarray, scene: dict, look: dict, choice: dict) -> tuple[np.ndarray, dict]:
     """The decided round-10 look. Returns the image and what the automatic steps did."""
     base = fin.render(decoded, scene, look, choice)
@@ -128,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("ERROR ROUND8_MISMATCH: the photo selection no longer matches the round-8 record")
     used = tuned | {g.stem(ed) for ed in photos}
     fresh = g.pick(edited, used, per_busy_date=1)
-    fresh = [fresh[int((i + .5) * len(fresh) / NEW_PHOTOS)] for i in range(min(NEW_PHOTOS, len(fresh)))]
+    fresh = spread(fresh, NEW_PHOTOS)
     if used & {g.stem(ed) for ed in fresh}:
         raise SystemExit("ERROR REUSED_PHOTO")
     jobs = [("調整に使ったシーン", s["id"], livepicture / s["source"], s, fin.chosen(s["id"]), None)
