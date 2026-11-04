@@ -74,9 +74,16 @@
 - **SC-010**: Orton単体、段3混合、段1→3を強度0/.5/1で全画素比較する。現行移植の暫定回帰境界は絶対誤差2e-5（rtol=0）。既存goldenも維持する。明部fade/転送/肌/HDR/負値/量の受渡し/入力保持を検証し、数値一致を最終画質合格にしない。
 - **SC-011**: 最終headのPC/Android CI、canonical/独立レビューをDraft PRへ記録する。段4/5、全renderer、DNG/R7、実機画質/性能は未完。mergeは別承認。
 
+## 合成fixtureの保存形式（#98）
+
+- **FR-021**: protections/blur/glow/mistの既存CSVを標準gzipへ可逆変換する。ケース/寸法/全画素値/誤差境界とPC正本・runtime処理は変えない。旧CSVとの恒久二重保存を残さない。
+- **FR-022**: Python生成/再照合とJVM読込に標準ライブラリを使う。生成gzipへローカルfilename/時刻を含めず、生成データ属性とCI pathsを更新する。新依存を足さない。
+- **SC-012**: 変換前Git blobと解凍後のbytes/SHA-256が4件とも一致する。既存全画素テストと一時出力へのCLI再生成→展開→再照合が成功し、git属性を確認できる。
+- **SC-013**: 最終headのPC/Android CI・canonical/独立レビューと公開検査を別Draft PRへ記録し、mergeは別承認とする。容量削減を実行時のメモリ・性能改善とはしない。
+
 ## 次の小縦切り: R7共通土台（#78、plan境界B）
 
-- **FR-021**: 公開共通recipeを正本とし、P2→I1 local tone→foundation→vibrance→K1→S2を純Kotlinへ移植する。外部base EVとfoundation skin ROIを必須入力とし、写真別設定・例外を含めない。E2 .6と共通ev .3の加算境界を明記する。
-- **FR-022**: local toneのBOX→BICUBICと92/50百分位をPC互換にする。既存BOX/BILINEAR・既存Stage Clearの版とgoldenを維持する。入力を変更せず、gamut mappingやWB近似は追加しない。
-- **FR-023**: 公開共通設定と合成ROIを既存`r7_final.render`にも渡し、6段とlog baseの全画素fixtureを生成する。ゼロROIと後段の検出顔マスクを混同しない。WB W1・Pixel profile/decode・露出推定・実ROI供給・画面/保存は別途検証する。
-- **SC-012**: 7ケース4908画素のlog baseと各段を絶対誤差2e-5以内（rtol=0、暫定移植回帰境界）で比較する。外部露出、入力保持、ROI形状/値、非有限EVと無効gainの拒否も検証し、実写画質/端末性能の合格とは区別する。詳細は[r7-base.md](r7-base.md)。
+- **R7-FR-001**: 公開共通recipeを正本とし、P2→I1 local tone→foundation→vibrance→K1→S2を純Kotlinへ移植する。外部base EVとfoundation skin ROIを必須入力とし、写真別設定・例外を含めない。E2 .6と共通ev .3の加算境界を明記する。
+- **R7-FR-002**: local toneのBOX→BICUBICと92/50百分位をPC互換にする。既存BOX/BILINEAR・既存Stage Clearの版とgoldenを維持する。入力を変更せず、gamut mappingやWB近似は追加しない。
+- **R7-FR-003**: 公開共通設定と合成ROIを既存`r7_final.render`にも渡し、6段とlog baseの全画素fixtureを生成する。ゼロROIと後段の検出顔マスクを混同しない。WB W1・Pixel profile/decode・露出推定・実ROI供給・画面/保存は別途検証する。
+- **R7-SC-001**: 7ケース4908画素のlog baseと各段を絶対誤差2e-5以内（rtol=0、暫定移植回帰境界）で比較する。外部露出、入力保持、ROI形状/値、非有限EVと無効gainの拒否も検証し、実写画質/端末性能の合格とは区別する。詳細は[r7-base.md](r7-base.md)。

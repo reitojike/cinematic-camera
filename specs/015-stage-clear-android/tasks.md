@@ -56,9 +56,16 @@
 - [x] T028 純Kotlin実装と単体/段1→3・入力保持/不正入力の検証を行い、既存goldenも維持する（SC-010）。
 - [x] T029 PC/Android検証・公開検査、Draft PRと独立レビューを完了する（SC-011）。最終headのCI/canonical/独立再確認をPRへ記録し、mergeは別承認。
 
-## Phase 9: R7共通土台（T006の一部）
+## Phase 9: 既存合成fixtureの保存形式（#98）
 
-- [x] T030 公開共通recipeと外部EV/skin ROI、decode/W1の分離を定義する（FR-021/023）。
-- [x] T031 BICUBICを共通resizeへ追加し、R7の6段を純Kotlinへ移植する（FR-021/022）。
-- [x] T032 PC既存rendererと同じ共通設定・合成ROIから全画素fixtureを生成し、各段/不正入力/入力保持を比較する（FR-023、SC-012）。
-- [ ] T033 最終headのPC/Android CI、canonical/独立レビューを確認しDraft PRへ記録する。実DNG入力・ROI供給・W1・実機を完了扱いにしない。
+- [x] T030 Issueの重複を確認し、可逆圧縮/生成属性と対象外をIssue・spec/planへ定義する（FR-021/022）。
+- [x] T031 Git blobをgzipへ変換し、解凍bytes/SHA-256一致を確認する。PC/JVM読込・生成・CI pathsを更新する。
+- [x] T032 一時CLI再生成→展開/再照合、既存PC/JVM全画素と属性・公開検査を検証する（SC-012）。
+- [x] T033 独立レビュー・公開検査と別Draft PRの準備を完了する（SC-013）。最終headのCI/canonical/独立再確認をPRへ記録し、mergeは別承認。
+
+## Phase 10: R7共通土台（T006の一部）
+
+- [x] R7-T001 公開共通recipeと外部EV/skin ROI、decode/W1の分離を定義する（R7-FR-001/003）。
+- [x] R7-T002 BICUBICを共通resizeへ追加し、R7の6段を純Kotlinへ移植する（R7-FR-001/002）。
+- [x] R7-T003 PC既存rendererと同じ共通設定・合成ROIから全画素fixtureを生成し、各段/不正入力/入力保持を比較する（R7-FR-003、R7-SC-001）。
+- [ ] R7-T004 最終headのPC/Android CI、canonical/独立レビューを確認しDraft PRへ記録する。実DNG入力・ROI供給・W1・実機を完了扱いにしない。

@@ -6,6 +6,7 @@ This is not a DNG decoder or a whole Stage Clear conformance test.
 from __future__ import annotations
 
 import argparse
+import gzip
 import ast
 from pathlib import Path
 
@@ -20,7 +21,7 @@ from test_stage_clear import scene
 
 ROOT = Path(__file__).resolve().parents[2]
 CONSTANTS = ROOT / "app/src/main/java/dev/cinematic/p0/raw/StageClearV1.kt"
-FIXTURE = ROOT / "app/src/test/resources/stage_clear_protections_v1.csv"
+FIXTURE = ROOT / "app/src/test/resources/stage_clear_protections_v1.csv.gz"
 
 
 def matrix(function: str, module, name: str) -> list[list[float]]:
@@ -120,7 +121,7 @@ def check_exports() -> None:
     if CONSTANTS.read_text(encoding="utf-8") != constants():
         raise AssertionError("Generated Kotlin constants differ from PC authority")
     expected = fixture().splitlines()
-    committed = FIXTURE.read_text(encoding="utf-8").splitlines()
+    committed = gzip.decompress(FIXTURE.read_bytes()).decode("utf-8").splitlines()
     if len(expected) != len(committed):
         raise AssertionError("Synthetic fixture shape changed")
     # NumPy wheel/CPU math can differ in the last float32 bits. Keep metadata exact;
@@ -145,7 +146,10 @@ def main() -> int:
     if args.write:
         for path, contents in generated().items():
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(contents, encoding="utf-8", newline="\n")
+            if path == FIXTURE:
+                path.write_bytes(gzip.compress(contents.encode("utf-8"), mtime=0))
+            else:
+                path.write_text(contents, encoding="utf-8", newline="\n")
     else:
         check_exports()
     print("Stage Clear protection exports match PC authority" if not args.write else "Wrote synthetic protection exports")

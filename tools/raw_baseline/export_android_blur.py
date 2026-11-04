@@ -6,6 +6,7 @@ Run --write deliberately, or --check (default) to verify committed numerical evi
 from __future__ import annotations
 
 import argparse
+import gzip
 from pathlib import Path
 
 import numpy as np
@@ -14,7 +15,7 @@ from PIL import Image
 import r10_iconic as ic
 
 ROOT = Path(__file__).resolve().parents[2]
-FIXTURE = ROOT / "app/src/test/resources/stage_clear_blur_v1.csv"
+FIXTURE = ROOT / "app/src/test/resources/stage_clear_blur_v1.csv.gz"
 
 
 def plane(width: int, height: int) -> np.ndarray:
@@ -66,7 +67,7 @@ def fixture() -> str:
 
 
 def check_exports() -> None:
-    expected, actual = fixture().splitlines(), FIXTURE.read_text(encoding="utf-8").splitlines()
+    expected, actual = fixture().splitlines(), gzip.decompress(FIXTURE.read_bytes()).decode("utf-8").splitlines()
     if len(expected) != len(actual):
         raise AssertionError("Blur fixture shape changed")
     for line, (want, got) in enumerate(zip(expected, actual), 1):
@@ -88,7 +89,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.write:
         FIXTURE.parent.mkdir(parents=True, exist_ok=True)
-        FIXTURE.write_text(fixture(), encoding="utf-8", newline="\n")
+        FIXTURE.write_bytes(gzip.compress(fixture().encode("utf-8"), mtime=0))
     else:
         check_exports()
     print("Wrote synthetic blur fixture" if args.write else "Blur fixture matches PC")
