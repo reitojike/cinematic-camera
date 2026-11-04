@@ -129,6 +129,31 @@ adb -s <isolated-emulator> shell am instrument -w -e isolated true -e class dev.
 最後に今回insertしたURIと固有private directoryだけを除去する。既存写真/本人の端末/既存AVDへ実行しない。
 標準codecの成立・隔離APIのsmokeであり、実DNG現像、画作り、実process kill/電源断、Pixel実機性能の合格ではない。
 
+## 自動現像実行制御の限定検証
+
+`AutoDevelopRunnerTest`/`AutoDevelopQueueTest`/`AutoDevelopJournalTest`/`AutoDevelopStopOwnershipTest`と
+`JpegOperationOwnersTest`を含め、既存`dev.cinematic.p0.rawcapture.*` suiteで検証する。
+各phaseのcommit前/後/readback失敗、未知schema・破損、process owner再生成と未確認出力の非昇格、
+撮影予約・旧世代停止、通知callback/closeの未完了保持、明示retry、重複配送と別撮影の非中断、
+公開失敗での同じ成功artifact/publisher保持、manual/autoの同一operation二重取得拒否を確認する。
+fake renderer/publisherによる制御の証拠であり、real decoderが停止可能・全解像度/色/顔品質を満たす証拠にはしない。
+
+使い捨てemulatorだけで、既存JPEG公開の回帰も含めて次を実行する。
+
+```text
+adb -s <isolated-emulator> shell am instrument -w -e isolated true -e class dev.cinematic.p0.rawcapture.AutoDevelopInstrumentationTest,dev.cinematic.p0.rawcapture.RenderedJpegInstrumentationTest dev.cinematic.p0.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+API29以上・goldfish/ranchu・isolated指定を要求する。合成DNG byte列と16x12のプログラム生成JPEGを使うsynthetic FINAL adapterで、
+read-only FD/stream・出力close・AtomicFile台帳・#118のMediaStore公開を通す。出力なしの成功receipt、producerの失敗latch、
+PREVIEW adapterを拒否し、原本不変・JPEG公開0・実資源解放後のslot再利用を確認する。
+同じcapture/generationのmanual factoryとauto backendが同一台帳の二重writerにならないことも確認する。
+合成nativeテストは登録済みproduction rendererを作らず、標準IO/APIの統合試験としてだけ記録する。
+今回の固有IDで作った共有URIとprivate directoryだけを片付け、既存写真や本人の端末へ実行しない。
+
+旧版のseal-in-closeを使うと`successWithoutOutputIsInvalidNotResourceLeak`がHELDではなくRESOURCES_HELDで失敗する。
+修正版は資源closeと出力検査を分け、失敗データを残しつつ他jobのslotを塞がないことを確認する。
+
 ## Pixel 9aの後続検証（本人の操作）
 
 1. 本人が許可したDNGで#78の比較基準/有効性を確認し、強度0/0.5/1、向き/寸法/色管理を分けて比べる。
