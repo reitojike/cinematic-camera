@@ -4,11 +4,15 @@ on:
   pull_request:
     paths:
       - 'tools/raw_baseline/**'
+      - 'app/src/main/java/dev/cinematic/p0/raw/StageClearV1.kt'
+      - 'app/src/test/resources/stage_clear_protections_v1.csv'
       - '.github/workflows/raw-baseline.yml'
   push:
     branches: [main]
     paths:
       - 'tools/raw_baseline/**'
+      - 'app/src/main/java/dev/cinematic/p0/raw/StageClearV1.kt'
+      - 'app/src/test/resources/stage_clear_protections_v1.csv'
       - '.github/workflows/raw-baseline.yml'
   workflow_dispatch:
 
