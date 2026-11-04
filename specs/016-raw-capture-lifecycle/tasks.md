@@ -27,8 +27,8 @@
 - [ ] T009 [US1] `main/rawcapture/CaptureJournal.kt`に版つき台帳と単一writer・root内参照検証を実装する（FR-001/006/008）。
 - [ ] T010 [US1] `main/rawcapture/RawCaptureStore.kt`に形式別完了と中断時の保全を実装する（FR-001/002）。
 - [ ] T011 [US1] `test/rawcapture/CaptureJournalTest.kt`/`RawCaptureStoreTest.kt`でclose/commit失敗・death・未知schema・不正pathを故障注入する（SC-001）。
-- [ ] T012 [US1] `main/rawcapture/RecoverablePhotoPublisher.kt`でDNGの1行公開と照合を実装する（FR-003/007）。
-- [ ] T013 [US1] `test/rawcapture/RecoverablePhotoPublisherTest.kt`でinsert応答前、URI記録、copy/close/pending解除の各故障と旧写真非変更を検証する（SC-001/002）。
+- [ ] T012 [US1] `main/rawcapture/RecoverablePhotoPublisher.kt`でDNGの1行公開、readback/hash一致、共有原本への引渡しを実装する（FR-003/007）。
+- [ ] T013 [US1] `test/rawcapture/RecoverablePhotoPublisherTest.kt`でinsert応答前、URI記録、copy/close/pending解除/readback/解放台帳の故障を検証する（SC-001/002）。
 - [ ] T014 [US1] 別の接続PRで`main/CameraProbe.kt`の新RAW保存だけを接続し、既存cleanup/timeout/late-callbackを形式別保全へ切替える（FR-001/002/003/005/008）。
 - [ ] T015 [US1] `test/rawcapture/RawCaptureIntegrationTest.kt`で部分成功/重複/late/世代隔離、busy解除とDNG共有成否の分離を検証する（SC-001/003）。
 
@@ -44,7 +44,7 @@
 
 ## Phase 5: 検証・収束
 
-- [ ] T021 [US1] [US2] `specs/016-raw-capture-lifecycle/quickstart.md`の実機手順を本人操作で確認し、#78/保存専用Issueへ非公開素材を含まない検証要約を記録する（SC-001〜004）。
+- [ ] T021 [US1] [US2] `specs/016-raw-capture-lifecycle/quickstart.md`の実機手順を本人操作で確認し、#78/保存専用Issueへ非公開素材を含まない検証要約を記録する（SC-001〜005、FR-012）。
 - [ ] T022 `specs/016-raw-capture-lifecycle/tasks.md`の実装/実機状態を更新し、各PRの最終headでlint/unit/build、canonical、独立明示OK、thread0を確認する。mergeは別承認。
 
 ## Dependencies & Implementation Strategy
@@ -54,3 +54,14 @@ T012〜013は保全契約確定後にfake sourceで独立検証できるが、T0
 T016〜019は#78本体なしでもfake rendererで検証でき、T020は#78の画素比較/出力契約成立が前提。
 US1の故障テストと#78の合成golden比較は別ファイルで並行可能。CameraProbe接続と共有型の同時編集は避ける。
 生成・照合・cleanupの各テストは意図した故障で失敗を確認してから実装する。新依存や重い現像本体は追加しない。
+
+## Phase 6: 共有原本1つへの引渡し・参照（接続前の必須作業）
+
+- [ ] T023 [US1] `main/rawcapture/RawCaptureStore.kt`に共有原本確認後だけの一時DNG解放、lease、削除失敗とdeathからの再開を実装する（FR-001/003）。
+- [ ] T024 [US1] `test/rawcapture/RawCaptureStoreTest.kt`に同サイズ破損、解放の全故障点、正常時共有1/内部0、仮JPEG非削除を追加する（SC-001）。
+- [ ] T025 [US2] `main/rawcapture/SharedOriginalAccess.kt`にread-only URI、hash照合、原本不在/変更/権限失効の区別と再関連付け契約を実装する（FR-010/011）。
+- [ ] T026 [US2] `test/rawcapture/SharedOriginalAccessTest.kt`で外部移動/削除/同サイズ改変/失効/選択取消/別内容再選択/台帳消失を検証する（SC-005）。
+
+T023〜024はT012〜013と同じ保全/公開PRで実施し、T014の撮影接続より前に完了する。
+T025〜026はT016〜020より前の参照基盤。標準pickerのUI実装は#81等の後続だが、この参照/権限契約なしに
+再インストール後の既存DNG編集を対応済みとは扱わない。

@@ -4,22 +4,61 @@
 
 | 入力 | 保全する原本 | 内部JPEG | 共有公開 |
 |---|---|---|---|
-| RAW+JPEG | 受領したDNG | 受領した撮影JPEG | DNGを原本保存、成功した現像JPEGを後から別保存 |
-| RAWのみ | 受領したDNG | なし。欠落を失敗としない | DNGと、現像に成功したJPEG |
+| RAW+JPEG | 引渡し確認後は共有DNGの1つ | 受領した撮影JPEG | DNGを原本保存、成功した現像JPEGを後から別保存 |
+| RAWのみ | 引渡し確認後は共有DNGの1つ | なし。欠落を失敗としない | DNGと、現像に成功したJPEG |
 | JPEG単独 | 既存経路のJPEG | この契約の仮JPEGにはしない | 現行のJPEG保存を維持 |
 | RAW+JPEGの部分成功 | 完了した形式だけ | 完了していれば保全 | DNG成功時のみ原本保存可。JPEGだけなら自動RAW現像は不可 |
 
 受領成功はCameraXの形式別callbackとファイルclose/検査で記録する。保存成功とRAW decode有効性は別。
 古いcallbackは撮影UI状態を変更しないが、その撮影記録に所有されるファイルを削除する理由にはしない。
 
+## DNG原本の引渡しと一時コピーの解放
+
+公開操作の`PUBLISHED`と、唯一の永続原本にできる`SHARED_READY`を分ける。
+撮影用一時DNG、共有pending DNGが一時的に共存することは許容するが、通常完了後の恒久ミラーを作らない。
+
+| 引渡し状態 | 進める条件 | 保全/再開 |
+|---|---|---|
+| `LOCAL_RECEIVED` | 形式別callback、close、非emptyとサイズを台帳へ記録 | ここで撮影busyを解除可能。hash/readbackはまだ待たない。decode有効性は別判定 |
+| `SOURCE_VERIFIED` | 撮影優先の後段IOで入力全バイトSHA-256を計算・台帳commitし、公開操作を準備 | hash未完/失敗はLOCAL_RECEIVEDのまま保全。重い検証を撮影busyに含めない |
+| `SHARED_VERIFYING` | コピー先close後のreadbackで入力サイズと全バイトSHA-256一致、公開照合成功 | mismatch/読取失敗/公開不明は削除せず停止。公開API成功だけで進めない |
+| `SHARED_READY` | pending=0、同一URIの読取可と内容一致、共有URI/hash/状態を台帳へcommit | 未commitなら一時DNGを削除しない。復旧で共有先を再確認 |
+| `LOCAL_RELEASE_PENDING` | 一時DNGのwriter/reader leaseが0、同じ共有原本が読取可/一致と再確認後、状態を先にcommit | 同じ撮影の一時DNGだけを削除。削除失敗は後処理待ち、再公開しない |
+| `SHARED_ONLY` | 一時DNGの不在を確認してcommit | 以後は共有原本URIだけを参照。内部原本を再作成しない |
+
+削除と台帳commit間でdeathした場合は、一時ファイルの有無と共有原本を照合して解放を完了する。
+共有先が不明/変更済みなら残存一時DNGを保全し、自動削除しない。一時ファイルが既になく共有先も失われたら
+原本不在として停止し、保全成功と表示しない。仮JPEG、別撮影、共有DNGを一時DNG cleanupへ渡さない。
+撮影busy解除は受領記録とpreview復帰を基準にし、readback/hash/共有commit/解放は待たせない。
+共有原本が確立するまで自動現像を開始しない。解放処理は撮影優先で遅延可能だが、失敗を隠して二重保存を常態化させない。
+read leaseの生countは永続化せず、現在processのsessionとattemptごとに開いている参照から管理する。
+process death後の再起動では旧processの所有attemptを無効化し、現在の参照から再構築してから解放を判定する。
+同じprocessでcancel/世代変更しただけではleaseを消さず、実際のreader/writer解放を待つ。
+
+アプリのread leaseは外部アプリの変更/削除を防がない。最終照合と削除を跨ぐ外部操作に原子的保証はなく、
+共有原本の消失まで保護するバックアップではない。恒久二重保存を避ける合意の限界として扱う。
+
+## 原本参照の再取得と外部変更
+
+- `SourceRef`はURI/サイズ/SHA-256/参照権の由来を持ち、raw pathやファイル名だけで同一性を決めない。
+  共有原本はread-only FD/streamで開き、処理開始・JPEG公開前に照合する。途中のreadエラーやhash不一致は公開しない。
+- 自分の新規MediaStore原本を開く場合と、再インストール後や本人選択で開く場合の権限を分ける。
+  旧インストールの所有やpersistable grantが残るとは仮定しない。本人選択のread grantだけを使い、必要ならpersistする。
+- `SOURCE_UNAVAILABLE`（削除/移動/権限失効/volume不在）と`SOURCE_CHANGED`（同じURIでも別内容）で現像を止める。
+  見つからないことを削除と断定せず、再選択・アクセス再取得を案内する。同名の別DNGへ自動でrecipeを適用しない。
+- 再選択したURIが同じhashなら既存台帳のrecipeと再関連付けできる。hashが異なる場合は別原本として本人に示す。
+  再インストール等で台帳/recipeそのものがなければ新規編集となり、過去設定・仮JPEG・出力との対応を復元済みとは扱わない。
+- DNGの公開とJPEGの公開は別の画像。ギャラリーやPhoto PickerのRAW/JPEGグループ表示を保証しない。
+  DNGを選べないときは標準ファイル選択へ切り替え、取得した実データのDNG対応を検証する。写真の外部送信は行わない。
+
 ## #78との受け渡し（型はまだ作らない）
 
-- 入力: `captureId`、`renderGeneration`、`attemptId`、読み取り専用DNG参照、固定recipe、独立した派生出力先、cancel確認口。
+- 入力: `captureId`、`renderGeneration`、`attemptId`、共有原本の読み取り専用URI/FDと内容識別、固定recipe、独立した派生出力先、cancel確認口。
 - recipe: schema/renderer/baselineの識別版、`stage-clear-v1`、明示strength（初期0.5）、外部決定の露出定義、
   顔入力の有無/定義、出力の寸法/向き/色空間/transfer/JPEG設定。#79未接続の顔/露出を推測で埋めない。
 - 出力: 成功時だけ完全なJPEG参照、検査可能な寸法/向き/色定義と処理識別。失敗・未対応・中断は区別する。
 - rendererは原本/仮JPEG/MediaStore/撮影状態/台帳を変更しない。保存側は画素処理順やgoldenを変更しない。
-- 読み取り参照は処理中保持し、rendererが参照を解放するまで削除・上書きしない。cancel要求と解放完了は別。
+- 読み取り参照は処理中保持し、アプリ側は削除・上書きしない。外部変更を排他できるとは扱わない。cancel要求と解放完了は別。
 - レシピ変更は新generation。旧attemptの結果は新generationへ採用せず、その未公開の派生出力だけを片付ける。
 - 既定値の将来変更で既存要求を変えない。同一環境・同一版の再生成を検証し、異なるCPU/GPU間のbit一致を先に約束しない。
 
@@ -51,4 +90,4 @@ recipeの変更でDNGの公開操作を増やさない。操作ID、ランダム
 
 DBとMediaStoreを跨ぐexactly-once保証は主張しない。不明時に自動停止することで、重複公開を避ける。
 失敗した自分の未公開pending行をcleanupする場合も、所有とpendingを再確認し、台帳へ結果を残す。
-原本・仮JPEGはこのcleanupへ渡さない。
+共有原本・仮JPEGはこのcleanupへ渡さない。一時DNGの解放は上記の引渡し契約だけで行う。
