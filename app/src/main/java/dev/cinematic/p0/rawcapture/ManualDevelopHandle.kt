@@ -7,10 +7,26 @@ internal class ManualDevelopControl(initiallyRequested: Boolean) {
     class Ticket internal constructor()
     private var epoch = Ticket()
     private var requested = initiallyRequested
+    private var pendingPreview: PrivateTrialDelivery<*>? = null
+    private var previewFenced = false
     @Synchronized fun begin(): Ticket { requested = true; return epoch }
-    @Synchronized fun stop() { requested = false; epoch = Ticket() }
+    fun stop() {
+        val pending = synchronized(this) { requested = false; epoch = Ticket(); pendingPreview }
+        pending?.close() // Display-only software Bitmap, never a native decoder/FD or coordinator lock.
+    }
     @Synchronized fun isRequested() = requested
     @Synchronized fun accepts(ticket: Ticket?) = requested && epoch === ticket
+    @Synchronized fun canClaim(ticket: Ticket?) = accepts(ticket) && !previewFenced
+    @Synchronized fun fencePreview(value: Boolean) { previewFenced = value }
+    @Synchronized fun hasPendingPreview() = pendingPreview != null
+    @Synchronized fun holdPreview(delivery: PrivateTrialDelivery<*>, ticket: Ticket): Boolean {
+        if (!canClaim(ticket) || pendingPreview != null) return false
+        pendingPreview = delivery
+        return true
+    }
+    @Synchronized fun releasePreview(delivery: PrivateTrialDelivery<*>) {
+        if (pendingPreview === delivery) pendingPreview = null
+    }
 }
 
 /** Opaque retained connection to the queue's sole generation and publication owner. No file/factory API.
@@ -26,7 +42,7 @@ internal class ManualDevelopHandle internal constructor(private val queue: AutoD
     fun publish(observations: AutoDevelopConditions): CompletableFuture<AutoDevelopRecord> {
         return queue.publishManual(request, observations, control.begin())
     }
-    fun requestStop() { control.stop(); queue.stopManual(request) }
+    fun requestStop() { try { control.stop() } finally { queue.stopManual(request) } }
     fun retry(): CompletableFuture<AutoDevelopRecord> {
         return queue.retryManual(request, control.begin())
     }

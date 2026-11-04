@@ -5,7 +5,7 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.io.IOException
 
-internal enum class AutoRenderQuality { FINAL_ORIGINAL, PREVIEW, MANUAL_BOUNDED_1024_PRELIMINARY }
+internal enum class AutoRenderQuality { FINAL_ORIGINAL, PREVIEW, MANUAL_BOUNDED_1024_PRELIMINARY, PRIVATE_TRIAL_1024 }
 internal enum class AutoInputProfile { SUPPORTED, UNKNOWN }
 
 /** FINAL dimensions are exact; explicitly bounded manual dimensions are upper bounds, never original size. */
@@ -34,19 +34,28 @@ internal data class AutoDevelopRequest(
         rendererContract == "stage-clear-bounded-jpeg-v1" && recipe.schema == "stage-clear-bounded-jpeg-v1" &&
         width == 1024 && height == 1024 && profile == AutoInputProfile.UNKNOWN &&
         face == RenderedFaceState.NOT_RUN && exposure == RenderedExposureState.UNKNOWN
-    val admissible get() = publishable || boundedManual
+    val boundedTrial get() = quality == AutoRenderQuality.PRIVATE_TRIAL_1024 &&
+        rendererContract == "stage-clear-private-no-face-trial-v1" && recipe.schema == rendererContract &&
+        width == 1024 && height == 1024 && profile == AutoInputProfile.UNKNOWN &&
+        face == RenderedFaceState.NOT_RUN && exposure == RenderedExposureState.DIAGNOSTIC
+    val interactive get() = boundedManual || boundedTrial
+    val admissible get() = publishable || interactive
     fun accepts(receipt: AutoRenderReceipt): Boolean = receipt.request == this && admissible &&
         receipt.output.orientation == 1 && receipt.output.color == "sRGB" &&
-        receipt.face in setOf(RenderedFaceState.VERIFIED_NONE, RenderedFaceState.VERIFIED_FACES) &&
-        receipt.exposure == RenderedExposureState.SUPPORTED &&
-        (if (boundedManual) receipt.output.width <= width && receipt.output.height <= height &&
+        (if (boundedTrial) receipt.face == RenderedFaceState.NOT_RUN && receipt.exposure == RenderedExposureState.DIAGNOSTIC
+        else receipt.face in setOf(RenderedFaceState.VERIFIED_NONE, RenderedFaceState.VERIFIED_FACES) &&
+            receipt.exposure == RenderedExposureState.SUPPORTED) &&
+        (if (interactive) receipt.output.width <= width && receipt.output.height <= height &&
             receipt.output.bytes <= 8L * 1024 * 1024 else receipt.output.width == width && receipt.output.height == height &&
             receipt.face == face && receipt.exposure == exposure)
     fun completed(output: JpegOutputDescription, observedFace: RenderedFaceState = face,
-        observedExposure: RenderedExposureState = exposure) = CompletedRender(
+        observedExposure: RenderedExposureState = exposure): CompletedRender {
+        check(quality != AutoRenderQuality.PRIVATE_TRIAL_1024) { "Private trial cannot become CompletedRender" }
+        return CompletedRender(
         RenderedJpegRequest(captureId, generation, source, recipe, output), rendererContract,
         RenderedResultKind.COMPLETE_STAGE_CLEAR, observedFace, observedExposure,
-    )
+        )
+    }
 }
 
 /** Success is only a claim until the owner closes and the independent JPEG inspector agrees. */

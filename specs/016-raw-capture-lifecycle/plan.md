@@ -389,3 +389,13 @@ interactive側は実行直前の資源観測でcommon条件を更新し、自分
 最新common条件が停止/未知なら古いjob snapshotで開始しない。枠は実資源close後だけcompleteする。
 queueが内部で枠を取るmanual処理をpreviewの枠内でawaitしない。legacy preview decoderのclose不明は
 成功ackへ補完せず、UI接続側にも所有/解放の検証を要求する。全体の撮影自動投入・起動列挙・実機合格は依然残件である。
+
+## Private trialの最小接続
+
+AutoDevelopQueue/Journal/Runner/Backendを共用し、PRIVATE_TRIAL_1024とPrivateTrialHandle/Statusで完成routeと型を分ける。
+trialのreceipt/codec/台帳遷移/completed/publisher入口は復旧後も公開不能を維持する。既存BoundedJpegRendererAdapterは
+recipe.isTrialだけrenderTrialへ分岐し、NOT_RUN/DIAGNOSTICを保持する。固定trial adapterは登録するが、完成/auto adapterは0のまま。
+
+fresh private readbackは同attemptの検査済みbyte列をdecodeし、原本再照合・取消epoch・実reader close後だけdeliveryを返す。
+ManualDevelopControlは未claim deliveryを1つだけ保持し、取消でclose、claimでUIへ所有を移す。未受領のまま次のreadで画像を積み上げず、
+表示中Bitmapを裏でrecycleしない。新たなexecutor/controller/公開処理や顔SDKは追加しない。

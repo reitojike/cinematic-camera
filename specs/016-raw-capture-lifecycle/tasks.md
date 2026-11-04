@@ -116,3 +116,8 @@ production controls登録・photoroll接続・実観測・Pixel実機は上記�
 
 - [ ] T033 [US2] `photoroll`のpreview/手動UIを`DevelopExecution`と`ManualDevelopHandle`へ接続し、旧Semaphoreとの二重枠をなくす。選択/背景化の取消、latest条件、同owner status/publish/fresh確認、preview decoderの実close不明保持を検証する per FR-004/005/006/007/010・plan:共通の手動要求・実行・公開契約 (partial)。
 - [ ] T034 [US2] T016/T017/T020/T025/T026の未接続部分を実source/recipe/providerと撮影lifecycleへ結び、起動時の完全台帳列挙、capture予約、foreground/camera/record/rebind/thermal/storage/memory観測、参照権再選択を検証する。顔/EV/profile未成立は登録せず、T021の実機測定とSC-004の許容差確定までカメラ使用中の現像を無効にする per FR-005/006/009/010/011・SC-003/004/005 (partial)。
+
+## Phase 10: Private trial縦断接続
+
+- [x] T035 [US2] 固定private-trial品質/recipeの専用handle・状態と同queue/実FD所有を接続し、復旧後もcompleted/publishへ進まないことを検証する（#129/#131、FR-005/006/008/009）。
+- [x] T036 [US2] 同attemptのfresh private readbackと未claim/claim所有を接続し、取消直前/直後・世代変更・実close・同byte列decode・原本不変・共有公開0をtrial routeの単体/合成nativeで検証する（#129/#131、FR-001/004/005/006/008/010）。

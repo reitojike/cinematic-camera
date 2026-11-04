@@ -1,15 +1,22 @@
 package dev.cinematic.p0.rawcapture
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.ColorSpace
+import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import androidx.annotation.RequiresApi
 import java.io.Closeable
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.nio.file.Files
+import java.nio.ByteBuffer
+import java.security.MessageDigest
 
 /** Owns ORIGINAL reads and distinct attempt outputs. No source/provisional/delete capability is handed to adapters. */
 @RequiresApi(29)
@@ -104,6 +111,7 @@ internal class AndroidAutoDevelopBackend(
     }
     override fun publication(record: AutoDevelopRecord, isCurrent: () -> Boolean): AutoDevelopPublication {
         checkRequest(record.request)
+        if (request.quality == AutoRenderQuality.PRIVATE_TRIAL_1024) throw IOException("Private trial cannot acquire a publication owner")
         if (!supports(record.request)) throw IOException("Final renderer contract is not enrolled")
         val attemptId = requireNotNull(record.attemptId)
         publisher?.let { if (publishedAttempt != attemptId) throw CaptureJournalConflict(); return it }
@@ -127,5 +135,48 @@ internal class AndroidAutoDevelopBackend(
             }, AndroidJpegInspector(), isCurrent)
         publishedAttempt = attemptId
         return RecoverableAutoPublication(native).also { publisher = it }
+    }
+
+    override fun privatePreview(record: AutoDevelopRecord, shouldStop: () -> Boolean): PrivateTrialPreview {
+        checkRequest(record.request)
+        if (!request.boundedTrial || record.phase != AutoJobPhase.RENDERED) throw CaptureJournalConflict()
+        val expected = requireNotNull(record.outputFingerprint)
+        val description = requireNotNull(record.observed).output
+        releaseResources()
+        verifyOriginal(request, shouldStop)
+        val buffer = ByteArrayOutputStream(minOf(expected.bytes.toInt(), 64 * 1024))
+        resources.input(files(requireNotNull(record.attemptId)).openRead()).use { input ->
+            val chunk = ByteArray(32 * 1024)
+            while (true) {
+                if (shouldStop()) throw DngVerificationStopped()
+                val count = input.read(chunk)
+                if (count < 0) break
+                if (buffer.size().toLong() + count > expected.bytes) throw DngContentChanged()
+                buffer.write(chunk, 0, count)
+            }
+        }
+        val bytes = buffer.toByteArray()
+        val fingerprint = OriginalFingerprint(bytes.size.toLong(), MessageDigest.getInstance("SHA-256").digest(bytes)
+            .joinToString("") { "%02x".format(it) })
+        if (fingerprint != expected) throw DngContentChanged()
+        val inspection = AndroidJpegInspector().inspect({ ByteArrayInputStream(bytes) }, shouldStop)
+        if (inspection.fingerprint != expected || inspection.output != description) throw DngContentChanged()
+        var ownedImage: Bitmap? = null
+        try {
+            if (shouldStop()) throw DngVerificationStopped()
+            val bitmap = ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(bytes))) { decoder, info, _ ->
+                if (info.size.width != description.width || info.size.height != description.height) throw IOException("Private JPEG dimensions changed")
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                decoder.setTargetColorSpace(ColorSpace.get(ColorSpace.Named.SRGB))
+                decoder.setOnPartialImageListener { false }
+            }.also { ownedImage = it }
+            if (bitmap.isRecycled || bitmap.config == Bitmap.Config.HARDWARE || bitmap.width != description.width ||
+                bitmap.height != description.height || bitmap.width > 1024 || bitmap.height > 1024 || bitmap.colorSpace?.isSrgb != true) {
+                throw IOException("Private display image is unsupported")
+            }
+            verifyOriginal(request, shouldStop)
+            if (shouldStop()) throw DngVerificationStopped()
+            return PrivateTrialPreview(bitmap, PrivateTrialStatus.from(record)).also { ownedImage = null }
+        } finally { ownedImage?.recycle() }
     }
 }

@@ -19,6 +19,119 @@ import org.junit.runner.RunWith
 /** Entirely synthetic. Its known-none/EV provider is never enrolled in the application singleton. */
 @RunWith(AndroidJUnit4::class)
 class ManualDevelopInstrumentationTest {
+    @Test fun privateTrialFactoryRendersAndFreshlyDisplaysWithoutAnyPublicationCapability() {
+        check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
+        check(Build.HARDWARE in setOf("goldfish", "ranchu") && Build.VERSION.SDK_INT >= 29)
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val resolver = context.contentResolver
+        val uri = resolver.insert(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, "synthetic_private_${UUID.randomUUID()}.dng")
+            put(MediaStore.Images.Media.MIME_TYPE, "image/x-adobe-dng")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Cinematic Camera Synthetic Tests/")
+            put(MediaStore.Images.Media.IS_PENDING, 1)
+        })!!
+        var ownedDirectory: File? = null
+        var handle: PrivateTrialHandle? = null
+        try {
+            val bytes = syntheticDng(2048, 1536)
+            resolver.openOutputStream(uri, "w")!!.use { it.write(bytes) }
+            resolver.update(uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null)
+            val fp = DngContentVerifier.identify(bytes.size.toLong(), { resolver.openInputStream(uri)!! })
+            val source = SharedOriginalReference(uri.toString(), fp, OriginalGrant.USER_SELECTED)
+            val id = ManualDevelopRequests.identity(source)
+            val root = File(context.noBackupFilesDir, "raw-captures")
+            val candidate = File(root, id)
+            check(!candidate.exists()) { "Refuse to reuse an existing private operation" }
+            ownedDirectory = candidate
+            val allowed = AutoDevelopConditions(true, false, false, false, true, true, true, true)
+            DevelopExecution.updateConditions(allowed)
+            val trial = AndroidAutoDevelopQueue.preparePrivateTrial(context, source).join().also { handle = it }
+            val beforeRender = DevelopExecution.reserveCapture()
+            try {
+                trial.start(allowed).join()
+                assertEquals(PrivateTrialPhase.PREPARED, trial.status().join().phase)
+            } finally { DevelopExecution.releaseCapture(beforeRender) }
+            val ready = trial.status().join()
+            assertEquals(PrivateTrialPhase.READY, ready.phase)
+            assertEquals(AutoRenderQuality.PRIVATE_TRIAL_1024, ready.request.quality)
+            assertEquals(RenderedFaceState.NOT_RUN, ready.face)
+            assertEquals(RenderedExposureState.DIAGNOSTIC, ready.exposure)
+            val output = requireNotNull(ready.output)
+            assertEquals(768, output.width); assertEquals(1024, output.height)
+            val storage = AndroidAtomicJournalStorage(File(candidate, "renders"), trial.request.generation.toString(), CaptureJournalFile.AUTO_DEVELOP)
+            val journal = AutoDevelopJournal(id, trial.request.generation, storage)
+            val attempt = journal.read()!!.attemptId
+            val delivery = trial.readPreview(allowed) { false }.join()
+            val image = delivery.claim()!!
+            assertEquals(768, image.bitmap.width); assertEquals(1024, image.bitmap.height)
+            assertTrue(image.bitmap.colorSpace!!.isSrgb)
+            assertNotEquals(android.graphics.Bitmap.Config.HARDWARE, image.bitmap.config)
+            assertEquals(ready.fingerprint, image.status.fingerprint)
+            image.close(); assertTrue(image.bitmap.isRecycled)
+            val capture = DevelopExecution.reserveCapture()
+            try { assertThrows(java.util.concurrent.CompletionException::class.java) { trial.readPreview(allowed) { false }.join() } }
+            finally { DevelopExecution.releaseCapture(capture) }
+            val unclaimed = trial.readPreview(allowed) { false }.join()
+            trial.requestStop()
+            assertNull(unclaimed.claim())
+            val same = trial.readPreview(allowed) { false }.join().claim()!!
+            assertEquals(ready.fingerprint, same.status.fingerprint)
+            same.close()
+            // Force future cancellation before its queued readback; rejected delivery must close.
+            val whileSelecting = trial.readPreview(allowed) { false }.join()
+            val entered = java.util.concurrent.CountDownLatch(1)
+            val release = java.util.concurrent.CountDownLatch(1)
+            val blockedPrepare = AndroidAutoDevelopQueue.get(context).preparePrivateTrial(id) {
+                entered.countDown()
+                check(release.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                journal.read()!!.request
+            }
+            check(entered.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            try {
+                val whilePreparing = whileSelecting.claim()
+                try { assertNull(whilePreparing) } finally { whilePreparing?.close() }
+                val abandoned = trial.readPreview(allowed) { false }
+                assertTrue(abandoned.cancel(false))
+            } finally { release.countDown(); blockedPrepare.handle { _, _ -> Unit }.join() }
+            blockedPrepare.join()
+            val afterAbandon = trial.readPreview(allowed) { false }.join().claim()!!
+            afterAbandon.close()
+            assertEquals(attempt, journal.read()!!.attemptId)
+            assertNull(AndroidAtomicJournalStorage(File(candidate, "renders"), trial.request.generation.toString(),
+                CaptureJournalFile.JPEG_PUBLICATION).read(JpegPublicationCodec.MAX_BYTES))
+            DngContentVerifier.verify(fp, { resolver.openInputStream(uri)!! })
+            val stale = trial.readPreview(allowed) { false }.join()
+            val selected = AndroidAtomicJournalStorage(root, id, CaptureJournalFile.MANUAL_REQUEST)
+            val acknowledgementLost = object : AtomicJournalStorage {
+                override fun read(maxBytes: Int) = selected.read(maxBytes)
+                override fun replace(contents: ByteArray) { selected.replace(contents); throw java.io.IOException("Synthetic commit acknowledgement lost") }
+            }
+            val unknown = AndroidAutoDevelopQueue.get(context).preparePrivateTrial(id) {
+                ManualDevelopRequests(source, acknowledgementLost).prepare(JpegGenerationRecipe.trial().snapshot.copy(payload =
+                    JpegGenerationRecipe.trial().snapshot.payload + ";synthetic-new-policy"))
+            }
+            assertThrows(java.util.concurrent.CompletionException::class.java) { unknown.join() }
+            val staleClaim = stale.claim()
+            try { assertNull(staleClaim) } finally { staleClaim?.close() }
+            val completeRecipe = JpegGenerationRecipe(AndroidAsShotJpegFrames.CONTRACT, RenderRecipeSnapshot("synthetic-unregistered-v1", "fixed"))
+            val next = AndroidAutoDevelopQueue.prepareManual(context, source, completeRecipe).join()
+            assertEquals(trial.request.generation + 2, next.request.generation)
+            assertNull(stale.claim())
+            assertThrows(java.util.concurrent.CompletionException::class.java) { trial.readPreview(allowed) { false }.join() }
+            assertThrows(java.util.concurrent.CompletionException::class.java) { next.start(allowed).join() }
+            assertNull(AndroidAtomicJournalStorage(File(candidate, "renders"), trial.request.generation.toString(),
+                CaptureJournalFile.JPEG_PUBLICATION).read(JpegPublicationCodec.MAX_BYTES))
+            DngContentVerifier.verify(fp, { resolver.openInputStream(uri)!! })
+        } finally {
+            handle?.requestStop()
+            check(resolver.delete(uri, null, null) == 1)
+            ownedDirectory?.let { directory ->
+                check(directory.canonicalFile.parentFile == File(context.noBackupFilesDir, "raw-captures").canonicalFile)
+                if (directory.exists()) check(directory.deleteRecursively())
+            }
+        }
+    }
+
     @Test fun ownedNativeDngToPrivateJpegThenExplicitPublicationAndFreshConfirmation() {
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
         check(Build.HARDWARE in setOf("goldfish", "ranchu") && Build.VERSION.SDK_INT >= 29)
@@ -96,8 +209,7 @@ class ManualDevelopInstrumentationTest {
     }
 
     // Generated TIFF/Bayer values only; same minimal layout as the existing decoder tests.
-    private fun syntheticDng(): ByteArray {
-        val width = 32; val height = 24
+    private fun syntheticDng(width: Int = 32, height: Int = 24): ByteArray {
         fun shorts(vararg values: Int) = ByteBuffer.allocate(values.size * 2).order(ByteOrder.LITTLE_ENDIAN)
             .apply { values.forEach { putShort(it.toShort()) } }.array()
         fun longs(vararg values: Int) = ByteBuffer.allocate(values.size * 4).order(ByteOrder.LITTLE_ENDIAN)

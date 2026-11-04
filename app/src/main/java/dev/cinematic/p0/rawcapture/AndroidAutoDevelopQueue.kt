@@ -24,6 +24,7 @@ internal object AndroidAutoDevelopQueue {
     @Synchronized fun get(context: Context): AutoDevelopQueue = owner ?: create(context.applicationContext).also { owner = it }
 
     fun prepareManual(context: Context, source: SharedOriginalReference, recipe: JpegGenerationRecipe): CompletableFuture<ManualDevelopHandle> {
+        require(!recipe.isTrial) { "Private trial has a separate handle" }
         val app = context.applicationContext
         val id = ManualDevelopRequests.identity(source)
         val queue = get(app)
@@ -32,17 +33,27 @@ internal object AndroidAutoDevelopQueue {
                 id, CaptureJournalFile.MANUAL_REQUEST)).prepare(recipe.snapshot)
         }
     }
+    fun preparePrivateTrial(context: Context, source: SharedOriginalReference,
+        recipe: JpegGenerationRecipe = JpegGenerationRecipe.trial()): CompletableFuture<PrivateTrialHandle> {
+        require(recipe.isTrial && recipe.snapshot == JpegGenerationRecipe.trial().snapshot)
+        val app = context.applicationContext
+        val id = ManualDevelopRequests.identity(source)
+        return get(app).preparePrivateTrial(id) {
+            ManualDevelopRequests(source, AndroidAtomicJournalStorage(File(app.noBackupFilesDir, "raw-captures"),
+                id, CaptureJournalFile.MANUAL_REQUEST)).prepare(recipe.snapshot)
+        }
+    }
 
     private fun create(context: Context): AutoDevelopQueue {
         val root = File(context.noBackupFilesDir, "raw-captures")
-        val catalog = AutoRendererCatalog(adapters) // Trial is never enrolled; full auto remains unavailable.
+        val catalog = AutoRendererCatalog(adapters + BoundedJpegRendererAdapter.privateTrial()) // Completed/full auto enrollment remains empty.
         return AutoDevelopQueue(Executors.newSingleThreadExecutor { command ->
             Thread(command, "auto-develop").apply { priority = Thread.MIN_PRIORITY }
         }, DevelopExecution.coordinator, journalFactory = { request ->
             // Auto requests refer only to newly captured, fully handed-off originals. Picker/manual edits are separate.
-            val original = if (request.boundedManual) null else DngPublicationJournal(request.captureId,
+            val original = if (request.interactive) null else DngPublicationJournal(request.captureId,
                 AndroidAtomicJournalStorage(root, request.captureId, CaptureJournalFile.DNG_PUBLICATION)).read()
-            if (!request.boundedManual && (request.source.grant != OriginalGrant.APP_OWNED || original?.phase != DngPublicationPhase.SHARED_ONLY ||
+            if (!request.interactive && (request.source.grant != OriginalGrant.APP_OWNED || original?.phase != DngPublicationPhase.SHARED_ONLY ||
                 original.uri != request.source.uri || original.fingerprint != request.source.fingerprint)) {
                 throw IOException("Shared original handoff is not confirmed")
             }
