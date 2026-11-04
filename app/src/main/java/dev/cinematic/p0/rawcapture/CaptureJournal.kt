@@ -23,6 +23,7 @@ internal class CaptureReceipt(
     expectedFormats: Set<RawOutput>,
     receivedBytes: Map<RawOutput, Long>,
     val phase: CaptureReceiptPhase,
+    val originalFingerprint: OriginalFingerprint? = null,
 ) {
     val expectedFormats: Set<RawOutput> = Collections.unmodifiableSet(expectedFormats.toSet())
     val receivedBytes: Map<RawOutput, Long> = Collections.unmodifiableMap(receivedBytes.toMap())
@@ -36,6 +37,9 @@ internal class CaptureReceipt(
         val allReceived = this.receivedBytes.keys == this.expectedFormats
         require(phase != CaptureReceiptPhase.FILES_RECEIVED || allReceived) { "Incomplete receipt" }
         require(phase != CaptureReceiptPhase.CAPTURING || !allReceived) { "Invalid capture phase" }
+        require(originalFingerprint == null || this.receivedBytes[RawOutput.DNG] == originalFingerprint.bytes) {
+            "Original fingerprint requires matching DNG receipt"
+        }
     }
 
     fun relativePath(output: RawOutput): String {
@@ -92,7 +96,21 @@ internal class CaptureJournal(private val captureId: String, private val storage
         val phase = if (current.phase == CaptureReceiptPhase.CAPTURING && received.keys == current.expectedFormats) {
             CaptureReceiptPhase.FILES_RECEIVED
         } else current.phase // Late callbacks can preserve receipts without hiding interruption.
-        return persist(CaptureReceipt(captureId, next(current), current.expectedFormats, received, phase))
+        return persist(CaptureReceipt(captureId, next(current), current.expectedFormats, received, phase, current.originalFingerprint))
+    }
+
+    /** Caller has read and successfully closed the received DNG; never replaces an existing identity. */
+    @Synchronized
+    fun recordOriginalFingerprint(expectedRevision: Long, fingerprint: OriginalFingerprint): CaptureReceipt {
+        val current = current(expectedRevision)
+        require(current.receivedBytes[RawOutput.DNG] == fingerprint.bytes) { "Original size does not match DNG receipt" }
+        current.originalFingerprint?.let {
+            if (it != fingerprint) throw CaptureJournalConflict()
+            return current
+        }
+        return persist(CaptureReceipt(
+            captureId, next(current), current.expectedFormats, current.receivedBytes, current.phase, fingerprint,
+        ))
     }
 
     @Synchronized
@@ -115,6 +133,7 @@ internal class CaptureJournal(private val captureId: String, private val storage
         if (current.phase != CaptureReceiptPhase.CAPTURING) return current
         return persist(CaptureReceipt(
             captureId, next(current), current.expectedFormats, current.receivedBytes, CaptureReceiptPhase.INTERRUPTED,
+            current.originalFingerprint,
         ))
     }
 
@@ -139,7 +158,7 @@ internal class CaptureJournal(private val captureId: String, private val storage
 internal object CaptureReceiptCodec {
     const val MAX_BYTES = 4096
     private const val MAGIC = 0x4343524a // CCRJ
-    private const val VERSION = 1
+    private const val VERSION = 2
     private const val DIGEST_BYTES = 32
 
     fun encode(receipt: CaptureReceipt): ByteArray {
@@ -154,6 +173,8 @@ internal object CaptureReceiptCodec {
             out.writeByte(receipt.phase.code)
             out.writeLong(receipt.receivedBytes[RawOutput.DNG] ?: -1L)
             out.writeLong(receipt.receivedBytes[RawOutput.JPEG] ?: -1L)
+            out.writeByte(if (receipt.originalFingerprint == null) 0 else 1)
+            receipt.originalFingerprint?.sha256?.chunked(2)?.forEach { out.writeByte(it.toInt(16)) }
         }
         val payload = buffer.toByteArray()
         return payload + MessageDigest.getInstance("SHA-256").digest(payload)
@@ -169,7 +190,8 @@ internal object CaptureReceiptCodec {
         try {
             return DataInputStream(ByteArrayInputStream(payload)).use { input ->
                 if (input.readInt() != MAGIC) throw IOException("Invalid capture journal magic")
-                if (input.readInt() != VERSION) throw IOException("Unsupported capture journal version")
+                val version = input.readInt()
+                if (version !in 1..VERSION) throw IOException("Unsupported capture journal version")
                 val idSize = input.readUnsignedByte()
                 if (idSize !in 1..64) throw IOException("Invalid capture ID length")
                 val idBytes = ByteArray(idSize).also { input.readFully(it) }
@@ -187,8 +209,19 @@ internal object CaptureReceiptCodec {
                         if (size != -1L) put(output, size)
                     }
                 }
+                val fingerprint = if (version == 1) null else when (input.readUnsignedByte()) {
+                    0 -> null
+                    1 -> {
+                        val digest = ByteArray(DIGEST_BYTES).also { input.readFully(it) }
+                        OriginalFingerprint(
+                            received[RawOutput.DNG] ?: throw IOException("Original fingerprint without DNG receipt"),
+                            digest.joinToString("") { "%02x".format(it) },
+                        )
+                    }
+                    else -> throw IOException("Invalid original fingerprint flag")
+                }
                 if (input.available() != 0) throw IOException("Trailing capture receipt data")
-                CaptureReceipt(id, revision, expectedFormats, received, phase)
+                CaptureReceipt(id, revision, expectedFormats, received, phase, fingerprint)
             }
         } catch (e: IllegalArgumentException) {
             throw IOException("Invalid capture receipt fields", e)
