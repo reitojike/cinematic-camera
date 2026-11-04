@@ -123,6 +123,20 @@ class AutoDevelopQueueTest {
         assertTrue(duplicateRestore.isCompletedExceptionally)
     }
 
+    @Test fun failedRestoreCannotStartAnOldGenerationFromAPartialInventory() {
+        val f = Fixture()
+        val old = request(generation = 1)
+        val current = request(generation = 2)
+        f.journal(old).prepare(old); f.journal(current).prepare(current)
+        f.corrupt(current)
+        val restored = f.queue.restore(listOf(old, current))
+        f.queue.updateConditions(allowed)
+        f.io.drain()
+        assertTrue(restored.isCompletedExceptionally)
+        assertEquals(0, f.starts.get())
+        assertEquals(AutoJobPhase.QUEUED, f.journal(old).read()!!.phase)
+    }
+
     private class ManualExecutor : Executor {
         private val tasks = ArrayDeque<Runnable>()
         override fun execute(command: Runnable) { tasks.addLast(command) }
@@ -143,6 +157,10 @@ class AutoDevelopQueueTest {
         var failClose = false
         var onRender: (AutoDevelopRequest) -> Unit = {}
         private val storage = mutableMapOf<Pair<String, Long>, MemoryStorage>()
+        fun corrupt(request: AutoDevelopRequest) {
+            val bytes = storage.getValue(request.captureId to request.generation).bytes!!
+            bytes[8] = (bytes[8].toInt() xor 1).toByte()
+        }
         fun journal(request: AutoDevelopRequest) = AutoDevelopJournal(request.captureId, request.generation,
             storage.getOrPut(request.captureId to request.generation) { MemoryStorage() })
         val queue = AutoDevelopQueue(io, AutoDevelopCoordinator(), ::journal, { request -> object : AutoDevelopBackend {

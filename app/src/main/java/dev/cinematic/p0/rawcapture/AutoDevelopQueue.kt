@@ -64,17 +64,22 @@ internal class AutoDevelopQueue(
     /** Rebuild only on a new process owner; a live owner's handles must never be bypassed. */
     fun restore(requests: List<AutoDevelopRequest>): CompletableFuture<Unit> = onIo {
         if (jobs.isNotEmpty()) throw IllegalStateException("Auto-develop owner already initialized")
+        val restoredJobs = linkedMapOf<Key, Job>()
+        val restoredLatest = mutableMapOf<String, Long>()
         requests.sortedBy { it.generation }.forEach { request ->
             val key = Key(request.captureId, request.generation)
-            if (key in jobs) throw CaptureJournalConflict()
+            if (key in restoredJobs) throw CaptureJournalConflict()
             val journal = journalFactory(request)
             val record = journal.recoverAfterProcessDeath() ?: throw CaptureJournalConflict()
             if (record.request != request) throw CaptureJournalConflict()
-            latest[request.captureId] = maxOf(latest[request.captureId] ?: 0, request.generation)
-            jobs[key] = Job(journal, AutoDevelopRunner(journal, admission, backendFactory(request), cancellationIo, ::wake) {
+            restoredLatest[request.captureId] = maxOf(restoredLatest[request.captureId] ?: 0, request.generation)
+            restoredJobs[key] = Job(journal, AutoDevelopRunner(journal, admission, backendFactory(request), cancellationIo, ::wake) {
                 latest[request.captureId] == request.generation
             })
         }
+        // An unreadable newer definition must not leave an older partial inventory runnable.
+        latest.putAll(restoredLatest)
+        jobs.putAll(restoredJobs)
         wake()
     }
     fun retry(captureId: String, generation: Long): CompletableFuture<AutoDevelopRecord> = onIo {

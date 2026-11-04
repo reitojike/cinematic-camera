@@ -75,6 +75,7 @@ recipe payloadの意味は実renderer adapterの責務であり、制御側は�
 停止要求と撮影予約は`AutoDevelopCoordinator`の短いlockでlatched状態を更新し、描画/IO/closeを待たない。
 rendererへの明示停止口（native CancellationSignal等）は別のcancel executorから呼ぶ。通知自体が戻らない間も
 attemptとslotを保持する。通知をcloseと扱わず、native処理と提供FDの寿命を維持し、強制解放しない。
+停止intentはprocess内のrunner/slotを組で固定し、遅延した旧停止で次のnative attemptを取り直してcancelしない。
 実kernelの中断点や即時停止は保証しない。renderer.closeが成功してから提供IOを解放し、出力の検査はその後に行う。
 出力欠落/失敗latchはINVALID_OUTPUTで停止するが、実資源が閉じていれば別jobのslotを塞がない。
 
@@ -84,6 +85,8 @@ attemptとslotを保持する。通知をcloseと扱わず、native処理と提�
 旧世代の未解放ownerはqueueから除去せず、最新世代だけに新規作業を認める。retryはRETRYABLEに対する明示操作だけで、
 即時無限retryを行わない。RENDERED/PUBLISHINGは同じ成功attemptと公開操作を再開し、再renderやartifact差替えをしない。
 process復旧時のRENDERINGは未確認出力のままRETRYABLEへ戻し、存在/byte数だけで成功へ昇格しない。
+復旧対象一覧は全件検証した後だけqueueへ受理する。新世代の破損/未知版で復旧失敗した際に、部分的に読めた旧世代だけを実行しない。
+起動時の完全な台帳列挙とproduction条件の観測接続は後続gateであり、省略した一覧で既存jobを再開しない。
 
 manual factoryとauto backendは同じ`captureId:RENDERED:generation`について共通のprocess所有権claimを使う。
 別ownerの同じ台帳/公開操作への接続は、資源のclose後も拒否する。取消やActivity再生成で別AtomicFile writerを作らない。

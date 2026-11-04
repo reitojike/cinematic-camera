@@ -148,6 +148,33 @@ class AutoDevelopRunnerTest {
         } finally { renderFinish.countDown(); cancelFinish.countDown(); renderIo.shutdownNow(); cancelIo.shutdownNow() }
     }
 
+    @Test fun delayedStopSnapshotNeverCancelsTheNextNativeAttemptOfTheSameRunner() {
+        val f = Fixture(cancellationIo = java.util.concurrent.Executor { it.run() })
+        val entered = java.util.concurrent.LinkedBlockingQueue<Unit>()
+        val finish = java.util.concurrent.Semaphore(0)
+        val cancellations = java.util.concurrent.atomic.AtomicInteger()
+        val worker = Executors.newSingleThreadExecutor()
+        f.backend.onRender = { entered.put(Unit); check(finish.tryAcquire(5, TimeUnit.SECONDS)) }
+        f.backend.onCancel = { cancellations.incrementAndGet() }
+        f.backend.renderFails = true
+        f.admission.updateConditions(allowed)
+        try {
+            val first = worker.submit<AutoRunResult> { f.runner.advance() }
+            assertNotNull(entered.poll(5, TimeUnit.SECONDS))
+            val oldTarget = f.runner.stopTarget()!!
+            finish.release()
+            assertEquals(AutoRunStatus.RETRYABLE, first.get(5, TimeUnit.SECONDS).status)
+            f.journal.retry(f.journal.read()!!.revision)
+            f.backend.renderFails = false
+            val second = worker.submit<AutoRunResult> { f.runner.advance() }
+            assertNotNull(entered.poll(5, TimeUnit.SECONDS))
+            f.runner.requestStop(oldTarget)
+            assertEquals(0, cancellations.get())
+            finish.release()
+            assertEquals(AutoRunStatus.PUBLISHED, second.get(5, TimeUnit.SECONDS).status)
+        } finally { finish.release(2); worker.shutdownNow() }
+    }
+
     @Test fun failedRenderRequiresExplicitRetryAndEveryRetryRechecksOriginal() {
         val f = Fixture()
         f.admission.updateConditions(allowed)

@@ -57,10 +57,16 @@ internal class AutoDevelopRunner(
     private var publication: AutoDevelopPublication? = null
     val hasUnreleasedResources get() = slot != null
 
+    /** Process-local cancellation intent. A delayed caller must retain the original owner+slot pair. */
+    class StopTarget internal constructor(internal val owner: AutoDevelopRunner, internal val slot: AutoDevelopCoordinator.Attempt)
+    fun stopTarget(): StopTarget? = slot?.let { StopTarget(this, it) }
+
     /** Never invoke adapter/native cancellation on the capture/UI caller or the occupied renderer executor. */
-    fun requestStop() {
-        slot?.let(admission::requestStop)
+    fun requestStop(requested: StopTarget? = stopTarget()) {
+        if (requested == null || requested.owner !== this) return
+        admission.requestStop(requested.slot)
         val target = synchronized(ownership) {
+            if (slot !== requested.slot) return
             val owner = attempt
             if (owner == null || closing || cancelSent) return
             cancelSent = true
@@ -117,7 +123,10 @@ internal class AutoDevelopRunner(
             val created = backend.createAttempt(record.request, requireNotNull(record.attemptId))
             synchronized(ownership) { attempt = created; cancelSent = false }
             renderPending = true
-            try { receipt = requireNotNull(attempt).render(::stopped) }
+            try {
+                if (stopped()) throw CancellationException("Auto-develop attempt superseded before render")
+                receipt = requireNotNull(attempt).render(::stopped)
+            }
             catch (failure: Throwable) { renderFailure = failure }
             if (!closeRender()) return result(AutoRunStatus.RESOURCES_HELD, record)
             record = finishRender(record)
