@@ -1,19 +1,35 @@
 package dev.cinematic.p0.raw
 
+import java.util.concurrent.CancellationException
 import kotlin.math.*
 
 /** Boundary B only. Input must already have the intended profile/WB; W1 is not applied here. */
 internal object R7Base {
     /** ROI is the foundation's skin region, not the later detected-face protection mask. */
-    fun render(input: LinearSrgbImage, foundationSkinRoi: FloatPlane, externalBaseEv: Double): LinearSrgbImage {
+    fun render(
+        input: LinearSrgbImage,
+        foundationSkinRoi: FloatPlane,
+        externalBaseEv: Double,
+        shouldStop: () -> Boolean = { false },
+    ): LinearSrgbImage {
+        fun checkpoint() {
+            if (shouldStop()) throw CancellationException("R7 rendering stopped")
+        }
+        // Stage boundaries only; a running colour/blur kernel is not interrupted.
+        checkpoint()
         validate(input, foundationSkinRoi, externalBaseEv)
         // Production does not retain every full-frame intermediate as the comparison test does.
         var image = profile(input)
+        checkpoint()
         image = localTone(image)
+        checkpoint()
         image = foundation(image, foundationSkinRoi, externalBaseEv)
+        checkpoint()
         image = vibrance(image)
+        checkpoint()
         image = crisp(image)
-        return skin(image)
+        checkpoint()
+        return skin(image).also { checkpoint() }
     }
 
     internal fun stages(input: LinearSrgbImage, roi: FloatPlane, ev: Double): List<LinearSrgbImage> {
