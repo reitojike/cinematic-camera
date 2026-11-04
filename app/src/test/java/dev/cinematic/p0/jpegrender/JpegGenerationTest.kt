@@ -11,6 +11,78 @@ class JpegGenerationTest {
     private val policy = RenderRecipeSnapshot("synthetic-controls-v1", "fixed-ev=0;faces=none")
     private val recipe get() = JpegGenerationRecipe("synthetic-frame-v1", policy)
 
+    @Test fun trialPreservesUnverifiedStatesAndHasSeparateRecipeAndResult() {
+        val f = Fixture(trial = true)
+        val generated = f.attempt.renderTrial { false }
+        assertEquals(JpegGenerationRecipe.TRIAL_SCHEMA, generated.request.recipe.schema)
+        assertEquals(RenderedResultKind.TRIAL_PREVIEW, generated.kind)
+        assertEquals(RenderedFaceState.NOT_RUN, generated.face)
+        assertEquals(RenderedExposureState.DIAGNOSTIC, generated.exposure)
+        assertEquals(f.request.source, generated.request.source)
+        assertEquals(f.encoded.size.toLong(), generated.jpegFingerprint.bytes)
+        assertEquals(2, f.sourceOpens)
+        assertTrue(f.closed)
+        assertFalse(f.attempt.hasUnreleasedResources)
+        val attemptedPromotion = CompletedRender(generated.request, "trial", generated.kind, generated.face, generated.exposure)
+        assertThrows(IOException::class.java) {
+            attemptedPromotion.requirePublishable(setOf(RendererPublicationContract("trial", JpegGenerationRecipe.TRIAL_SCHEMA)))
+        }
+    }
+
+    @Test fun wrongPurposeAndForgedTrialControlsAreRejectedBeforeOutput() {
+        val trial = Fixture(trial = true)
+        assertThrows(IllegalArgumentException::class.java) { trial.attempt.render { false } }
+        assertEquals(0, trial.sourceOpens)
+        val completed = Fixture()
+        assertThrows(IllegalArgumentException::class.java) { completed.attempt.renderTrial { false } }
+        assertEquals(0, completed.sourceOpens)
+        for (f in listOf(Fixture(trial = true, face = RenderedFaceState.VERIFIED_NONE),
+            Fixture(trial = true, exposure = RenderedExposureState.SUPPORTED), Fixture(trial = true, foundationWeight = .75f))) {
+            assertThrows(Exception::class.java) { f.attempt.renderTrial { false } }
+            assertEquals(0, f.outputOpens)
+        }
+    }
+
+    @Test fun realTrialControlsUseAsShotDiagnosticExposureWithoutClaimingNoFaces() {
+        val image = image()
+        val prepared = AsShotNoFaceTrialControls.prepare(image, AsShotNoFaceTrialControls.POLICY) { false }
+        val expected = R7PreviewInputs.prepare(R7PreviewInputs.AsShotInput(image,
+            R7PreviewInputs.Source.LIBRAW_PRELIMINARY_AS_SHOT), emptyList())
+        assertEquals(expected.exposure.externalBaseEv, prepared.externalEv, 0.0)
+        assertEquals(RenderedFaceState.NOT_RUN, prepared.faceState)
+        assertEquals(RenderedExposureState.DIAGNOSTIC, prepared.exposureState)
+        assertTrue(prepared.faces.copyWeights().all { it == 0f })
+        assertTrue(prepared.foundationRoi.copyValues().all { it == 0f })
+        assertThrows(IllegalArgumentException::class.java) {
+            AsShotNoFaceTrialControls.prepare(image, policy) { false }
+        }
+    }
+
+    @Test fun trialFaultsAndPartialWriteCancellationCannotReturnConfirmableOutput() {
+        for (f in listOf(Fixture(trial = true, codecSuccess = false), Fixture(trial = true, corruptRead = true),
+            Fixture(trial = true, changeSourceOnSecondRead = true), Fixture(trial = true, oversizedCodec = true))) {
+            assertThrows(IOException::class.java) { f.attempt.renderTrial { false } }
+            assertFalse(f.attempt.hasUnreleasedResources)
+        }
+        val f = Fixture(trial = true)
+        var stopped = false
+        f.afterPartialWrite = { stopped = true }
+        assertThrows(CancellationException::class.java) { f.attempt.renderTrial { stopped } }
+        assertTrue(f.closed)
+        assertFalse(f.attempt.hasUnreleasedResources)
+    }
+
+    @Test fun trialFailedCloseRetainsOwnerUntilPositiveRelease() {
+        val f = Fixture(trial = true)
+        f.failClose = true
+        assertThrows(IOException::class.java) { f.attempt.renderTrial { false } }
+        assertTrue(f.attempt.hasUnreleasedResources)
+        f.failClose = false
+        f.attempt.releaseResources()
+        assertFalse(f.attempt.hasUnreleasedResources)
+        assertThrows(IllegalStateException::class.java) { f.attempt.renderTrial { false } }
+    }
+
     @Test fun invalidRecipeAndUnknownInputsCannotBecomeCompletion() {
         for (strength in listOf(Double.NaN, -1.0, 1.1)) assertThrows(IllegalArgumentException::class.java) { JpegGenerationRecipe("frame", policy, strength) }
         for (quality in listOf(0, 101)) assertThrows(IllegalArgumentException::class.java) { JpegGenerationRecipe("frame", policy, quality = quality) }
@@ -126,26 +198,29 @@ class JpegGenerationTest {
     }
 
     private fun image() = LinearSrgbImage(4, 4, FloatArray(48) { .2f })
-    private fun controls(image: LinearSrgbImage, face: RenderedFaceState = RenderedFaceState.VERIFIED_NONE, foundationWeight: Float = 0f) = JpegControls(
-        policy, 0.0, FloatPlane(image.width, image.height, FloatArray(image.pixelCount) { foundationWeight }),
-        FaceMask(image.width, image.height, FloatArray(image.pixelCount)), face, RenderedExposureState.SUPPORTED,
+    private fun controls(image: LinearSrgbImage, face: RenderedFaceState = RenderedFaceState.VERIFIED_NONE, foundationWeight: Float = 0f, controlPolicy: RenderRecipeSnapshot = policy,
+        exposure: RenderedExposureState = RenderedExposureState.SUPPORTED) = JpegControls(
+        controlPolicy, 0.0, FloatPlane(image.width, image.height, FloatArray(image.pixelCount) { foundationWeight }),
+        FaceMask(image.width, image.height, FloatArray(image.pixelCount)), face, exposure,
     )
 
     private inner class Fixture(
-        face: RenderedFaceState = RenderedFaceState.VERIFIED_NONE,
+        face: RenderedFaceState? = null,
+        exposure: RenderedExposureState? = null,
+        trial: Boolean = false,
         foundationWeight: Float = 0f,
         targetGeneration: Long = 1,
         codecSuccess: Boolean = true,
         corruptRead: Boolean = false,
         changeSourceOnSecondRead: Boolean = false,
         oversizedCodec: Boolean = false,
-        inputContract: String = "synthetic-frame-v1",
+        inputContract: String? = null,
     ) {
         val encoded = "synthetic codec bytes".toByteArray()
         private val original = "synthetic source".toByteArray()
         val source = SharedOriginalReference("content://media/external_primary/images/media/1",
             DngContentVerifier.identify(original.size.toLong(), { original.inputStream() }), OriginalGrant.APP_OWNED)
-        val request = JpegGenerationRequest("synthetic_render", 1, source, recipe)
+        val request = JpegGenerationRequest("synthetic_render", 1, source, if (trial) JpegGenerationRecipe.trial() else recipe)
         var sourceOpens = 0; var outputOpens = 0; var failClose = false; var closed = false
         var failOriginalReadClose = false; var failJpegReadClose = false
         var afterPartialWrite: () -> Unit = {}
@@ -163,11 +238,13 @@ class JpegGenerationTest {
                 override fun close() { if (failJpegReadClose) throw IOException("Synthetic read close failure"); super.close() }
             }
         }, object : JpegFrameSource {
-            override val contract = inputContract
+            override val contract = inputContract ?: request.recipe.inputContract
             override fun load(source: SharedOriginalReference, longEdge: Int, shouldStop: () -> Boolean) = JpegFrame(image(), 8, 8, true)
         }, object : JpegControlsProvider {
-            override val contract = policy.schema
-            override fun prepare(image: LinearSrgbImage, policy: RenderRecipeSnapshot, shouldStop: () -> Boolean) = controls(image, face, foundationWeight)
+            override val contract = request.recipe.controls.schema
+            override fun prepare(image: LinearSrgbImage, policy: RenderRecipeSnapshot, shouldStop: () -> Boolean) = controls(image,
+                face ?: if (trial) RenderedFaceState.NOT_RUN else RenderedFaceState.VERIFIED_NONE, foundationWeight, policy,
+                exposure ?: if (trial) RenderedExposureState.DIAGNOSTIC else RenderedExposureState.SUPPORTED)
         }, {
                 sourceOpens++
                 object : FilterInputStream((if (changeSourceOnSecondRead && sourceOpens == 2) "modified source!".toByteArray() else original).inputStream()) {

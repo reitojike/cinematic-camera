@@ -8,23 +8,29 @@ import java.io.OutputStream
 import java.util.Base64
 
 /** Explicit bounded export recipe, never a PhotoRoll Preview/Bitmap. No production provider is enrolled. */
-internal class JpegGenerationRecipe(
+internal class JpegGenerationRecipe private constructor(
     val inputContract: String,
     val controls: RenderRecipeSnapshot,
-    val strength: Double = .5,
-    val quality: Int = 95,
+    val strength: Double,
+    val quality: Int,
+    internal val isTrial: Boolean,
 ) {
+    constructor(inputContract: String, controls: RenderRecipeSnapshot, strength: Double = .5, quality: Int = 95) :
+        this(inputContract, controls, strength, quality, false)
     val snapshot: RenderRecipeSnapshot
     init {
         require(inputContract.matches(Regex("[A-Za-z0-9_.-]{1,64}")))
         require(strength.isFinite() && strength in 0.0..1.0 && quality in 1..100)
         require(controls.payload.toByteArray(Charsets.UTF_8).size <= 512)
         val policy = Base64.getUrlEncoder().withoutPadding().encodeToString(controls.payload.toByteArray(Charsets.UTF_8))
-        snapshot = RenderRecipeSnapshot(SCHEMA, "input=$inputContract;controls=${controls.schema};policy=$policy;edge=$MAX_EDGE;" +
+        snapshot = RenderRecipeSnapshot(if (isTrial) TRIAL_SCHEMA else SCHEMA, "input=$inputContract;controls=${controls.schema};policy=$policy;edge=$MAX_EDGE;" +
             "strength=${java.lang.Double.toHexString(strength)};quality=$quality;color=sRGB-SDR;pixelProfile=preliminary")
     }
     companion object {
         const val SCHEMA = "stage-clear-bounded-jpeg-v1"
+        const val TRIAL_SCHEMA = "stage-clear-private-no-face-trial-v1"
+        /** Fixed first-try policy, not a conversion of a completed recipe or mutable UI defaults. */
+        fun trial() = JpegGenerationRecipe(AndroidAsShotJpegFrames.CONTRACT, AsShotNoFaceTrialControls.POLICY, .5, 95, true)
         const val RENDERER = "stage-clear-bounded-jpeg-v1"
         const val MAX_EDGE = 1024
         const val MAX_BYTES = 8L * 1024 * 1024
@@ -76,6 +82,17 @@ internal data class JpegControls(
         }
         require(faceState != RenderedFaceState.VERIFIED_FACES || hasFace) { "Verified faces need an aligned protection mask" }
     }
+
+    /** The fixed trial policy omits both protection and explicit foundation regions, without claiming absence. */
+    fun validateTrial(image: LinearSrgbImage, expectedPolicy: RenderRecipeSnapshot) {
+        if (policy != expectedPolicy || expectedPolicy != AsShotNoFaceTrialControls.POLICY || !externalEv.isFinite() ||
+            faceState != RenderedFaceState.NOT_RUN || exposureState != RenderedExposureState.DIAGNOSTIC) {
+            throw IOException("Private trial requires its diagnostic policy and unverified states")
+        }
+        faces.requireAligned(image)
+        require(foundationRoi.width == image.width && foundationRoi.height == image.height)
+        repeat(image.pixelCount) { p -> require(faces[p] == 0f && foundationRoi[p] == 0f) }
+    }
 }
 
 internal interface JpegControlsProvider {
@@ -91,3 +108,15 @@ internal fun interface LinearJpegEncoder {
 
 /** Completed bytes at the recorded bounded resolution; neither full-resolution nor Pixel quality acceptance. */
 internal data class GeneratedJpeg(val render: CompletedRender, val jpegFingerprint: OriginalFingerprint)
+
+/** Private inspection result only. Deliberately contains neither CompletedRender nor a publication owner. */
+internal data class TrialJpeg(val request: RenderedJpegRequest, val jpegFingerprint: OriginalFingerprint) {
+    init {
+        require(request.recipe.schema == JpegGenerationRecipe.TRIAL_SCHEMA)
+        require(request.output.width <= JpegGenerationRecipe.MAX_EDGE && request.output.height <= JpegGenerationRecipe.MAX_EDGE)
+        require(jpegFingerprint.bytes == request.output.bytes && jpegFingerprint.bytes <= JpegGenerationRecipe.MAX_BYTES)
+    }
+    val kind: RenderedResultKind get() = RenderedResultKind.TRIAL_PREVIEW
+    val face: RenderedFaceState get() = RenderedFaceState.NOT_RUN
+    val exposure: RenderedExposureState get() = RenderedExposureState.DIAGNOSTIC
+}
