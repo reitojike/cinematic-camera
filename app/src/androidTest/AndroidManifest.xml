@@ -1,4 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- AGP overrides the first instrumentation with testInstrumentationRunner. -->
+    <instrumentation
+        android:name="androidx.test.runner.AndroidJUnitRunner"
+        android:targetPackage="dev.cinematic.p0" />
     <instrumentation
         android:name="dev.cinematic.p0.rawcapture.DngHandoffInstrumentation"
         android:targetPackage="dev.cinematic.p0" />
