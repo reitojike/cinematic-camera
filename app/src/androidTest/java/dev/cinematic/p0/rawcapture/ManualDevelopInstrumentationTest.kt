@@ -74,6 +74,7 @@ class ManualDevelopInstrumentationTest {
             assertEquals(ready.fingerprint, same.status.fingerprint)
             same.close()
             // Force future cancellation before its queued readback; rejected delivery must close.
+            val whileSelecting = trial.readPreview(allowed) { false }.join()
             val entered = java.util.concurrent.CountDownLatch(1)
             val release = java.util.concurrent.CountDownLatch(1)
             val blockedPrepare = AndroidAutoDevelopQueue.get(context).preparePrivateTrial(id) {
@@ -82,8 +83,12 @@ class ManualDevelopInstrumentationTest {
                 journal.read()!!.request
             }
             check(entered.await(5, java.util.concurrent.TimeUnit.SECONDS))
-            val abandoned = trial.readPreview(allowed) { false }
-            try { assertTrue(abandoned.cancel(false)) } finally { release.countDown() }
+            try {
+                val whilePreparing = whileSelecting.claim()
+                try { assertNull(whilePreparing) } finally { whilePreparing?.close() }
+                val abandoned = trial.readPreview(allowed) { false }
+                assertTrue(abandoned.cancel(false))
+            } finally { release.countDown(); blockedPrepare.handle { _, _ -> Unit }.join() }
             blockedPrepare.join()
             val afterAbandon = trial.readPreview(allowed) { false }.join().claim()!!
             afterAbandon.close()

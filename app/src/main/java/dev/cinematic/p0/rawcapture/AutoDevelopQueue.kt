@@ -92,12 +92,14 @@ internal class AutoDevelopQueue(
     private fun prepareInteractive(captureId: String, allocate: () -> AutoDevelopRequest): AutoDevelopRequest {
         requireCaptureId(captureId)
         manualFences.add(captureId)
+        jobs.filterKeys { it.captureId == captureId }.values.forEach { it.control.fencePreview(true) }
         try {
             val request = allocate()
             require(request.interactive && request.captureId == captureId && captureId == ManualDevelopRequests.identity(request.source))
             resourceOwner?.takeIf { it.first.captureId == captureId && it.first.generation < request.generation }?.second?.requestStop()
             accept(request, enabled = false)
             manualFences.remove(captureId)
+            currentManual(request).control.fencePreview(false)
             return request
         } catch (failure: Throwable) {
             // The fence must cover a preview already returned through a completed future as well.
