@@ -152,3 +152,7 @@ prepare/start/status/publish/retryのfutureを待つ間にUIのpreview枠を持�
 previewは同じDevelopExecutionへfresh common観測をupdateConditionsし、job別rendererAvailableで
 tryStartObservedする。shouldStop(token)をstage境界で確認し、実native/stream close後だけDevelopExecution.completeAfterResourcesClosedする。解放時は待機queueをwakeする。
 取消/例外/Activity再生成でclose不明ownerを捨てない。現在このPRはphotorollを変更せず、UI側接続・実観測は別PRで検証する。
+
+取消は永続edit generationと別のprocess内epochを失効させる。queued start/publish/retry/confirmは呼出時epochを固定し、
+後着IOは失効済みepochで台帳を進めない。公開権威もepochに固定し、new startだけで古いSaveを復活させない。
+PUBLISHINGの中断後も、新たな明示publishが同じ公開ownerを再開する。fresh確認は完了まで同epochを照合する。

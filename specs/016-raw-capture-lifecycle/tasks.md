@@ -106,9 +106,9 @@ T027〜029の検証はJVMのfault/fake rendererと、隔離API37のsynthetic ada
 
 ## Phase 8: 手動要求と共通ownerの統合
 
-- [ ] T030 [US2] `ManualDevelopRequests`/`ManualDevelopHandle`と既存queueに手動の固定source/recipe/縮小品質/永続ID・世代を接続し、commit不明/再配送/旧世代fenceを検証する。
-- [ ] T031 [US2] 既存runner/台帳に実出力観測、生成と明示publishの分離、同publisherのfresh確認を接続し、取消/後着retry/外部削除のfaultを検証する。
-- [ ] T032 [US2] `BoundedJpegRendererAdapter`/`AndroidOwnedJpegFrames`と同attempt readbackを実装し、共通admission・実FD close・原本不変を合成nativeで確認する。
+- [x] T030 [US2] `ManualDevelopRequests`/`ManualDevelopHandle`と既存queueに手動の固定source/recipe/縮小品質/永続ID・世代を接続し、commit不明/再配送/旧世代fenceを検証する。
+- [x] T031 [US2] 既存runner/台帳に実出力観測、生成と明示publishの分離、同publisherのfresh確認を接続し、取消/後着retry/外部削除のfaultを検証する。
+- [x] T032 [US2] `BoundedJpegRendererAdapter`/`AndroidOwnedJpegFrames`と同attempt readbackを実装し、共通admission・実FD close・原本不変を合成nativeで確認する。
 
 production controls登録・photoroll接続・実観測・Pixel実機は上記の部品完了とは区別し、T020/021/025/026を完了にしない。
 
