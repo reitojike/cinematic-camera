@@ -8,7 +8,9 @@ import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.LinkOption
 
-internal enum class CaptureJournalFile(val fileName: String) { RECEIPT("receipt.bin"), DNG_PUBLICATION("dng-publication.bin") }
+internal enum class CaptureJournalFile(val fileName: String) {
+    RECEIPT("receipt.bin"), DNG_PUBLICATION("dng-publication.bin"), JPEG_PUBLICATION("jpeg-publication.bin"),
+}
 
 /** Pure path validation; root must be a trusted app-private directory supplied by the caller. */
 internal object CaptureJournalPaths {
