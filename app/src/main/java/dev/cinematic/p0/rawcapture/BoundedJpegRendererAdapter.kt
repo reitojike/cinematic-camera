@@ -19,9 +19,10 @@ internal class BoundedJpegRendererAdapter(
     private val encoder: LinearJpegEncoder,
     private val inspector: JpegInspector,
 ) : RendererAdapter {
-    override val contract = JpegGenerationRecipe.PUBLICATION_CONTRACT
-    override val quality = AutoRenderQuality.MANUAL_BOUNDED_1024_PRELIMINARY
-    override fun supports(request: AutoDevelopRequest) = request.boundedManual && request.recipe == recipe.snapshot &&
+    override val contract = if (recipe.isTrial) RendererPublicationContract(JpegGenerationRecipe.TRIAL_SCHEMA, JpegGenerationRecipe.TRIAL_SCHEMA)
+        else JpegGenerationRecipe.PUBLICATION_CONTRACT
+    override val quality = if (recipe.isTrial) AutoRenderQuality.PRIVATE_TRIAL_1024 else AutoRenderQuality.MANUAL_BOUNDED_1024_PRELIMINARY
+    override fun supports(request: AutoDevelopRequest) = (if (recipe.isTrial) request.boundedTrial else request.boundedManual) && request.recipe == recipe.snapshot &&
         controls.contract == recipe.controls.schema
     override fun createAttempt(request: AutoDevelopRequest, attemptId: String, io: AutoRenderIo): AutoRenderAttempt {
         if (!supports(request)) throw AutoRenderUnsupported()
@@ -39,6 +40,12 @@ internal class BoundedJpegRendererAdapter(
             }, encoder, inspector)
         return object : AutoRenderAttempt {
             override fun render(shouldStop: () -> Boolean): AutoRenderReceipt {
+                if (recipe.isTrial) {
+                    val result = generation.renderTrial(shouldStop)
+                    if (result.request.captureId != request.captureId || result.request.generation != request.generation ||
+                        result.request.source != request.source || result.request.recipe != request.recipe) throw IOException("Foreign private trial JPEG")
+                    return AutoRenderReceipt(request, result.request.output, result.face, result.exposure)
+                }
                 val result = generation.render(shouldStop)
                 val render = result.render
                 if (render.request.source != request.source || render.request.recipe != request.recipe ||
@@ -52,5 +59,10 @@ internal class BoundedJpegRendererAdapter(
                 frameOwner.close() // Only actual acknowledgement permits the backend/coordinator to release.
             }
         }
+    }
+    companion object {
+        fun privateTrial(): BoundedJpegRendererAdapter = BoundedJpegRendererAdapter(JpegGenerationRecipe.trial(),
+            { request, io -> AndroidOwnedJpegFrames(io, request.source) }, AsShotNoFaceTrialControls,
+            AndroidSrgbJpegEncoder, AndroidJpegInspector())
     }
 }

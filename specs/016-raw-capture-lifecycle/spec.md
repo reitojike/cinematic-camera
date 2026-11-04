@@ -107,3 +107,15 @@ preview/manual/autoは同じprocess coordinatorを使い、UI Semaphoreや別wor
 renderer対応可否はjob別、camera/foreground/thermal/storage/memoryの最新停止条件は共通である。
 古いallowed snapshotや取消済みretryの後着タスクで停止条件を上書きしない。取消/submit受領は資源解放ではない。
 native/codec/reader/writerの実closeが確認できるまで枠を保持し、確認不能なら撮影受付を待たせず現像を止める。
+
+## Private trial専用の縦断接続（#129/#131）
+
+完成provider未登録の初回試用では、固定1024/as-shot・強度0.5・診断露出・顔保護未実行の
+private trialだけを明示開始できる。専用PrivateTrialHandleはstart/status/stop/retry/fresh private readbackのみを持ち、
+CompletedRender・publish・共有URIを提供しない。完成品質のテストを代用せず、このtrial routeで原本不変・共有公開0を確認する。
+永続source/recipe/品質/ID/世代・attemptを同queueへ保存し、既存FD ownership・取消epoch・最新common条件を再利用する。
+
+fresh readPreviewは同attemptの全byte/hash・codec実寸法/向き/sRGBとsourceを確認し、その同じbyte列からsoftware Bitmapを
+共通枠の内側でdecodeする。reader実close後に専用deliveryへ渡す。UIがclaimするまではqueue所有であり、future完了後の取消でも
+未受領画像をcloseする。claim直前に世代/取消epochを再確認し、claim後だけUIが表示Bitmapの所有者としてclear/closeする。
+表示画像は次回memory観測に含まれる。元JPEGや原本の別ファイルコピー、別queue、共有公開ownerは作らない。
