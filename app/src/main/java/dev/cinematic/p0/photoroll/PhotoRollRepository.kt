@@ -34,7 +34,8 @@ internal class PhotoRollRepository(private val resolver: ContentResolver, privat
         return PhotoRollListing(items, "このアプリが保存したDNG候補（最新200件まで）。他の端末内DNGはFilesから選べます")
     }
 
-    fun check(uri: Uri, fromFiles: Boolean, shouldStop: () -> Boolean): PhotoRollOriginal {
+    fun check(uri: Uri, fromFiles: Boolean, shouldStop: () -> Boolean, maxBytes: Long = MAX_SOURCE_BYTES): PhotoRollOriginal {
+        require(maxBytes in 1..MAX_SOURCE_BYTES)
         if (uri.scheme != "content") throw PhotoRollSourceFailure("読み取り権限のある端末内DNGを選んでください")
         if (fromFiles) {
             val id = runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull()
@@ -52,8 +53,8 @@ internal class PhotoRollRepository(private val resolver: ContentResolver, privat
         }
         if (name?.endsWith(".dng", ignoreCase = true) != true && resolver.getType(uri) != "image/x-adobe-dng")
             throw PhotoRollSourceFailure("DNGを選んでください。拡張子だけでは現像対応は確定しません")
-        val bytes = size?.takeIf { it in 1..MAX_SOURCE_BYTES }
-            ?: throw PhotoRollSourceFailure("原本のサイズが不明、空、または256 MiBを超えています。この入力はまだ扱えません")
+        val bytes = size?.takeIf { it in 1..maxBytes }
+            ?: throw PhotoRollSourceFailure("原本のサイズが不明、空、または${maxBytes / (1024 * 1024)} MiBを超えています。この入力はまだ扱えません")
         val fingerprint = DngContentVerifier.identify(bytes, { resolver.openInputStream(uri)
             ?: throw PhotoRollSourceFailure("原本を読み取れません。Filesから選び直してください") }, shouldStop)
         return PhotoRollOriginal(uri, fingerprint)
