@@ -55,3 +55,10 @@
 - [x] T027 PC定数生成と可逆gzipの合成全画素fixture、PC再照合を追加する（FR-020）。
 - [x] T028 純Kotlin実装と単体/段1→3・入力保持/不正入力の検証を行い、既存goldenも維持する（SC-010）。
 - [x] T029 PC/Android検証・公開検査、Draft PRと独立レビューを完了する（SC-011）。最終headのCI/canonical/独立再確認をPRへ記録し、mergeは別承認。
+
+## Phase 9: R7共通土台（T006の一部）
+
+- [x] T030 公開共通recipeと外部EV/skin ROI、decode/W1の分離を定義する（FR-021/023）。
+- [x] T031 BICUBICを共通resizeへ追加し、R7の6段を純Kotlinへ移植する（FR-021/022）。
+- [x] T032 PC既存rendererと同じ共通設定・合成ROIから全画素fixtureを生成し、各段/不正入力/入力保持を比較する（FR-023、SC-012）。
+- [ ] T033 最終headのPC/Android CI、canonical/独立レビューを確認しDraft PRへ記録する。実DNG入力・ROI供給・W1・実機を完了扱いにしない。

@@ -12,7 +12,7 @@ import kotlin.math.round
 
 /** r10_iconic.blur / blur_rgb numerical boundary, not the full Stage Clear look. */
 internal object StageClearBlur {
-    internal enum class Filter { BOX, BILINEAR }
+    internal enum class Filter { BOX, BILINEAR, BICUBIC }
 
     fun plane(input: FloatPlane, radiusFraction: Double): FloatPlane {
         val (width, height) = reducedSize(input.width, input.height, radiusFraction)
@@ -63,7 +63,11 @@ internal object StageClearBlur {
         // Pillow's full-frame box endpoints are float32 even though coefficients are double.
         val scale = inputSize.toFloat().toDouble() / outputSize
         val footprint = max(scale, 1.0)
-        val support = footprint * if (filter == Filter.BOX) .5 else 1.0
+        val support = footprint * when (filter) {
+            Filter.BOX -> .5
+            Filter.BILINEAR -> 1.0
+            Filter.BICUBIC -> 2.0
+        }
         val inverse = 1.0 / footprint
         return Array(outputSize) { destination ->
             val centre = (destination + .5) * scale
@@ -75,6 +79,14 @@ internal object StageClearBlur {
                 when (filter) {
                     Filter.BOX -> if (distance > -.5 && distance <= .5) 1.0 else 0.0
                     Filter.BILINEAR -> max(0.0, 1 - abs(distance))
+                    // Pillow's cubic convolution, a=-0.5; negative lobes are intentional.
+                    Filter.BICUBIC -> abs(distance).let { x ->
+                        when {
+                            x < 1 -> ((1.5 * x - 2.5) * x) * x + 1
+                            x < 2 -> (((-.5 * x + 2.5) * x - 4) * x) + 2
+                            else -> 0.0
+                        }
+                    }
                 }
             }
             val total = weights.sum()
