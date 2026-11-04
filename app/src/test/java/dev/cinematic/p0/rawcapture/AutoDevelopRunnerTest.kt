@@ -274,6 +274,34 @@ class AutoDevelopRunnerTest {
         assertNotEquals(before, f.journal.read()!!.attemptId)
     }
 
+    @Test fun interruptedDecisionSurvivesCommitFaultAndResourceSlotReleaseUntilExplicitRetry() {
+        for (closeFailure in listOf(false, true)) for (fault in listOf("before", "after", "readback")) {
+            val f = Fixture()
+            f.admission.updateConditions(allowed)
+            var capture: AutoDevelopCoordinator.CaptureReservation? = null
+            f.backend.onRender = { capture = f.admission.reserveCapture() } // Renderer still returns a late success.
+            if (closeFailure) {
+                f.backend.closeFails = true
+                assertEquals(AutoRunStatus.RESOURCES_HELD, f.runner.advance().status)
+                f.backend.closeFails = false
+            }
+            f.storage.interruptedFault = fault
+            assertThrows(IOException::class.java) { f.runner.advance() }
+            assertFalse(f.runner.hasUnreleasedResources) // Do not retain a closed physical slot merely for metadata retry.
+            f.admission.releaseCapture(capture!!)
+            f.backend.onRender = {}
+            assertEquals(AutoRunStatus.RETRYABLE, f.runner.advance().status)
+            assertEquals(AutoJobReason.INTERRUPTED, f.journal.read()!!.reason)
+            assertEquals(1, f.backend.starts)
+            assertEquals(0, f.backend.publisherInstances)
+            assertEquals(0, f.backend.publishes)
+            f.journal.retry(f.journal.read()!!.revision)
+            assertEquals(AutoRunStatus.PUBLISHED, f.runner.advance().status)
+            assertEquals(2, f.backend.starts)
+            assertEquals(2, f.backend.attempts.distinct().size)
+        }
+    }
+
     @Test fun immutableRequestCorruptionUnknownSchemaAndCasCannotResetTheJob() {
         val f = Fixture()
         val initial = f.journal.read()!!
@@ -300,8 +328,21 @@ class AutoDevelopRunnerTest {
     }
     private class MemoryStorage : AtomicJournalStorage {
         var bytes: ByteArray? = null
-        override fun read(maxBytes: Int) = bytes?.clone()
-        override fun replace(contents: ByteArray) { bytes = contents.clone() }
+        var interruptedFault = "none"
+        private var failNextRead = false
+        override fun read(maxBytes: Int): ByteArray? {
+            if (failNextRead) { failNextRead = false; throw IOException("readback fault") }
+            return bytes?.clone()
+        }
+        override fun replace(contents: ByteArray) {
+            val record = AutoDevelopCodec.decode(contents)
+            val fault = interruptedFault.takeIf { record.phase == AutoJobPhase.RETRYABLE && record.reason == AutoJobReason.INTERRUPTED } ?: "none"
+            if (fault != "none") interruptedFault = "none"
+            if (fault == "before") throw IOException("before interrupted commit")
+            bytes = contents.clone()
+            if (fault == "after") throw IOException("after interrupted commit")
+            if (fault == "readback") failNextRead = true
+        }
     }
 
     private inner class Backend(private val request: AutoDevelopRequest) : AutoDevelopBackend {

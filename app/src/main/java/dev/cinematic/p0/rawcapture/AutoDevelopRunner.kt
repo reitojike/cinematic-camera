@@ -54,6 +54,10 @@ internal class AutoDevelopRunner(
     private var receipt: AutoRenderReceipt? = null
     private var renderPending = false
     private var renderFailure: Throwable? = null
+    private var renderAttemptId: String? = null
+    private data class RenderDecision(val attemptId: String, val phase: AutoJobPhase, val reason: AutoJobReason,
+        val fingerprint: OriginalFingerprint? = null)
+    private var renderDecision: RenderDecision? = null
     private var publication: AutoDevelopPublication? = null
     val hasUnreleasedResources get() = slot != null
 
@@ -92,7 +96,17 @@ internal class AutoDevelopRunner(
             if (slot != null && !releaseIo()) return result(AutoRunStatus.RESOURCES_HELD, null)
             answer = run()
         } finally {
-            if (attempt == null && releaseIo()) { slot?.let(admission::completeAfterResourcesClosed); slot = null }
+            if (attempt == null && releaseIo()) {
+                // Resource ownership may end while its metadata commit is uncertain. Preserve the
+                // observed terminal decision independently; a fresh slot must not make it successful.
+                val current = slot
+                val renderId = renderAttemptId
+                if (renderPending && renderDecision == null && renderId != null && current != null && admission.shouldStop(current)) {
+                    renderDecision = RenderDecision(renderId, AutoJobPhase.RETRYABLE, AutoJobReason.INTERRUPTED)
+                }
+                current?.let(admission::completeAfterResourcesClosed)
+                slot = null
+            }
             advancing.set(false)
         }
         return if (slot != null) answer.copy(status = AutoRunStatus.RESOURCES_HELD) else answer
@@ -111,6 +125,8 @@ internal class AutoDevelopRunner(
         if (renderPending && record.phase == AutoJobPhase.RENDERING) {
             record = finishRender(record)
         } else if (record.phase == AutoJobPhase.QUEUED) {
+            // An explicit retry starts a different attempt, including if the next intent commit fails.
+            receipt = null; renderFailure = null; renderPending = false; renderDecision = null; renderAttemptId = null
             try { backend.verifyOriginal(record.request, ::stopped) }
             catch (changed: DngContentChanged) { return result(AutoRunStatus.HELD, journal.hold(record.revision, AutoJobReason.SOURCE_CHANGED)) }
             catch (failure: Exception) {
@@ -119,7 +135,7 @@ internal class AutoDevelopRunner(
             }
             if (stopped()) return result(AutoRunStatus.BLOCKED, record)
             record = journal.start(record.revision) // A failed/readback-uncertain commit never calls renderer.
-            receipt = null; renderFailure = null
+            renderAttemptId = record.attemptId
             val created = backend.createAttempt(record.request, requireNotNull(record.attemptId))
             synchronized(ownership) { attempt = created; cancelSent = false }
             renderPending = true
@@ -180,25 +196,37 @@ internal class AutoDevelopRunner(
     }
     private fun finishRender(record: AutoDevelopRecord): AutoDevelopRecord {
         if (record.phase != AutoJobPhase.RENDERING) throw CaptureJournalConflict()
+        val decision = renderDecision ?: decideRender(record).also { renderDecision = it }
+        if (decision.attemptId != record.attemptId) throw CaptureJournalConflict()
+        return when (decision.phase) {
+            AutoJobPhase.RETRYABLE -> journal.retryable(record.revision, decision.reason)
+            AutoJobPhase.HELD -> journal.hold(record.revision, decision.reason)
+            AutoJobPhase.RENDERED -> journal.rendered(record.revision, requireNotNull(decision.fingerprint))
+            else -> throw CaptureJournalConflict()
+        }
+    }
+    private fun decideRender(record: AutoDevelopRecord): RenderDecision {
+        val renderId = requireNotNull(record.attemptId)
+        fun interrupted() = RenderDecision(renderId, AutoJobPhase.RETRYABLE, AutoJobReason.INTERRUPTED)
+        fun failed() = RenderDecision(renderId, AutoJobPhase.RETRYABLE, AutoJobReason.RENDER_FAILED)
+        fun invalid() = RenderDecision(renderId, AutoJobPhase.HELD, AutoJobReason.INVALID_OUTPUT)
         val failure = renderFailure
         if (stopped() || failure is CancellationException || failure is DngVerificationStopped) {
-            return journal.retryable(record.revision, AutoJobReason.INTERRUPTED)
+            return interrupted()
         }
-        if (failure is AutoRenderUnsupported) return journal.hold(record.revision, AutoJobReason.UNSUPPORTED)
-        if (failure != null) return journal.retryable(record.revision, AutoJobReason.RENDER_FAILED)
-        val value = receipt ?: return journal.retryable(record.revision, AutoJobReason.RENDER_FAILED)
+        if (failure is AutoRenderUnsupported) return RenderDecision(renderId, AutoJobPhase.HELD, AutoJobReason.UNSUPPORTED)
+        if (failure != null) return failed()
+        val value = receipt ?: return failed()
         val request = record.request
         if (value.request != request || !value.request.publishable || value.output.width != request.width || value.output.height != request.height ||
-            value.output.orientation != 1 || value.output.color != "sRGB") return journal.hold(record.revision, AutoJobReason.INVALID_OUTPUT)
+            value.output.orientation != 1 || value.output.color != "sRGB") return invalid()
         val inspection = try { backend.inspect(request, requireNotNull(record.attemptId), ::stopped) }
         catch (_: Exception) {
-            if (stopped()) return journal.retryable(record.revision, AutoJobReason.INTERRUPTED)
-            return journal.hold(record.revision, AutoJobReason.INVALID_OUTPUT)
+            return if (stopped()) interrupted() else invalid()
         }
-        if (stopped()) return journal.retryable(record.revision, AutoJobReason.INTERRUPTED)
-        if (backend.hasUnreleasedResources) throw IOException("Output inspection resources remain open")
-        if (inspection.output != value.output || inspection.fingerprint.bytes != value.output.bytes) return journal.hold(record.revision, AutoJobReason.INVALID_OUTPUT)
-        return journal.rendered(record.revision, inspection.fingerprint)
+        if (stopped()) return interrupted()
+        if (backend.hasUnreleasedResources || inspection.output != value.output || inspection.fingerprint.bytes != value.output.bytes) return invalid()
+        return RenderDecision(renderId, AutoJobPhase.RENDERED, AutoJobReason.NONE, inspection.fingerprint)
     }
     private fun result(status: AutoRunStatus, record: AutoDevelopRecord?) = AutoRunResult(status, record)
 }

@@ -77,6 +77,8 @@ decode/入力準備中に判明した未対応は`AutoRenderUnsupported`とし�
 rendererへの明示停止口（native CancellationSignal等）は別のcancel executorから呼ぶ。通知自体が戻らない間も
 attemptとslotを保持する。通知をcloseと扱わず、native処理と提供FDの寿命を維持し、強制解放しない。
 停止intentはprocess内のrunner/slotを組で固定し、遅延した旧停止で次のnative attemptを取り直してcancelしない。
+停止/失敗/検査成功の完了判断はattempt IDに固定し、台帳commit確認まで保持する。物理slotの解放や新slotの取得で
+その判断を成功へ再評価しない。process death後に判断が失われたRENDERINGは既存の中断復旧に従う。
 実kernelの中断点や即時停止は保証しない。renderer.closeが成功してから提供IOを解放し、出力の検査はその後に行う。
 出力欠落/失敗latchはINVALID_OUTPUTで停止するが、実資源が閉じていれば別jobのslotを塞がない。
 
