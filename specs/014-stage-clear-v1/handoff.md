@@ -7,7 +7,7 @@ Stage Clear v1（[spec](spec.md) / [plan](plan.md)）を前提に、P2/P3の作�
 
 - ルックの正本は`tools/raw_baseline/stage_clear.py`の`render(base, faces, strength)`と、
   入力となる第7回の土台`tools/raw_baseline/r7_final.py`の`render`。処理順とパラメータは[plan](plan.md)の表。
-- 既定の強度は1。写真ごとに編集で0〜1へ下げられる（ユーザー決定）。強度で変わるのはにじみ・ミスト・Orton・周辺減光・彩度だけ。
+- 既定の強度は0.5（`stage_clear.DEFAULT_STRENGTH`）。写真ごとに編集で0〜1の間で上げ下げできる（ユーザー決定、[#86](https://github.com/reitojike/cinematic-camera/issues/86)）。強度で変わるのはにじみ・ミスト・Orton・周辺減光・彩度だけ。
 - 顔の赤みの抑え・顔の白飛びガード・ハイライトのなだらかさは、どの強度でも常にかかる。
 - 顔の範囲は外部の検出器からマスクで渡す。顔が見つからない写真は全体の処理だけになり、手動で補う。
 - 露出はルックに含めない。方針は「顔があれば顔で測り、なければ中央の上位3%」。PCの比較は仮の露出。
