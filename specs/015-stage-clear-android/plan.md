@@ -44,3 +44,23 @@ layerには同じ寸法を要求する。呼出側が強度0.5やskin weightを�
 
 新しい依存・権限・UI・撮影フックなし。原本や非公開素材・写真別設定を扱わない。
 PCの処理を変えず、機械検証と実機確認を分離する。進捗・レビュー結果はPRに置く。
+
+## 次の小縦切り: ぼかしの互換境界
+
+`StageClearBlur`を純Kotlinで追加する。`FloatPlane`は線形輝度/マスク等の任意Float32平面で、RGBには既存`LinearSrgbImage`を使う。
+PCの`cell=max(radius*longSide,1)`、`small=max(2,round(side/cell))`に従い、BOX→BILINEARを各チャンネル独立に適用する。
+半径は有限かつ0以上。0でも最小辺2というPCの挙動を保持する。
+
+Pillow固定版の[Resample.c](https://github.com/python-pillow/Pillow/blob/13.0.0/src/libImaging/Resample.c)で
+ピクセル中心、端の正規化、doubleの重み・加算から各軸出力をfloatへ戻す点を確認した。
+縮小する高さの差が幅の差の2倍を超える場合は縦軸を先に処理する。BOXは単純な面積積分へ置き換えない。
+Android標準Bitmapはfloatの線形平面・同じカーネル/丸めを保証する比較境界ではないため、この限定した数値カーネルをCPUで実装する。
+汎用画像ライブラリ・新依存・GPU/NDKの導入には広げない。
+Pillowの著作権・許諾表示は`app/src/main/assets/third_party/Pillow-LICENSE.txt`に保持し、APKにも含める。
+
+`export_android_blur.py`はPCのblurとPillowから公開可能な合成CSVのみを生成する。
+各ケースの入力、縮小寸法、BOX中間出力、BILINEAR復元出力を全画素で検証する。RGB独立性は3チャンネルの異なる入力で別途確認する。
+fixture変更時もPC CIが走るようpathsへ追加する。既存の保護段golden・正本・版・既定強度0.5を変更しない。
+
+このPRはplan境界Cの**ぼかし共通基盤のみ**。glow/mist/Orton等の移植、R7、DNG、全Stage Clearの強度別一致、
+表示/全解像度での端末時間・メモリと撮影応答は引き続き未検証とする。
