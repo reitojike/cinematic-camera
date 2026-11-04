@@ -32,6 +32,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -51,6 +52,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
     val loading = loadingTicket != null
     var notice by remember { mutableStateOf<String?>(null) }
     var preview by remember { mutableStateOf<Bitmap?>(null) }
+    var renderStage by remember { mutableStateOf<PhotoRollRenderStage?>(null) }
     val cancellationOwner = remember { PhotoRollWorkOwner<CancellationSignal> { it.cancel() } }
 
     fun backToList() { cancellationOwner.cancel(); selectedUri = null; preview = null; selection = selection.clear(); retry++ }
@@ -85,17 +87,22 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
             return@repeatOnLifecycle
         }
         selection = selection.select(source)
+        renderStage = null
         val ticket = selection.ticket!!
         val cancellation = CancellationSignal()
         cancellationOwner.begin(cancellation)
         val job = currentCoroutineContext()
         val shouldStop = { !job.isActive || cancellation.isCanceled }
+        val requestScope = this
         try {
             val result = withContext(Dispatchers.IO) {
                 photoRollWork.withPermit {
                     val original = repository.check(Uri.parse(source), fromFiles, shouldStop, renderer.maxSourceBytes)
                     withContext(Dispatchers.Main) { selection = selection.rendering(ticket) }
-                    val request = PhotoRollRenderRequest(original, mode = renderer.mode)
+                    val request = PhotoRollRenderRequest(original, mode = renderer.mode, maxEdge = renderer.maxEdge,
+                        onStage = { stage -> requestScope.launch(Dispatchers.Main) {
+                            if (selection.accepts(ticket)) renderStage = stage
+                        } })
                     val rendered = renderer.render(request, cancellation)
                     if (rendered is PhotoRollRenderResult.Preview) {
                         val bitmap = rendered.bitmap
@@ -112,9 +119,11 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
             if (selection.accepts(ticket)) when (result) {
                 is PhotoRollRenderResult.Preview -> {
                     preview = result.bitmap
-                    selection = selection.finish(ticket, true, if (result.mode == PhotoRollPreviewMode.DNG_TRIAL)
-                        "DNGの試験表示です。ルック・顔検出は未適用で、色や明るさは暫定です。JPEG保存はまだ利用できません"
-                        else "Stage Clear v1・強度0.5・表示用。JPEG書き出しは未接続です")
+                    selection = selection.finish(ticket, true, when (result.mode) {
+                        PhotoRollPreviewMode.DNG_TRIAL -> "DNGの試験表示です。ルック・顔検出は未適用で、色や明るさは暫定です。JPEG保存はまだ利用できません"
+                        PhotoRollPreviewMode.STAGE_CLEAR_TRIAL -> "Stage Clear v1・強度0.5の試験表示です。撮影時WBと診断用の明るさを使用。顔検出・顔保護、W1とPixel固有の色変換は未対応で、色や明るさは暫定です。JPEG保存はまだ利用できません"
+                        PhotoRollPreviewMode.STAGE_CLEAR -> "Stage Clear v1・強度0.5・表示用。JPEG書き出しは未接続です"
+                    })
                 }
                 is PhotoRollRenderResult.Unavailable -> selection = selection.finish(ticket, false, result.reason)
             }
@@ -138,13 +147,20 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         Column(Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 16.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { if (selectedUri != null) backToList() else close() }) { Text(if (selectedUri == null) "撮影へ" else "一覧へ") }
-                Text(if (selectedUri == null) "写真 · DNG" else if (renderer.mode == PhotoRollPreviewMode.DNG_TRIAL) "DNG試験表示" else "DNG現像", style = MaterialTheme.typography.titleLarge)
+                Text(if (selectedUri == null) "写真 · DNG" else when (renderer.mode) {
+                    PhotoRollPreviewMode.DNG_TRIAL -> "DNG試験表示"
+                    PhotoRollPreviewMode.STAGE_CLEAR_TRIAL -> "Stage Clear試験"
+                    PhotoRollPreviewMode.STAGE_CLEAR -> "DNG現像"
+                }, style = MaterialTheme.typography.titleLarge)
             }
             if (selectedUri == null) {
                 Text("端末内のDNG原本を選んでください", style = MaterialTheme.typography.titleMedium)
                 Text("Filesでは「内部ストレージ」から選択してください", style = MaterialTheme.typography.bodySmall)
-                Text(if (renderer.mode == PhotoRollPreviewMode.DNG_TRIAL) "DNGを縮小して試験表示します。ルック適用・編集調整・JPEG保存は準備中です"
-                    else "外部SDからの取り込み・編集調整・JPEG書き出しは準備中です", style = MaterialTheme.typography.bodySmall)
+                Text(when (renderer.mode) {
+                    PhotoRollPreviewMode.DNG_TRIAL -> "DNGを縮小して試験表示します。ルック適用・編集調整・JPEG保存は準備中です"
+                    PhotoRollPreviewMode.STAGE_CLEAR_TRIAL -> "Stage Clearを縮小して試験表示します。顔は保護しません。撮影時WB・診断露出を使い、色と明るさは暫定です。W1・Pixel固有の色変換・JPEG保存は未対応です"
+                    PhotoRollPreviewMode.STAGE_CLEAR -> "外部SDからの取り込み・編集調整・JPEG書き出しは準備中です"
+                }, style = MaterialTheme.typography.bodySmall)
                 TextButton(enabled = foreground && !pickerPending, onClick = {
                     if (!pickerPending) try { pickerPending = true; picker.launch(arrayOf("*/*")) }
                     catch (_: Exception) { pickerPending = false; notice = "Filesを開けませんでした" }
@@ -162,8 +178,12 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
             } else {
                 val status = when (selection.phase) {
                     PhotoRollPhase.CHECKING -> "原本を確認中…"
-                    PhotoRollPhase.RENDERING -> if (renderer.mode == PhotoRollPreviewMode.DNG_TRIAL) "DNGを処理中…" else "現像処理を確認中…"
-                    PhotoRollPhase.DISPLAYED -> if (renderer.mode == PhotoRollPreviewMode.DNG_TRIAL) "試験表示 · ルック未適用" else "表示用の現像結果"
+                    PhotoRollPhase.RENDERING -> renderStage?.label ?: "DNGを処理中…"
+                    PhotoRollPhase.DISPLAYED -> when (renderer.mode) {
+                        PhotoRollPreviewMode.DNG_TRIAL -> "試験表示 · ルック未適用"
+                        PhotoRollPreviewMode.STAGE_CLEAR_TRIAL -> "Stage Clear試験 · 顔保護なし"
+                        PhotoRollPreviewMode.STAGE_CLEAR -> "表示用の現像結果"
+                    }
                     PhotoRollPhase.BLOCKED -> "現像を開始・完了できません"
                     PhotoRollPhase.PAUSED -> "処理を中断しました"
                     PhotoRollPhase.EMPTY -> "原本の確認待ち"
@@ -172,7 +192,11 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                 if (selection.phase in setOf(PhotoRollPhase.CHECKING, PhotoRollPhase.RENDERING)) LinearProgressIndicator(Modifier.fillMaxWidth())
                 selection.message?.let { Text(it, Modifier.padding(vertical = 12.dp)) }
                 val image = preview
-                if (image != null && selection.phase == PhotoRollPhase.DISPLAYED) Image(image.asImageBitmap(), if (renderer.mode == PhotoRollPreviewMode.DNG_TRIAL) "DNGの試験表示（ルック未適用）" else "現像結果（表示用）",
+                if (image != null && selection.phase == PhotoRollPhase.DISPLAYED) Image(image.asImageBitmap(), when (renderer.mode) {
+                    PhotoRollPreviewMode.DNG_TRIAL -> "DNGの試験表示（ルック未適用）"
+                    PhotoRollPreviewMode.STAGE_CLEAR_TRIAL -> "Stage Clearの試験表示（顔保護なし、色と明るさは暫定）"
+                    PhotoRollPreviewMode.STAGE_CLEAR -> "現像結果（表示用）"
+                },
                     Modifier.fillMaxWidth().weight(1f), contentScale = ContentScale.Fit)
                 else Spacer(Modifier.weight(1f))
                 Text("原本は読み取り専用で参照します。コピー・上書き・公開は行いません", style = MaterialTheme.typography.bodySmall)

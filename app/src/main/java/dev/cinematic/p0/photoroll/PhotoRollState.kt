@@ -4,7 +4,12 @@ internal fun canOpenPhotoRoll(busy: Boolean, recordingBusy: Boolean, ownsCapture
     !busy && !recordingBusy && !ownsCapture && !unknown
 
 internal enum class PhotoRollPhase { EMPTY, CHECKING, RENDERING, DISPLAYED, BLOCKED, PAUSED }
-internal enum class PhotoRollPreviewMode { STAGE_CLEAR, DNG_TRIAL }
+internal enum class PhotoRollPreviewMode { STAGE_CLEAR, DNG_TRIAL, STAGE_CLEAR_TRIAL }
+
+internal enum class PhotoRollRenderStage(val label: String) {
+    DECODE("DNGを読み込み中…"), INPUTS("診断用の明るさを計算中…"),
+    BASE("R7の土台を処理中…"), LOOK("Stage Clearを適用中…"), DISPLAY("表示用に変換中…"),
+}
 
 internal data class PhotoRollResources(
     val camerasIdle: Boolean?, val thermalStatus: Int?, val lowMemory: Boolean?, val availableBytes: Long?,

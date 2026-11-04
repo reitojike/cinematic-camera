@@ -18,7 +18,7 @@ class PhotoRollActivity : ComponentActivity() {
         enableEdgeToEdge()
         val repository = PhotoRollRepository(contentResolver, packageName)
         resourceObserver = PhotoRollResourceObserver(applicationContext)
-        val renderer: PhotoRollRenderer = DngTrialRenderer(contentResolver, resourceObserver::snapshot)
+        val renderer: PhotoRollRenderer = StageClearTrialRenderer(contentResolver, resourceObserver::snapshot)
         setContent {
             CaptureTheme { PhotoRollScreen(repository, renderer, foreground, ::finish) }
         }

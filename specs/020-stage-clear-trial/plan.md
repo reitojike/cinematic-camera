@@ -1,0 +1,9 @@
+# 実装計画
+
+photorollとテストだけを変更する。#115のR7PreviewInputsとR7Base.shouldStopに依存し、最終候補は同PR統合後のmainへ合わせる。#114は別担当のopt-in入力であり、本候補のas-shot契約とは混ぜない。
+
+純KotlinのStageClearTrialPipelineが診断入力→R7→Lookを呼び、Android adapterはdecode/Bitmapを担当する。Stage Clear出力は線形RGBなので既存TrialDisplayPixelsのsRGB転送を1回だけ用いる。段階通知は要求へ注入し、画面のcoroutineからmainに配送してticketで隔離する。
+
+長辺512上限で既存1024用資源gateを維持する。kernel中にcancelされても戻るまでpermitを保持し、bitmapを表示しない。既存DngTrialRendererは残し、Activityの既定だけをStageClearTrialRendererへ変更する。
+
+純計算の合成試験は処理順・明示未検出・入力不変・停止/固定要求の拒否を確認。Android合成試験は実content URIからnative/Look/Bitmapまで、原本hashと中断後の再実行を確認。最終lint/unit/両ABI APK/test APK、CI、canonical/独立レビューとmain CIを取得する。
