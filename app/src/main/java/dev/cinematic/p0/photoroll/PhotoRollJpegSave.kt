@@ -3,8 +3,8 @@ package dev.cinematic.p0.photoroll
 import dev.cinematic.p0.rawcapture.CompletedRender
 import dev.cinematic.p0.rawcapture.JpegPublicationPhase
 import dev.cinematic.p0.rawcapture.JpegPublicationRecord
-import dev.cinematic.p0.rawcapture.OriginalFingerprint
 import dev.cinematic.p0.rawcapture.RendererPublicationContract
+import dev.cinematic.p0.rawcapture.SharedOriginalReference
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,9 +28,8 @@ internal class PhotoRollJpegSave private constructor(
     val width get() = render.request.output.width
     val height get() = render.request.output.height
 
-    fun matches(uri: String, fingerprint: OriginalFingerprint, mode: PhotoRollPreviewMode) =
-        mode == PhotoRollPreviewMode.STAGE_CLEAR && render.request.source.uri == uri &&
-            render.request.source.fingerprint == fingerprint
+    fun matches(source: SharedOriginalReference, mode: PhotoRollPreviewMode) =
+        mode == PhotoRollPreviewMode.STAGE_CLEAR && render.request.source == source
 
     /** Also used immediately before opening a published result; reuses and rechecks the same publisher. */
     fun advance(shouldStop: () -> Boolean): PhotoRollSaveSnapshot {
@@ -62,8 +61,7 @@ internal class PhotoRollJpegSave private constructor(
     companion object {
         /** Validation precedes factory invocation: trial/unsupported inputs cannot allocate a public operation. */
         fun prepare(
-            originalUri: String,
-            fingerprint: OriginalFingerprint,
+            source: SharedOriginalReference,
             mode: PhotoRollPreviewMode,
             render: CompletedRender,
             supportedContracts: Set<RendererPublicationContract>,
@@ -71,7 +69,7 @@ internal class PhotoRollJpegSave private constructor(
             createPublisher: () -> PhotoRollJpegPublisher,
         ): PhotoRollJpegSave {
             require(mode == PhotoRollPreviewMode.STAGE_CLEAR) { "Trial previews cannot be saved as completed JPEG" }
-            require(render.request.source.uri == originalUri && render.request.source.fingerprint == fingerprint) {
+            require(render.request.source == source) {
                 "Completed JPEG must refer to the selected checked original"
             }
             render.requirePublishable(supportedContracts)
