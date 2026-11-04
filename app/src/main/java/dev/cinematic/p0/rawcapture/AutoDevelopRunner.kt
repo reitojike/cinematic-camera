@@ -6,7 +6,7 @@ import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
-internal enum class AutoRunStatus { BLOCKED, RETRYABLE, HELD, PUBLICATION_PENDING, PUBLISHED, RESOURCES_HELD }
+internal enum class AutoRunStatus { BLOCKED, RETRYABLE, HELD, PUBLICATION_PENDING, PUBLISHED, RESOURCES_HELD, PRIVATE_READY }
 internal data class AutoRunResult(val status: AutoRunStatus, val record: AutoDevelopRecord?)
 
 internal interface AutoDevelopPublication {
@@ -31,6 +31,7 @@ internal interface AutoDevelopBackend {
     fun createAttempt(request: AutoDevelopRequest, attemptId: String): AutoRenderAttempt
     fun inspect(request: AutoDevelopRequest, attemptId: String, shouldStop: () -> Boolean): JpegInspection
     fun publication(record: AutoDevelopRecord, isCurrent: () -> Boolean): AutoDevelopPublication
+    fun privatePreview(record: AutoDevelopRecord, shouldStop: () -> Boolean): PrivateTrialPreview = throw IOException("Private trial readback unavailable")
 }
 
 /**
@@ -161,6 +162,7 @@ internal class AutoDevelopRunner(
         if (record.phase == AutoJobPhase.RETRYABLE) return result(AutoRunStatus.RETRYABLE, record)
         if (record.phase == AutoJobPhase.HELD) return result(AutoRunStatus.HELD, record)
         if (record.phase == AutoJobPhase.RENDERED) {
+            if (record.request.boundedTrial) return result(AutoRunStatus.PRIVATE_READY, record)
             if (stopped() || !allowPublication()) return result(AutoRunStatus.PUBLICATION_PENDING, record)
             record = journal.publishing(record.revision)
         }
@@ -257,6 +259,27 @@ internal class AutoDevelopRunner(
                 checked.uri == null || checked.render != record.completed()) throw IOException("Published JPEG could not be confirmed")
             return checked
         } finally {
+            if (attempt == null && releaseIo()) { slot?.let(admission::completeAfterResourcesClosed); slot = null }
+            advancing.set(false)
+        }
+    }
+    /** Same generation/attempt only. Produces a display image, never a completed/publication receipt. */
+    fun readPrivateTrial(shouldStop: () -> Boolean): PrivateTrialPreview {
+        if (!advancing.compareAndSet(false, true)) throw IOException("Develop owner is active")
+        var image: PrivateTrialPreview? = null
+        try {
+            if (attempt != null && !closeRender() || !releaseIo()) throw IOException("Develop resources remain open")
+            val record = journal.read() ?: throw CaptureJournalConflict()
+            if (!record.request.boundedTrial || record.phase != AutoJobPhase.RENDERED || !isCurrent() || !supports(record.request)) throw CaptureJournalConflict()
+            if (slot == null) slot = admit() ?: throw IOException("Develop execution is occupied or blocked")
+            val stop = { shouldStop() || stopped() }
+            if (stop()) throw DngVerificationStopped()
+            val readback = backend.privatePreview(record, stop).also { image = it }
+            if (stop() || !releaseIo() || readback.status != PrivateTrialStatus.from(record)) throw IOException("Private preview not confirmed")
+            image = null // Handoff is registered by the queue before its future completes.
+            return readback
+        } finally {
+            image?.close()
             if (attempt == null && releaseIo()) { slot?.let(admission::completeAfterResourcesClosed); slot = null }
             advancing.set(false)
         }

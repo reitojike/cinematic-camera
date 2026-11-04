@@ -51,7 +51,7 @@ internal class AutoDevelopQueue(
     }
 
     fun submit(request: AutoDevelopRequest): CompletableFuture<AutoDevelopRecord> {
-        require(request.quality != AutoRenderQuality.MANUAL_BOUNDED_1024_PRELIMINARY) { "Use the explicit manual entry" }
+        require(!request.interactive) { "Use the typed interactive entry" }
         val active = resourceOwner
         if (active != null && active.first.captureId == request.captureId && active.first.generation < request.generation) {
             active.second.requestStop() // Supersession only; duplicate delivery/another capture must not cancel valid work.
@@ -66,12 +66,13 @@ internal class AutoDevelopQueue(
         val journal = existing?.journal ?: journalFactory(request)
         val record = journal.prepare(request)
         if (existing == null) {
+            jobs.filterKeys { it.captureId == request.captureId && it.generation < request.generation }.values.forEach { it.control.stop() }
             latest[request.captureId] = request.generation
             jobs[key] = Job(journal, AutoDevelopRunner(journal, admission, backendFactory(request), cancellationIo, ::wake,
-                interactive = request.boundedManual, observations = { jobs[key]?.observations },
-                allowPublication = { !request.boundedManual || jobs[key]?.let { it.control.accepts(it.publicationIntent) } == true }) {
+                interactive = request.interactive, observations = { jobs[key]?.observations },
+                allowPublication = { !request.interactive || (request.boundedManual && jobs[key]?.let { it.control.accepts(it.publicationIntent) } == true) }) {
                 latest[request.captureId] == request.generation && request.captureId !in manualFences &&
-                    (!request.boundedManual || jobs[key]?.control?.isRequested() == true)
+                    (!request.interactive || jobs[key]?.control?.isRequested() == true)
             }, enabled)
         }
         wake()
@@ -79,19 +80,39 @@ internal class AutoDevelopQueue(
     }
     /** Allocation and immutable generation acceptance share the existing IO owner. No render on prepare. */
     fun prepareManual(captureId: String, allocate: () -> AutoDevelopRequest): CompletableFuture<ManualDevelopHandle> = onIo {
+        val request = prepareInteractive(captureId, allocate)
+        require(request.boundedManual)
+        ManualDevelopHandle(this, request, currentManual(request).control)
+    }
+    fun preparePrivateTrial(captureId: String, allocate: () -> AutoDevelopRequest): CompletableFuture<PrivateTrialHandle> = onIo {
+        val request = prepareInteractive(captureId, allocate)
+        require(request.boundedTrial)
+        PrivateTrialHandle(this, request, currentManual(request).control)
+    }
+    private fun prepareInteractive(captureId: String, allocate: () -> AutoDevelopRequest): AutoDevelopRequest {
         requireCaptureId(captureId)
         manualFences.add(captureId)
         val request = try { allocate() } catch (failure: Throwable) {
             resourceOwner?.takeIf { it.first.captureId == captureId }?.second?.requestStop()
             throw failure
         }
-        require(request.boundedManual && request.captureId == captureId && captureId == ManualDevelopRequests.identity(request.source))
+        require(request.interactive && request.captureId == captureId && captureId == ManualDevelopRequests.identity(request.source))
         resourceOwner?.takeIf { it.first.captureId == captureId && it.first.generation < request.generation }?.second?.requestStop()
         accept(request, enabled = false)
         manualFences.remove(captureId)
-        ManualDevelopHandle(this, request, currentManual(request).control)
+        return request
     }
     internal fun startManual(request: AutoDevelopRequest, observations: AutoDevelopConditions,
+        ticket: ManualDevelopControl.Ticket): CompletableFuture<AutoDevelopRecord> {
+        require(request.boundedManual)
+        return startInteractive(request, observations, ticket)
+    }
+    internal fun startTrial(request: AutoDevelopRequest, observations: AutoDevelopConditions,
+        ticket: ManualDevelopControl.Ticket): CompletableFuture<AutoDevelopRecord> {
+        require(request.boundedTrial)
+        return startInteractive(request, observations, ticket)
+    }
+    private fun startInteractive(request: AutoDevelopRequest, observations: AutoDevelopConditions,
         ticket: ManualDevelopControl.Ticket): CompletableFuture<AutoDevelopRecord> = onIo {
         val job = currentManual(request)
         requireIntent(job, ticket)
@@ -101,11 +122,17 @@ internal class AutoDevelopQueue(
         (job.journal.read() ?: throw CaptureJournalConflict()).also { wake() }
     }
     internal fun manualStatus(request: AutoDevelopRequest): CompletableFuture<AutoDevelopRecord> = onIo {
+        require(request.boundedManual)
+        currentManual(request).journal.read() ?: throw CaptureJournalConflict()
+    }
+    internal fun trialStatus(request: AutoDevelopRequest): CompletableFuture<AutoDevelopRecord> = onIo {
+        require(request.boundedTrial)
         currentManual(request).journal.read() ?: throw CaptureJournalConflict()
     }
     /** Explicit user Save intent; first publication is never implied by generation or status. */
     internal fun publishManual(request: AutoDevelopRequest, observations: AutoDevelopConditions,
         ticket: ManualDevelopControl.Ticket): CompletableFuture<AutoDevelopRecord> = onIo {
+        require(request.boundedManual)
         val job = currentManual(request)
         requireIntent(job, ticket)
         val record = job.journal.read() ?: throw CaptureJournalConflict()
@@ -122,6 +149,7 @@ internal class AutoDevelopQueue(
     }
     internal fun confirmManual(request: AutoDevelopRequest, observations: AutoDevelopConditions,
         ticket: ManualDevelopControl.Ticket, shouldStop: () -> Boolean): CompletableFuture<JpegPublicationRecord> = onIo {
+        require(request.boundedManual)
         val job = currentManual(request)
         requireIntent(job, ticket)
         job.observations = observations
@@ -132,10 +160,25 @@ internal class AutoDevelopQueue(
         finally { if (!job.runner.hasUnreleasedResources) resourceOwner = null }
     }
     private fun currentManual(request: AutoDevelopRequest): Job {
-        require(request.boundedManual)
+        require(request.interactive)
         val job = jobs[Key(request.captureId, request.generation)] ?: throw CaptureJournalConflict()
         if (request.captureId in manualFences || latest[request.captureId] != request.generation || job.journal.read()?.request != request) throw CaptureJournalConflict()
         return job
+    }
+    internal fun readTrial(request: AutoDevelopRequest, observations: AutoDevelopConditions, ticket: ManualDevelopControl.Ticket,
+        shouldStop: () -> Boolean): CompletableFuture<PrivateTrialDelivery<PrivateTrialPreview>> = onIo {
+        require(request.boundedTrial)
+        val job = currentManual(request)
+        requireIntent(job, ticket)
+        if (job.control.hasPendingPreview()) throw java.io.IOException("Claim or close the pending preview first")
+        job.observations = observations
+        val held = resourceOwner
+        if (held != null && held.second !== job.runner && held.second.hasUnreleasedResources) throw CaptureJournalConflict()
+        resourceOwner = Key(request.captureId, request.generation) to job.runner
+        try {
+            val image = job.runner.readPrivateTrial { !job.control.accepts(ticket) || shouldStop() }
+            PrivateTrialDelivery(image, job.control, ticket)
+        } finally { if (!job.runner.hasUnreleasedResources) resourceOwner = null }
     }
     private fun requireIntent(job: Job, ticket: ManualDevelopControl.Ticket) {
         if (!job.control.accepts(ticket)) throw java.util.concurrent.CancellationException("Manual invocation cancelled")
@@ -153,11 +196,11 @@ internal class AutoDevelopQueue(
             if (record.request != request) throw CaptureJournalConflict()
             restoredLatest[request.captureId] = maxOf(restoredLatest[request.captureId] ?: 0, request.generation)
             restoredJobs[key] = Job(journal, AutoDevelopRunner(journal, admission, backendFactory(request), cancellationIo, ::wake,
-                interactive = request.boundedManual, observations = { jobs[key]?.observations },
-                allowPublication = { !request.boundedManual || jobs[key]?.let { it.control.accepts(it.publicationIntent) } == true }) {
+                interactive = request.interactive, observations = { jobs[key]?.observations },
+                allowPublication = { !request.interactive || (request.boundedManual && jobs[key]?.let { it.control.accepts(it.publicationIntent) } == true) }) {
                 latest[request.captureId] == request.generation && request.captureId !in manualFences &&
-                    (!request.boundedManual || jobs[key]?.control?.isRequested() == true)
-            }, enabled = !request.boundedManual)
+                    (!request.interactive || jobs[key]?.control?.isRequested() == true)
+            }, enabled = !request.interactive)
         }
         // An unreadable newer definition must not leave an older partial inventory runnable.
         latest.putAll(restoredLatest)
@@ -166,10 +209,17 @@ internal class AutoDevelopQueue(
     }
     fun retry(captureId: String, generation: Long): CompletableFuture<AutoDevelopRecord> = onIo {
         val job = jobs[Key(captureId, generation)] ?: throw CaptureJournalConflict()
-        if (job.journal.read()?.request?.boundedManual == true) throw CaptureJournalConflict()
+        if (job.journal.read()?.request?.interactive == true) throw CaptureJournalConflict()
         retryJob(captureId, generation, job)
     }
     internal fun retryManual(request: AutoDevelopRequest, ticket: ManualDevelopControl.Ticket): CompletableFuture<AutoDevelopRecord> = onIo {
+        require(request.boundedManual)
+        val job = currentManual(request)
+        requireIntent(job, ticket)
+        retryJob(request.captureId, request.generation, job)
+    }
+    internal fun retryTrial(request: AutoDevelopRequest, ticket: ManualDevelopControl.Ticket): CompletableFuture<AutoDevelopRecord> = onIo {
+        require(request.boundedTrial)
         val job = currentManual(request)
         requireIntent(job, ticket)
         retryJob(request.captureId, request.generation, job)
@@ -199,7 +249,10 @@ internal class AutoDevelopQueue(
     }
     private fun <T> onIo(action: () -> T): CompletableFuture<T> {
         val future = CompletableFuture<T>()
-        try { io.execute { try { future.complete(action()) } catch (t: Throwable) { future.completeExceptionally(t) } } }
+        try { io.execute { try {
+            val value = action()
+            if (!future.complete(value) && value is java.io.Closeable) value.close()
+        } catch (t: Throwable) { future.completeExceptionally(t) } } }
         catch (t: Throwable) { future.completeExceptionally(t) }
         return future
     }

@@ -10,16 +10,17 @@ import java.security.MessageDigest
 internal class ManualDevelopRequests(private val source: SharedOriginalReference, private val storage: AtomicJournalStorage) {
     val captureId = identity(source)
     fun prepare(recipe: RenderRecipeSnapshot): AutoDevelopRequest {
-        require(recipe.schema == "stage-clear-bounded-jpeg-v1")
+        val trial = recipe.schema == "stage-clear-private-no-face-trial-v1"
+        require(trial || recipe.schema == "stage-clear-bounded-jpeg-v1")
         val previous = storage.read(AutoDevelopCodec.MAX_BYTES)?.let(AutoDevelopCodec::decode)
         if (previous != null && (previous.request.source != source || previous.request.captureId != captureId ||
-                !previous.request.boundedManual || previous.phase != AutoJobPhase.QUEUED)) throw CaptureJournalConflict()
+                !previous.request.interactive || previous.phase != AutoJobPhase.QUEUED)) throw CaptureJournalConflict()
         if (previous?.request?.recipe == recipe) return previous.request
         val generation = previous?.request?.generation ?: 0
         if (generation == Long.MAX_VALUE) throw IOException("Manual generation exhausted")
-        val request = AutoDevelopRequest(captureId, generation + 1, source, recipe, "stage-clear-bounded-jpeg-v1", 1024, 1024,
-            AutoRenderQuality.MANUAL_BOUNDED_1024_PRELIMINARY, RenderedFaceState.NOT_RUN,
-            RenderedExposureState.UNKNOWN, AutoInputProfile.UNKNOWN)
+        val request = AutoDevelopRequest(captureId, generation + 1, source, recipe, recipe.schema, 1024, 1024,
+            if (trial) AutoRenderQuality.PRIVATE_TRIAL_1024 else AutoRenderQuality.MANUAL_BOUNDED_1024_PRELIMINARY,
+            RenderedFaceState.NOT_RUN, if (trial) RenderedExposureState.DIAGNOSTIC else RenderedExposureState.UNKNOWN, AutoInputProfile.UNKNOWN)
         val bytes = AutoDevelopCodec.encode(AutoDevelopRecord(request))
         storage.replace(bytes)
         if (storage.read(AutoDevelopCodec.MAX_BYTES)?.contentEquals(bytes) != true) throw IOException("Manual request commit unconfirmed")

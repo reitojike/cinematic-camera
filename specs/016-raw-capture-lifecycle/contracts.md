@@ -156,3 +156,13 @@ tryStartObservedする。shouldStop(token)をstage境界で確認し、実native
 取消は永続edit generationと別のprocess内epochを失効させる。queued start/publish/retry/confirmは呼出時epochを固定し、
 後着IOは失効済みepochで台帳を進めない。公開権威もepochに固定し、new startだけで古いSaveを復活させない。
 PUBLISHINGの中断後も、新たな明示publishが同じ公開ownerを再開する。fresh確認は完了まで同epochを照合する。
+
+## Private trial UI契約
+
+`AndroidAutoDevelopQueue.preparePrivateTrial(context, source, JpegGenerationRecipe.trial())` → `PrivateTrialHandle`。
+start(observations)/status()/requestStop()/retry()と`readPreview(observations, shouldStop)`だけを使う。
+status READY後のfresh readPreviewは`PrivateTrialDelivery<PrivateTrialPreview>`を返す。UIは独自の枠を取ってawaitせず、
+受領直前にdelivery.claim()を呼び、nullなら表示しない。claim後のpreview.bitmapはsoftware sRGB・実寸法≤1024であり、
+UIが選択変更/背景化時に画面から外してpreview.close()する。未claimはqueueが取消時にcloseする。
+source/grant/recipeをUIで補完・採番せず、顔NOT_RUN・露出DIAGNOSTIC・Pixel profile未対応を表示する。
+CompletedRender/公開/共有URIへの変換入口はなく、完成用handleへtrial recipeを渡すとIO前に拒否する。

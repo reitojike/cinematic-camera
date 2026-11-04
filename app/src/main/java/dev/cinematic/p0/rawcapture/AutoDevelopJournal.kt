@@ -31,9 +31,11 @@ internal data class AutoDevelopRecord(
             (phase == AutoJobPhase.HELD && outputFingerprint != null)))
         require(outputFingerprint == null || attemptId != null)
         require(observed == null || (outputFingerprint != null && request.accepts(observed) && observed.output.bytes == outputFingerprint.bytes))
-        require(!request.boundedManual || outputFingerprint == null || observed != null)
+        require(!request.interactive || outputFingerprint == null || observed != null)
+        require(!request.boundedTrial || phase !in setOf(AutoJobPhase.PUBLISHING, AutoJobPhase.PUBLISHED))
     }
     fun completed(): CompletedRender {
+        check(!request.boundedTrial) { "Private trial has no completed publication result" }
         val fingerprint = requireNotNull(outputFingerprint)
         val receipt = observed
         return if (receipt != null) request.completed(receipt.output, receipt.face, receipt.exposure)
@@ -71,7 +73,10 @@ internal class AutoDevelopJournal(
         JpegOutputDescription(current.request.width, current.request.height, 1, "sRGB", fingerprint.bytes)
         return persist(current.copy(revision = next(current), phase = AutoJobPhase.RENDERED, outputFingerprint = fingerprint, observed = observed))
     }
-    @Synchronized fun publishing(revision: Long) = advance(revision, AutoJobPhase.RENDERED, AutoJobPhase.PUBLISHING)
+    @Synchronized fun publishing(revision: Long): AutoDevelopRecord {
+        if (current(revision).request.boundedTrial) throw CaptureJournalConflict()
+        return advance(revision, AutoJobPhase.RENDERED, AutoJobPhase.PUBLISHING)
+    }
     @Synchronized fun published(revision: Long) = advance(revision, AutoJobPhase.PUBLISHING, AutoJobPhase.PUBLISHED)
     @Synchronized fun retryable(revision: Long, reason: AutoJobReason): AutoDevelopRecord {
         val current = current(revision)
@@ -85,7 +90,7 @@ internal class AutoDevelopJournal(
     }
     @Synchronized fun retry(revision: Long): AutoDevelopRecord {
         val current = current(revision)
-        val reselect = current.request.boundedManual && current.phase == AutoJobPhase.HELD &&
+        val reselect = current.request.interactive && current.phase == AutoJobPhase.HELD &&
             current.reason == AutoJobReason.SOURCE_UNAVAILABLE && current.attemptId == null && current.outputFingerprint == null
         if (current.phase != AutoJobPhase.RETRYABLE && !reselect) throw CaptureJournalConflict()
         return persist(current.copy(revision = next(current), phase = AutoJobPhase.QUEUED, attemptId = null, reason = AutoJobReason.NONE))
@@ -167,7 +172,7 @@ internal object AutoDevelopCodec {
                 val observed = if (version >= 2 && flag(input)) AutoRenderReceipt(request,
                     JpegOutputDescription(input.readInt(), input.readInt(), input.readInt(), text(input, 32), input.readLong()),
                     enumValue(input.readInt()), enumValue(input.readInt())) else null
-                if (version == 1 && request.quality == AutoRenderQuality.MANUAL_BOUNDED_1024_PRELIMINARY) throw IOException("Invalid legacy quality")
+                if (version == 1 && request.quality !in setOf(AutoRenderQuality.FINAL_ORIGINAL, AutoRenderQuality.PREVIEW)) throw IOException("Invalid legacy quality")
                 if (input.available() != 0) throw IOException("Trailing auto-develop data")
                 AutoDevelopRecord(request, revision, phase, attempt, count, output, reason, observed)
             }
