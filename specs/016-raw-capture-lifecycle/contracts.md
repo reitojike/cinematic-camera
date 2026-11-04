@@ -166,3 +166,6 @@ status READY後のfresh readPreviewは`PrivateTrialDelivery<PrivateTrialPreview>
 UIが選択変更/背景化時に画面から外してpreview.close()する。未claimはqueueが取消時にcloseする。
 source/grant/recipeをUIで補完・採番せず、顔NOT_RUN・露出DIAGNOSTIC・Pixel profile未対応を表示する。
 CompletedRender/公開/共有URIへの変換入口はなく、完成用handleへtrial recipeを渡すとIO前に拒否する。
+
+prepare中はclaim専用fenceを設定し、通常workerの取消epoch判定と分ける。同一要求・世代の照合成功時だけ解除する。
+割当/受理が不明なら旧epochを失効させ、既にfutureへ返した未claim画像もcloseしてから所有を解放する。
