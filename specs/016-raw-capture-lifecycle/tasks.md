@@ -34,17 +34,18 @@ T011の台帳側はfake backendのwrite/read失敗・commit応答喪失・破損
 RawCaptureStoreは人工byte列の実一時ファイルでopen/部分write/flush/close、台帳commit前後の失敗、再生成、
 既存directory/fileの非再利用、pathと所有handle、部分成功のバイト列保全を検証。
 AndroidAtomicFile・実mediaの実端末障害/OS kill/電源断は未検証のためT011全体は未完了。
-T009の受領metadataと版2の任意原本fingerprintは共有成功の証明ではない。DNG有効性、共有原本引渡し/解放、recipe/公開状態は後続項目。
+T009の受領metadataと版2の任意原本fingerprintは共有成功の証明ではない。DNG有効性とrecipeは別項目、共有引渡しはT012以降。
 T010も撮影/起動走査へ未接続のstream保全部品。未知ファイルを削除/成功へ昇格せず、同サイズ改変の検出は別の内容照合処理の責務。
-- [ ] T012 [US1] `main/rawcapture/RecoverablePhotoPublisher.kt`でDNGの1行公開、readback/hash一致、共有原本への引渡しを実装する（FR-003/007）。
-- [ ] T013 [US1] `test/rawcapture/RecoverablePhotoPublisherTest.kt`でinsert応答前、URI記録、copy/close/pending解除/readback/解放台帳の故障を検証する（SC-001/002）。
+- [x] T012 [US1] `main/rawcapture/DngHandoffCoordinator.kt`と`MediaStoreDngPendingRows.kt`でDNGの1行公開、readback/hash一致、共有原本への引渡しを実装する（FR-003/007）。
+- [x] T013 [US1] `test/rawcapture/DngInsertRecoveryTest.kt`/`DngHandoffTest.kt`でinsert応答前、URI記録、copy/close/pending解除/readback/解放台帳の故障を検証する（SC-001/002）。
 
 T012/T013前段として`DngContentVerifier`と`RawCaptureStore.verifyOriginal`で全byteのsize/SHA-256、
 任意fingerprintの版2台帳commit・版1読取り移行、内容readback照合と停止/IO/close/CAS/commit失敗を実装・人工データで検証。
 初回hash以前の同サイズ改変やDNG decode有効性は証明しない。
 insert部分は`DngPublicationJournal`/`DngInsertCoordinator`/`MediaStoreDngPendingRows`に分離し、公開intentのreadback後だけinsert、
 pending行の所有/期待metadata照合、URI記録と不明時の非再insertを実装。`DngInsertRecoveryTest`で故障台帳/fake providerの中断・復旧を検証。
-実adapterは端末未検証。byte copy/close/readbackからの公開、共有原本確立/一時DNG解放は未実装のため両項目は未完了。
+copy前のintent、入出力close後の読戻し、公開応答喪失の同URI採用、共有確認、解放intentと固定一時DNG削除を実装。
+fault台帳/fake providerと人工byte列の実一時ファイルで検証し、API/実画像/OS kill/電源断と撮影接続の合格には数えない。
 - [ ] T014 [US1] 別の接続PRで`main/CameraProbe.kt`の新RAW保存だけを接続し、既存cleanup/timeout/late-callbackを形式別保全へ切替える（FR-001/002/003/005/008）。
 - [ ] T015 [US1] `test/rawcapture/RawCaptureIntegrationTest.kt`で部分成功/重複/late/世代隔離、busy解除とDNG共有成否の分離を検証する（SC-001/003）。
 
@@ -73,8 +74,8 @@ US1の故障テストと#78の合成golden比較は別ファイルで並行可�
 
 ## Phase 6: 共有原本1つへの引渡し・参照（接続前の必須作業）
 
-- [ ] T023 [US1] `main/rawcapture/RawCaptureStore.kt`に共有原本確認後だけの一時DNG解放、lease、削除失敗とdeathからの再開を実装する（FR-001/003）。
-- [ ] T024 [US1] `test/rawcapture/RawCaptureStoreTest.kt`に同サイズ破損、解放の全故障点、正常時共有1/内部0、仮JPEG非削除を追加する（SC-001）。
+- [x] T023 [US1] `main/rawcapture/RawCaptureStore.kt`に共有原本確認後だけの一時DNG解放、lease、削除失敗と再生成からの再開を実装する（FR-001/003）。
+- [x] T024 [US1] `test/rawcapture/DngHandoffTest.kt`に同サイズ破損、解放台帳の前後/readback故障、正常時共有1/内部0、仮JPEG非削除を追加する（SC-001）。
 - [ ] T025 [US2] `main/rawcapture/SharedOriginalAccess.kt`にread-only URI、hash照合、原本不在/変更/権限失効の区別と再関連付け契約を実装する（FR-010/011）。
 - [ ] T026 [US2] `test/rawcapture/SharedOriginalAccessTest.kt`で開始/公開直前に検知できる外部移動/削除/同サイズ改変/失効と、選択取消/別内容再選択/台帳消失を検証する。最終照合後の非排他的な外部操作は別の限界として記録する（SC-005）。
 

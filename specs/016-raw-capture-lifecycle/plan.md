@@ -143,7 +143,7 @@ root・撮影directory・台帳sidecar・両media pathのredirectを拒否する
 台帳commit失敗/応答喪失後は同じ閉鎖handleと再読したrevisionで照合し、ファイルを作り直さない。
 
 同期IOは撮影優先のIO executorで使う契約。アプリからのroot固定、CameraX stream/callback adapter、起動時のdirectory走査、
-実際の撮影busy解除は未接続。全バイトhashと同サイズ改変照合は下記の別処理、DNG decode・MediaStore・共有引渡し/一時DNG解放は後続作業。
+実際の撮影busy解除は未接続。全バイトhash、共有引渡し/一時DNG解放は下記の別処理、DNG decodeは別担当である。
 stream closeとJVM上の再生成テストを、実端末のfsync/電源断・OS kill試験の合格に置き換えない。
 
 ### 共有引渡し前の内容識別と読戻し照合（T012/T013の前段）
@@ -165,15 +165,15 @@ immutableな`OriginalFingerprint`は正のbyte数と厳密な小文字64桁SHA-2
 その後、path/受領サイズ/revisionを再照合し、fingerprintを既存のreadback付き台帳更新でcommitする。
 hash中のJPEG受領などでrevisionが進んだ場合、古い結果をcommitしない。停止callbackはstoreのlock外だけで呼ぶ。
 最終の協調停止確認とmetadata commitは一括transactionではなく、その後の停止を原子的に排他する保証はない。
-これは撮影優先IO executorから明示的に使う未接続部品。共有URI/公開状態、reader leaseと一時DNG解放、起動走査は後続である。
+これは撮影優先IO executorから明示的に使う部品。通常の原本readは下記と同じleaseを取得する。起動走査と撮影接続は未実装。
 
 ### pending DNG行の確保とURI復旧（T012/T013のinsert部分）
 
 `DngPublicationJournal`は同じ撮影の`ORIGINAL`操作を`dng-publication.bin`へ保存する。
 受領台帳の`receipt.bin`とは別で、`AndroidAtomicJournalStorage`のfile kindを固定enumから選ぶ。
 defaultは従来の受領台帳のまま。両file kindのbase/`.new`/`.bak`と撮影directoryに同じpath検証を適用する。
-版1・4KiB上限・payload SHA-256、capture ID、revision、token、原本fingerprint、期待volume/path/MIME/name、
-phaseと任意URIを記録する。形式拡張で既存tokenや期待metadataを作り直さず、別途migrationを検証する。
+版2・4KiB上限・payload SHA-256、capture ID、revision、token、原本fingerprint、期待volume/path/MIME/name、
+phaseと任意URIを記録する。版1の既存4状態を読み、token/URIを維持して次の正当な更新で移行する。
 
 prepareは同じ撮影のhash記録済みreceiptを要求し、再prepareでも既存状態・tokenを維持する。fingerprint不一致は停止する。
 1 process・1公開操作に1つのlive journal/coordinatorを所有し、他instance/process間の排他は提供しない。
@@ -182,15 +182,34 @@ prepareは同じ撮影のhash記録済みreceiptを要求し、再prepareでも�
 `UNKNOWN`に止め、再insertや削除をしない。通常のinsert/query例外やnull応答も不明として自動停止する。
 `ROW_RECORDED`も毎回再照合し、公開済み・欠落・外部変更を新しい行で補わない。`UNKNOWN`は自動解除しない。
 
-`MediaStoreDngPendingRows`はAPI 29以上の標準Images/external_primaryへ`IS_PENDING=1`でinsertし、metadataを読むだけ。
+`MediaStoreDngPendingRows`はAPI 29以上の標準Images/external_primaryへ`IS_PENDING=1`でinsertする。
 API 30以上は`QUERY_ARG_MATCH_PENDING=MATCH_INCLUDE`、API 29は`setIncludePending`でpendingを明示的に含める。
 owner列のnull・visibility制約・列欠落・null cursor/権限不足を安全な所有/不在と推定しない。名前/tokenだけで所有と扱わない。
-広範囲権限、fallback query、row update/deleteは追加しない。照合結果は瞬間の観測で、恒久的な書込み許可ではない。
+広範囲権限、fallback query、row deleteは追加しない。照合結果は瞬間の観測で、恒久的な書込み許可ではない。
 
 `ROW_RECORDED`はpending行の特定までで、byte書込み・共有保存成功・公開成功を表さない。
-copy/close/readback、公開と共有原本確立、一時DNG解放は未実装。将来の各書込み前にも所有/pendingを再照合する。
-appのroot/kind選択・撮影/起動走査へ未接続。JVMはfake provider/故障台帳とpathを検証し、実MediaStore adapterはcompile/lintと独立レビューまで。
-API 29/30以降のpending検索、owner visibility、volume/API実動作・OS kill・電源断は端末検証として残す。
+
+### コピー・公開確定・一時DNG解放（T012/T013/T023/T024）
+
+`DngHandoffCoordinator`は公開台帳と`RawCaptureStore.handoffSource(journal)`、上記の標準MediaStore adapterを受け取る。
+1撮影につき各instanceを1つ保持し、storeを台帳へbindしてから原本readerを公開する。同期IOをUI/CameraX callback threadで呼ばない。
+`COPYING`を先にcommitし、64KiB上限で入力hashを照合しつつ同じpending URIへcopy、両stream close後の全byte readbackを行う。
+再開時は完成内容を確認できれば再copyしない。内容不一致と全close成功を確認した自分の未完成pending行だけ再copyし、
+read不能やclose失敗を空ファイルと推定しない。失敗したcloseはhandleを保持し、`releaseResources`の再試行が成功するまで追加IOを止める。
+
+`BYTES_COMPLETE`を再照合し、`PUBLISHING`の台帳readback後にだけpending解除を行う。updateはowner/期待metadata/pendingを条件とし、
+更新数1を要求する。成功応答を失っても同URIのpending=0と全byte一致を採用し、公開行をtruncate/再insertしない。
+同URIの公開内容を再照合して`PUBLISHED`、`SHARED_READY`を順にcommitする。公開済み以後の不在/改変では履歴を保持して停止する。
+
+全local readerは`verifyOriginal`も含めleaseを取得する。停止要求では減らさず、実close成功を待つ。
+writer/readerが0の時だけ所有予約を取得し、その間は通常readerを新規openできない。内部原本と共有先を再検証し、
+`LOCAL_RELEASE_PENDING`のcommit/readbackと共有先の再検証後だけ固定`original.dng`を削除する。
+commitの応答喪失ではその呼出し内で削除せず、復旧で台帳と同URIを再照合する。削除後の不在と共有内容を確認して`SHARED_ONLY`をcommitする。
+再生成時も台帳をbindし、永続release pending以後の通常reader禁止を再構築する。仮JPEG/別撮影/共有行は削除APIへ渡さない。
+共有先検証と一時削除は外部アプリに対する原子transactionではない。
+
+appのroot/kind選択・撮影/起動走査へは未接続。JVMでは実一時ファイル、fake provider、故障台帳でphaseごとの前後/readback失敗、
+copy/read/close、公開応答喪失、解放予約、削除前後の応答喪失を検証する。OS kill・電源断とPixel実撮影の合格には数えない。
 
 ## 撮影優先と自動現像
 
@@ -249,8 +268,8 @@ WorkManagerは今回採用しない。永続要求と画素処理の停止能力
    開始条件と未知値、撮影予約race、旧完了・例外・再生成を合成検証。撮影へ未接続。
 3. **保全PR**: 受領台帳`CaptureJournal.kt`/`AndroidAtomicJournalStorage.kt`と、実ファイルを扱う
    `RawCaptureStore.kt`をさらに小さいPRへ分け、各故障テストを追加する。CameraProbeへ未接続。
-4. **公開PR**: `rawcapture/RecoverablePhotoPublisher.kt`/`SharedOriginalAccess.kt`と故障テスト。
-   1行ずつの照合、共有DNGへの引渡し、一時DNG解放とread-only参照を実装。既存publisherを置換しない。
+4. **公開PR**: `DngPublicationJournal`/`DngInsertCoordinator`/`DngHandoffCoordinator`と故障テスト。
+   同URI照合、共有DNGへの引渡し、一時DNG解放を実装。一般の選択URI参照は`SharedOriginalAccess`の後続責務とし、既存publisherを置換しない。
 5. **撮影接続PR**: 新RAW撮影だけを切替え、形式別callback/timeout/epoch/preview復帰/原本保全を検証。
 6. **#78統合PR**: 成立したrendererをadapterで接続し、非公開実DNGと性能測定後に自動現像を有効化する。
 

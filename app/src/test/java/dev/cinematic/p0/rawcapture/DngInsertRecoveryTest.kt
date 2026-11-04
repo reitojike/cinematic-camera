@@ -36,9 +36,9 @@ class DngInsertRecoveryTest {
 
     @Test fun normalInsertCommitsIntentBeforeApiAndRecordsOnlyOnePendingUri() {
         val fixture = fixture()
-        fixture.rows.beforeInsert = { assertEquals(DngInsertPhase.INSERTING, fixture.journal.read()!!.phase) }
+        fixture.rows.beforeInsert = { assertEquals(DngPublicationPhase.INSERTING, fixture.journal.read()!!.phase) }
         val result = fixture.coordinator.advance()
-        assertEquals(DngInsertPhase.ROW_RECORDED, result.phase)
+        assertEquals(DngPublicationPhase.ROW_RECORDED, result.phase)
         assertEquals(uri, result.uri)
         assertEquals(1, fixture.rows.inserts)
         assertEquals(result, fixture.coordinator.advance())
@@ -50,7 +50,7 @@ class DngInsertRecoveryTest {
         val fixture = fixture()
         fixture.rows.crash = "after"
         assertThrows(SimulatedDeath::class.java) { fixture.coordinator.advance() }
-        assertEquals(DngInsertPhase.INSERTING, fixture.journal.read()!!.phase)
+        assertEquals(DngPublicationPhase.INSERTING, fixture.journal.read()!!.phase)
         fixture.rows.crash = "none"
         val restarted = DngInsertCoordinator(DngPublicationJournal(id, fixture.storage), fixture.rows)
         assertEquals(uri, restarted.advance().uri)
@@ -64,9 +64,9 @@ class DngInsertRecoveryTest {
         assertThrows(SimulatedDeath::class.java) { fixture.coordinator.advance() }
         fixture.rows.crash = "none"
         val restarted = DngInsertCoordinator(DngPublicationJournal(id, fixture.storage), fixture.rows)
-        assertEquals(DngInsertPhase.UNKNOWN, restarted.advance().phase)
+        assertEquals(DngPublicationPhase.UNKNOWN, restarted.advance().phase)
         val calls = fixture.rows.totalCalls
-        assertEquals(DngInsertPhase.UNKNOWN, restarted.advance().phase)
+        assertEquals(DngPublicationPhase.UNKNOWN, restarted.advance().phase)
         assertEquals(calls, fixture.rows.totalCalls)
         assertEquals(1, fixture.rows.inserts) // One attempted call, no created row.
         assertTrue(fixture.rows.rows.isEmpty())
@@ -83,10 +83,10 @@ class DngInsertRecoveryTest {
             fixture.storage.readFails = false
             val result = fixture.coordinator.advance()
             if (fault == "before") {
-                assertEquals(DngInsertPhase.ROW_RECORDED, result.phase)
+                assertEquals(DngPublicationPhase.ROW_RECORDED, result.phase)
                 assertEquals(1, fixture.rows.inserts)
             } else {
-                assertEquals(DngInsertPhase.UNKNOWN, result.phase)
+                assertEquals(DngPublicationPhase.UNKNOWN, result.phase)
                 assertEquals(0, fixture.rows.inserts)
             }
         }
@@ -112,7 +112,7 @@ class DngInsertRecoveryTest {
             val fixture = fixture()
             fixture.rows.crash = fault
             val result = fixture.coordinator.advance()
-            assertEquals(DngInsertPhase.UNKNOWN, result.phase)
+            assertEquals(DngPublicationPhase.UNKNOWN, result.phase)
             fixture.rows.crash = "none"
             val calls = fixture.rows.totalCalls
             assertEquals(result, fixture.coordinator.advance())
@@ -136,7 +136,7 @@ class DngInsertRecoveryTest {
             val fixture = fixture()
             fixture.journal.markInserting(0)
             fixture.rows.rows += candidates
-            assertEquals(DngInsertPhase.UNKNOWN, fixture.coordinator.advance().phase)
+            assertEquals(DngPublicationPhase.UNKNOWN, fixture.coordinator.advance().phase)
             assertEquals(0, fixture.rows.inserts)
             assertEquals(candidates, fixture.rows.rows)
         }
@@ -149,7 +149,7 @@ class DngInsertRecoveryTest {
             else fixture.coordinator.advance()
             fixture.rows.queryFails = true
             val result = fixture.coordinator.advance()
-            assertEquals(DngInsertPhase.UNKNOWN, result.phase)
+            assertEquals(DngPublicationPhase.UNKNOWN, result.phase)
             assertEquals(if (point == "recorded") uri else null, result.uri)
             val inserts = fixture.rows.inserts
             fixture.rows.queryFails = false
@@ -160,7 +160,7 @@ class DngInsertRecoveryTest {
         val fixture = fixture()
         fixture.coordinator.advance()
         fixture.rows.rows.clear()
-        assertEquals(DngInsertPhase.UNKNOWN, fixture.coordinator.advance().phase)
+        assertEquals(DngPublicationPhase.UNKNOWN, fixture.coordinator.advance().phase)
         assertEquals(1, fixture.rows.inserts)
     }
 
@@ -170,7 +170,7 @@ class DngInsertRecoveryTest {
             fixture.coordinator.advance()
             fixture.rows.rows[0] = changed
             val result = fixture.coordinator.advance()
-            assertEquals(DngInsertPhase.UNKNOWN, result.phase)
+            assertEquals(DngPublicationPhase.UNKNOWN, result.phase)
             assertEquals(uri, result.uri)
             assertEquals(listOf(changed), fixture.rows.rows)
             assertEquals(1, fixture.rows.inserts)
@@ -183,7 +183,7 @@ class DngInsertRecoveryTest {
             fixture.rows.returnUri = response
             fixture.rows.inspectOverride = row().copy(uri = uri.dropLast(1) + "8")
             val result = fixture.coordinator.advance()
-            assertEquals(DngInsertPhase.UNKNOWN, result.phase)
+            assertEquals(DngPublicationPhase.UNKNOWN, result.phase)
             assertEquals(if (response == uri) uri else null, result.uri)
             assertEquals(1, fixture.rows.inserts)
         }
@@ -192,7 +192,7 @@ class DngInsertRecoveryTest {
     @Test fun unknownOrCorruptJournalCannotTriggerProviderCallsOrBeReset() {
         val fixture = fixture()
         val good = fixture.storage.contents!!.copyOf()
-        val unknown = withDigest(good.dropLast(32).toByteArray().also { it[7] = 2 })
+        val unknown = withDigest(good.dropLast(32).toByteArray().also { it[7] = 3 })
         val trailing = withDigest(good.dropLast(32).toByteArray() + byteArrayOf(0))
         val badTarget = good.dropLast(32).toByteArray().also {
             val offset = it.toString(Charsets.ISO_8859_1).indexOf("Pictures/")
