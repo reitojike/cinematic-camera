@@ -95,6 +95,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
             return@repeatOnLifecycle
         }
         selection = selection.select(source)
+        notice = null
         renderStage = null
         val ticket = selection.ticket!!
         val cancellation = CancellationSignal()
