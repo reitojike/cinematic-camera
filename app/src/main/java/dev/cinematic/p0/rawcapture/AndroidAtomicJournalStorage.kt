@@ -11,6 +11,7 @@ import java.nio.file.LinkOption
 internal enum class CaptureJournalFile(val fileName: String) {
     RECEIPT("receipt.bin"), DNG_PUBLICATION("dng-publication.bin"), JPEG_PUBLICATION("jpeg-publication.bin"),
     AUTO_DEVELOP("auto-develop.bin"),
+    MANUAL_REQUEST("manual-request.bin"),
 }
 
 /** Pure path validation; root must be a trusted app-private directory supplied by the caller. */

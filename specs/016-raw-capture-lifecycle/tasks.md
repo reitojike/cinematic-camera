@@ -103,3 +103,16 @@ T025〜026はT016〜020より前の参照基盤。標準pickerのUI実装は#81�
 production renderer登録0・自動撮影接続なしを維持する。512pxの試験表示、顔NOT_RUN、診断露出、未知profileは自動公開しない。
 T016/T017/T020、T025/026の残件と実機確認をこの先行統合のcheckboxで置き換えない。
 T027〜029の検証はJVMのfault/fake rendererと、隔離API37のsynthetic adapterによるもの。実DNG decode/全解像度・色/顔の成立、実OS kill/電源断、Pixel性能の合格を含めない。
+
+## Phase 8: 手動要求と共通ownerの統合
+
+- [x] T030 [US2] `ManualDevelopRequests`/`ManualDevelopHandle`と既存queueに手動の固定source/recipe/縮小品質/永続ID・世代を接続し、commit不明/再配送/旧世代fenceを検証する。
+- [x] T031 [US2] 既存runner/台帳に実出力観測、生成と明示publishの分離、同publisherのfresh確認を接続し、取消/後着retry/外部削除のfaultを検証する。
+- [x] T032 [US2] `BoundedJpegRendererAdapter`/`AndroidOwnedJpegFrames`と同attempt readbackを実装し、共通admission・実FD close・原本不変を合成nativeで確認する。
+
+production controls登録・photoroll接続・実観測・Pixel実機は上記の部品完了とは区別し、T020/021/025/026を完了にしない。
+
+## Phase 9: Convergence
+
+- [ ] T033 [US2] `photoroll`のpreview/手動UIを`DevelopExecution`と`ManualDevelopHandle`へ接続し、旧Semaphoreとの二重枠をなくす。選択/背景化の取消、latest条件、同owner status/publish/fresh確認、preview decoderの実close不明保持を検証する per FR-004/005/006/007/010・plan:共通の手動要求・実行・公開契約 (partial)。
+- [ ] T034 [US2] T016/T017/T020/T025/T026の未接続部分を実source/recipe/providerと撮影lifecycleへ結び、起動時の完全台帳列挙、capture予約、foreground/camera/record/rebind/thermal/storage/memory観測、参照権再選択を検証する。顔/EV/profile未成立は登録せず、T021の実機測定とSC-004の許容差確定までカメラ使用中の現像を無効にする per FR-005/006/009/010/011・SC-003/004/005 (partial)。
