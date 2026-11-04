@@ -2,7 +2,7 @@
 
 **Created**: 2026-11-01 (UTC)
 
-**Status**: 製品方針確定。US1関連のP0.5限定probeは実装済み・実機未確認。Stage Clear等のルック、非破壊編集、製品UIは後続。
+**Status**: 製品方針確定。US1関連のP0.5限定probeは実装済み・実機未確認。Stage ClearはPC基準のv1を[014](../014-stage-clear-v1/spec.md)で確定（Android移植・preview・残る2ルック・非破壊編集・製品UIは後続）。
 
 **Input**: ユーザー提供「Cinematic Camera — 製品方針アップデート・開発引き継ぎ」
 （添付記載日2026-11-02）と、最優先ルック名を **Stage Clear** とする確定指示。
