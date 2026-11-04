@@ -94,6 +94,7 @@ class MainActivity : ComponentActivity() {
         }
     }
     override fun onStart() {
+        if (::probe.isInitialized) probe.onHostStarting()
         super.onStart()
         if (!observingRotationSetting) {
             contentResolver.registerContentObserver(
@@ -105,6 +106,7 @@ class MainActivity : ComponentActivity() {
         orientationListener?.let { if (it.canDetectOrientation()) it.enable() }
     }
     override fun onResume() {
+        if (::probe.isInitialized) probe.onHostStarting()
         super.onResume()
         refreshRotationSetting()
         val granted = checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
