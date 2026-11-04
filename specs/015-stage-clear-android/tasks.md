@@ -19,3 +19,10 @@
 - [ ] T006 DNG decode→線形sRGBとR7土台を独立検証する（#78 AC2、plan A/B）。
 - [ ] T007 段1〜5を移植し、強度0/0.5/1を全画素で比較する（#78 AC1、plan C）。
 - [ ] T008 Pixel 9a実DNGのPC並列比較・表示用/全解像度の時間/メモリ・撮影応答条件を記録する（#78 AC2/3）。
+
+## Phase 4: ぼかし共通基盤（独立PR、T007の一部）
+
+- [x] T009 PC/Pillowの座標・偶数丸め・端・Float32・軸順序を確認し、限定した契約と検証境界を定義する（FR-007/008）。
+- [x] T010 BOX中間・BILINEAR復元の合成全画素CSVとPC再照合を追加し、fixture変更時のPC CIを保証する（FR-009、SC-004）。
+- [x] T011 純KotlinのFloatPlane、PC互換ぼかしとRGB経路、入力保持/不正入力/境界テストを実装する（FR-007/008/009）。
+- [ ] T012 PC/Androidの機械検証・秘密除外を行い、Draft PRと最終headのcanonical/独立レビューまで進める（SC-005）。mergeは別承認。
