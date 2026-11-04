@@ -21,6 +21,8 @@ import dev.cinematic.p0.rawcapture.RawCaptureNotice
 import dev.cinematic.p0.rawcapture.RawCaptureObserver
 import dev.cinematic.p0.rawcapture.RawCaptureTicket
 import dev.cinematic.p0.rawcapture.RawOutput
+import dev.cinematic.p0.rawcapture.AndroidAutoDevelopQueue
+import dev.cinematic.p0.rawcapture.DevelopExecution
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -39,6 +41,107 @@ class DngTrialRendererTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private val resources = PhotoRollResources(true, 0, false, PhotoRollResources.REQUIRED_AVAILABLE_BYTES)
     private var queueObserver: RawCaptureObserver? = null
+
+    @Test fun cancelledSourceReadKeepsCommonSlotUntilReadAndCloseActuallyFinish() {
+        val ready = PhotoRollResources(true, 0, false, 1024L * 1024 * 1024,
+            PhotoRollCameraSnapshot(false, false, false, false), true, true)
+        val conditions = ready.developConditions(true)
+        DevelopExecution.updateConditions(conditions)
+        val entered = CountDownLatch(1); val finishRead = CountDownLatch(1)
+        val closing = CountDownLatch(1); val finishClose = CountDownLatch(1)
+        val failure = AtomicReference<Throwable?>()
+        val signal = CancellationSignal()
+        val worker = Thread {
+            try {
+                PhotoRollOriginalChecks.run({ ready }, signal) { reader, _ ->
+                    reader.open { object : java.io.InputStream() {
+                        override fun read(): Int { entered.countDown(); check(finishRead.await(15, TimeUnit.SECONDS)); return -1 }
+                        override fun close() { closing.countDown(); check(finishClose.await(15, TimeUnit.SECONDS)) }
+                    } }.use { it.read() }
+                }
+            } catch (error: Throwable) { failure.set(error) }
+        }.apply { isDaemon = true; start() }
+        try {
+            assertTrue(entered.await(15, TimeUnit.SECONDS))
+            signal.cancel()
+            assertNull(DevelopExecution.tryStartObserved(conditions))
+            finishRead.countDown()
+            assertTrue(closing.await(15, TimeUnit.SECONDS))
+            val camera = DevelopExecution.reserveCapture() // Priority does not wait for the blocked close.
+            DevelopExecution.releaseCapture(camera)
+            assertNull(DevelopExecution.tryStartObserved(conditions))
+            finishClose.countDown()
+            worker.join(15_000)
+            assertFalse(worker.isAlive)
+            assertNull(failure.get())
+            val next = requireNotNull(DevelopExecution.tryStartObserved(conditions))
+            DevelopExecution.completeAfterResourcesClosed(next)
+        } finally { finishRead.countDown(); finishClose.countDown(); worker.join(15_000) }
+    }
+
+    /** Real shared-original→retained private JPEG→fresh readback→UI display copy, without camera capture. */
+    @Test fun privateTrialRendererReopensSameArtifactWithoutPublishingOrRecyclingDisplay() = withOriginal { original ->
+        val resolver = context.contentResolver
+        assertEquals(1, resolver.update(original.uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null))
+        val ready = PhotoRollResources(true, 0, false, 1024L * 1024 * 1024,
+            PhotoRollCameraSnapshot(false, false, false, false), true, true)
+        DevelopExecution.updateConditions(ready.developConditions(true))
+        val renderer = PrivateTrialPhotoRollRenderer(context) { ready }
+        val checked = renderer.checkOriginal(PhotoRollRepository(resolver, context.packageName), original.uri, false, CancellationSignal())
+        val request = PhotoRollRenderRequest(checked, mode = renderer.mode, maxEdge = renderer.maxEdge)
+        val before = sharedJpegCount()
+        val first = renderer.render(request, CancellationSignal()) as PhotoRollRenderResult.Preview
+        val handle = AndroidAutoDevelopQueue.preparePrivateTrial(context, checked.reference).get(15, TimeUnit.SECONDS)
+        val observed = handle.status().get(15, TimeUnit.SECONDS)
+        val output = requireNotNull(observed.output)
+        val second = renderer.render(request, CancellationSignal()) as PhotoRollRenderResult.Preview
+        try {
+            assertEquals(PhotoRollPreviewMode.PRIVATE_TRIAL, first.mode)
+            assertNull(first.jpegSave); assertNull(second.jpegSave)
+            assertNotSame(first.bitmap, second.bitmap)
+            assertFalse(first.bitmap.isRecycled)
+            assertEquals(Bitmap.Config.ARGB_8888, first.bitmap.config)
+            assertTrue(first.bitmap.colorSpace!!.isSrgb)
+            assertEquals(output.width, first.bitmap.width)
+            assertEquals(output.height, first.bitmap.height)
+            assertTrue(first.bitmap.width <= 1024 && first.bitmap.height <= 1024)
+            val one = IntArray(first.bitmap.width * first.bitmap.height)
+            val two = IntArray(one.size)
+            first.bitmap.getPixels(one, 0, first.bitmap.width, 0, 0, first.bitmap.width, first.bitmap.height)
+            second.bitmap.getPixels(two, 0, second.bitmap.width, 0, 0, second.bitmap.width, second.bitmap.height)
+            assertArrayEquals(one, two)
+            assertEquals(observed.request, handle.status().get(15, TimeUnit.SECONDS).request)
+            assertEquals(observed.fingerprint, handle.status().get(15, TimeUnit.SECONDS).fingerprint)
+            assertEquals(before, sharedJpegCount())
+            DngContentVerifier.verify(checked.fingerprint, { resolver.openInputStream(checked.uri)!! })
+        } finally { first.bitmap.recycle(); second.bitmap.recycle(); handle.requestStop() }
+    }
+
+    @Test fun privateTrialUiCancellationBeforeReadbackKeepsOriginalAndAllowsExplicitRetry() = withOriginal { original ->
+        val resolver = context.contentResolver
+        assertEquals(1, resolver.update(original.uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null))
+        val ready = PhotoRollResources(true, 0, false, 1024L * 1024 * 1024,
+            PhotoRollCameraSnapshot(false, false, false, false), true, true)
+        DevelopExecution.updateConditions(ready.developConditions(true))
+        val renderer = PrivateTrialPhotoRollRenderer(context) { ready }
+        val checked = renderer.checkOriginal(PhotoRollRepository(resolver, context.packageName), original.uri, false, CancellationSignal())
+        val signal = CancellationSignal()
+        val request = PhotoRollRenderRequest(checked, mode = renderer.mode, maxEdge = renderer.maxEdge,
+            onStage = { if (it == PhotoRollRenderStage.TRIAL_READBACK) signal.cancel() })
+        val before = sharedJpegCount()
+        assertThrows(OperationCanceledException::class.java) { renderer.render(request, signal) }
+        val result = renderer.render(request.copy(explicitRetry = true, onStage = {}), CancellationSignal())
+        assertTrue("Private trial retry failed: $result", result is PhotoRollRenderResult.Preview)
+        (result as PhotoRollRenderResult.Preview).bitmap.recycle()
+        assertEquals(before, sharedJpegCount())
+        DngContentVerifier.verify(checked.fingerprint, { resolver.openInputStream(checked.uri)!! })
+    }
+
+    private fun sharedJpegCount(): Int = context.contentResolver.query(
+        MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), arrayOf(MediaStore.Images.Media._ID),
+        "${MediaStore.MediaColumns.OWNER_PACKAGE_NAME}=? AND ${MediaStore.Images.Media.MIME_TYPE}=?",
+        arrayOf(context.packageName, "image/jpeg"), null,
+    )!!.use { it.count }
 
     /** Programmatic callback/queue/list/renderer path, not CameraX capture or Compose interaction. */
     @Test fun syntheticCaptureHandsOffOneOriginalAndDisplaysItAsTrial() {

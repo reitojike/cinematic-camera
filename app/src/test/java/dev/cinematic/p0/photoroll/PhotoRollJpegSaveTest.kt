@@ -35,7 +35,7 @@ class PhotoRollJpegSaveTest {
 
     @Test fun trialModesAreRejectedBeforeCreatingAnyPublisher() {
         var factories = 0
-        for (mode in listOf(PhotoRollPreviewMode.DNG_TRIAL, PhotoRollPreviewMode.STAGE_CLEAR_TRIAL)) {
+        for (mode in listOf(PhotoRollPreviewMode.DNG_TRIAL, PhotoRollPreviewMode.STAGE_CLEAR_TRIAL, PhotoRollPreviewMode.PRIVATE_TRIAL)) {
             try {
                 PhotoRollJpegSave.prepare(source, mode, render, supported, { true }) {
                     factories++; PhotoRollJpegPublisher { record() }

@@ -1,6 +1,7 @@
 package dev.cinematic.p0.photoroll
 
 import android.os.Bundle
+import android.os.Build
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -19,7 +20,13 @@ class PhotoRollActivity : ComponentActivity() {
         enableEdgeToEdge()
         val repository = PhotoRollRepository(contentResolver, packageName)
         resourceObserver = PhotoRollResourceObserver(applicationContext, DevelopExecution::updateConditions)
-        val renderer: PhotoRollRenderer = StageClearTrialRenderer(contentResolver, resourceObserver::snapshot)
+        val renderer: PhotoRollRenderer = if (Build.VERSION.SDK_INT >= 29)
+            PrivateTrialPhotoRollRenderer(applicationContext, resourceObserver::snapshot)
+        else object : PhotoRollRenderer {
+            override val mode = PhotoRollPreviewMode.PRIVATE_TRIAL
+            override fun render(request: PhotoRollRenderRequest, cancellation: android.os.CancellationSignal) =
+                PhotoRollRenderResult.Unavailable("私有試験JPEGの現像はAndroid 10以降で利用できます")
+        }
         setContent {
             CaptureTheme { PhotoRollScreen(repository, renderer, foreground, ::finish) }
         }

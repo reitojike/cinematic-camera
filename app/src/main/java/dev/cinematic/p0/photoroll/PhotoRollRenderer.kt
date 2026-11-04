@@ -19,6 +19,7 @@ internal data class PhotoRollRenderRequest(
     val strength: Float = 0.5f,
     val maxEdge: Int = 1024,
     val mode: PhotoRollPreviewMode = PhotoRollPreviewMode.STAGE_CLEAR,
+    val explicitRetry: Boolean = false,
     val onStage: (PhotoRollRenderStage) -> Unit = {},
 )
 
@@ -46,6 +47,8 @@ internal interface PhotoRollRenderer {
     val mode: PhotoRollPreviewMode get() = PhotoRollPreviewMode.STAGE_CLEAR
     val maxSourceBytes: Long get() = PhotoRollRepository.MAX_SOURCE_BYTES
     val maxEdge: Int get() = 1024
+    fun checkOriginal(repository: PhotoRollRepository, uri: Uri, fromFiles: Boolean, cancellation: CancellationSignal) =
+        repository.check(uri, fromFiles, { cancellation.isCanceled }, maxSourceBytes)
     fun render(request: PhotoRollRenderRequest, cancellation: CancellationSignal): PhotoRollRenderResult
 }
 
