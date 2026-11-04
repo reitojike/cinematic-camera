@@ -9,7 +9,10 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
 import java.io.FilterInputStream
+import java.io.FilterOutputStream
 import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.StandardOpenOption
 
 class RawCaptureSessionTest {
     @get:Rule val temporary = TemporaryFolder()
@@ -116,6 +119,30 @@ class RawCaptureSessionTest {
         assertEquals(DngPublicationPhase.SHARED_ONLY, f.session.advanceHandoff()!!.phase)
     }
 
+    @Test fun lateJpegCloseCanRaceWithFirstHashCommitWithoutLosingItsReceipt() {
+        listOf(false, true).forEach { interrupted ->
+            val f = Fixture()
+            val outputs = f.session.prepare(setOf(RawOutput.DNG, RawOutput.JPEG))
+            outputs.getValue(RawOutput.DNG).write(original)
+            outputs.getValue(RawOutput.JPEG).write(jpeg)
+            f.session.received(RawOutput.DNG)
+            if (interrupted) f.store.interrupt(f.store.readReceipt()!!.revision)
+            f.onJpegClose = { f.store.verifyOriginal(f.store.readReceipt()!!.revision) }
+            val receipt = f.session.received(RawOutput.JPEG)
+            assertEquals(setOf(RawOutput.DNG, RawOutput.JPEG), receipt.receivedBytes.keys)
+            assertEquals(if (interrupted) CaptureReceiptPhase.INTERRUPTED else CaptureReceiptPhase.FILES_RECEIVED, receipt.phase)
+            assertNotNull(receipt.originalFingerprint)
+            val duplicate = f.session.received(RawOutput.JPEG)
+            assertEquals(receipt.revision, duplicate.revision)
+            assertEquals(receipt.originalFingerprint, duplicate.originalFingerprint)
+            assertArrayEquals(jpeg, f.jpegFile.readBytes())
+            assertEquals(DngPublicationPhase.SHARED_ONLY, f.session.advanceHandoff()!!.phase)
+            val historical = f.session.received(RawOutput.DNG)
+            assertEquals(receipt.phase, historical.phase)
+            assertEquals(receipt.originalFingerprint, historical.originalFingerprint)
+        }
+    }
+
     private inner class Fixture {
         val root = temporary.newFolder()
         val id = "synthetic_capture"
@@ -126,15 +153,23 @@ class RawCaptureSessionTest {
         val rows = Rows()
         var readCloseFails = false
         var readOpens = 0
+        var onJpegClose: () -> Unit = {}
+        lateinit var store: RawCaptureStore
         var session = makeSession()
-        private fun makeSession() = RawCaptureSession(
-            RawCaptureStore(root, id, receiptStorage, openOriginalInput = { file ->
+        private fun makeSession(): RawCaptureSession {
+            store = RawCaptureStore(root, id, receiptStorage, openNewOutput = { file ->
+                object : FilterOutputStream(Files.newOutputStream(file.toPath(), StandardOpenOption.CREATE_NEW,
+                    StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
+                    override fun close() { super.close(); if (file.name == RawOutput.JPEG.fileName) onJpegClose() }
+                }
+            }, openOriginalInput = { file ->
                 readOpens++
                 object : FilterInputStream(Files.newInputStream(file.toPath())) {
                     override fun close() { if (readCloseFails) throw IOException("Synthetic read close failure"); super.close() }
                 }
-            }), DngPublicationJournal(id, publicationStorage), rows,
-        )
+            })
+            return RawCaptureSession(store, DngPublicationJournal(id, publicationStorage), rows)
+        }
         fun recreate(): RawCaptureSession = makeSession().also { session = it }
     }
 

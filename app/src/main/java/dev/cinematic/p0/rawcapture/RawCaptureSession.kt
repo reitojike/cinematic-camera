@@ -1,6 +1,5 @@
 package dev.cinematic.p0.rawcapture
 
-import java.io.IOException
 import java.io.OutputStream
 
 /** One live session per capture. Receipt methods use capture IO; handoff uses a separate single worker. */
@@ -42,11 +41,8 @@ internal class RawCaptureSession(
     /** A format-specific CameraX success callback is required; bytes/close alone never imply success. */
     fun received(format: RawOutput): CaptureReceipt {
         val output = requireNotNull(outputs[format]) { "Unexpected camera output" }
-        val current = store.readReceipt() ?: throw IOException("Capture receipt unavailable")
-        // Historical duplicate callbacks remain harmless after the temporary DNG has been released.
-        if (format in current.receivedBytes) return current
         output.close()
-        return store.received(current.revision, output)
+        return store.receivedCurrent(output)
     }
 
     /** Request failure stops further writes but retains every file, including unknown/partial outputs. */

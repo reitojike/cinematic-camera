@@ -93,6 +93,16 @@ internal class RawCaptureStore(
         return journal.received(expectedRevision, handle.format, closedFileSize(handle.format))
     }
 
+    /** Callback commit races with background fingerprint commit; re-read and update under one store lock. */
+    @Synchronized
+    fun receivedCurrent(handle: RawCaptureOutput): CaptureReceipt {
+        require(handles[handle.format] === handle) { "Foreign capture output" }
+        if (!handle.closedSuccessfully()) throw IOException("Capture output did not close successfully")
+        val current = readReceipt() ?: throw CaptureJournalConflict()
+        if (handle.format in current.receivedBytes) return current // Historical receipt after local DNG release.
+        return journal.received(current.revision, handle.format, closedFileSize(handle.format))
+    }
+
     /** Request-level interruption does not close a stream or release another writer. */
     @Synchronized
     fun interrupt(expectedRevision: Long): CaptureReceipt {

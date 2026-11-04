@@ -223,6 +223,8 @@ request errorでcloseした後に正しいlate successが来た場合も、そ�
 `AndroidRawCaptureQueue`の1 process所有者が撮影ごとのstore/journal/coordinatorを保持し、Activity再生成で並立させない。
 準備は専用executor、close/受領台帳は2 thread pool上の撮影別serial queue、復旧走査は別低優先executorとする。
 hash/copy/公開は別の単一handoff IOへ分離し、初回hashのreadも失敗closeを保持・再試行可能にする。
+callbackの正常closeはlock外で行い、続く最新receipt再読と受領commitは`receivedCurrent`の短いstore lock内で行う。
+初回hashの最終fingerprint commitと同じ排他境界を使い、途中でrevisionが進んでもlate受領を取りこぼさない。
 未解放readerがある間は単一attemptの所有を維持して追加IOを止める。blocked closeで次のprepareをqueue上で塞がない。
 foreground ownerが0の間、撮影/録画・Finalize/設定準備・rebind・未解放writerがある間はhandoffを新規開始しない。
 予約とhandoff admissionを同じ短いlockで直列化し、開始済みattemptへの停止はlatchする。blockedなprovider IOの即時停止は保証しない。
