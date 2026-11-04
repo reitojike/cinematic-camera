@@ -9,9 +9,20 @@ import android.os.Looper
 import android.os.PowerManager
 import android.os.StatFs
 import java.util.concurrent.ConcurrentHashMap
+import dev.cinematic.p0.rawcapture.AutoDevelopConditions
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 /** Observes availability; never opens, closes or controls a CameraX camera/session. */
-internal class PhotoRollResourceObserver(context: Context) {
+internal class PhotoRollResourceObserver(context: Context,
+    private val publishConditions: (AutoDevelopConditions) -> Unit = {},
+    private val authority: PhotoRollObservationAuthority = PhotoRollObservationOwners.authority,
+) {
     private val cameraManager = context.getSystemService(CameraManager::class.java)
     private val activityManager = context.getSystemService(ActivityManager::class.java)
     private val powerManager = context.getSystemService(PowerManager::class.java)
@@ -21,6 +32,9 @@ internal class PhotoRollResourceObserver(context: Context) {
     @Volatile private var ids: Set<String>? = null
     @Volatile private var registered = false
     @Volatile private var generation = 0L
+    private val observationLock = Any()
+    private var observationEpoch = 0L
+    private var polling: CoroutineScope? = null
     private var callback: CameraManager.AvailabilityCallback? = null
 
     fun start() {
@@ -36,20 +50,40 @@ internal class PhotoRollResourceObserver(context: Context) {
                 }
                 callback = next
                 cameraManager?.registerAvailabilityCallback(next, Handler(Looper.getMainLooper()))
+                polling = CoroutineScope(SupervisorJob() + Dispatchers.IO).also { scope -> scope.launch {
+                    while (isActive) {
+                        val observedEpoch = synchronized(observationLock) { generation to observationEpoch }
+                        val conditions = snapshot().developConditions(rendererAvailable = true)
+                        synchronized(observationLock) {
+                            if (registered && generation == observedEpoch.first && observationEpoch == observedEpoch.second)
+                                authority.observed(this@PhotoRollResourceObserver, conditions, publishConditions)
+                        }
+                        delay(500)
+                    }
+                } }
             }
         } catch (_: Exception) { stop() }
     }
 
     fun stop() {
-        foreground = false
-        registered = false
-        generation++
+        synchronized(observationLock) {
+            foreground = false
+            registered = false
+            generation++
+            observationEpoch++
+            authority.foreground(this, false, publishConditions)
+        }
+        polling?.cancel(); polling = null
         try { callback?.let { cameraManager?.unregisterAvailabilityCallback(it) } } catch (_: Exception) { /* Unconfirmed remains blocked. */ }
         callback = null
         available.clear(); ids = null
     }
 
-    fun foreground(value: Boolean) { foreground = value }
+    fun foreground(value: Boolean) = synchronized(observationLock) {
+        foreground = value
+        observationEpoch++ // A pre-pause IO observation must not restore an old allowed snapshot.
+        authority.foreground(this, value, publishConditions)
+    }
 
     fun snapshot(): PhotoRollResources {
         val idle = ids?.let { known -> registered && known.all { available[it] == true } }

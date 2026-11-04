@@ -8,6 +8,8 @@ import androidx.lifecycle.LifecycleRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.CameraProbe
+import dev.cinematic.p0.rawcapture.AutoDevelopConditions
+import java.util.concurrent.CopyOnWriteArrayList
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -15,6 +17,26 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class PhotoRollCameraObservationAndroidTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
+
+    @Test fun foregroundChangeKeepsCameraAvailabilityCallbacksAndStopsAllowedObservations() {
+        val published = CopyOnWriteArrayList<AutoDevelopConditions>()
+        val observer = PhotoRollResourceObserver(instrumentation.targetContext, publishConditions = { published.add(it) })
+        instrumentation.runOnMainSync { observer.start(); observer.foreground(true) }
+        try {
+            val deadline = SystemClock.elapsedRealtime() + 15_000
+            var idle: Boolean?
+            do {
+                idle = observer.snapshot().camerasIdle
+                if (idle == true) break
+                SystemClock.sleep(50)
+            } while (SystemClock.elapsedRealtime() < deadline)
+            assertEquals(true, idle)
+            instrumentation.runOnMainSync { observer.foreground(false) }
+            val pausedFrom = published.lastIndex
+            SystemClock.sleep(700)
+            assertTrue(published.drop(pausedFrom).all { it.foreground == false })
+        } finally { instrumentation.runOnMainSync { observer.stop() } }
+    }
 
     @Test fun hostStartingIsVisibleBeforeLifecycleAndBackgroundClearsOnlyItsOwnIntent() {
         lateinit var probe: CameraProbe

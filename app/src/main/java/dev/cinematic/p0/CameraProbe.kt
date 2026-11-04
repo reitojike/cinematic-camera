@@ -47,6 +47,7 @@ import dev.cinematic.p0.rawcapture.DngPublicationPhase
 import dev.cinematic.p0.rawcapture.RawCapturePresentation
 import dev.cinematic.p0.photoroll.AndroidPhotoRollCameraObservations
 import dev.cinematic.p0.photoroll.PhotoRollCameraSnapshot
+import dev.cinematic.p0.photoroll.PhotoRollCameraPriority
 
 @androidx.annotation.OptIn(markerClass = [androidx.camera.camera2.interop.ExperimentalCamera2Interop::class])
 class CameraProbe(private val context: Context, private val owner: LifecycleOwner) {
@@ -202,6 +203,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     val recordingAudioState get() = cine.audioState
     private var activeCaptureToken: String? = null
     private var photoRollHostMayStart = false
+    private val photoRollPriority = PhotoRollCameraPriority()
     private var photoRollRebind: Boolean? = false
     private var photoRollProviderPending = false
     private var photoRollCloseAcknowledged = false
@@ -645,7 +647,9 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         }.also { controlHandler.postDelayed(it, budget) }
     }
     /** Called before Activity lifecycle can restart CameraX. Deferred binds are not active work. */
-    fun onHostStarting() { if (!closed) photoRollHostMayStart = true }
+    fun onHostStarting() {
+        if (!closed) { photoRollPriority.starting(); photoRollHostMayStart = true }
+    }
 
     fun onForeground() {
         onHostStarting()
@@ -704,6 +708,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     }
     fun onBackground() {
         photoRollHostMayStart = false
+        photoRollPriority.background()
         rawCameraOwner?.foreground(false)
         cine.stop("activity background; no background recording")
         if (mode == CaptureMode.STILL && (bound || stillExposure != null || exposureOperationPending)) {
@@ -1675,6 +1680,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
 
     fun close() {
         photoRollHostMayStart = false
+        photoRollPriority.background()
         photoRollRebind = true
         photoRollCloseAcknowledged = false
         rawPresentation.invalidate()

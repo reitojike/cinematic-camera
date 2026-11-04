@@ -8,6 +8,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import dev.cinematic.p0.CaptureTheme
+import dev.cinematic.p0.rawcapture.DevelopExecution
 
 class PhotoRollActivity : ComponentActivity() {
     private var foreground by mutableStateOf(false)
@@ -17,7 +18,7 @@ class PhotoRollActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val repository = PhotoRollRepository(contentResolver, packageName)
-        resourceObserver = PhotoRollResourceObserver(applicationContext)
+        resourceObserver = PhotoRollResourceObserver(applicationContext, DevelopExecution::updateConditions)
         val renderer: PhotoRollRenderer = StageClearTrialRenderer(contentResolver, resourceObserver::snapshot)
         setContent {
             CaptureTheme { PhotoRollScreen(repository, renderer, foreground, ::finish) }
