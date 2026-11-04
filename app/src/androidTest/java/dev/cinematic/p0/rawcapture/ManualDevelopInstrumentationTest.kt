@@ -33,7 +33,7 @@ class ManualDevelopInstrumentationTest {
         var ownedDirectory: File? = null
         var handle: PrivateTrialHandle? = null
         try {
-            val bytes = syntheticDng()
+            val bytes = syntheticDng(2048, 1536)
             resolver.openOutputStream(uri, "w")!!.use { it.write(bytes) }
             resolver.update(uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null)
             val fp = DngContentVerifier.identify(bytes.size.toLong(), { resolver.openInputStream(uri)!! })
@@ -53,13 +53,13 @@ class ManualDevelopInstrumentationTest {
             assertEquals(RenderedFaceState.NOT_RUN, ready.face)
             assertEquals(RenderedExposureState.DIAGNOSTIC, ready.exposure)
             val output = requireNotNull(ready.output)
-            assertEquals(12, output.width); assertEquals(16, output.height)
+            assertEquals(768, output.width); assertEquals(1024, output.height)
             val storage = AndroidAtomicJournalStorage(File(candidate, "renders"), trial.request.generation.toString(), CaptureJournalFile.AUTO_DEVELOP)
             val journal = AutoDevelopJournal(id, trial.request.generation, storage)
             val attempt = journal.read()!!.attemptId
             val delivery = trial.readPreview(allowed) { false }.join()
             val image = delivery.claim()!!
-            assertEquals(12, image.bitmap.width); assertEquals(16, image.bitmap.height)
+            assertEquals(768, image.bitmap.width); assertEquals(1024, image.bitmap.height)
             assertTrue(image.bitmap.colorSpace!!.isSrgb)
             assertNotEquals(android.graphics.Bitmap.Config.HARDWARE, image.bitmap.config)
             assertEquals(ready.fingerprint, image.status.fingerprint)
@@ -187,8 +187,7 @@ class ManualDevelopInstrumentationTest {
     }
 
     // Generated TIFF/Bayer values only; same minimal layout as the existing decoder tests.
-    private fun syntheticDng(): ByteArray {
-        val width = 32; val height = 24
+    private fun syntheticDng(width: Int = 32, height: Int = 24): ByteArray {
         fun shorts(vararg values: Int) = ByteBuffer.allocate(values.size * 2).order(ByteOrder.LITTLE_ENDIAN)
             .apply { values.forEach { putShort(it.toShort()) } }.array()
         fun longs(vararg values: Int) = ByteBuffer.allocate(values.size * 4).order(ByteOrder.LITTLE_ENDIAN)
