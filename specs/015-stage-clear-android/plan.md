@@ -99,3 +99,36 @@ scaled glowedで自動強度と段2以降を再実行する。段2出力から�
 合成fixtureは強度0/.5/1についてbase、肌色重み、PCの段1出力、ブラックミスト単体、段2出力と自動強度を持つ。
 段2単体の比較とKotlin段1→2の累積比較を分け、既存保護/ぼかし/段1goldenも維持する。
 段3以降の組立て、URI/decode、永続状態、MediaStore、撮影の開始条件には手を入れない。
+
+## 性能と画質の判断順序
+
+最終目標は数値の完全一致ではなく、PCとの全体の雰囲気・印象をそろえること。
+現行方式で一通りつないだ後、Pixel 9aの性能と、標準API/ライブラリ置換による画像変化を比較してメリデメを判断する。
+既存goldenは移植中の回帰検出として維持するが、永続的な精度制約・最終画質合格にはしない。
+[性能検討](research.md)にcopy/中間配列の棚卸し、コード量と可逆圧縮、既存API候補・測定手順を整理する。
+容量計算は実測peakではない。今回、新依存・置換実装・測定入口は追加しない。
+
+## 次の小縦切り: 段3（Orton）
+
+`StageClearOrton.render(mistResult, originalSkinWeight)`は段2の画像とlightAddingStrengthを組で受ける。
+自動強度は再計算せず、元baseの肌色重みを維持する。顔減光時にもscaled glowedから段2/3を再実行する契約は変えない。
+PCのdisplay域へのclamp付きsRGB転送→明るい合成→.012ぼかし→表示輝度.75〜.95でのfade→線形へ復帰、
+1超チャンネルの復元→OKLabで肌の彩度増加抑制→段2と同じ量で混合を移植する。
+Orton内のclampは正本の意図的な境界であり、入力負値が全工程でそのまま保持されるという意味ではない。
+既存shoulderのclampしない転送関数とは分離する。小さいOKLab scratchを再利用し、フル画像のOKLab配列は作らない。
+
+PCから定数と合成fixtureを生成する。11場面×強度0/.5/1で単体と段1→3を全画素比較し、
+明部fade・肌・HDR・負値・入力保持・強度の受渡しも確認する。
+新fixtureは標準gzipで可逆圧縮し、PC/Python・JVMの標準ライブラリで展開する。再照合は解凍後の同じ画素値を対象とし、
+縮小・ケース削除で行数を減らさない。PC CIのpathsにも定数とgzip fixtureを追加する。
+段4/5・全renderer、DNG/R7、保存URI、実機の画質・時間・peakは後続として区別する。
+
+### 固定goldenへのPC再照合
+
+Orton単体/累積出力のPC再生成も、SC-010の既存2e-5（rtol=0）で同じ固定goldenと比較する。
+入力列（base/skin/misted）は従来2e-6を維持し、段2は独立exportでも検証する。定数/metadata/形状と全画素比較を維持し、非有限値は拒否する。
+従来のPC出力検査2e-6より緩くなるため、2e-6超〜2e-5以内のPC再生成差に対する検出力は下がる。
+これは意図的な検証境界の整合であり、golden画素・Kotlin境界・製品処理を変えない。独自ULP基準やCPU固定は導入しない。
+runnerによる末尾差の原因は未断定。失敗runと最大差・採否根拠はPRへ記録する。NumPyの[CPU dispatch](https://numpy.org/doc/stable/reference/simd/build-options.html)も参照。
+PCとKotlinが各々固定goldenに2e-5以内でも、両者を直接比較した差が必ず2e-5以内になるという保証ではない。
+これらは暫定の移植回帰であり、最終の雰囲気/印象や実機性能の受入条件ではない。
