@@ -309,7 +309,7 @@ Android adapterは新規出力をCREATE_NEWで作り、producerのwrite/close失
 現段階は同期IOの境界であり、自動schedulerやCameraProbe/編集UIへは接続しない。
 
 JPEGは同じencoded byte列からhash・全体長・JPEG MIME・寸法・向き・sRGBを検査する。
-標準ImageDecoderのpartial decodeを拒否しEOIも要求する。向き未記載は標準の通常向きとして扱い、
+標準ImageDecoderのpartial decodeを拒否しEOIも要求する。向き未指定（frameworkはUNDEFINED/0で返す）は通常向きとして扱い、
 EXIF回転を必要とする出力は拒否する。encoded長32MiB、辺32768、100MP、検査用bitmap最大64x64を上限とする。
 encoded bufferは複製分もメモリを使い、標準codec呼出し中の即時cancelは保証しない。撮影/メモリ/熱の
 admissionと実測は接続前に必要である。ImageDecoderがsRGBと認識したことを検査し、PC JPEG codecの
@@ -326,6 +326,7 @@ render前の要求保存や実process deathからの自動現像再開の実装�
 [ImageInfo](https://developer.android.com/reference/android/graphics/ImageDecoder.ImageInfo)、
 [partial decode](https://developer.android.com/reference/android/graphics/ImageDecoder.OnPartialImageListener)、
 [ExifInterface](https://developer.android.com/reference/android/media/ExifInterface)。
+未指定orientationの0補完は[公式framework実装](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/main/media/java/android/media/ExifInterface.java)の`addDefaultValuesForCompatibility`で確認する。
 
 1. **設計PR**: 本spec/plan/contracts/tasks/検証案と原則IV・002の方針更新。アプリ変更なし。
 2. **policy PR**: `rawcapture/AutoDevelopPolicy.kt`/`AutoDevelopCoordinator.kt`と対応JUnit。

@@ -30,10 +30,14 @@ internal class AndroidJpegInspector : JpegInspector {
         // Reject missing EOI even when a tolerant codec can recover pixels. This is a completed-output boundary.
         if (encoded.size < 4 || encoded[0] != 0xff.toByte() || encoded[1] != 0xd8.toByte() ||
             encoded[encoded.size - 2] != 0xff.toByte() || encoded.last() != 0xd9.toByte()) throw IOException("Incomplete JPEG")
-        val orientation = ByteArrayInputStream(encoded).use {
-            ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+        val exifOrientation = ByteArrayInputStream(encoded).use {
+            ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, -1)
         }
-        if (orientation != ExifInterface.ORIENTATION_NORMAL) throw IOException("JPEG pixels are not physically oriented")
+        // Framework ExifInterface inserts UNDEFINED (0) when the JPEG has no orientation tag.
+        // Both unspecified and NORMAL need no viewer transform; all rotation/flip values are refused.
+        if (exifOrientation !in setOf(ExifInterface.ORIENTATION_UNDEFINED, ExifInterface.ORIENTATION_NORMAL)) {
+            throw IOException("JPEG pixels are not physically oriented")
+        }
         checkContinue()
         var width = 0
         var height = 0
@@ -52,6 +56,6 @@ internal class AndroidJpegInspector : JpegInspector {
         val fingerprint = OriginalFingerprint(encoded.size.toLong(), MessageDigest.getInstance("SHA-256").digest(encoded)
             .joinToString("") { "%02x".format(it) })
         checkContinue()
-        return JpegInspection(JpegOutputDescription(width, height, orientation, "sRGB", fingerprint.bytes), fingerprint)
+        return JpegInspection(JpegOutputDescription(width, height, 1, "sRGB", fingerprint.bytes), fingerprint)
     }
 }

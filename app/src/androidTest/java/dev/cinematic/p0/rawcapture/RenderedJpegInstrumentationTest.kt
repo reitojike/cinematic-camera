@@ -42,6 +42,8 @@ class RenderedJpegInstrumentationTest {
 
     @Test fun nativeInspectorAcceptsCompleteSrgbAndRejectsTruncationCorruptionAndExifRotation() {
         val jpeg = syntheticJpeg()
+        assertEquals(ExifInterface.ORIENTATION_UNDEFINED, ExifInterface(ByteArrayInputStream(jpeg))
+            .getAttributeInt(ExifInterface.TAG_ORIENTATION, -1))
         val inspector = AndroidJpegInspector()
         fun inspect(bytes: ByteArray) = inspector.inspect({ ByteArrayInputStream(bytes) }, { false })
         val observed = inspect(jpeg)
@@ -53,8 +55,12 @@ class RenderedJpegInstrumentationTest {
         val file = File.createTempFile("jpeg-inspection-", ".jpg", context.cacheDir)
         try {
             file.writeBytes(jpeg)
-            ExifInterface(file).apply { setAttribute(ExifInterface.TAG_ORIENTATION, "6"); saveAttributes() }
-            assertThrows(IOException::class.java) { inspect(file.readBytes()) }
+            ExifInterface(file).apply { setAttribute(ExifInterface.TAG_ORIENTATION, "1"); saveAttributes() }
+            assertEquals(1, inspect(file.readBytes()).output.orientation)
+            for (orientation in 2..8) {
+                ExifInterface(file).apply { setAttribute(ExifInterface.TAG_ORIENTATION, orientation.toString()); saveAttributes() }
+                assertThrows(IOException::class.java) { inspect(file.readBytes()) }
+            }
         } finally { check(file.delete()) }
         assertThrows(IOException::class.java) { inspector.inspect({ ByteArrayInputStream(jpeg) }, { true }) }
     }
@@ -96,7 +102,8 @@ class RenderedJpegInstrumentationTest {
             }
             fun publisher(provider: RenderedJpegRows) = RecoverablePhotoPublisher(journal(), provider, render,
                 setOf(RendererPublicationContract("synthetic-renderer-v1", "synthetic-v1")), input, AndroidJpegInspector(), { true })
-            assertThrows(IOException::class.java) { publisher(lostAck).advance() }
+            val acknowledgement = assertThrows(IOException::class.java) { publisher(lostAck).advance() }
+            assertEquals("Synthetic acknowledgement loss", acknowledgement.message)
             val interrupted = journal().read()!!
             jpegUri = interrupted.uri
             assertEquals(JpegPublicationPhase.PUBLISHING, interrupted.phase)
