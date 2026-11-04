@@ -34,10 +34,14 @@ T011の台帳側はfake backendのwrite/read失敗・commit応答喪失・破損
 RawCaptureStoreは人工byte列の実一時ファイルでopen/部分write/flush/close、台帳commit前後の失敗、再生成、
 既存directory/fileの非再利用、pathと所有handle、部分成功のバイト列保全を検証。
 AndroidAtomicFile・実mediaの実端末障害/OS kill/電源断は未検証のためT011全体は未完了。
-T009は受領metadataのみ。DNG有効性、共有コピー完全性、原本引渡し/解放、recipe/公開状態は後続項目。
-T010も撮影/起動走査へ未接続のstream保全部品。未知ファイルを削除/成功へ昇格せず、同サイズ改変の検出は後続hash照合の責務。
+T009の受領metadataと版2の任意原本fingerprintは共有成功の証明ではない。DNG有効性、共有原本引渡し/解放、recipe/公開状態は後続項目。
+T010も撮影/起動走査へ未接続のstream保全部品。未知ファイルを削除/成功へ昇格せず、同サイズ改変の検出は別の内容照合処理の責務。
 - [ ] T012 [US1] `main/rawcapture/RecoverablePhotoPublisher.kt`でDNGの1行公開、readback/hash一致、共有原本への引渡しを実装する（FR-003/007）。
 - [ ] T013 [US1] `test/rawcapture/RecoverablePhotoPublisherTest.kt`でinsert応答前、URI記録、copy/close/pending解除/readback/解放台帳の故障を検証する（SC-001/002）。
+
+T012/T013前段として`DngContentVerifier`と`RawCaptureStore.verifyOriginal`で全byteのsize/SHA-256、
+任意fingerprintの版2台帳commit・版1読取り移行、内容readback照合と停止/IO/close/CAS/commit失敗を実装・人工データで検証。
+初回hash以前の同サイズ改変やDNG decode有効性は証明しない。MediaStore/共有URI/公開・共有原本確立/一時DNG解放は未実装のため両項目は未完了。
 - [ ] T014 [US1] 別の接続PRで`main/CameraProbe.kt`の新RAW保存だけを接続し、既存cleanup/timeout/late-callbackを形式別保全へ切替える（FR-001/002/003/005/008）。
 - [ ] T015 [US1] `test/rawcapture/RawCaptureIntegrationTest.kt`で部分成功/重複/late/世代隔離、busy解除とDNG共有成否の分離を検証する（SC-001/003）。
 

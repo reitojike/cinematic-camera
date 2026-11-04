@@ -98,10 +98,10 @@ pathは専用root内に解決できる相対参照だけを受理し、壊れた
 
 ### 撮影未接続の受領台帳（T009・T011の台帳部分）
 
-`CaptureJournal`の版1は撮影ID、revision、期待形式（DNGまたはDNG+JPEG）、形式別の受領byte数、
+`CaptureJournal`の受領部分は撮影ID、revision、期待形式（DNGまたはDNG+JPEG）、形式別の受領byte数、
 `CAPTURING`/`INTERRUPTED`/`FILES_RECEIVED`だけを保存する。これはcallbackとcloseを呼出側が確認したという
 記録であり、ファイル存在やDNG decode・元バイト列のSHA-256・共有保存の成功を証明しない。
-実ファイルの受領確認はT010、hashと共有原本への引渡しはT012以降、recipe/公開状態の拡張は後続の版で扱う。
+実ファイルの受領確認はT010、原本内容識別は下記の版2、共有原本への引渡しはT012以降、recipe/公開状態の拡張は後続の版で扱う。
 
 台帳は4KiB上限の固定レイアウト、magic/明示schema版/台帳payloadのSHA-256で破損を検出する。
 台帳digestはDNGのhashや改ざん防止署名ではない。未知版・余剰データ・不正field・別撮影IDは読取エラーとし、
@@ -143,8 +143,29 @@ root・撮影directory・台帳sidecar・両media pathのredirectを拒否する
 台帳commit失敗/応答喪失後は同じ閉鎖handleと再読したrevisionで照合し、ファイルを作り直さない。
 
 同期IOは撮影優先のIO executorで使う契約。アプリからのroot固定、CameraX stream/callback adapter、起動時のdirectory走査、
-実際の撮影busy解除は未接続。DNG decode・全バイトhash・同サイズ改変検出・MediaStore・共有引渡し/一時DNG解放も別の後続作業。
+実際の撮影busy解除は未接続。全バイトhashと同サイズ改変照合は下記の別処理、DNG decode・MediaStore・共有引渡し/一時DNG解放は後続作業。
 stream closeとJVM上の再生成テストを、実端末のfsync/電源断・OS kill試験の合格に置き換えない。
+
+### 共有引渡し前の内容識別と読戻し照合（T012/T013の前段）
+
+`DngContentVerifier`はread-only openerを1回呼び、自身がstreamをcloseする。64KiB bufferで全byteをSHA-256へ通し、
+期待サイズとの過不足、read/close失敗、読取が進まない状態は成功にしない。停止はopen前、readの間と直後、close後に協調確認する。
+既にblockedなprovider readを即時中断する保証はない。`verify`は期待size/hashと全byteが一致したときだけ返し、
+コピー先readbackにも利用できるが、URI所有/pending/公開済み・共有原本の確立を検証するものではない。
+
+immutableな`OriginalFingerprint`は正のbyte数と厳密な小文字64桁SHA-256を持つ。最初のhashはその時点の内容識別を設定するもので、
+撮影直後から最初のhashまでの同サイズ改変やDNG decode有効性を証明しない。一度設定したhashを再計算値で上書きしない。
+以後の`verifyOriginal`で不一致なら停止し、旧台帳と現ファイルをそのまま残す。
+
+受領台帳の版2はDNG受領サイズに対応する任意の原本SHA-256を追加する（flag 1byte＋存在時32byte）。
+台帳payload自体の破損検出digestとは別の値である。版1はhashなしとして読取り、読取りだけでは書換えない。
+次の正当な更新で版2へ移行し、受領/中断/遅延callbackでもfingerprintを保持する。未知版・不正flag・短いdigestは上書きしない。
+
+`RawCaptureStore.verifyOriginal`はDNG受領記録と固定pathを短いlockでsnapshotし、lock外でread-onlyにhashを計算する。
+その後、path/受領サイズ/revisionを再照合し、fingerprintを既存のreadback付き台帳更新でcommitする。
+hash中のJPEG受領などでrevisionが進んだ場合、古い結果をcommitしない。停止callbackはstoreのlock外だけで呼ぶ。
+最終の協調停止確認とmetadata commitは一括transactionではなく、その後の停止を原子的に排他する保証はない。
+これは撮影優先IO executorから明示的に使う未接続部品。共有URI/公開状態、reader leaseと一時DNG解放、起動走査は後続である。
 
 ## 撮影優先と自動現像
 
