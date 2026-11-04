@@ -4,6 +4,10 @@ PhotoRollJpegSave.prepareで#118のrequirePublishableと原本/modeを検証し�
 
 UIはPreviewの任意ownerを受け取るが、現行両trial rendererはnullのまま。#118のproduction契約は登録しない。保存中/公開確認済み/未確認/HOLDを表示し、再照合済みPUBLISHEDだけにACTION_VIEWを許す。これは完成rendererへの接続準備であり、実保存の有効化ではない。
 
+共有workerとの競合に備え、ownerは読み取り専用StateFlowで状態を通知する。競合呼出の戻りはURIなしのSAVINGだけとし、通知状態を書き換えない。UIは自分のクリック処理中を別に保持して二重押下を防ぎ、戻り値のSAVINGで完了通知を上書きしない。観測は前景・ticket/source/ownerで隔離し、自動で外部viewerを開かない。
+
+別workerが公開ownerを保持する要求は、その同じownerへの確認をPhotoRollJpegPublisherへ委譲する。UI用にAndroidRenderedJpegOperationのfactoryを別取得したり、attempt出力を別のprivate JPEGへコピーしたりしない。手動要求・結果の同一性と状態取得のAPIは実行制御側の確定契約へ合わせる。
+
 表示BitmapをJPEGへ圧縮するコードはUIへ追加しない。完成rendererの登録時には、private JPEGがその出力品質/解像度契約を満たすことを別途確認する。出力寸法やcodec成功だけではPixel画質合格やフル解像度を保証しない。
 
 unitではpublisher生成前のtrial/顔/露出/未登録/原本拒否、応答喪失後の同owner再照合、UNKNOWN停止、外部削除後の成功表示取消、途中停止/旧世代の結果不採用を確認。既存#118の公開・codec・故障試験を再実装しない。lint/unit/app/test APK、最終CI/canonical/独立レビューを取得する。実機の保存・復帰・外部viewer・性能は未確認。

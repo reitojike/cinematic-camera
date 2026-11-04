@@ -5,6 +5,14 @@ import java.io.IOException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -139,7 +147,9 @@ class PhotoRollJpegSaveTest {
         try {
             val first = executor.submit<PhotoRollSaveSnapshot> { owner.advance { false } }
             assertTrue(entered.await(5, TimeUnit.SECONDS))
-            assertEquals(PhotoRollSavePhase.SAVING, owner.advance { false }.phase)
+            val contender = owner.advance { false }
+            assertEquals(PhotoRollSavePhase.SAVING, contender.phase)
+            assertNull(contender.uri)
             release.countDown()
             assertEquals(PhotoRollSavePhase.PUBLISHED, first.get(5, TimeUnit.SECONDS).phase)
             assertEquals(1, calls)
@@ -155,5 +165,51 @@ class PhotoRollJpegSaveTest {
         assertNull(owner.snapshot.uri)
         assertEquals(PhotoRollSavePhase.PUBLISHED, owner.advance { false }.phase)
         assertEquals(1, factories)
+    }
+
+    @Test fun concurrentCallCannotReceivePublishedWithoutDoingItsOwnConfirmation() {
+        val confirmedHere = ThreadLocal.withInitial { false }
+        val unexpectedReceipts = AtomicInteger()
+        val calls = AtomicInteger()
+        val owner = prepare { PhotoRollJpegPublisher { confirmedHere.set(true); calls.incrementAndGet(); record() } }
+        assertNotNull(owner.advance { false }.uri) // A previous published receipt exists before contention.
+        val ready = CountDownLatch(2); val start = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val futures = List(2) { executor.submit {
+                ready.countDown(); check(start.await(5, TimeUnit.SECONDS))
+                try { repeat(2_000) {
+                    confirmedHere.set(false)
+                    val result = owner.advance { false }
+                    if (result.phase == PhotoRollSavePhase.PUBLISHED && confirmedHere.get() != true) unexpectedReceipts.incrementAndGet()
+                    if (result.phase == PhotoRollSavePhase.SAVING && result.uri != null) unexpectedReceipts.incrementAndGet()
+                } } finally { confirmedHere.remove() }
+            } }
+            assertTrue(ready.await(5, TimeUnit.SECONDS)); start.countDown()
+            futures.forEach { it.get(5, TimeUnit.SECONDS) }
+            assertTrue(calls.get() > 1)
+            assertEquals(0, unexpectedReceipts.get())
+        } finally { start.countDown(); executor.shutdownNow(); confirmedHere.remove() }
+    }
+
+    @Test fun sharedWorkerCompletionIsObservableWithoutStartingAnotherSave() = runBlocking {
+        val entered = CountDownLatch(1); val release = CountDownLatch(1)
+        val owner = prepare { PhotoRollJpegPublisher { entered.countDown(); check(release.await(5, TimeUnit.SECONDS)); record() } }
+        val observed = mutableListOf<PhotoRollSaveSnapshot>()
+        val observer = launch(start = CoroutineStart.UNDISPATCHED) { owner.snapshots.take(3).toList(observed) }
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val worker = executor.submit<PhotoRollSaveSnapshot> { owner.advance { false } }
+            assertTrue(entered.await(5, TimeUnit.SECONDS))
+            yield() // Consume SAVING before allowing the publisher to finish.
+            assertEquals(PhotoRollSavePhase.SAVING, observed.last().phase)
+            val contender = owner.advance { false }
+            assertEquals(PhotoRollSavePhase.SAVING, contender.phase); assertNull(contender.uri)
+            release.countDown()
+            assertEquals(PhotoRollSavePhase.PUBLISHED, worker.get(5, TimeUnit.SECONDS).phase)
+            withTimeout(5_000) { observer.join() }
+            assertEquals(listOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.SAVING, PhotoRollSavePhase.PUBLISHED), observed.map { it.phase })
+            assertNotNull(observed.last().uri)
+        } finally { release.countDown(); observer.cancel(); executor.shutdownNow() }
     }
 }
