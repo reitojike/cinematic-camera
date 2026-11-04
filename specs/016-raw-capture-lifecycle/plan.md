@@ -108,6 +108,25 @@ pathは専用root内に解決できる相対参照だけを受理し、壊れた
 - 背景化では開始禁止/協調停止し、次のforegroundで台帳を再走査。OS kill中の完了や即時の背景現像は保証しない。
 - 初期PR群はカメラへ未接続、rendererも未登録とし、製品の自動現像は有効化しない。
 
+### 未接続の開始制御の契約（T006〜T008）
+
+`rawcapture/AutoDevelopPolicy.kt`はforeground/camera session/録画・Finalize/rebind/熱/容量/renderer/メモリの
+8観測値を受け取り、未確認をnullableで表す。すべての条件が安全側に確認できる場合だけ開始可能とする。
+policyは実測を行わず、呼出側が最新の観測を供給する。既定は全条件が未確認で、開始不可。
+
+`AutoDevelopCoordinator`は短いsynchronized状態遷移だけを行い、IOや呼出側callbackをlock内で実行しない。
+撮影予約と開始判定を同じlockで直列化し、予約が先なら開始不可、開始が先ならそのattemptへ停止要求を記録する。
+撮影予約は実行中処理の停止/解放を待たない。呼出側はcamera操作前に予約し、優先期間終了後にその予約だけを解放する。
+camera/録画が続く場合は、観測を更新してから予約を解放する。
+
+attempt/予約は参照identityで識別し、別coordinatorや旧attemptの完了で現在のownerを解放しない。
+停止要求はattemptごとにlatchし、条件回復で取り消さない。`completeAfterResourcesClosed`は実際にreader/writerが
+閉じた後だけ呼ぶ契約であり、停止要求や例外通知だけでは処理枠を解放しない。未知のattemptは常に停止扱いにする。
+再生成したcoordinatorは旧ticket/lease/観測を復元せず、永続台帳の復旧は後続の保全実装に任せる。
+将来の接続では1 processに1 coordinatorを保持し、activity/camera再生成で生存中workerの所有を回避して作り直さない。
+開始許可から実際のdecode開始までの外部操作を原子的にはできず、将来adapterは開始前にも停止要求を確認する。
+この制御だけでnative処理の即時停止・実機資源競合の解消・DNG保存の成立を保証しない。
+
 ## 公式資料と採用判断
 
 - [MediaStore](https://developer.android.com/training/data-storage/shared/media): 自分の新規画像とpending公開を使う。
@@ -125,7 +144,8 @@ WorkManagerは今回採用しない。永続要求と画素処理の停止能力
 ## PR分割と検証
 
 1. **設計PR**: 本spec/plan/contracts/tasks/検証案と原則IV・002の方針更新。アプリ変更なし。
-2. **policy PR**: `rawcapture/AutoDevelopPolicy.kt`と対応JUnitだけ。開始条件と未知値、撮影予約race、再開を合成検証。撮影へ未接続。
+2. **policy PR**: `rawcapture/AutoDevelopPolicy.kt`/`AutoDevelopCoordinator.kt`と対応JUnit。
+   開始条件と未知値、撮影予約race、旧完了・例外・再生成を合成検証。撮影へ未接続。
 3. **保全PR**: `rawcapture/CaptureJournal.kt`/`RawCaptureStore.kt`と故障テスト。CameraProbeへ未接続。
 4. **公開PR**: `rawcapture/RecoverablePhotoPublisher.kt`/`SharedOriginalAccess.kt`と故障テスト。
    1行ずつの照合、共有DNGへの引渡し、一時DNG解放とread-only参照を実装。既存publisherを置換しない。
