@@ -78,6 +78,7 @@ internal class AndroidAutoDevelopBackend(
                 return OwnedDescriptor(owner).also { descriptors += it }
             }
             override fun openOutput(): OutputStream { requireRendering(); return resources.output(output.createOutput()) }
+            override fun openOutputRead(): InputStream { requireRendering(); return resources.input(output.openRead()) }
         }
         // The adapter constructor must not acquire resources: the returned owner is retained before render.
         val engine = adapter.createAttempt(request, attemptId, io)
