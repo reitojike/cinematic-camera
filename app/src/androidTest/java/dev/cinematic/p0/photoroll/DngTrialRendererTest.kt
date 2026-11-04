@@ -2,6 +2,8 @@ package dev.cinematic.p0.photoroll
 
 import android.content.ContentValues
 import android.graphics.Bitmap
+import android.net.Uri
+import android.os.Build
 import android.os.CancellationSignal
 import android.os.OperationCanceledException
 import android.provider.MediaStore
@@ -9,18 +11,135 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.rawcapture.DngContentVerifier
+import dev.cinematic.p0.rawcapture.AndroidRawCaptureQueue
+import dev.cinematic.p0.rawcapture.CaptureReceiptPhase
+import dev.cinematic.p0.rawcapture.DngPublicationPhase
+import dev.cinematic.p0.rawcapture.DngPublicationRecord
+import dev.cinematic.p0.rawcapture.MediaStoreDngPendingRows
+import dev.cinematic.p0.rawcapture.RawCaptureNotice
+import dev.cinematic.p0.rawcapture.RawCaptureObserver
+import dev.cinematic.p0.rawcapture.RawCaptureTicket
+import dev.cinematic.p0.rawcapture.RawOutput
+import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/** Generated non-photo input in a test-owned pending row; never publishes or captures an image. */
+/** Synthetic input only. The queue case publishes its own DNG; no case captures a camera image. */
 @RunWith(AndroidJUnit4::class)
 @SdkSuppress(minSdkVersion = 29)
 class DngTrialRendererTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private val resources = PhotoRollResources(true, 0, false, PhotoRollResources.REQUIRED_AVAILABLE_BYTES)
+    private var queueObserver: RawCaptureObserver? = null
+
+    /** Programmatic callback/queue/list/renderer path, not CameraX capture or Compose interaction. */
+    @Test fun syntheticCaptureHandsOffOneOriginalAndDisplaysItAsTrial() {
+        check(Build.HARDWARE in setOf("goldfish", "ranchu")) { "Disposable emulator only" }
+        val bytes = syntheticDng()
+        val fingerprint = DngContentVerifier.identify(bytes.size.toLong(), { bytes.inputStream() })
+        val jpeg = "synthetic provisional JPEG bytes".toByteArray()
+        val id = "integration_${UUID.randomUUID().toString().replace("-", "")}"
+        val received = CountDownLatch(1)
+        val shared = CountDownLatch(1)
+        val failure = AtomicReference<Throwable?>()
+        val record = AtomicReference<DngPublicationRecord?>()
+        val queue = AndroidRawCaptureQueue.get(context)
+        val camera = queue.newCameraOwner().apply { foreground(true) } // Reserved until both receipts are observed.
+        val rows = MediaStoreDngPendingRows(context)
+        val observer = RawCaptureObserver { ticket, notice ->
+            try {
+                when (notice) {
+                    is RawCaptureNotice.Prepared -> {
+                        notice.outputs.getValue(RawOutput.DNG).write(bytes)
+                        notice.outputs.getValue(RawOutput.JPEG).write(jpeg)
+                        queue.received(ticket, RawOutput.JPEG)
+                        queue.received(ticket, RawOutput.DNG)
+                    }
+                    is RawCaptureNotice.Received -> if (notice.receipt.phase == CaptureReceiptPhase.FILES_RECEIVED) received.countDown()
+                    is RawCaptureNotice.Shared -> { record.set(notice.record); shared.countDown() }
+                    is RawCaptureNotice.Failed -> error("Synthetic queue failure: ${notice.stage}")
+                }
+            } catch (error: Throwable) { failure.set(error); received.countDown(); shared.countDown() }
+        }
+        queueObserver = observer // The production queue intentionally holds observers weakly.
+        var issued: RawCaptureTicket? = null
+        var cleanupRecord: DngPublicationRecord? = null
+        var primaryFailure: Throwable? = null
+        try {
+            val ticket = queue.prepare(id, setOf(RawOutput.DNG, RawOutput.JPEG), observer)
+            issued = ticket
+            assertTrue("Callback receipts timed out", received.await(15, TimeUnit.SECONDS))
+            assertNull(failure.get())
+            assertNull(ticket.session!!.receipt()!!.originalFingerprint)
+            assertEquals(1L, shared.count)
+            camera.update(false)
+            assertTrue("Shared original timed out", shared.await(15, TimeUnit.SECONDS))
+            assertNull(failure.get())
+            val done = requireNotNull(record.get())
+            assertEquals(DngPublicationPhase.SHARED_ONLY, done.phase)
+            assertEquals(id, done.target.captureId)
+            assertEquals(fingerprint, done.fingerprint)
+            assertFalse(ticket.session!!.hasUnreleasedWriters)
+            assertFalse(ticket.session!!.hasUnreleasedHandoffResources)
+            check(done.target.accepts(requireNotNull(rows.inspect(requireNotNull(done.uri))), false))
+            DngContentVerifier.verify(fingerprint, { rows.openRead(done.target, done.uri, false) })
+            cleanupRecord = done // UNKNOWN/foreign/unverified notifications can never become cleanup authority.
+            assertEquals(1, rows.find(done.target).size)
+            val local = File(File(context.noBackupFilesDir, "raw-captures"), id)
+            assertFalse(File(local, RawOutput.DNG.fileName).exists())
+            assertArrayEquals(jpeg, File(local, RawOutput.JPEG.fileName).readBytes())
+            val uri = Uri.parse(requireNotNull(done.uri))
+            val repository = PhotoRollRepository(context.contentResolver, context.packageName)
+            assertTrue(repository.list(CancellationSignal()).items.any { it.uri == uri.toString() })
+            val renderer = DngTrialRenderer(context.contentResolver) { resources }
+            val original = repository.check(uri, false, { false }, renderer.maxSourceBytes)
+            assertEquals(done.fingerprint, original.fingerprint)
+            assertEquals(fingerprint, original.fingerprint)
+            val result = renderer.render(PhotoRollRenderRequest(original, mode = PhotoRollPreviewMode.DNG_TRIAL), CancellationSignal())
+            assertTrue(result is PhotoRollRenderResult.Preview)
+            val preview = result as PhotoRollRenderResult.Preview
+            try {
+                assertEquals(PhotoRollPreviewMode.DNG_TRIAL, preview.mode)
+                assertEquals(16, preview.bitmap.width)
+                assertEquals(12, preview.bitmap.height)
+                repository.verify(original) { false }
+            } finally { preview.bitmap.recycle() }
+        } catch (error: Throwable) {
+            primaryFailure = error
+            throw error
+        } finally {
+            try {
+                camera.update(true) // Latch a stop before releasing the last foreground owner.
+                issued?.let { ticket ->
+                    if (!ticket.writerReleased.get()) {
+                        queue.interrupt(ticket) // Only this failed/incomplete request; never close a live store directly.
+                        val closed = CountDownLatch(1)
+                        ticket.serial.execute(context.mainExecutor) { closed.countDown() }
+                        check(closed.await(15, TimeUnit.SECONDS) && ticket.writerReleased.get()) {
+                            "Synthetic writer release unconfirmed"
+                        }
+                    }
+                    check(ticket.session?.hasUnreleasedHandoffResources != true) { "Synthetic handoff resources remain held" }
+                }
+                // Only a positively completed, matching row created by this test. No scan/delete on failure.
+                cleanupRecord?.let { done ->
+                    check(done.target.accepts(requireNotNull(rows.inspect(requireNotNull(done.uri))), false))
+                    DngContentVerifier.verify(done.fingerprint, { rows.openRead(done.target, done.uri, false) })
+                    check(context.contentResolver.delete(Uri.parse(done.uri), null, null) == 1)
+                    check(rows.find(done.target).isEmpty())
+                }
+            } catch (cleanup: Throwable) {
+                if (primaryFailure != null) primaryFailure.addSuppressed(cleanup) else throw cleanup
+            } finally { camera.close(); queueObserver = null }
+        }
+    }
 
     @Test fun selectedContentUriProducesHonestTrialBitmapAndLeavesOriginalUnchanged() = withOriginal { original ->
         val renderer = DngTrialRenderer(context.contentResolver) { resources }
