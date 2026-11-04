@@ -27,6 +27,9 @@ internal class RawCaptureStore(
         )
     },
     private val deleteOriginalFile: (File) -> Boolean = { Files.deleteIfExists(it.toPath()) },
+    private val openOriginalInput: (File) -> InputStream = { file ->
+        Files.newInputStream(file.toPath(), StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)
+    },
 ) {
     private val directory = requireNotNull(CaptureJournalPaths.receiptFile(root, captureId).parentFile)
     private val journal = CaptureJournal(captureId, journalStorage)
@@ -99,12 +102,16 @@ internal class RawCaptureStore(
 
     /** Establish/recheck local byte identity before handoff; heavy reads never hold the store lock. */
     fun verifyOriginal(expectedRevision: Long, shouldStop: () -> Boolean = { false }): CaptureReceipt {
+        return verifyOriginalTracked(expectedRevision, { it }, shouldStop)
+    }
+
+    internal fun verifyOriginalTracked(expectedRevision: Long, ownRead: (InputStream) -> InputStream, shouldStop: () -> Boolean): CaptureReceipt {
         val receipt = synchronized(this) {
             val current = current(expectedRevision)
             if (RawOutput.DNG !in current.receivedBytes) throw IOException("DNG has not been received")
             current
         }
-        val openReadOnly = { openOriginalReader() }
+        val openReadOnly = { ownRead(openOriginalReader()) }
         val fingerprint = receipt.originalFingerprint?.let {
             DngContentVerifier.verify(it, openReadOnly, shouldStop)
         } ?: DngContentVerifier.identify(receipt.receivedBytes.getValue(RawOutput.DNG), openReadOnly, shouldStop)
@@ -158,7 +165,7 @@ internal class RawCaptureStore(
         }
         if (owner != null && releaseOwner !== owner) throw IOException("Foreign original release reservation")
         if (receipt.receivedBytes[RawOutput.DNG] != closedFileSize(RawOutput.DNG)) throw IOException("DNG receipt mismatch")
-        val stream = Files.newInputStream(File(checkedDirectory(), RawOutput.DNG.fileName).toPath(), StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)
+        val stream = openOriginalInput(File(checkedDirectory(), RawOutput.DNG.fileName))
         originalReaders++
         return object : FilterInputStream(stream) {
             private var released = false
