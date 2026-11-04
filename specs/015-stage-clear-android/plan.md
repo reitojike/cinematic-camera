@@ -141,3 +141,29 @@ exporter --writeの一時出力を展開して生成textと照合し、既存che
 .gitattributesで生成CSV/gzipをlinguist-generatedとして扱い、gzipはbinaryにする。定数や手書きコードは折りたたまない。
 PC CI pathsはgzip resourceと属性を監視する。ケース削除・寸法縮小・新依存・runtime変更は含めない。
 #96で追加したOrton gzipは変更せず、既存4件を別Draft PRで検証する。mainへのmergeは別承認。
+
+## 段4/5とR7 baseからの組立て
+
+`StageClearCharacter`がvignetteとvibrance、`StageClearLook.renderFromBase`が既存各段の組立てだけを担当する。
+周辺減光は画素中心と縦横比を使ったsmoothstep、彩度は既存OKLab共通計算と画素ごとの小scratchを再利用する。
+画像全体のOKLab配列や新依存を足さない。strength0でもPCにあるvibranceのOKLab往復は現行回帰の対象とする。
+
+rendererは元baseのskinを保持し、glowの後に既存Protections.finishへ段2〜5の純粋なclosureを渡す。
+顔減光時の再実行・常時cap/shoulderは既存保護段を再利用する。返値は画像とfaceCutFactorで、DNG入力APIとはしない。
+保存URIの寿命やI/Oは持ち込まず、原本・仮JPEG・完成JPEGの保存側へ接続しない。
+合成fixtureは単体の周辺減光/彩度と、base/顔マスクからの全段出力・顔係数を持つ。
+既存の部品goldenも維持し、全段数値回帰の成立をDNG現像・最終画質・12MP性能の成立に置き換えない。
+
+非clampの中間出力は大きいHDR値でも検証し、既存ケースを縮小/削除しない。
+新しい境界は、段4/5単体がatol=2e-5 + rtol=2e-6、段1→5直接累積がatol=2e-5 + rtol=2e-5。
+全段最終出力は既存atol=2e-5/rtol=0、入力列は2e-6で同じ固定goldenへ比較する。
+これは経験的な暫定回帰基準で数学的丸め保証ではない。直接累積では単体より検出力が低くなり、値1で4e-5の差を許す。
+精度合わせ目的のruntime変更や独自ULP/CPU固定はしない。新境界の採否理由・最初の比較失敗・最大差はPRへ記録する。
+既存fixtureのstage3Pixelsと実装の段1→3、および段1→5のworst case/強度/channel/expected/actualを診断に残し、
+差がどの経路で生じるかを分ける。最終出力の差が小さいだけで中間の正しさを証明したとは扱わない。
+既存goldenと既存段の比較境界は変更しない。PC/Android各々の固定golden比較を、直接の両者間誤差保証に置き換えない。
+
+#104の表示用PhotoRollRendererと同じ`shouldStop: () -> Boolean`を`renderFromBase`の任意引数として受ける。
+既存呼出しは既定falseで維持し、停止時は標準CancellationExceptionで呼出側へ返す。画像/原本は書き換えず、
+呼出側が世代・permit・Bitmap所有権を管理する。チェックは大きい処理の境界であり、実行中blur/colour kernelは中断しない。
+画素ループ全体の改変や追加の非同期基盤を先行導入せず、最初の表示用接続とPixelでの停止時間計測を優先する。

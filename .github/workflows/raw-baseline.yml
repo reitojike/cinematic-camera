@@ -13,6 +13,8 @@ on:
       - 'app/src/test/resources/stage_clear_mist_v1.csv.gz'
       - 'app/src/main/java/dev/cinematic/p0/raw/StageClearOrtonV1.kt'
       - 'app/src/test/resources/stage_clear_orton_v1.csv.gz'
+      - 'app/src/main/java/dev/cinematic/p0/raw/StageClearCharacterV1.kt'
+      - 'app/src/test/resources/stage_clear_character_v1.csv.gz'
       - '.github/workflows/raw-baseline.yml'
       - '.gitattributes'
   push:
@@ -28,6 +30,8 @@ on:
       - 'app/src/test/resources/stage_clear_mist_v1.csv.gz'
       - 'app/src/main/java/dev/cinematic/p0/raw/StageClearOrtonV1.kt'
       - 'app/src/test/resources/stage_clear_orton_v1.csv.gz'
+      - 'app/src/main/java/dev/cinematic/p0/raw/StageClearCharacterV1.kt'
+      - 'app/src/test/resources/stage_clear_character_v1.csv.gz'
       - '.github/workflows/raw-baseline.yml'
       - '.gitattributes'
   workflow_dispatch:
