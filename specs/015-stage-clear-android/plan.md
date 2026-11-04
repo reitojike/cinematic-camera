@@ -79,6 +79,6 @@ PCのGLOW設定・半径・合成比・暖色tintは`export_android_glow.py`か�
 
 この段の出力を段2〜5へ渡すのは後続。顔減光時にはglowedを係数倍して段2〜6を再実行する既存契約を保ち、glowを再実行しない。
 全ルックのrendererを完成したようなAPI名や撮影フックは追加しない。
-保存#89/設計PR #90との境界として、後続decodeは共有領域の単一原本DNGへの読み取り専用URIを参照する。
+[保存契約](../016-raw-capture-lifecycle/contracts.md)との境界として、後続decodeは共有領域の単一原本DNGへの読み取り専用URIを参照する。
 URIの権限・寿命・cancel/解放はdecodeアダプター側で扱い、純粋な画素処理へI/Oや恒久的DNGコピーを持ち込まない。
 仮JPEGは内部、完成JPEGの共有公開は保存側。今回URI層や保存型は追加しない。

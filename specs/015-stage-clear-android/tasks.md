@@ -32,4 +32,4 @@
 - [x] T013 PCの段1・skin weight・強度0の境界と保存/URIからの分離を定義する（FR-010/011/012）。
 - [x] T014 PC定数生成と肌色重み/段1の合成全画素fixture・再照合を追加する（FR-013、SC-006）。
 - [x] T015 OKLab共通計算を共有し、段1を純Kotlinへ移植して既存保護段/ぼかしの互換性も検証する（FR-010/011/012、SC-006）。
-- [ ] T016 PC/Android検証・秘密除外、Draft PRと独立レビューを完了する（SC-007）。最終headのCI/canonical/独立再確認はPRへ記録し、mergeは別承認。
+- [x] T016 PC/Android検証・秘密除外、Draft PRと独立レビューを完了する（SC-007）。最終headのCI/canonical/独立再確認はPRへ記録し、mergeは別承認。
