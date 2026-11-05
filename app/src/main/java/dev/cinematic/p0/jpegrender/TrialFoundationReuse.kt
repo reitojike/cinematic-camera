@@ -2,8 +2,13 @@ package dev.cinematic.p0.jpegrender
 
 import dev.cinematic.p0.raw.LinearSrgbImage
 import dev.cinematic.p0.raw.PhotoAdjustments
+import dev.cinematic.p0.raw.FaceMask
+import dev.cinematic.p0.raw.PreparedStageClearGlow
+import dev.cinematic.p0.raw.StageClearLook
+import dev.cinematic.p0.raw.StageClearProtections
+import java.util.concurrent.CancellationException
 
-/** The only retained pixel foundation: immutable R7 pixels and small, checked geometry/exposure metadata.
+/** The retained trial foundation: immutable R7 pixels, small Glow fields and checked metadata.
  * Never retains an as-shot image, ROI, face mask, decoder, stream, or an Android display owner. */
 internal class TrialPreparedFoundation(
     val base: LinearSrgbImage,
@@ -14,7 +19,23 @@ internal class TrialPreparedFoundation(
     val geometryVersion: String = GEOMETRY_VERSION,
     val adjustments: PhotoAdjustments = PhotoAdjustments(),
 ) {
+    @Volatile private var previewFields: PreparedStageClearGlow? = null
     val pixelBytes: Long get() = base.width.toLong() * base.height * 3 * 4
+    val previewFieldBytes: Long get() = previewFields?.retainedFieldBytes ?: 0
+
+    /** This verified foundation is already bound to source, controls and epoch by TrialFoundationReuse. */
+    fun renderTrial(faces: FaceMask, strength: Double, shouldStop: () -> Boolean): StageClearProtections.Result {
+        fun checkpoint() { if (shouldStop()) throw CancellationException("Trial preview stopped") }
+        checkpoint()
+        if (base.width < 2 || base.height < 2) {
+            return StageClearLook.renderFromBase(base, faces, strength).also { checkpoint() }
+        }
+        val fields = previewFields ?: synchronized(this) {
+            previewFields ?: PreparedStageClearGlow.prepare(base, ::checkpoint).also { previewFields = it }
+        }
+        checkpoint()
+        return fields.render(faces, strength, ::checkpoint).also { checkpoint() }
+    }
 
     internal fun validFor(request: JpegGenerationRequest): Boolean =
         request.recipe.isTrial && JpegGenerationRecipe.fromTrialSnapshot(request.recipe.snapshot) != null &&
