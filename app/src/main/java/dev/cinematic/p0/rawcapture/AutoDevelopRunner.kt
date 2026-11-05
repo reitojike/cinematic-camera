@@ -129,9 +129,11 @@ internal class AutoDevelopRunner(
         if (record.phase == AutoJobPhase.HELD) return result(AutoRunStatus.HELD, record)
         // A readable legacy FULL record is not corrupt inventory. Preserve its artifact/attempt
         // and any publication journal/URI, but never reconstruct success from request metadata.
-        if (record.request.quality == AutoRenderQuality.FINAL_ORIGINAL && record.observed == null &&
+        if ((record.request.quality == AutoRenderQuality.FINAL_ORIGINAL ||
+                (record.request.publishable && record.observed?.original == null)) &&
             record.phase in setOf(AutoJobPhase.RENDERED, AutoJobPhase.PUBLISHING)) {
-            return result(AutoRunStatus.HELD, journal.hold(record.revision, AutoJobReason.MISSING_OBSERVATION))
+            val reason = if (record.observed == null) AutoJobReason.MISSING_OBSERVATION else AutoJobReason.MISSING_ORIGINAL_EVIDENCE
+            return result(AutoRunStatus.HELD, journal.hold(record.revision, reason))
         }
         if (record.phase == AutoJobPhase.RETRYABLE && slot == null) return result(AutoRunStatus.RETRYABLE, record)
         if (!supports(record.request)) {
@@ -190,6 +192,8 @@ internal class AutoDevelopRunner(
                 }
             } catch (_: DngContentChanged) {
                 return result(AutoRunStatus.HELD, journal.hold(record.revision, AutoJobReason.CONTENT_CHANGED))
+            } catch (_: JpegPublicationTooLarge) {
+                return result(AutoRunStatus.HELD, journal.hold(record.revision, AutoJobReason.INVALID_OUTPUT))
             } catch (_: Exception) {
                 return result(if (owner.hasUnreleasedResources) AutoRunStatus.RESOURCES_HELD else AutoRunStatus.PUBLICATION_PENDING, journal.read())
             }
@@ -240,12 +244,17 @@ internal class AutoDevelopRunner(
         val value = receipt ?: return failed()
         val request = record.request
         if (!request.accepts(value)) return invalid()
+        if (request.publishable && value.original?.binding?.attemptId != renderId) return invalid()
         val inspection = try { backend.inspect(request, requireNotNull(record.attemptId), ::stopped) }
         catch (_: Exception) {
             return if (stopped()) interrupted() else invalid()
         }
         if (stopped()) return interrupted()
         if (backend.hasUnreleasedResources || inspection.output != value.output || inspection.fingerprint.bytes != value.output.bytes) return invalid()
+        try {
+            // Bounded metadata validation after close/inspection, before the durable success commit.
+            AutoDevelopCodec.encode(record.copy(phase = AutoJobPhase.RENDERED, outputFingerprint = inspection.fingerprint, observed = value))
+        } catch (_: AutoDevelopJournalTooLarge) { return invalid() }
         return RenderDecision(renderId, AutoJobPhase.RENDERED, AutoJobReason.NONE, inspection.fingerprint, value)
     }
 

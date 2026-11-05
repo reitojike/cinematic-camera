@@ -8,8 +8,10 @@ import java.io.IOException
 import java.security.MessageDigest
 import java.util.UUID
 
+internal class AutoDevelopJournalTooLarge : IOException("Auto-develop journal too large")
+
 internal enum class AutoJobPhase { QUEUED, RENDERING, RETRYABLE, RENDERED, PUBLISHING, PUBLISHED, HELD }
-internal enum class AutoJobReason { NONE, INTERRUPTED, RENDER_FAILED, UNSUPPORTED, SOURCE_UNAVAILABLE, SOURCE_CHANGED, INVALID_OUTPUT, PUBLICATION_UNKNOWN, CONTENT_CHANGED, MISSING_OBSERVATION }
+internal enum class AutoJobReason { NONE, INTERRUPTED, RENDER_FAILED, UNSUPPORTED, SOURCE_UNAVAILABLE, SOURCE_CHANGED, INVALID_OUTPUT, PUBLICATION_UNKNOWN, CONTENT_CHANGED, MISSING_OBSERVATION, MISSING_ORIGINAL_EVIDENCE }
 
 internal data class AutoDevelopRecord(
     val request: AutoDevelopRequest,
@@ -30,15 +32,20 @@ internal data class AutoDevelopRecord(
         require((outputFingerprint != null) == (phase in setOf(AutoJobPhase.RENDERED, AutoJobPhase.PUBLISHING, AutoJobPhase.PUBLISHED) ||
             (phase == AutoJobPhase.HELD && outputFingerprint != null)))
         require(outputFingerprint == null || attemptId != null)
-        require(observed == null || (outputFingerprint != null && request.accepts(observed) && observed.output.bytes == outputFingerprint.bytes))
+        require(observed == null || (outputFingerprint != null && observed.request == request && observed.output.bytes == outputFingerprint.bytes &&
+            (if (request.publishable && observed.original == null) true else request.accepts(observed))))
+        require(!request.publishable || observed?.original == null || observed.original.binding.attemptId == attemptId)
         require(!request.interactive || outputFingerprint == null || observed != null)
         require(request.quality != AutoRenderQuality.PRIVATE_TRIAL_1024 || phase !in setOf(AutoJobPhase.PUBLISHING, AutoJobPhase.PUBLISHED))
     }
     fun completed(): CompletedRender {
         check(request.quality != AutoRenderQuality.PRIVATE_TRIAL_1024) { "Private trial has no completed publication result" }
-        requireNotNull(outputFingerprint)
+        if (request.quality == AutoRenderQuality.FINAL_ORIGINAL) throw IOException("Legacy original has no strict completion evidence")
+        val fingerprint = requireNotNull(outputFingerprint)
         val receipt = observed ?: throw IOException("Completed render requires an observed result")
-        return request.completed(receipt.output, receipt.face, receipt.exposure)
+        val original = if (request.publishable) OriginalRenderCompletion(requireNotNull(request.originalDeclaration),
+            receipt.original ?: throw IOException("Original observations missing"), fingerprint) else null
+        return request.completed(receipt.output, receipt.face, receipt.exposure, original)
     }
 }
 
@@ -69,12 +76,14 @@ internal class AutoDevelopJournal(
     @Synchronized fun rendered(revision: Long, fingerprint: OriginalFingerprint, observed: AutoRenderReceipt? = null): AutoDevelopRecord {
         val current = current(revision)
         if (current.phase != AutoJobPhase.RENDERING) throw CaptureJournalConflict()
-        JpegOutputDescription(current.request.width, current.request.height, 1, "sRGB", fingerprint.bytes)
+        if (fingerprint.bytes !in 1..JpegOutputDescription.MAX_JPEG_BYTES) throw IOException("Invalid JPEG byte count")
+        if (!current.request.publishable) JpegOutputDescription(current.request.width, current.request.height, 1, "sRGB", fingerprint.bytes)
         return persist(current.copy(revision = next(current), phase = AutoJobPhase.RENDERED, outputFingerprint = fingerprint, observed = observed))
     }
     @Synchronized fun publishing(revision: Long): AutoDevelopRecord {
         val current = current(revision)
-        if (current.request.quality == AutoRenderQuality.PRIVATE_TRIAL_1024 || current.observed == null) throw CaptureJournalConflict()
+        if (current.request.quality in setOf(AutoRenderQuality.PRIVATE_TRIAL_1024, AutoRenderQuality.FINAL_ORIGINAL) ||
+            current.observed == null || (current.request.publishable && current.observed.original == null)) throw CaptureJournalConflict()
         return advance(revision, AutoJobPhase.RENDERED, AutoJobPhase.PUBLISHING)
     }
     @Synchronized fun published(revision: Long) = advance(revision, AutoJobPhase.PUBLISHING, AutoJobPhase.PUBLISHED)
@@ -121,11 +130,12 @@ internal class AutoDevelopJournal(
 internal object AutoDevelopCodec {
     const val MAX_BYTES = 4096
     private const val MAGIC = 0x43434144 // CCAD; independent of receipt and JPEG publication.
-    private const val VERSION = 2
+    private const val VERSION = 3
     fun encode(record: AutoDevelopRecord): ByteArray {
         val buffer = ByteArrayOutputStream()
+        val version = if (record.request.originalDeclaration != null || record.observed?.original != null) VERSION else 2
         DataOutputStream(buffer).use { out ->
-            out.writeInt(MAGIC); out.writeInt(VERSION)
+            out.writeInt(MAGIC); out.writeInt(version)
             val r = record.request
             out.writeUTF(r.captureId); out.writeLong(r.generation)
             out.writeUTF(r.source.uri); fp(out, r.source.fingerprint); out.writeInt(r.source.grant.ordinal)
@@ -142,10 +152,14 @@ internal object AutoDevelopCodec {
                 out.writeUTF(it.output.color); out.writeLong(it.output.bytes)
                 out.writeInt(it.face.ordinal); out.writeInt(it.exposure.ordinal)
             }
+            if (version >= 3) {
+                OriginalEvidenceCodec.writeDeclaration(out, r.originalDeclaration)
+                OriginalEvidenceCodec.writeObservation(out, record.observed?.original)
+            }
         }
         val payload = buffer.toByteArray()
         return (payload + MessageDigest.getInstance("SHA-256").digest(payload)).also {
-            if (it.size > MAX_BYTES) throw IOException("Auto-develop journal too large")
+            if (it.size > MAX_BYTES) throw AutoDevelopJournalTooLarge()
         }
     }
     fun decode(encoded: ByteArray): AutoDevelopRecord {
@@ -163,15 +177,22 @@ internal object AutoDevelopCodec {
                 val uri = text(input, 1024); val fingerprint = fp(input); val grant = enumValue<OriginalGrant>(input.readInt())
                 val source = SharedOriginalReference(uri, fingerprint, grant)
                 val recipe = RenderRecipeSnapshot(text(input, 64), text(input, 1024)); val renderer = text(input, 64)
-                val request = AutoDevelopRequest(id, generation, source, recipe, renderer, input.readInt(), input.readInt(),
-                    enumValue(input.readInt()), enumValue(input.readInt()), enumValue(input.readInt()), enumValue(input.readInt()))
+                val width = input.readInt(); val height = input.readInt(); val quality = enumValue<AutoRenderQuality>(input.readInt())
+                val face = enumValue<RenderedFaceState>(input.readInt()); val exposure = enumValue<RenderedExposureState>(input.readInt())
+                val profile = enumValue<AutoInputProfile>(input.readInt())
                 val revision = input.readLong(); val phase = enumValue<AutoJobPhase>(input.readInt()); val count = input.readInt()
                 val attempt = if (flag(input)) text(input, 32) else null
                 val output = if (flag(input)) fp(input) else null
                 val reason = enumValue<AutoJobReason>(input.readInt())
-                val observed = if (version >= 2 && flag(input)) AutoRenderReceipt(request,
-                    JpegOutputDescription(input.readInt(), input.readInt(), input.readInt(), text(input, 32), input.readLong()),
-                    enumValue(input.readInt()), enumValue(input.readInt())) else null
+                val outputDescription = if (version >= 2 && flag(input))
+                    JpegOutputDescription(input.readInt(), input.readInt(), input.readInt(), text(input, 32), input.readLong()) else null
+                val observedFace = if (outputDescription != null) enumValue<RenderedFaceState>(input.readInt()) else null
+                val observedExposure = if (outputDescription != null) enumValue<RenderedExposureState>(input.readInt()) else null
+                val declaration = if (version >= 3) OriginalEvidenceCodec.readDeclaration(input) else null
+                val original = if (version >= 3) OriginalEvidenceCodec.readObservation(input) else null
+                if (original != null && outputDescription == null) throw IOException("Orphan original observations")
+                val request = AutoDevelopRequest(id, generation, source, recipe, renderer, width, height, quality, face, exposure, profile, declaration)
+                val observed = outputDescription?.let { AutoRenderReceipt(request, it, requireNotNull(observedFace), requireNotNull(observedExposure), original) }
                 if (version == 1 && request.quality !in setOf(AutoRenderQuality.FINAL_ORIGINAL, AutoRenderQuality.PREVIEW)) throw IOException("Invalid legacy quality")
                 if (input.available() != 0) throw IOException("Trailing auto-develop data")
                 AutoDevelopRecord(request, revision, phase, attempt, count, output, reason, observed)

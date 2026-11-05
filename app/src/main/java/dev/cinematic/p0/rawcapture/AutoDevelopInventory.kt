@@ -41,7 +41,8 @@ internal class AutoDevelopInventory(
                 }
                 if (files.all { Files.notExists(it.toPath(), NOFOLLOW_LINKS) }) return@generationLoop
                 val request = read(capture.name, number)?.request ?: throw IOException("Unresolved auto-develop journal")
-                if (request.captureId != capture.name || request.generation != number || !request.admissible) {
+                val readableLegacy = request.quality == AutoRenderQuality.FINAL_ORIGINAL
+                if (request.captureId != capture.name || request.generation != number || (!request.admissible && !readableLegacy)) {
                     throw IOException("Foreign or unsupported auto-develop inventory")
                 }
                 requests.add(request)

@@ -55,6 +55,7 @@ internal class RecoverablePhotoPublisher(
         render.requirePublishable(supportedContracts)
         var current = journal.read()
         if (current != null && current.render != render) throw CaptureJournalConflict()
+        current?.let { render.requireFingerprint(it.fingerprint) }
         if (current?.phase == JpegPublicationPhase.UNKNOWN) return current
         if (current?.phase == JpegPublicationPhase.PUBLISHED) {
             verifyPublic(current, resources, stop) // Never recreate a later deleted/changed shared row.
@@ -67,6 +68,7 @@ internal class RecoverablePhotoPublisher(
             if (inspection.output != render.request.output || inspection.fingerprint.bytes != inspection.output.bytes) {
                 throw IOException("Completed JPEG metadata does not match the request")
             }
+            render.requireFingerprint(inspection.fingerprint)
             checkReleased(resources)
             checkContinue(stop)
             current = journal.prepare(render, inspection.fingerprint)
