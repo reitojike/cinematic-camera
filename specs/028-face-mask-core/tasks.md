@@ -14,8 +14,8 @@
 
 ## Phase 3: 検証・レビュー
 
-- [ ] T005 PC合成検証とfocused JVMテスト、利用できる単独実行枠でAndroid lint/unit/buildを行い、差分/秘密除外とSpec Kit整合を確認する（SC-003）。
-- [ ] T006 独立レビュー、Draft PR、最新head CI/canonicalとthreadを確認する。権限/環境の未実行は具体的な結果と共に引き渡す。
+- [x] T005 PC合成検証とfocused JVMテスト、利用できる単独実行枠でAndroid lint/unit/buildを行い、差分/秘密除外とSpec Kit整合を確認する（SC-003）。
+- [x] T006 独立レビュー、Draft PR、最新head CI/canonicalとthreadを確認する。権限/環境の未実行は具体的な結果と共に引き渡す。
 
 ## 依存と進め方
 
