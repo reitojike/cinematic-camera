@@ -103,3 +103,10 @@ cancelをgrid accept/finish前に確認し、input.rowsがcloseを確認して�
 全体は同じ合成DNG SHA/強度・AGP/JDK/ABI/debug flags/AVD設定をそろえたbaseline/candidateで測る。
 全体とkernelの差、host/JIT/sampling状態、測定source/APK hashを記録する。
 条件が異なる旧#166全体値をA/B結果として流用せず、画像差や資源・取消の問題、利益が乏しい場合は採用しない。
+
+kernelの再現入口は`dev.cinematic.p0.jpegrender.original.OriginalBloomFieldsBenchmarkTest`、
+`originalBloomFieldsBenchmark=true`、`bloomFieldsSize=SMALL|24MP`、新しい32桁hexの`runId`。
+`files/original-bloom-fields-<runId>.json`を同じID・success/completeと照合する。
+同candidate APK内の単独reduce3回/共有1回を各3組交互順で測り、全reduced fieldのraw-bit SHAを比較する。
+fixture生成でcacheが温まるためcold diskの比較ではない。旧mainとの速度比較は別APKの全段診断と区別する。
+全段`Original24PipelineTest`は`syntheticInputSha256/Bytes`も記録し、同じ固定fixtureであることを照合する。

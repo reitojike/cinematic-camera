@@ -26,8 +26,8 @@
 
 ## bloom fieldの共有走査（Issue #167）
 
-- [ ] 最大3本/追加payload上限と事前fallbackを備える共有grid集計を実装し、単独reduceの式を共用する。
-- [ ] field/復元行のraw-bit一致、HDR/端/倍率と走査/project回数を検証する。
-- [ ] 追加payload・取消・短い/不正raster・project/close失敗と部分成功の禁止を検証する。
+- [x] 最大3本/追加payload上限と事前fallbackを備える共有grid集計を実装し、単独reduceの式を共用する。
+- [x] field/復元行のraw-bit一致、HDR/端/倍率と走査/project回数を検証する。
+- [x] 追加payload・取消・短い/不正raster・project/close失敗と部分成功の禁止を検証する。
 - [ ] 固定条件のkernel交互測定とbaseline/candidate全段測定を行い、効果/画像/観測メモリを区別する。
 - [ ] 最終headの公開検査・lint/unit/両ABI/CI/canonical/独立レビューを確認し、採否と通常merge/main CIを記録する。

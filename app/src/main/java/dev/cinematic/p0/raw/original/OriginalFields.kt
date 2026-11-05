@@ -132,7 +132,7 @@ internal object OriginalFields {
         val elements = sizes.map { (width, height) -> width.toLong() * height * channels }
         if (!eligible || !batchAccumulatorsFit(elements)) return radii.map { blur(input, it, channels, stop, project) }
         return collect(input, sizes.map { (width, height) -> PreparedGrid(input, width, height, channels, OriginalFilter.LINEAR) },
-            channels, stop, project)
+            channels, stop, checkProjection = true, project = project)
     }
 
     /** Double payload only: coefficients/Contributor metadata remain bounded by at most three grids. */
@@ -164,18 +164,21 @@ internal object OriginalFields {
         interpolation: OriginalFilter = OriginalFilter.LINEAR,
         project: (FloatArray, FloatArray) -> Unit): OriginalField {
         validateGrid(input, width, height, channels)
-        return collect(input, listOf(PreparedGrid(input, width, height, channels, interpolation)), channels, stop, project).single()
+        // Preserve the original single-grid boundary: file rows validate source samples, and
+        // map/LinearSrgbImage consumers validate their results. Do not add a full projection scan.
+        return collect(input, listOf(PreparedGrid(input, width, height, channels, interpolation)), channels, stop,
+            checkProjection = false, project = project).single()
     }
 
     private fun collect(input: OriginalRaster, grids: List<PreparedGrid>, channels: Int, stop: () -> Boolean,
-        project: (FloatArray, FloatArray) -> Unit): List<OriginalField> {
+        checkProjection: Boolean, project: (FloatArray, FloatArray) -> Unit): List<OriginalField> {
         val projected = FloatArray(input.width * channels)
         var next = 0
         originalCheckpoint(stop)
         input.rows(stop) { y, rgb ->
             require(y == next && y < input.height && rgb.size == input.width * 3) { "Invalid original raster row" }
             project(rgb, projected)
-            require(projected.all { it.isFinite() }) { "Non-finite original field projection" }
+            if (checkProjection) require(projected.all { it.isFinite() }) { "Non-finite original field projection" }
             grids.forEach { originalCheckpoint(stop); it.accept(y, projected) }
             next++
         }

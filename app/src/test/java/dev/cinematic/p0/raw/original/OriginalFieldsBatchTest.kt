@@ -2,7 +2,11 @@ package dev.cinematic.p0.raw.original
 
 import dev.cinematic.p0.raw.FloatPlane
 import dev.cinematic.p0.raw.StageClearBlur
+import java.io.File
 import java.io.IOException
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.nio.file.Files
 import java.util.concurrent.CancellationException
 import org.junit.Assert.*
 import org.junit.Test
@@ -182,8 +186,8 @@ class OriginalFieldsBatchTest {
         }
     }
 
-    @Test fun nonFiniteInputProjectionAndProjectOutputNeverProduceFields() {
-        for (sourceNan in listOf(true, false)) for (batch in listOf(false, true)) {
+    @Test fun batchRejectsNonFiniteInputProjectionAndProjectOutputBeforeReturningFields() {
+        for (sourceNan in listOf(true, false)) {
             val source = Raster(48, 32).also { if (sourceNan) it.mode = "nan" }
             val project = projection(3)
             val invalidProject: (FloatArray, FloatArray) -> Unit = { rgb, out ->
@@ -191,12 +195,69 @@ class OriginalFieldsBatchTest {
                 if (!sourceNan) out[0] = Float.POSITIVE_INFINITY
             }
             assertThrows(IllegalArgumentException::class.java) {
-                if (batch) OriginalFields.blurMany(source, radii, 3, { false }, invalidProject)
-                else OriginalFields.blur(source, radii.first(), 3, { false }, invalidProject)
+                OriginalFields.blurMany(source, radii, 3, { false }, invalidProject)
             }
             assertEquals(1, source.walks)
             assertEquals(1, source.closes)
             assertEquals(0, source.open)
+        }
+    }
+
+    @Test fun singleGridStillRejectsNanAndShortPhysicalRasterAtTheExistingReadBoundary() {
+        for (nan in listOf(true, false)) {
+            val root = Files.createTempDirectory("single-field-source-failure").toFile()
+            val file = File(root, "source.rgb")
+            val bytes = ByteBuffer.allocate(4 * 4 * 3 * Float.SIZE_BYTES).order(ByteOrder.LITTLE_ENDIAN)
+                .apply { repeat(4 * 4 * 3) { putFloat(if (nan && it == 0) Float.NaN else .5f) } }.array()
+            file.writeBytes(if (nan) bytes else bytes.copyOf(bytes.size - Float.SIZE_BYTES))
+            val source = OriginalRasterFile(file, 4, 4)
+            var projects = 0
+            try {
+                assertThrows(IOException::class.java) {
+                    OriginalFields.reduce(source, 2, 2, 3, { false }) { rgb, out -> projects++; rgb.copyInto(out) }
+                }
+                assertEquals(0, projects)
+                assertFalse(source.hasPendingOwners)
+            } finally {
+                source.closePending()
+                assertTrue(file.delete())
+                assertTrue(root.delete())
+            }
+        }
+    }
+
+    @Test fun singleGridInvalidProjectionIsRejectedByLinearImageConsumerWithoutChangingProducerBoundary() {
+        val source = Raster(48, 32)
+        var projects = 0
+        val field = OriginalFields.reduce(source, 2, 2, 3, { false }) { _, out ->
+            projects++; out.fill(Float.NaN)
+        }
+        // Single-grid fields were never a completion proof. Keep their original validation boundary
+        // at the image consumer rather than introducing an extra full input scan in the producer.
+        assertEquals(source.height, projects)
+        assertEquals(1, source.closes)
+        assertThrows(IllegalArgumentException::class.java) { field.reducedRgb() }
+    }
+
+    @Test fun singleGridInvalidProjectionCannotBecomeACompletedMappedRaster() {
+        val root = Files.createTempDirectory("single-field-consumer-failure").toFile()
+        val work = OriginalRasterWorkspace(File(root, "attempt"))
+        val source = Raster(48, 32)
+        try {
+            val field = OriginalFields.reduce(source, 2, 2, 1, { false }) { _, out -> out.fill(Float.POSITIVE_INFINITY) }
+            val fieldRow = FloatArray(source.width)
+            assertThrows(IllegalArgumentException::class.java) {
+                work.map(source, { false }) { y, rgb ->
+                    field.row(y, fieldRow)
+                    FloatArray(rgb.size) { fieldRow[it / 3] }
+                }
+            }
+            assertFalse(work.hasPendingOwners)
+            assertEquals(2, source.walks)
+            assertEquals(2, source.closes)
+        } finally {
+            work.disposeConfirmed()
+            assertTrue(root.delete())
         }
     }
 
