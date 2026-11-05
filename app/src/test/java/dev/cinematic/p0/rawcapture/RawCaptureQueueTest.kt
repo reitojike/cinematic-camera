@@ -15,6 +15,22 @@ class RawCaptureQueueTest {
     @get:Rule val temporary = TemporaryFolder()
     private val original = "synthetic camera bytes".toByteArray()
 
+    @Test fun explicitIntentTravelsThroughPreparationReceiptsAndSharedOriginalHandoff() {
+        val f = Fixture()
+        val intent = CaptureDevelopIntent(RenderRecipeSnapshot("synthetic-policy-v1", "fixed"), "synthetic-renderer-v1")
+        val ticket = f.queue.prepare("intent", setOf(RawOutput.DNG), f.observer, intent)
+        f.prepareIo.runAll(); f.main.runAll()
+        assertEquals(intent, ticket.session!!.receipt()!!.developIntent)
+        f.streams().getValue(RawOutput.DNG).write(original)
+        f.queue.received(ticket, RawOutput.DNG)
+        f.pump()
+        assertEquals(DngPublicationPhase.SHARED_ONLY, (f.notices.last() as RawCaptureNotice.Shared).record.phase)
+        assertEquals(intent, ticket.session!!.receipt()!!.developIntent)
+        assertEquals(1, f.rows.inserts)
+        assertFalse(f.rawFile("intent").exists())
+        assertEquals(CaptureReceiptPhase.FILES_RECEIVED, ticket.session!!.receipt()!!.phase)
+    }
+
     @Test fun captureReceiptsAndCameraReservationBothPrecedeSharedIo() {
         val f = Fixture()
         val camera = f.queue.newCameraOwner()

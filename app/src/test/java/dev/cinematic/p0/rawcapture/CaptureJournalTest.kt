@@ -155,7 +155,7 @@ class CaptureJournalTest {
         CaptureJournal(id, file).create(pair)
         val good = file.contents!!.copyOf()
         val badChecksum = good.copyOf().also { it[10] = (it[10].toInt() xor 1).toByte() }
-        val badVersion = withDigest(good.dropLast(32).toByteArray().also { it[7] = 3 })
+        val badVersion = withDigest(good.dropLast(32).toByteArray().also { it[7] = 4 })
         val trailing = withDigest(good.dropLast(32).toByteArray() + byteArrayOf(0))
         for (bad in listOf(badChecksum, badVersion, trailing, byteArrayOf(0), ByteArray(4097))) {
             file.contents = bad
@@ -246,7 +246,8 @@ class CaptureJournalTest {
         assertEquals(8L, updated.revision)
         assertEquals(CaptureReceiptPhase.FILES_RECEIVED, updated.phase)
         assertEquals(fingerprint, CaptureJournal(id, file).read()!!.originalFingerprint)
-        assertEquals(2, ByteBuffer.wrap(file.contents!!).getInt(4))
+        assertEquals(3, ByteBuffer.wrap(file.contents!!).getInt(4))
+        assertNull(updated.developIntent)
     }
 
     @Test fun originalFingerprintCannotBeReplacedAndSurvivesInterruptAndLateJpeg() {
@@ -279,7 +280,7 @@ class CaptureJournalTest {
         journal.recordOriginalFingerprint(1, OriginalFingerprint(3, "a".repeat(64)))
         val payload = file.contents!!.dropLast(32).toByteArray()
         val invalid = listOf(
-            payload.copyOf().also { it[it.size - 33] = 2 },
+            payload.copyOf().also { it[35 + id.length] = 2 }, // Frozen fingerprint flag offset; v3 appends intent.
             payload.copyOf(payload.size - 1),
             payload.copyOf().also { ByteBuffer.wrap(it).putLong(19 + id.length, -1) },
         )

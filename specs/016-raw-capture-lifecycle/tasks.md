@@ -128,3 +128,11 @@ production controls登録・photoroll接続・実観測・Pixel実機は上記�
 - [x] T038 [US2] 実一時directoryとfault台帳でsidecar、未知/破損新世代、ID/世代不一致、列挙失敗、初期化失敗後の投入拒否、manual/privateの非自動実行、中断retryと成功artifact保持を検証する（SC-001/002/003）。
 
 完成renderer/固定recipe生成・撮影からの新規要求投入・Pixel性能/画質は今回の復旧部品に含めず、T017/020/021/034全体を完了にしない。
+
+## Phase 12: 撮影時の自動現像意図
+
+- [x] T039 [US2] 既存`CaptureReceipt`版3へ固定recipe/renderer契約/希望FINAL品質を任意保存し、旧版を意図なしとして読む。検証結果や成功出力を捏造せず4KiB/checksum/未知版保留を維持する（T016先行部分、FR-006/009）。
+- [x] T040 [US2] 既存queue/session/storeのprepareで意図を受け渡し、台帳commit/readbackを出力openより先に完了する。受領・fingerprint・中断・復旧で不変保持し、既定入口は意図なしを維持する（FR-001/002/006/008）。
+- [x] T041 [US2] 旧版opt-out、意図不変、完全/部分受領、中断/late/restart、create commit前後/readback喪失と出力open順序を人工ファイル・fault台帳で検証する（SC-001/002/003）。
+
+撮影からの自動submit、実FINAL provider/全解像度メモリ・画質/Pixel性能はこの意図保存の完了に含めない。

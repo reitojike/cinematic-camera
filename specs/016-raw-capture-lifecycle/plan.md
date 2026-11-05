@@ -413,3 +413,14 @@ inventory全体を保留する。読み取れた旧世代だけを先に登録�
 復旧だけで実行/公開しない。完成要求の成功artifact/公開台帳は既存ownerで照合し、撮影予約・録画・
 foreground/資源の未知/停止条件を維持する。台帳のない既存DNGから新しい要求を推測生成しない。
 完成rendererは未登録のままなので、この復旧接続を完成JPEG保存や自動現像の有効化とは扱わない。
+
+## 撮影時の自動現像意図
+
+`CaptureReceipt`の版3へ任意の`CaptureDevelopIntent`を保持する。固定recipe、renderer契約、希望する
+FINAL_ORIGINAL品質だけを撮影前に記録し、検証済みprofile・顔・EV・寸法やrenderer成功receiptを含めない。
+既存の台帳のcommit/readback後にだけ出力streamを開き、受領・原本fingerprint・中断・復旧の全更新で意図を保持する。
+既存版1/2は意図なしとして読み、現在の設定から補完しない。4KiB上限とchecksum、未知版/破損の保留を維持する。
+
+現在の撮影入口は意図なしが既定であり、自動現像を有効にしない。後続の投入には、明示意図、正常な全形式受領、
+SHARED_ONLYと同原本fingerprint、実FINAL providerの成立が必要となる。希望品質を成功品質へ変換せず、
+未成立のproviderへ実行要求を作らない。新しい台帳・queue・UI・画像処理を追加しない。

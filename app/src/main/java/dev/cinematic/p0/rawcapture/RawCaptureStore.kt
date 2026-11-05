@@ -41,14 +41,14 @@ internal class RawCaptureStore(
 
     /** A failed creation also reserves the directory; never reuse even an empty orphan. */
     @Synchronized
-    fun create(expectedFormats: Set<RawOutput>): CaptureReceipt {
+    fun create(expectedFormats: Set<RawOutput>, developIntent: CaptureDevelopIntent? = null): CaptureReceipt {
         require(RawOutput.DNG in expectedFormats) { "RAW capture requires DNG" }
         checkedDirectory()
         if (journal.read() != null) throw CaptureJournalConflict()
         Files.createDirectories(requireNotNull(directory.parentFile).toPath())
         checkedDirectory()
         Files.createDirectory(directory.toPath())
-        return journal.create(expectedFormats).also { createdHere = true }
+        return journal.create(expectedFormats, developIntent).also { createdHere = true }
     }
 
     /** Existing receipt sizes are checked, but same-size changes/DNG validity are not inferred. */

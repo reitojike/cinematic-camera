@@ -58,7 +58,7 @@ internal object StageClearProtections {
             lab[2] = (newChroma * sin(radians)).toFloat()
             StageClearColor.toRgb(lab, out, p * 3)
         }
-        return LinearSrgbImage(image.width, image.height, out)
+        return LinearSrgbImage.takeOwnership(image.width, image.height, out)
     }
 
     /** NumPy percentile(..., 90), method=linear, after encoding the float32 luminance. */
@@ -93,7 +93,7 @@ internal object StageClearProtections {
             val factor = decode(rolled) / y
             repeat(3) { c -> out[p * 3 + c] = (image[p * 3 + c] * factor).toFloat() }
         }
-        return LinearSrgbImage(image.width, image.height, out)
+        return LinearSrgbImage.takeOwnership(image.width, image.height, out)
     }
 
     internal fun encode(linear: Double): Double {
