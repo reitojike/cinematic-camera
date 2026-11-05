@@ -102,7 +102,7 @@ class AutoDevelopInventoryTest {
     }
 
     @Test fun trustedRootAliasIsAllowedButChildRedirectsAreRejected() {
-        assumeFalse(System.getProperty("os.name").startsWith("Windows")) // Windows symlink creation needs host privilege.
+        assumeFalse(System.getProperty("os.name").orEmpty().startsWith("Windows")) // Windows symlink creation needs host privilege.
         val root = temporary.newFolder()
         val record = AutoDevelopRecord(request())
         val file = write(root, record)

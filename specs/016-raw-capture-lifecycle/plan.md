@@ -402,7 +402,8 @@ ManualDevelopControlは未claim deliveryを1つだけ保持し、取消でclose�
 
 ## 起動時の現像要求復旧
 
-既存process queueの最初のIO作業で、`raw-captures/<id>/renders/<generation>/auto-develop.bin`を全列挙する。
+共通process queueが初めて必要になった際の最初のIO作業で、`raw-captures/<id>/renders/<generation>/auto-develop.bin`を全列挙する。
+現在は手動private入口からのlazy初期化であり、Activity起動そのものや撮影callbackからの新規自動要求投入は追加しない。
 AtomicFileのsidecarも存在と扱い、未知/破損した台帳、path/世代/要求IDの不一致、redirect、列挙失敗は
 inventory全体を保留する。読み取れた旧世代だけを先に登録しない。読み取りはUI/capture threadで行わず、
 同じserial IO ownerで復旧を先に並べ、後着のmanual/private prepareとの順序を固定する。
