@@ -59,7 +59,7 @@ internal class AutoDevelopRunner(
     private var closing = false
     private var cancelSent = false
     private var cancelCalls = 0
-    private var receipt: AutoRenderReceipt? = null
+    private var output: AutoRenderOutput? = null
     private var renderPending = false
     private var renderFailure: Throwable? = null
     private var renderAttemptId: String? = null
@@ -129,21 +129,29 @@ internal class AutoDevelopRunner(
         if (record.phase == AutoJobPhase.HELD) return result(AutoRunStatus.HELD, record)
         // A readable legacy FULL record is not corrupt inventory. Preserve its artifact/attempt
         // and any publication journal/URI, but never reconstruct success from request metadata.
-        if (record.request.quality == AutoRenderQuality.FINAL_ORIGINAL && record.observed == null &&
+        if ((record.request.quality == AutoRenderQuality.FINAL_ORIGINAL ||
+                (record.request.publishable && record.observed?.original == null)) &&
             record.phase in setOf(AutoJobPhase.RENDERED, AutoJobPhase.PUBLISHING)) {
-            return result(AutoRunStatus.HELD, journal.hold(record.revision, AutoJobReason.MISSING_OBSERVATION))
+            val reason = if (record.observed == null) AutoJobReason.MISSING_OBSERVATION else AutoJobReason.MISSING_ORIGINAL_EVIDENCE
+            return result(AutoRunStatus.HELD, journal.hold(record.revision, reason))
         }
         if (record.phase == AutoJobPhase.RETRYABLE && slot == null) return result(AutoRunStatus.RETRYABLE, record)
         if (!supports(record.request)) {
             if (slot != null) throw IOException("Live renderer contract changed")
             return result(AutoRunStatus.HELD, journal.hold(record.revision, AutoJobReason.UNSUPPORTED))
         }
+        if (record.phase == AutoJobPhase.QUEUED) {
+            try { AutoDevelopCodec.requireAttemptCapacity(record) }
+            catch (_: AutoDevelopJournalTooLarge) {
+                return result(AutoRunStatus.HELD, journal.hold(record.revision, AutoJobReason.INVALID_OUTPUT))
+            }
+        }
         if (slot == null) slot = admit() ?: return result(AutoRunStatus.BLOCKED, record)
         if (renderPending && record.phase == AutoJobPhase.RENDERING) {
             record = finishRender(record)
         } else if (record.phase == AutoJobPhase.QUEUED) {
             // An explicit retry starts a different attempt, including if the next intent commit fails.
-            receipt = null; renderFailure = null; renderPending = false; renderDecision = null; renderAttemptId = null
+            output = null; renderFailure = null; renderPending = false; renderDecision = null; renderAttemptId = null
             try { backend.verifyOriginal(record.request, ::stopped) }
             catch (changed: DngContentChanged) { return result(AutoRunStatus.HELD, journal.hold(record.revision, AutoJobReason.SOURCE_CHANGED)) }
             catch (failure: Exception) {
@@ -158,7 +166,7 @@ internal class AutoDevelopRunner(
             renderPending = true
             try {
                 if (stopped()) throw CancellationException("Auto-develop attempt superseded before render")
-                receipt = requireNotNull(attempt).render(::stopped)
+                output = requireNotNull(attempt).render(::stopped)
             }
             catch (failure: Throwable) { renderFailure = failure }
             if (!closeRender()) return result(AutoRunStatus.RESOURCES_HELD, record)
@@ -190,6 +198,8 @@ internal class AutoDevelopRunner(
                 }
             } catch (_: DngContentChanged) {
                 return result(AutoRunStatus.HELD, journal.hold(record.revision, AutoJobReason.CONTENT_CHANGED))
+            } catch (_: JpegPublicationTooLarge) {
+                return result(AutoRunStatus.HELD, journal.hold(record.revision, AutoJobReason.INVALID_OUTPUT))
             } catch (_: Exception) {
                 return result(if (owner.hasUnreleasedResources) AutoRunStatus.RESOURCES_HELD else AutoRunStatus.PUBLICATION_PENDING, journal.read())
             }
@@ -237,15 +247,22 @@ internal class AutoDevelopRunner(
         }
         if (failure is AutoRenderUnsupported) return RenderDecision(renderId, AutoJobPhase.HELD, AutoJobReason.UNSUPPORTED)
         if (failure != null) return failed()
-        val value = receipt ?: return failed()
+        val produced = output ?: return failed()
+        val value = produced.receipt
         val request = record.request
         if (!request.accepts(value)) return invalid()
+        if (request.publishable && value.original?.binding?.attemptId != renderId) return invalid()
         val inspection = try { backend.inspect(request, requireNotNull(record.attemptId), ::stopped) }
         catch (_: Exception) {
             return if (stopped()) interrupted() else invalid()
         }
         if (stopped()) return interrupted()
-        if (backend.hasUnreleasedResources || inspection.output != value.output || inspection.fingerprint.bytes != value.output.bytes) return invalid()
+        if (backend.hasUnreleasedResources || inspection.output != value.output || inspection.fingerprint.bytes != value.output.bytes ||
+            inspection.fingerprint != produced.fingerprint) return invalid()
+        try {
+            // Bounded metadata validation after close/inspection, before the durable success commit.
+            AutoDevelopCodec.encode(record.copy(phase = AutoJobPhase.RENDERED, outputFingerprint = inspection.fingerprint, observed = value))
+        } catch (_: AutoDevelopJournalTooLarge) { return invalid() }
         return RenderDecision(renderId, AutoJobPhase.RENDERED, AutoJobReason.NONE, inspection.fingerprint, value)
     }
 

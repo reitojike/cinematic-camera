@@ -11,7 +11,7 @@ class AutoDevelopQueueTest {
     private fun request(id: String = "capture", generation: Long = 1) = AutoDevelopRequest(id, generation,
         SharedOriginalReference("content://test/original/1", OriginalFingerprint(3, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"), OriginalGrant.APP_OWNED),
         RenderRecipeSnapshot("test-v1", "fixed"), "test-final-v1", 16, 12, AutoRenderQuality.FINAL_ORIGINAL,
-        RenderedFaceState.VERIFIED_NONE, RenderedExposureState.SUPPORTED, AutoInputProfile.SUPPORTED)
+        RenderedFaceState.VERIFIED_NONE, RenderedExposureState.SUPPORTED, AutoInputProfile.SUPPORTED).forStrictOriginal()
     private val allowed = AutoDevelopConditions(true, false, false, false, true, true, true, true)
 
     @Test fun metadataSubmissionIsAsynchronousAndJobsRunOneAtATimeAfterAdmission() {
@@ -199,8 +199,7 @@ class AutoDevelopQueueTest {
         val request = request()
         val journal = f.journal(request)
         journal.prepare(request); journal.start(0); journal.rendered(1, request.source.fingerprint,
-            AutoRenderReceipt(request, JpegOutputDescription(16, 12, 1, "sRGB", 3),
-                RenderedFaceState.VERIFIED_NONE, RenderedExposureState.SUPPORTED))
+            request.syntheticReceipt(journal.read()!!.attemptId!!, 16, 12, 3))
         val before = journal.read()!!
         journal.publishing(before.revision)
         f.queue.restore { listOf(request) }
@@ -218,7 +217,7 @@ class AutoDevelopQueueTest {
 
     @Test fun readableMissingObservationDoesNotInvalidateOtherJobsInTheInventory() {
         val f = Fixture()
-        val legacy = request("legacy")
+        val legacy = request("legacy").forLegacyOriginal(16, 12)
         val valid = request("valid")
         f.journal(legacy).prepare(legacy); f.journal(legacy).start(0)
         val artifact = f.journal(legacy).rendered(1, legacy.source.fingerprint)
@@ -267,12 +266,12 @@ class AutoDevelopQueueTest {
             override fun supports(request: AutoDevelopRequest) = true
             override fun verifyOriginal(request: AutoDevelopRequest, shouldStop: () -> Boolean) {}
             override fun createAttempt(request: AutoDevelopRequest, attemptId: String) = object : AutoRenderAttempt {
-                override fun render(shouldStop: () -> Boolean): AutoRenderReceipt {
+                override fun render(shouldStop: () -> Boolean): AutoRenderOutput {
                     starts.incrementAndGet()
                     onRender(request)
                     if (shouldStop()) throw java.util.concurrent.CancellationException("superseded")
                     if (failRender) throw IOException("synthetic render failure")
-                    return AutoRenderReceipt(request, JpegOutputDescription(16, 12, 1, "sRGB", 3))
+                    return AutoRenderOutput(request.syntheticReceipt(attemptId, 16, 12, 3), request.source.fingerprint)
                 }
                 override fun close() { if (failClose) throw IOException("synthetic close failure") }
             }

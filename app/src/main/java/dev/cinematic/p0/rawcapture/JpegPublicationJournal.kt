@@ -8,6 +8,8 @@ import java.io.IOException
 import java.security.MessageDigest
 import java.util.UUID
 
+internal class JpegPublicationTooLarge : IOException("JPEG journal too large")
+
 internal enum class JpegPublicationPhase { PREPARED, INSERTING, ROW_RECORDED, COPYING, BYTES_COMPLETE, PUBLISHING, PUBLISHED, UNKNOWN }
 
 internal data class JpegPublicationTarget(val captureId: String, val generation: Long, val token: String) {
@@ -55,11 +57,14 @@ internal class JpegPublicationJournal(
 
     @Synchronized fun prepare(render: CompletedRender, fingerprint: OriginalFingerprint): JpegPublicationRecord {
         if (render.request.captureId != captureId || render.request.generation != generation) throw CaptureJournalConflict()
+        render.requireFingerprint(fingerprint)
         read()?.let {
             if (it.render != render || it.fingerprint != fingerprint) throw CaptureJournalConflict()
             return it
         }
-        return persist(JpegPublicationRecord(JpegPublicationTarget(captureId, generation, tokenFactory()), render, fingerprint))
+        val prepared = JpegPublicationRecord(JpegPublicationTarget(captureId, generation, tokenFactory()), render, fingerprint)
+        JpegPublicationCodec.requireRowCapacity(prepared)
+        return persist(prepared)
     }
 
     @Synchronized fun recordRow(revision: Long, uri: String): JpegPublicationRecord {
@@ -106,12 +111,13 @@ internal class JpegPublicationJournal(
 internal object JpegPublicationCodec {
     const val MAX_BYTES = 4096
     private const val MAGIC = 0x43434a50 // CCJP; separate from capture and ORIGINAL journals.
-    private const val VERSION = 1
+    private const val VERSION = 2
 
     fun encode(record: JpegPublicationRecord): ByteArray {
         val buffer = ByteArrayOutputStream()
+        val version = if (record.render.original != null || record.render.kind == RenderedResultKind.COMPLETE_ORIGINAL) VERSION else 1
         DataOutputStream(buffer).use { out ->
-            out.writeInt(MAGIC); out.writeInt(VERSION)
+            out.writeInt(MAGIC); out.writeInt(version)
             out.writeUTF(record.target.captureId); out.writeLong(record.target.generation); out.writeUTF(record.target.token)
             out.writeLong(record.revision); out.writeInt(record.phase.ordinal)
             out.writeBoolean(record.uri != null); record.uri?.let(out::writeUTF)
@@ -124,11 +130,18 @@ internal object JpegPublicationCodec {
             out.writeUTF(request.output.color); out.writeLong(request.output.bytes)
             out.writeUTF(render.rendererContract); out.writeInt(render.kind.ordinal); out.writeInt(render.face.ordinal); out.writeInt(render.exposure.ordinal)
             fingerprint(out, record.fingerprint)
+            if (version >= 2) OriginalEvidenceCodec.writeCompletion(out, render.original)
         }
         val payload = buffer.toByteArray()
         val encoded = payload + MessageDigest.getInstance("SHA-256").digest(payload)
-        if (encoded.size > MAX_BYTES) throw IOException("JPEG journal too large")
+        if (encoded.size > MAX_BYTES) throw JpegPublicationTooLarge()
         return encoded
+    }
+
+    /** Reserve the bounded ASCII MediaStore URI before inserting a row; every other field is fixed. */
+    fun requireRowCapacity(prepared: JpegPublicationRecord) {
+        val maxUriBytes = "content://media/external_primary/images/media/".length + Long.MAX_VALUE.toString().length
+        if (encode(prepared).size + 2 + maxUriBytes > MAX_BYTES) throw JpegPublicationTooLarge()
     }
 
     fun decode(encoded: ByteArray): JpegPublicationRecord {
@@ -139,7 +152,9 @@ internal object JpegPublicationCodec {
         }
         try {
             return DataInputStream(ByteArrayInputStream(payload)).use { input ->
-                if (input.readInt() != MAGIC || input.readInt() != VERSION) throw IOException("Unknown JPEG journal schema")
+                if (input.readInt() != MAGIC) throw IOException("Unknown JPEG journal schema")
+                val version = input.readInt()
+                if (version !in 1..VERSION) throw IOException("Unknown JPEG journal schema")
                 val target = JpegPublicationTarget(text(input, 64), input.readLong(), text(input, 32))
                 val revision = input.readLong()
                 val phase = enumValue<JpegPublicationPhase>(input.readInt())
@@ -150,8 +165,12 @@ internal object JpegPublicationCodec {
                 val recipe = RenderRecipeSnapshot(text(input, 64), text(input, 1024))
                 val output = JpegOutputDescription(input.readInt(), input.readInt(), input.readInt(), text(input, 32), input.readLong())
                 val request = RenderedJpegRequest(target.captureId, target.generation, source, recipe, output)
-                val render = CompletedRender(request, text(input, 64), enumValue(input.readInt()), enumValue(input.readInt()), enumValue(input.readInt()))
+                val renderer = text(input, 64); val kind = enumValue<RenderedResultKind>(input.readInt())
+                val face = enumValue<RenderedFaceState>(input.readInt()); val exposure = enumValue<RenderedExposureState>(input.readInt())
                 val fingerprint = fingerprint(input)
+                val original = if (version >= 2) OriginalEvidenceCodec.readCompletion(input) else null
+                if (version == 1 && kind == RenderedResultKind.COMPLETE_ORIGINAL) throw IOException("Invalid legacy JPEG result kind")
+                val render = CompletedRender(request, renderer, kind, face, exposure, original)
                 if (input.available() != 0) throw IOException("Trailing JPEG journal data")
                 JpegPublicationRecord(target, render, fingerprint, revision, phase, uri)
             }

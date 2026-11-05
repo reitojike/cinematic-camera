@@ -5,10 +5,10 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.io.IOException
 
-internal enum class AutoRenderQuality { FINAL_ORIGINAL, PREVIEW, MANUAL_BOUNDED_1024_PRELIMINARY, PRIVATE_TRIAL_1024 }
+internal enum class AutoRenderQuality { FINAL_ORIGINAL, PREVIEW, MANUAL_BOUNDED_1024_PRELIMINARY, PRIVATE_TRIAL_1024, FINAL_ORIGINAL_STRICT }
 internal enum class AutoInputProfile { SUPPORTED, UNKNOWN }
 
-/** FINAL dimensions are exact; explicitly bounded manual dimensions are upper bounds, never original size. */
+/** Legacy FINAL has fixed dimensions; strict original uses 0/0 = not yet observed, never a fake size. */
 internal data class AutoDevelopRequest(
     val captureId: String,
     val generation: Long,
@@ -21,15 +21,22 @@ internal data class AutoDevelopRequest(
     val face: RenderedFaceState,
     val exposure: RenderedExposureState,
     val profile: AutoInputProfile,
+    val originalDeclaration: OriginalRenderDeclaration? = null,
 ) {
     init {
         requireCaptureId(captureId)
         require(generation > 0 && rendererContract.matches(Regex("[A-Za-z0-9_.-]{1,64}")))
-        JpegOutputDescription(width, height, 1, "sRGB", 1) // Shared bounded dimension contract, not an output receipt.
+        if (quality == AutoRenderQuality.FINAL_ORIGINAL_STRICT) {
+            require(originalDeclaration != null && width == 0 && height == 0)
+            require(face == RenderedFaceState.NOT_RUN && exposure == RenderedExposureState.UNKNOWN && profile == AutoInputProfile.UNKNOWN)
+        } else {
+            require(originalDeclaration == null)
+            JpegOutputDescription(width, height, 1, "sRGB", 1)
+        }
     }
-    val publishable get() = quality == AutoRenderQuality.FINAL_ORIGINAL && profile == AutoInputProfile.SUPPORTED &&
-        face in setOf(RenderedFaceState.VERIFIED_NONE, RenderedFaceState.VERIFIED_FACES) && exposure == RenderedExposureState.SUPPORTED
-    val contract get() = RendererPublicationContract(rendererContract, recipe.schema)
+    /** Admits an attempt, not a completed result. Legacy FINAL is readable but cannot be enrolled. */
+    val publishable get() = quality == AutoRenderQuality.FINAL_ORIGINAL_STRICT
+    val contract get() = RendererPublicationContract(rendererContract, recipe.schema, originalDeclaration)
     val boundedManual get() = quality == AutoRenderQuality.MANUAL_BOUNDED_1024_PRELIMINARY &&
         rendererContract == "stage-clear-bounded-jpeg-v1" && recipe.schema == "stage-clear-bounded-jpeg-v1" &&
         width == 1024 && height == 1024 && profile == AutoInputProfile.UNKNOWN &&
@@ -40,27 +47,44 @@ internal data class AutoDevelopRequest(
         face == RenderedFaceState.NOT_RUN && exposure == RenderedExposureState.DIAGNOSTIC
     val interactive get() = boundedManual || boundedTrial
     val admissible get() = publishable || interactive
-    fun accepts(receipt: AutoRenderReceipt): Boolean = receipt.request == this && admissible &&
-        receipt.output.orientation == 1 && receipt.output.color == "sRGB" &&
+    fun accepts(receipt: AutoRenderReceipt): Boolean {
+        if (receipt.request != this || receipt.output.orientation != 1 || receipt.output.color != "sRGB") return false
+        if (publishable) return receipt.original?.matches(requireNotNull(originalDeclaration),
+            RenderedJpegRequest(captureId, generation, source, recipe, receipt.output), rendererContract, receipt.face, receipt.exposure) == true
+        // Validate old records for safe reading only; admissible excludes this legacy quality.
+        if (quality == AutoRenderQuality.FINAL_ORIGINAL) return profile == AutoInputProfile.SUPPORTED &&
+            face in setOf(RenderedFaceState.VERIFIED_NONE, RenderedFaceState.VERIFIED_FACES) && exposure == RenderedExposureState.SUPPORTED &&
+            receipt.original == null && receipt.output.width == width && receipt.output.height == height &&
+            receipt.face == face && receipt.exposure == exposure
+        return admissible && receipt.original == null &&
         (if (boundedTrial) receipt.face == RenderedFaceState.NOT_RUN && receipt.exposure == RenderedExposureState.DIAGNOSTIC
         else receipt.face in setOf(RenderedFaceState.VERIFIED_NONE, RenderedFaceState.VERIFIED_FACES) &&
             receipt.exposure == RenderedExposureState.SUPPORTED) &&
-        (if (interactive) receipt.output.width <= width && receipt.output.height <= height &&
-            receipt.output.bytes <= 8L * 1024 * 1024 else receipt.output.width == width && receipt.output.height == height &&
-            receipt.face == face && receipt.exposure == exposure)
+        receipt.output.width <= width && receipt.output.height <= height && receipt.output.bytes <= 8L * 1024 * 1024
+    }
     fun completed(output: JpegOutputDescription, observedFace: RenderedFaceState = face,
-        observedExposure: RenderedExposureState = exposure): CompletedRender {
+        observedExposure: RenderedExposureState = exposure, original: OriginalRenderCompletion? = null): CompletedRender {
         check(quality != AutoRenderQuality.PRIVATE_TRIAL_1024) { "Private trial cannot become CompletedRender" }
+        if (quality == AutoRenderQuality.FINAL_ORIGINAL) throw IOException("Legacy original has no strict completion evidence")
+        val request = RenderedJpegRequest(captureId, generation, source, recipe, output)
+        if (publishable && (original?.declaration != originalDeclaration ||
+            original?.matches(request, rendererContract, observedFace, observedExposure) != true)) throw IOException("Original completion evidence missing or invalid")
+        if (!publishable && original != null) throw IOException("Original evidence cannot upgrade an interactive result")
         return CompletedRender(
-        RenderedJpegRequest(captureId, generation, source, recipe, output), rendererContract,
-        RenderedResultKind.COMPLETE_STAGE_CLEAR, observedFace, observedExposure,
+        request, rendererContract,
+        if (publishable) RenderedResultKind.COMPLETE_ORIGINAL else RenderedResultKind.COMPLETE_STAGE_CLEAR, observedFace, observedExposure, original,
         )
     }
 }
 
 /** Success is only a claim until the owner closes and the independent JPEG inspector agrees. */
 internal data class AutoRenderReceipt(val request: AutoDevelopRequest, val output: JpegOutputDescription,
-    val face: RenderedFaceState = request.face, val exposure: RenderedExposureState = request.exposure)
+    val face: RenderedFaceState = request.face, val exposure: RenderedExposureState = request.exposure,
+    val original: OriginalRenderObservation? = null)
+
+/** Transient producer result. The owner must independently inspect the same output after actual close.
+ * Only their matching fingerprint is committed in the existing journal; this is not completion proof. */
+internal data class AutoRenderOutput(val receipt: AutoRenderReceipt, val fingerprint: OriginalFingerprint)
 internal class AutoRenderUnsupported : IOException("Renderer cannot satisfy this fixed request")
 
 /**
@@ -70,7 +94,7 @@ internal class AutoRenderUnsupported : IOException("Renderer cannot satisfy this
  * close returning is resource acknowledgement, not cancellation. Never report PREVIEW as FINAL.
  */
 internal interface AutoRenderAttempt : Closeable {
-    fun render(shouldStop: () -> Boolean): AutoRenderReceipt
+    fun render(shouldStop: () -> Boolean): AutoRenderOutput
     /** Optional native CancellationSignal bridge. Thread-safe/idempotent; never close or publish here. */
     fun requestStop() {}
 }

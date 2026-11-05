@@ -223,7 +223,7 @@ class RenderedJpegPublicationTest {
         assertThrows(IOException::class.java) { f.publisher().advance() }
         f.storage.bytes = encoded
         val unknown = encoded.copyOfRange(0, encoded.size - 32)
-        java.nio.ByteBuffer.wrap(unknown).putInt(4, 2) // A checksummed but unsupported future version.
+        java.nio.ByteBuffer.wrap(unknown).putInt(4, 3) // A checksummed but unsupported future version.
         f.storage.bytes = unknown + MessageDigest.getInstance("SHA-256").digest(unknown)
         assertThrows(IOException::class.java) { f.journal().read() }
         assertThrows(IOException::class.java) { f.publisher().advance() }
@@ -245,7 +245,42 @@ class RenderedJpegPublicationTest {
         assertThrows(CaptureJournalConflict::class.java) { f.journal().prepare(render, fingerprint("different".toByteArray())) }
     }
 
-    private inner class Fixture {
+    @Test fun strictEvidenceAndSameRowSurviveEveryCommitBoundaryAndAcknowledgementLoss() {
+        for (phase in JpegPublicationPhase.entries.filter { it != JpegPublicationPhase.UNKNOWN })
+        for (mode in listOf("before", "after", "readback")) {
+            val f = Fixture(strict = true)
+            f.storage.faultPhase = phase; f.storage.fault = mode
+            assertThrows(IOException::class.java) { f.publisher().advance() }
+            val knownUri = f.rows.row?.uri
+            f.storage.fault = "none"; f.storage.failRead = false
+            val restored = f.publisher().advance()
+            val unknownInsert = phase == JpegPublicationPhase.INSERTING && mode != "before"
+            assertEquals(if (unknownInsert) JpegPublicationPhase.UNKNOWN else JpegPublicationPhase.PUBLISHED, restored.phase)
+            assertEquals(f.completion.original, restored.render.original)
+            assertEquals(fingerprint(jpeg), restored.fingerprint)
+            if (knownUri != null) assertEquals(knownUri, restored.uri)
+            assertEquals(if (unknownInsert) 0 else 1, f.rows.inserts)
+            assertArrayEquals(original, f.originalBytes)
+            assertEquals(restored, f.publisher().advance())
+        }
+    }
+
+    @Test fun strictProofMissingUnsupportedOrDifferentFromActualBytesCannotCreateRows() {
+        val f = Fixture(strict = true)
+        val proof = f.completion.original!!
+        val invalid = listOf(
+            f.completion.copy(original = null),
+            f.completion.copy(original = proof.copy(observation = proof.observation.copy(profileState = AutoInputProfile.UNKNOWN))),
+            f.completion.copy(original = proof.copy(observation = proof.observation.copy(appliedEv = 5.0))),
+            f.completion.copy(original = proof.copy(outputFingerprint = proof.outputFingerprint.copy(sha256 = "0".repeat(64)))),
+        )
+        invalid.forEach { assertThrows(IOException::class.java) { f.publisher(it).advance() } }
+        assertNull(f.journal().read())
+        assertEquals(0, f.rows.inserts)
+        assertArrayEquals(original, f.originalBytes)
+    }
+
+    private inner class Fixture(strict: Boolean = false) {
         var originalBytes = original.clone()
         var jpegBytes = jpeg.clone()
         var originalUnavailable = false
@@ -254,14 +289,20 @@ class RenderedJpegPublicationTest {
             SharedOriginalReference("content://test/original/1", fingerprint(original), OriginalGrant.APP_OWNED),
             RenderRecipeSnapshot("test-recipe-v1", "{\"strength\":0.5}"),
             JpegOutputDescription(2, 2, 1, "sRGB", jpeg.size.toLong()))
-        val completion = CompletedRender(request, "test-renderer-v1", RenderedResultKind.COMPLETE_STAGE_CLEAR,
+        val completion = if (strict) {
+            val auto = AutoDevelopRequest(request.captureId, request.generation, request.source, request.recipe,
+                "test-renderer-v1", 2, 2, AutoRenderQuality.FINAL_ORIGINAL, RenderedFaceState.VERIFIED_NONE,
+                RenderedExposureState.SUPPORTED, AutoInputProfile.SUPPORTED).forStrictOriginal()
+            AutoDevelopRecord(auto, 2, AutoJobPhase.RENDERED, "a".repeat(32), 1, fingerprint(jpeg),
+                observed = auto.syntheticReceipt("a".repeat(32), 2, 2, jpeg.size.toLong())).completed()
+        } else CompletedRender(request, "test-renderer-v1", RenderedResultKind.COMPLETE_STAGE_CLEAR,
             RenderedFaceState.VERIFIED_NONE, RenderedExposureState.SUPPORTED)
         var inspectedOutput = request.output
         val storage = MemoryStorage()
         val rows = FakeRows()
         fun journal() = JpegPublicationJournal("capture-1", 1, storage) { "a".repeat(32) }
         fun publisher(c: CompletedRender = completion,
-            contracts: Set<RendererPublicationContract> = setOf(RendererPublicationContract("test-renderer-v1", "test-recipe-v1")),
+            contracts: Set<RendererPublicationContract> = setOf(RendererPublicationContract("test-renderer-v1", "test-recipe-v1", completion.original?.declaration)),
             isCurrent: () -> Boolean = { true }) = RecoverablePhotoPublisher(journal(), rows, c, contracts,
                 object : RenderedJpegInput {
                     override fun openJpeg() = ByteArrayInputStream(jpegBytes)

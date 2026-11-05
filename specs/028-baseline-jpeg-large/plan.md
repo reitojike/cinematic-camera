@@ -1,0 +1,9 @@
+# 設計
+
+既存の診断baselineに明示large modeを追加し、別JNI entryでのみ有効にする。小型oracle経路は残し、large frameのRGB16配列は空とする。入力はclassic LE/integer explicit cropの同じ限定subset。LibRaw make_mem_imageのfull native allocationは残るのでストリーミングRAW現像とは呼ばない。
+
+既存attemptのowner/故障注入を再利用する。largeでは原本/出力byte上限64MiB、Bitmap解放後のstreaming hashとBitmapFactory.decodeStream/ExifInterface読込を使う。managedの大配列を追加せず、codec nativeメモリを含め実測する。小型goldenは引き続き全画素/8方向の数値回帰とする。
+
+測定用fixtureは小型generated headerの寸法/crop/stripを更新し、RAWを一行ずつ生成する。12MPは格納4000×3000/EXIF6→3000×4000、24MPは6000×4000/EXIF1→6000×4000。normal heapを先に測り、資源があればlargeHeapの成功ケースを比較する。故障はnormalで同じ大画像を使い、ケース毎に独立instrumentationで記録する。
+
+10ms managed/native、100ms PSSの既存samplerを使い、pack_rowは最初の1回だけsnapshotを記録する。sampling/段階snapshot費用は時間に含める。ホスト空きphysical8GiB/commit6GiB以上で4GiB AVD起動、稼働時commit1GiB以下・他の重い作業なら次ケースを開始しない。実機性能/画質は判断しない。

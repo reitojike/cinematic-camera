@@ -37,6 +37,9 @@ class AutoDevelopInstrumentationTest {
             assertFalse(f.runner.hasUnreleasedResources)
             val record = f.publication().read()!!
             assertEquals(JpegPublicationPhase.PUBLISHED, record.phase)
+            assertEquals(f.request.originalDeclaration, record.render.original!!.declaration)
+            assertEquals(fingerprint(f.jpeg), record.render.original!!.outputFingerprint)
+            assertEquals(f.journal.read()!!.observed!!.original, record.render.original!!.observation)
             assertEquals(1, MediaStoreJpegRows(context).find(record.target).size)
             assertEquals(AutoRunStatus.PUBLISHED, f.runner.advance().status)
             assertEquals(1, f.starts)
@@ -48,6 +51,9 @@ class AutoDevelopInstrumentationTest {
     }
     @Test fun producerFailureIsInvalidAfterAllHandlesActuallyClose() {
         assertInvalidOutput("producer-fault")
+    }
+    @Test fun producerHashCannotBeReplacedByTheIndependentlyInspectedOutput() {
+        assertInvalidOutput("hash-mismatch")
     }
     private fun assertInvalidOutput(mode: String) {
         Fixture(mode).use { f ->
@@ -74,7 +80,7 @@ class AutoDevelopInstrumentationTest {
         Fixture("valid").use { f ->
             val manual = AndroidRenderedJpegOperation.get(context, f.request.captureId, 1)
             manual.createOutput().use { it.write(f.jpeg) }
-            manual.publisher(f.request.completed(JpegOutputDescription(16, 12, 1, "sRGB", f.jpeg.size.toLong())),
+            manual.publisher(f.completedForManual(),
                 setOf(f.request.contract), { true })
             assertThrows(CaptureJournalConflict::class.java) { f.runner.advance() }
             assertEquals(AutoJobPhase.PUBLISHING, f.journal.read()!!.phase)
@@ -98,18 +104,20 @@ class AutoDevelopInstrumentationTest {
                 ByteArrayOutputStream().also { check(bitmap.compress(Bitmap.CompressFormat.JPEG, 95, it)) }.toByteArray()
             } finally { bitmap.recycle() }
         }
+        private val policy = OriginalRenderDeclaration(RenderPolicyVersion("synthetic-input", 1), RenderPolicyVersion("synthetic-raster", 1),
+            RenderPolicyVersion("synthetic-detector", 1), RenderPolicyVersion("synthetic-metering", 1), -4.0, 4.0)
         val request = AutoDevelopRequest(id, 1, SharedOriginalReference(originalUri, fingerprint(original), OriginalGrant.APP_OWNED),
-            RenderRecipeSnapshot("synthetic-auto-v1", "synthetic-only"), "synthetic-final-adapter-v1", 16, 12,
-            AutoRenderQuality.FINAL_ORIGINAL, RenderedFaceState.VERIFIED_NONE, RenderedExposureState.SUPPORTED, AutoInputProfile.SUPPORTED)
+            RenderRecipeSnapshot("synthetic-auto-v1", "synthetic-only"), "synthetic-final-adapter-v1", 0, 0,
+            AutoRenderQuality.FINAL_ORIGINAL_STRICT, RenderedFaceState.NOT_RUN, RenderedExposureState.UNKNOWN, AutoInputProfile.UNKNOWN, policy)
         val journal = AutoDevelopJournal(id, 1, AndroidAtomicJournalStorage(requireNotNull(generation.parentFile), "1", CaptureJournalFile.AUTO_DEVELOP))
         val admission = AutoDevelopCoordinator()
         var starts = 0
         private val adapter = object : RendererAdapter {
             override val contract get() = request.contract
-            override val quality = if (mode == "preview") AutoRenderQuality.PREVIEW else AutoRenderQuality.FINAL_ORIGINAL
+            override val quality = if (mode == "preview") AutoRenderQuality.PREVIEW else AutoRenderQuality.FINAL_ORIGINAL_STRICT
             override fun supports(request: AutoDevelopRequest) = request == this@Fixture.request
             override fun createAttempt(request: AutoDevelopRequest, attemptId: String, io: AutoRenderIo) = object : AutoRenderAttempt {
-                override fun render(shouldStop: () -> Boolean): AutoRenderReceipt {
+                override fun render(shouldStop: () -> Boolean): AutoRenderOutput {
                     starts++
                     check(!shouldStop())
                     assertArrayEquals(original, io.openOriginal().use { it.readBytes() })
@@ -119,7 +127,13 @@ class AutoDevelopInstrumentationTest {
                         output.write(jpeg)
                         if (mode == "producer-fault") assertThrows(IndexOutOfBoundsException::class.java) { output.write(byteArrayOf(1), 0, 2) }
                     }
-                    return AutoRenderReceipt(request, JpegOutputDescription(16, 12, 1, "sRGB", jpeg.size.toLong()))
+                    val proof = OriginalRenderObservation(OriginalAttemptBinding(id, 1, attemptId, request.source.fingerprint,
+                        OriginalAttemptBinding.recipeHash(request.recipe), request.rendererContract), policy.inputPolicy, policy.geometryPolicy,
+                        RenderPolicyVersion("synthetic-profile", 1), AutoInputProfile.SUPPORTED, policy.faceDetector, policy.meteringPolicy, 0.0,
+                        OriginalRasterGeometry(16, 12, 1, 16, 12, true))
+                    return AutoRenderOutput(AutoRenderReceipt(request, JpegOutputDescription(16, 12, 1, "sRGB", jpeg.size.toLong()),
+                        RenderedFaceState.VERIFIED_NONE, RenderedExposureState.SUPPORTED, proof),
+                        fingerprint(jpeg).let { if (mode == "hash-mismatch") it.copy(sha256 = "0".repeat(64)) else it })
                 }
                 override fun close() {}
             }
@@ -134,6 +148,15 @@ class AutoDevelopInstrumentationTest {
         }
         fun publication() = JpegPublicationJournal(id, 1,
             AndroidAtomicJournalStorage(requireNotNull(generation.parentFile), "1", CaptureJournalFile.JPEG_PUBLICATION))
+        fun completedForManual(): CompletedRender {
+            val output = JpegOutputDescription(16, 12, 1, "sRGB", jpeg.size.toLong())
+            val observation = OriginalRenderObservation(OriginalAttemptBinding(id, 1, "b".repeat(32), request.source.fingerprint,
+                OriginalAttemptBinding.recipeHash(request.recipe), request.rendererContract), policy.inputPolicy, policy.geometryPolicy,
+                RenderPolicyVersion("synthetic-profile", 1), AutoInputProfile.SUPPORTED, policy.faceDetector, policy.meteringPolicy, 0.0,
+                OriginalRasterGeometry(16, 12, 1, 16, 12, true))
+            return request.completed(output, RenderedFaceState.VERIFIED_NONE, RenderedExposureState.SUPPORTED,
+                OriginalRenderCompletion(policy, observation, fingerprint(jpeg)))
+        }
         fun assertOriginal() = DngContentVerifier.verify(fingerprint(original), {
             requireNotNull(context.contentResolver.openInputStream(Uri.parse(originalUri)))
         })
