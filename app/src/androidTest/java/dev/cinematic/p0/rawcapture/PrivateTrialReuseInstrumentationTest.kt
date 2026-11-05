@@ -355,6 +355,37 @@ class PrivateTrialReuseInstrumentationTest {
         } finally { session.close() }
     }
 
+    @Test fun runnerRejectsSameGeometryAndLengthJpegWithAnotherHashAndInvalidatesProducingLease() {
+        val session = PrivateTrialReuseRegistry.openSession()
+        try {
+            Fixture().use { f ->
+                val pending = f.prepared(.5, session)
+                val actual = f.backend(pending.request)
+                var checkedValidReplacement = false
+                val fault = object : AutoDevelopBackend by actual {
+                    override fun inspect(request: AutoDevelopRequest, attemptId: String,
+                        shouldStop: () -> Boolean): JpegInspection {
+                        val lease = requireNotNull(PrivateTrialReuseRegistry.forRequest(request))
+                        assertNotNull(lease.load(JpegGenerationRequest(request.captureId, request.generation,
+                            request.source, JpegGenerationRecipe.trial(.5))))
+                        f.replaceWithSameGeometryAndLengthJpeg(attemptId)
+                        checkedValidReplacement = true
+                        return actual.inspect(request, attemptId, shouldStop)
+                    }
+                }
+                val runner = f.runner(pending.request, fault)
+                val held = runner.advance()
+                assertTrue(checkedValidReplacement)
+                assertEquals(AutoRunStatus.HELD, held.status)
+                assertEquals(AutoJobReason.INVALID_OUTPUT, requireNotNull(held.record).reason)
+                assertNull(PrivateTrialReuseRegistry.forRequest(pending.request))
+                assertFalse(runner.hasUnreleasedResources)
+                assertFalse(actual.hasUnreleasedResources)
+                f.assertOriginalAndUnpublished(requireNotNull(held.record))
+            }
+        } finally { session.close() }
+    }
+
     /** Tiny native inputs may be half-sized before physical orientation. Use only inspected output geometry. */
     private fun AutoDevelopRecord.comparisonCopy(lease: PrivateTrialReuseLease?): IntArray? {
         val output = requireNotNull(observed).output
@@ -480,6 +511,37 @@ class PrivateTrialReuseInstrumentationTest {
             } finally { bitmap.recycle() }
             val replacement = AndroidJpegInspector().inspect({ file.inputStream() }) { false }.output
             assertNotEquals(original, replacement) // Valid codec bytes, deliberately different real dimensions.
+        }
+        fun replaceWithSameGeometryAndLengthJpeg(attempt: String) {
+            val file = output(attempt)
+            val original = AndroidJpegInspector().inspect({ file.inputStream() }) { false }
+            val bytes = file.readBytes()
+            check(bytes.size >= 4 && bytes[0] == 0xff.toByte() && bytes[1] == 0xd8.toByte())
+            var offset = 2
+            var changed = false
+            // Alter one nonzero 8-bit DQT coefficient before SOS. This changes valid decoding metadata
+            // without changing stream length, frame dimensions, orientation, color definition or markers.
+            while (offset + 4 <= bytes.size) {
+                check(bytes[offset] == 0xff.toByte())
+                val marker = bytes[offset + 1].toInt() and 0xff
+                if (marker == 0xda || marker == 0xd9) break
+                val length = ((bytes[offset + 2].toInt() and 0xff) shl 8) or (bytes[offset + 3].toInt() and 0xff)
+                check(length >= 2 && offset.toLong() + 2 + length <= bytes.size)
+                if (marker == 0xdb && length >= 67 && (bytes[offset + 4].toInt() and 0xf0) == 0) {
+                    val coefficient = offset + 5
+                    check((bytes[coefficient].toInt() and 0xff) != 0)
+                    bytes[coefficient] = if (bytes[coefficient] == 1.toByte()) 2.toByte() else 1.toByte()
+                    changed = true
+                    break
+                }
+                offset += 2 + length
+            }
+            check(changed) { "Generated JPEG requires an 8-bit quantization table for this fault injection" }
+            file.writeBytes(bytes)
+            val replacement = AndroidJpegInspector().inspect({ file.inputStream() }) { false }
+            assertEquals(original.output, replacement.output)
+            assertEquals(original.fingerprint.bytes, replacement.fingerprint.bytes)
+            assertNotEquals(original.fingerprint.sha256, replacement.fingerprint.sha256)
         }
         fun assertOriginalAndUnpublished(record: AutoDevelopRecord) {
             DngContentVerifier.verify(source.fingerprint, { resolver.openInputStream(uri)!! })

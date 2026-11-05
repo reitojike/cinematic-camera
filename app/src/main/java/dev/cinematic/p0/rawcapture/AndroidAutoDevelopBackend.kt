@@ -36,7 +36,7 @@ internal class AndroidAutoDevelopBackend(
     private val previewOwnership = Any()
     private var comparisonFrames: OwnedJpegFrameSource? = null
     private data class PrivateReceipt(val request: AutoDevelopRequest, val attemptId: String,
-        val output: JpegOutputDescription, val reuse: PrivateTrialReuseLease)
+        val output: JpegOutputDescription, val fingerprint: OriginalFingerprint, val reuse: PrivateTrialReuseLease)
     private var privateAttemptToken: Any? = null
     private var privateReceipt: PrivateReceipt? = null // Immutable metadata only, never retained pixels.
 
@@ -115,9 +115,9 @@ internal class AndroidAutoDevelopBackend(
             override fun render(shouldStop: () -> Boolean): AutoRenderOutput {
                 rendering = true
                 try {
-                    return engine.render(shouldStop).also { receipt ->
+                    return engine.render(shouldStop).also { produced ->
                         if (reuse != null && privateAttemptToken === token)
-                            privateReceipt = PrivateReceipt(request, attemptId, receipt.output, reuse)
+                            privateReceipt = PrivateReceipt(request, attemptId, produced.receipt.output, produced.fingerprint, reuse)
                     }
                 }
                 finally { rendering = false }
@@ -145,7 +145,8 @@ internal class AndroidAutoDevelopBackend(
             val output = files(attemptId)
             output.sealCompleted() // Invalid/missing output is validation failure, not a resource close failure.
             val inspection = AndroidJpegInspector().inspect({ resources.input(output.openRead()) }, stop)
-            if (expected != null && (inspection.output != expected.output || inspection.fingerprint.bytes != expected.output.bytes))
+            if (expected != null && (inspection.output != expected.output || inspection.fingerprint.bytes != expected.output.bytes ||
+                    inspection.fingerprint != expected.fingerprint))
                 throw IOException("Private JPEG inspection differs from the renderer receipt")
             return inspection
         } catch (failure: Throwable) {
