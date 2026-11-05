@@ -8,8 +8,11 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.os.StatFs
+import android.util.Log
 import java.util.concurrent.ConcurrentHashMap
 import dev.cinematic.p0.rawcapture.AutoDevelopConditions
+import dev.cinematic.p0.rawcapture.AutoDevelopBlocker
+import dev.cinematic.p0.rawcapture.AutoDevelopPolicy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -34,6 +37,7 @@ internal class PhotoRollResourceObserver(context: Context,
     @Volatile private var generation = 0L
     private val observationLock = Any()
     private var observationEpoch = 0L
+    private var lastPublishedBlockers: Set<AutoDevelopBlocker>? = null
     private var polling: CoroutineScope? = null
     private var callback: CameraManager.AvailabilityCallback? = null
 
@@ -55,8 +59,14 @@ internal class PhotoRollResourceObserver(context: Context,
                         val observedEpoch = synchronized(observationLock) { generation to observationEpoch }
                         val conditions = snapshot().developConditions(rendererAvailable = true)
                         synchronized(observationLock) {
-                            if (registered && generation == observedEpoch.first && observationEpoch == observedEpoch.second)
+                            if (registered && generation == observedEpoch.first && observationEpoch == observedEpoch.second) {
+                                val blockers = AutoDevelopPolicy.blockers(conditions)
+                                if (foreground && lastPublishedBlockers != blockers) {
+                                    Log.i("CinematicRaw", "PHOTO_ROLL_BLOCKERS=${blockers.map { it.name }.sorted().joinToString(",")}")
+                                    lastPublishedBlockers = blockers
+                                }
                                 authority.observed(this@PhotoRollResourceObserver, conditions, publishConditions)
+                            }
                         }
                         delay(500)
                     }
@@ -71,6 +81,7 @@ internal class PhotoRollResourceObserver(context: Context,
             registered = false
             generation++
             observationEpoch++
+            lastPublishedBlockers = null
             authority.foreground(this, false, publishConditions)
         }
         polling?.cancel(); polling = null
@@ -82,6 +93,8 @@ internal class PhotoRollResourceObserver(context: Context,
     fun foreground(value: Boolean) = synchronized(observationLock) {
         foreground = value
         observationEpoch++ // A pre-pause IO observation must not restore an old allowed snapshot.
+        lastPublishedBlockers = null
+        Log.i("CinematicRaw", "PHOTO_ROLL_FOREGROUND=$value")
         authority.foreground(this, value, publishConditions)
     }
 

@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.os.CancellationSignal
 import android.os.OperationCanceledException
+import android.util.Log
 import androidx.annotation.RequiresApi
 import dev.cinematic.p0.jpegrender.JpegGenerationRecipe
 import dev.cinematic.p0.rawcapture.*
@@ -62,15 +63,20 @@ internal class PrivateTrialPhotoRollRenderer(context: Context, private val resou
                 if (!stopped) { stopped = true; if (issued) handle.requestStop() }
             }
         }
+        var stage = "status"
         try {
             var status = await(handle.status(), cancellation)
-            if (status.phase == PrivateTrialPhase.RETRYABLE && request.explicitRetry)
+            if (status.phase == PrivateTrialPhase.RETRYABLE && request.explicitRetry) {
+                stage = "retry"
                 status = await(issue { handle.retry() }, cancellation)
+            }
             if (status.phase in setOf(PrivateTrialPhase.PREPARED, PrivateTrialPhase.RUNNING)) {
                 request.onStage(PhotoRollRenderStage.TRIAL_RENDER)
+                stage = "start"
                 status = await(issue { handle.start(resources().developConditions(rendererAvailable = true)) }, cancellation)
             }
             while (status.phase in setOf(PrivateTrialPhase.PREPARED, PrivateTrialPhase.RUNNING)) {
+                stage = "poll"
                 cancellation.throwIfCanceled()
                 if (AutoDevelopPolicy.blockers(resources().developConditions(rendererAvailable = true)).isNotEmpty()) {
                     discardTransientInputs()
@@ -88,9 +94,11 @@ internal class PrivateTrialPhotoRollRenderer(context: Context, private val resou
                 else -> "試験JPEGを確認できません。原本を確認して再試行してください"
             })
             request.onStage(PhotoRollRenderStage.TRIAL_READBACK)
+            stage = "readback"
             val delivery = await(issue { handle.readPreview(resources().developConditions(rendererAvailable = true)) { cancellation.isCanceled } }, cancellation)
             try {
                 cancellation.throwIfCanceled()
+                stage = "claim"
                 val preview = delivery.claim() ?: return PhotoRollRenderResult.Unavailable("試験結果が中断・変更されたため表示できません。再試行してください")
                 try {
                     val observed = preview.status
@@ -104,9 +112,17 @@ internal class PrivateTrialPhotoRollRenderer(context: Context, private val resou
                         trialStrength = recipe.strength)
                 } finally { preview.close() }
             } finally { delivery.close() }
-        } catch (_: java.util.concurrent.CancellationException) {
+        } catch (failure: java.util.concurrent.CancellationException) {
             cancellation.throwIfCanceled()
-            return PhotoRollRenderResult.Unavailable("試験処理が中断・変更されました。原本を確認して再試行してください")
+            val kind = when (failure.message) {
+                "Manual invocation cancelled" -> "STALE_INTENT"
+                "Private preview not current" -> "STALE_DELIVERY"
+                "Private trial validation cancelled" -> "READBACK_STOP"
+                else -> "OTHER"
+            }
+            // Bounded reason codes only: never log a source URI, filename, DNG content or throwable.
+            Log.w("CinematicRaw", "PRIVATE_TRIAL_INTERRUPTED stage=$stage kind=$kind")
+            return PhotoRollRenderResult.Unavailable("試験処理が中断されました。状態を確認して再試行してください")
         } catch (_: OutOfMemoryError) {
             discardTransientInputs()
             cancellation.cancel()
