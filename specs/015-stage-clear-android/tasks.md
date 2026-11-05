@@ -78,3 +78,7 @@
 - [x] R7-T002 BICUBICを共通resizeへ追加し、R7の6段を純Kotlinへ移植する（R7-FR-001/002）。
 - [x] R7-T003 PC既存rendererと同じ共通設定・合成ROIから全画素fixtureを生成し、各段/不正入力/入力保持を比較する（R7-FR-003、R7-SC-001）。
 - [ ] R7-T004 最終headのPC/Android CI、canonical/独立レビューを確認しDraft PRへ記録する。実DNG入力・ROI供給・W1・実機を完了扱いにしない。
+
+## 高解像度化に向けたメモリ（#78）
+
+要件・設計とMEM-T001〜004の完了境界は[buffer-memory.md](buffer-memory.md)を参照。既定1024の引き上げやPixel実機の合格とは分ける。

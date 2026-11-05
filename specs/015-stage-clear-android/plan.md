@@ -6,6 +6,8 @@ AsShotWhiteXY の限定互換入力は [white-xy-compat.md](white-xy-compat.md) 
 
 **Issue**: #78 / **Branch**: `feat/issue-78-stage-clear-kotlin`
 
+高解像度化に向けた内部バッファ所有・負荷試験は [buffer-memory.md](buffer-memory.md) を参照（#78）。
+
 ## 設計と判断
 
 純Kotlin CPUを最初の比較基準とする。既存JVMテストで全画素を観測でき、Android用コードと同じ実装を試せる。
@@ -16,7 +18,7 @@ GPU/GLSLは演算精度・readback・端末依存の追加確認が必要。3D L
 PC CIでは生成物の一致を検証し、Android CIは同じCSVをJVMから読み込む。生成Kotlinを手で調整しない。
 定数は保護処理・共通色変換・版・既定強度のみを先行共有する。段1〜5はPCコードを引き続き正とする。
 
-`LinearSrgbImage`と`FaceMask`は検証済みコピーを保持する。内部配列を公開しない。
+`LinearSrgbImage`と`FaceMask`の外部constructorは検証済みコピーを保持する。kernelが新規生成した排他的配列だけは内部factoryへ所有移譲できる（[buffer-memory.md](buffer-memory.md)）。内部配列getterは公開しない。
 `StageClearProtections.finish(glowed, faces, layer)`は段2〜5の純関数を外部から受け取り、段6→7→必要なら段2〜6再実行→8を実装する。
 layerには同じ寸法を要求する。呼出側が強度0.5やskin weightを固定して渡す責務を持つ。このAPIはStage Clear全体のrendererではない。
 テストでは非線形の合成layerを使い、減光時に前段が再計算されたことも検証する。
