@@ -3,7 +3,7 @@
 ## 原寸DNG・heap診断（Issue #143 / spec026）
 
 - 別packageのdebug診断normal/largeHeapを用意。製品appの1024px/16MP/128MiB・half-size、JNI export、署名・保存・公開条件は維持する。
-- 最新mainを基点としたlocal通常appはlint/build/test APK・両ABI成功、82 suites/597 unit、failure/error0。Windowsの既存symlink4件はskipであり合格に数えない。診断は両flavorのlint・両ABI・test APK成功。最終headのCI/review証拠はPRを参照する。
+- main `ac0ddac`（#142）を基点としたlocal通常appはlint/build/test APK・両ABI成功、82 suites/597 unit、failure/error0。Windowsの既存symlink4件はskipであり合格に数えない。診断は両flavorのlint・両ABI・test APK成功。#144統合後の最終headのCI/review証拠はPRを参照する。
 - 専用API37 x86_64 AVDで指定RAM4096→6144MiBを比較。Android totalMemは4,105,592,832→6,213,230,592 bytesへ増えたが、通常Runtime.maxMemoryは両方192MiB、memoryClass192/largeMemoryClass576MiBだった。以前の低いRAM指定には起動時4096MB自動補正ログがあり、指定値を実RAMとみなさない。
 - 4GB AVDで通常診断はlargeHeap=false/maxHeap192MiB、比較診断は別packageでtrue/576MiBを実測。製品appへのlargeHeap採用・処理中切替ではない。
 - 原寸nativeは4000×3000/6000×4000と各90度向きで通常・largeHeapとも成功（各3 JUnit）。half-size0、原寸16bit出力、回転寸法/四隅、原本SHA-256不変、キャンセル2種・64MiB/24MP上限・不正入力拒否・回復を確認。両heap条件の各出力summary/checksumは一致。通常条件の観測最大は12MPでnative約212MiB/PSS約233MiB、24MPで約418MiB/約439MiBだった。
