@@ -119,3 +119,11 @@ fresh readPreviewは同attemptの全byte/hash・codec実寸法/向き/sRGBとsou
 共通枠の内側でdecodeする。reader実close後に専用deliveryへ渡す。UIがclaimするまではqueue所有であり、future完了後の取消でも
 未受領画像をcloseする。claim直前に世代/取消epochを再確認し、claim後だけUIが表示Bitmapの所有者としてclear/closeする。
 表示画像は次回memory観測に含まれる。元JPEGや原本の別ファイルコピー、別queue、共有公開ownerは作らない。
+
+## 原寸FULLの後続契約（未実装）
+
+原寸現像では、固定した要求の宣言と、同attemptで実際に得た成功証跡を分離する。
+顔/EV/profileの成功を実行前の仮定で埋めず、実sourceの原寸coverage・geometry・profile識別版・顔/EV・
+出力検査を台帳/公開ゲートへ保持する。旧記録の欠落は成功へ補完せず、private/手動boundedの互換と原本保全を維持する。
+詳細と実装前の確認は[原寸現像の要求と成功証跡](original-render-evidence.md)に従う。
+現在のFULL未登録・撮影intentなし・1024私有試験の実装を、この後続設計で有効化しない。

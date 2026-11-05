@@ -435,3 +435,10 @@ snapshotをjob/publisherへcacheせず、検査/表示decodeの呼出し終了�
 
 これはencoded配列の重複保持削減であり、codec内部の複製ゼロや6000×4000対応を意味しない。32MiB上限・
 1024既定・私有出力・原本の前後照合・実close後の共通slot解放を維持する。Float32画像/rendererの全解像度メモリは別の残件である。
+
+## 原寸要求と実観測の分離（後続設計）
+
+[原寸現像の要求と成功証跡](original-render-evidence.md)で、事前の宣言とdecode後の成功観測を分ける。
+実装は既存Runner/backendのsource/資源確認とattempt、現像/公開台帳を拡張し、別controllerや二重画像解析preflightを増やさない。
+新FULLはprofileを含む実証跡を必須とし、旧記録の欠落・私有試験・1024用memory許可を成功へ補完しない。
+現在の登録0を維持したまま#78/#79とのproducer契約・移行/故障試験を先に確定する。設計の完了は実FULLの有効化ではない。
