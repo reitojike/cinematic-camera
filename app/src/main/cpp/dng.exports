@@ -1,4 +1,6 @@
 {
     global: Java_dev_cinematic_p0_raw_NativeDngDecoder_decode;
+            Java_dev_cinematic_p0_raw_original_NativeOriginalRaster_decode24;
+            Java_dev_cinematic_p0_raw_original_NativeOriginalRaster_preflight24;
     local: *;
 };

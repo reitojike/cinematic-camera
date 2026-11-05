@@ -5,9 +5,11 @@ import dev.cinematic.p0.rawcapture.JpegPublicationPhase
 import dev.cinematic.p0.rawcapture.JpegPublicationRecord
 import dev.cinematic.p0.rawcapture.RendererPublicationContract
 import dev.cinematic.p0.rawcapture.SharedOriginalReference
+import dev.cinematic.p0.raw.PhotoAdjustments
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.Flow
 
 internal enum class PhotoRollSavePhase { READY, SAVING, PUBLISHED, UNCONFIRMED, HOLD }
 internal data class PhotoRollSaveSnapshot(val phase: PhotoRollSavePhase, val uri: String? = null)
@@ -15,24 +17,40 @@ internal fun interface PhotoRollJpegPublisher {
     fun advance(shouldStop: () -> Boolean): JpegPublicationRecord
 }
 
+/** UI-only boundary. Trial publication must have its own explicit manual contract and durable owner.
+ * A manual-trial implementation must bind appliedStrength to its immutable private JPEG recipe,
+ * retain one operation for retries, serialize advance, recheck the original, and hold UNKNOWN.
+ */
+internal interface PhotoRollJpegSaveOwner {
+    val snapshots: Flow<PhotoRollSaveSnapshot>
+    val snapshot: PhotoRollSaveSnapshot
+    /** 0/0 until a deferred manual render has produced and inspected its full-size JPEG. */
+    val width: Int
+    val height: Int
+    val appliedStrength: Double? get() = null
+    val appliedAdjustments: PhotoAdjustments? get() = null
+    fun matches(source: SharedOriginalReference, mode: PhotoRollPreviewMode): Boolean
+    fun advance(shouldStop: () -> Boolean): PhotoRollSaveSnapshot
+}
+
 /** Retained by the completed renderer per durable operation, never recreated by a UI retry. */
 internal class PhotoRollJpegSave private constructor(
     private val render: CompletedRender,
     private val publisher: PhotoRollJpegPublisher,
     private val isCurrent: () -> Boolean,
-) {
+) : PhotoRollJpegSaveOwner {
     private val running = AtomicBoolean(false)
     private val state = MutableStateFlow(PhotoRollSaveSnapshot(PhotoRollSavePhase.READY))
-    val snapshots = state.asStateFlow()
-    val snapshot get() = state.value
-    val width get() = render.request.output.width
-    val height get() = render.request.output.height
+    override val snapshots = state.asStateFlow()
+    override val snapshot get() = state.value
+    override val width get() = render.request.output.width
+    override val height get() = render.request.output.height
 
-    fun matches(source: SharedOriginalReference, mode: PhotoRollPreviewMode) =
+    override fun matches(source: SharedOriginalReference, mode: PhotoRollPreviewMode) =
         mode == PhotoRollPreviewMode.STAGE_CLEAR && render.request.source == source
 
     /** Also used immediately before opening a published result; reuses and rechecks the same publisher. */
-    fun advance(shouldStop: () -> Boolean): PhotoRollSaveSnapshot {
+    override fun advance(shouldStop: () -> Boolean): PhotoRollSaveSnapshot {
         // A contender has not rechecked anything. Never return another call's published receipt.
         if (!running.compareAndSet(false, true)) return PhotoRollSaveSnapshot(PhotoRollSavePhase.SAVING)
         try {
@@ -79,6 +97,7 @@ internal class PhotoRollJpegSave private constructor(
 }
 
 internal fun unavailableJpegSaveMessage(mode: PhotoRollPreviewMode): String = when (mode) {
+    PhotoRollPreviewMode.MANUAL_TRIAL -> "試験品質JPEGの手動保存は準備中です。原本は変更しません"
     PhotoRollPreviewMode.PRIVATE_TRIAL -> "縮小試験JPEGはアプリ内表示のみです。共有写真への保存は無効です"
     PhotoRollPreviewMode.STAGE_CLEAR_TRIAL -> "長辺512以下の試験画像は、完成JPEGとして保存できません"
     PhotoRollPreviewMode.DNG_TRIAL -> "この画像はルック未適用の試験表示です。完成JPEGとしては保存できません"

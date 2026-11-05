@@ -3,6 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val original24Probe = providers.gradleProperty("cinematicOriginal24Probe").orNull == "true"
+
 // Draft opt-in: default debug builds require no signing inputs and remain unchanged.
 val cinematicSigningMode = providers.environmentVariable("CINEMATIC_SIGNING_MODE").orElse("ephemeral_debug").get()
 require(cinematicSigningMode in setOf("ephemeral_debug", "stable_internal")) {
@@ -45,10 +47,21 @@ android {
         }
     }
     buildTypes {
+        if (original24Probe) {
+            create("original24Probe") {
+                initWith(getByName("debug"))
+                applicationIdSuffix = ".original24probe"
+                matchingFallbacks += "debug"
+            }
+        }
         getByName("release") {
             isDebuggable = false
             if (stableInternalSigning) signingConfig = signingConfigs.getByName("cinematicInternal")
         }
+    }
+    if (original24Probe) {
+        testBuildType = "original24Probe"
+        sourceSets.getByName("androidTest").manifest.srcFile("src/original24ProbeTest/AndroidManifest.xml")
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

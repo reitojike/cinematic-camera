@@ -32,12 +32,16 @@ import androidx.lifecycle.repeatOnLifecycle
 import dev.cinematic.p0.rawcapture.DngContentChanged
 import dev.cinematic.p0.rawcapture.DngVerificationStopped
 import dev.cinematic.p0.photoedit.PhotoEditInputToken
+import dev.cinematic.p0.photoedit.PhotoEditValues
+import dev.cinematic.p0.photoedit.PhotoAdjustmentPolicy
+import dev.cinematic.p0.raw.PhotoAdjustments
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Locale
 
 @Composable
 internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRollRenderer, foreground: Boolean, close: () -> Unit) {
@@ -47,16 +51,30 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
     var retry by remember { mutableIntStateOf(0) }
     var explicitRetry by remember { mutableStateOf(false) }
     var selection by remember { mutableStateOf(PhotoRollSelection()) }
-    var trialEditor by remember { mutableStateOf(TrialStrengthEditor.empty()) }
+    var savedStrength by rememberSaveable { mutableDoubleStateOf(.5) }
+    var savedWarmth by rememberSaveable { mutableDoubleStateOf(0.0) }
+    var savedExposureEv by rememberSaveable { mutableDoubleStateOf(0.0) }
+    val manualTrial = renderer.mode == PhotoRollPreviewMode.MANUAL_TRIAL
+    var trialEditor by remember { mutableStateOf(TrialStrengthEditor.empty(
+        if (manualTrial) PhotoEditValues(savedStrength, savedWarmth, savedExposureEv) else PhotoEditValues(savedStrength))) }
     var listing by remember { mutableStateOf(PhotoRollListing(emptyList())) }
     var loadingTicket by remember { mutableStateOf<Any?>(null) }
     val loading = loadingTicket != null
     var notice by remember { mutableStateOf<String?>(null) }
     var preview by remember { mutableStateOf<Bitmap?>(null) }
     var comparison by remember { mutableStateOf<Bitmap?>(null) }
+    // A displayed copy is released only after Compose removes its old image node.
+    DisposableEffect(preview) {
+        val owned = preview
+        onDispose { if (owned != null && !owned.isRecycled) owned.recycle() }
+    }
+    DisposableEffect(comparison) {
+        val owned = comparison
+        onDispose { if (owned != null && !owned.isRecycled) owned.recycle() }
+    }
     var comparisonLabel by remember { mutableStateOf<String?>(null) }
     var renderStage by remember { mutableStateOf<PhotoRollRenderStage?>(null) }
-    var jpegSave by remember { mutableStateOf<PhotoRollJpegSave?>(null) }
+    var jpegSave by remember { mutableStateOf<PhotoRollJpegSaveOwner?>(null) }
     var saveSnapshot by remember { mutableStateOf<PhotoRollSaveSnapshot?>(null) }
     var savePending by remember { mutableStateOf(false) }
     var viewerPending by remember { mutableStateOf(false) }
@@ -77,10 +95,16 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
     val navigation = remember { CameraRollNavigation() }
     val listingWork = remember { CameraRollListingWork() }
     val strengthTicket = trialEditor.ticket
+    val strengthEditable = renderer.mode in setOf(PhotoRollPreviewMode.PRIVATE_TRIAL,
+        PhotoRollPreviewMode.STAGE_CLEAR, PhotoRollPreviewMode.MANUAL_TRIAL)
+    val saveableMode = renderer.mode in setOf(PhotoRollPreviewMode.STAGE_CLEAR, PhotoRollPreviewMode.MANUAL_TRIAL)
 
     fun updateTrialEditor(next: TrialStrengthEditor) {
         val changesRequest = next.ticket != trialEditor.ticket
         trialEditor = next
+        savedStrength = next.requestedStrength
+        savedWarmth = next.requestedValues.temperature ?: 0.0
+        savedExposureEv = next.requestedValues.brightness ?: 0.0
         if (changesRequest) {
             cancellationOwner.cancel()
             preview = null; comparison = null; comparisonLabel = null
@@ -98,13 +122,15 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
     fun chooseDng(uri: String, files: Boolean) {
         renderer.discardTransientInputs()
         cancellationOwner.cancel(); explicitRetry = false; fromFiles = files
-        trialEditor = TrialStrengthEditor.empty()
+        savedStrength = .5
+        savedWarmth = 0.0; savedExposureEv = 0.0
+        trialEditor = TrialStrengthEditor.empty(if (manualTrial) PhotoAdjustmentPolicy.defaults else PhotoEditValues(.5))
         preview = null; comparison = null; comparisonLabel = null
         selection = selection.clear(); pageCursor = null; selectedUri = uri; retry++
     }
 
     fun closeRoll() { navigation.exit(); cancellationOwner.cancel(); renderer.discardTransientInputs(); close() }
-    fun backToList() { cancellationOwner.cancel(); renderer.discardTransientInputs(); explicitRetry = false; trialEditor = TrialStrengthEditor.empty(); selectedUri = null; preview = null; comparison = null; comparisonLabel = null; pageCursor = null; selection = selection.clear(); retry++ }
+    fun backToList() { cancellationOwner.cancel(); renderer.discardTransientInputs(); explicitRetry = false; savedStrength = .5; savedWarmth = 0.0; savedExposureEv = 0.0; trialEditor = TrialStrengthEditor.empty(if (manualTrial) PhotoAdjustmentPolicy.defaults else PhotoEditValues(.5)); selectedUri = null; preview = null; comparison = null; comparisonLabel = null; pageCursor = null; selection = selection.clear(); retry++ }
     BackHandler {
         val edit = trialEditor.session
         if (edit != null) cancelTrialEdit(edit.inputToken) else if (selectedUri != null) backToList() else closeRoll()
@@ -134,7 +160,11 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
             if (event == Lifecycle.Event.ON_PAUSE) {
                 renderer.discardTransientInputs()
                 cancellationOwner.cancel(); preview = null; comparison = null; comparisonLabel = null
-                trialEditor = trialEditor.pause()
+                trialEditor = trialEditor.pause().also {
+                    savedStrength = it.requestedStrength
+                    savedWarmth = it.requestedValues.temperature ?: 0.0
+                    savedExposureEv = it.requestedValues.brightness ?: 0.0
+                }
                 listing = PhotoRollListing(emptyList()); pageCursor = null; folderMenu = false
                 selection = selection.pause()
             }
@@ -190,24 +220,30 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         val job = currentCoroutineContext()
         val shouldStop = { !job.isActive || cancellation.isCanceled }
         val requestScope = this
+        // WithContext may discard a completed result when Main resumes into cancellation.
+        // Until the current ticket adopts it, this request still owns its display copies.
+        var pendingPreview: PhotoRollRenderResult.Preview? = null
         try {
             val result = withContext(Dispatchers.IO) {
                 run {
                     val original = renderer.checkOriginal(repository, Uri.parse(source), selectedFromFiles, cancellation)
                     withContext(Dispatchers.Main) {
                         if (!selection.accepts(ticket) || !trialEditor.accepts(strengthTicket)) throw CancellationException("Photo selection changed")
-                        if (renderer.mode == PhotoRollPreviewMode.PRIVATE_TRIAL) {
+                        if (strengthEditable) {
                             trialEditor = trialEditor.bind(original.reference)
                                 ?: throw PhotoRollSourceFailure("原本の内容や参照が変わりました。Filesから選び直してください")
                         }
                         selection = selection.rendering(ticket)
                     }
-                    val request = PhotoRollRenderRequest(original, strength = strengthTicket.strength, mode = renderer.mode, maxEdge = renderer.maxEdge,
+                    val adjustments = if (manualTrial) PhotoAdjustmentPolicy.adjustments(strengthTicket.values) else PhotoAdjustments()
+                    val request = PhotoRollRenderRequest(original, strength = strengthTicket.strength, adjustments = adjustments,
+                        mode = renderer.mode, maxEdge = renderer.maxEdge,
                         explicitRetry = retryThisRequest, onStage = { stage -> requestScope.launch(Dispatchers.Main) {
                             if (selection.accepts(ticket) && trialEditor.accepts(strengthTicket)) renderStage = stage
                         } })
                     val rendered = renderer.render(request, cancellation)
                     if (rendered is PhotoRollRenderResult.Preview) {
+                        pendingPreview = rendered
                         val bitmap = rendered.bitmap
                         if (rendered.mode != request.mode || bitmap.isRecycled || bitmap.config == Bitmap.Config.HARDWARE ||
                             bitmap.width !in 1..request.maxEdge || bitmap.height !in 1..request.maxEdge ||
@@ -218,7 +254,27 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                         if (rendered.jpegSave?.matches(original.reference, rendered.mode) == false) {
                             throw PhotoRollSourceFailure("保存結果が選択した原本と一致しないため停止しました")
                         }
-                        if (rendered.mode == PhotoRollPreviewMode.PRIVATE_TRIAL && rendered.trialStrength != request.strength)
+                        if (rendered.mode !in setOf(PhotoRollPreviewMode.STAGE_CLEAR, PhotoRollPreviewMode.MANUAL_TRIAL) &&
+                            rendered.jpegSave != null) throw PhotoRollSourceFailure("試験表示に保存対象が混入したため停止しました")
+                        if (rendered.mode in setOf(PhotoRollPreviewMode.STAGE_CLEAR, PhotoRollPreviewMode.MANUAL_TRIAL) && rendered.jpegSave == null)
+                            throw PhotoRollSourceFailure("JPEGの保存対象を確認できないため中止しました")
+                        if (rendered.mode == PhotoRollPreviewMode.MANUAL_TRIAL && rendered.jpegSave != null) {
+                            val outputWidth = rendered.jpegSave.width
+                            val outputHeight = rendered.jpegSave.height
+                            if (outputWidth < 0 || outputHeight < 0 || (outputWidth == 0) != (outputHeight == 0) ||
+                                outputWidth.toLong() * outputHeight > 24_000_000L)
+                                throw PhotoRollSourceFailure("24MPを超える、または寸法不明の試験JPEGは保存できません")
+                        }
+                        if (rendered.mode == PhotoRollPreviewMode.MANUAL_TRIAL &&
+                            (rendered.jpegSave?.appliedStrength != request.strength ||
+                                rendered.jpegSave?.appliedAdjustments != request.adjustments ||
+                                rendered.appliedAdjustments != request.adjustments))
+                            throw PhotoRollSourceFailure("保存対象の強度が要求と一致しないため中止しました")
+                        if (rendered.mode in setOf(PhotoRollPreviewMode.STAGE_CLEAR, PhotoRollPreviewMode.MANUAL_TRIAL) &&
+                            rendered.appliedStrength != request.strength)
+                            throw PhotoRollSourceFailure("現像結果の強度が要求と一致しないため中止しました")
+                        if (rendered.mode == PhotoRollPreviewMode.PRIVATE_TRIAL &&
+                            (rendered.trialStrength != request.strength || rendered.trialAdjustments != request.adjustments))
                             throw PhotoRollSourceFailure("試験画像の強度が要求と一致しないため停止しました")
                     }
                     rendered
@@ -226,23 +282,29 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
             }
             if (selection.accepts(ticket) && trialEditor.accepts(strengthTicket)) when (result) {
                 is PhotoRollRenderResult.Preview -> {
-                    if (result.mode == PhotoRollPreviewMode.PRIVATE_TRIAL)
-                        trialEditor = trialEditor.shown(strengthTicket, requireNotNull(result.trialStrength))
+                    if (strengthEditable) trialEditor = trialEditor.shown(strengthTicket,
+                        strengthTicket.values.copy(strength = requireNotNull(
+                            if (result.mode == PhotoRollPreviewMode.PRIVATE_TRIAL) result.trialStrength else result.appliedStrength)))
                     preview = result.bitmap
                     comparison = result.comparisonBitmap?.takeIf { before ->
-                        result.mode == PhotoRollPreviewMode.PRIVATE_TRIAL && !before.isRecycled &&
+                        strengthEditable && result.comparisonLabel != null && before !== result.bitmap && !before.isRecycled &&
                             before.config != Bitmap.Config.HARDWARE && before.colorSpace?.isSrgb == true &&
                             before.width == result.bitmap.width && before.height == result.bitmap.height
+                    }
+                    result.comparisonBitmap?.let { before ->
+                        if (comparison !== before && before !== result.bitmap && !before.isRecycled) before.recycle()
                     }
                     comparisonLabel = result.comparisonLabel.takeIf { comparison != null }
                     jpegSave = result.jpegSave
                     saveSnapshot = result.jpegSave?.snapshot
                     selection = selection.finish(ticket, true, when (result.mode) {
+                        PhotoRollPreviewMode.MANUAL_TRIAL -> "強度${trialStrengthLabel(requireNotNull(result.appliedStrength))}の縮小プレビューです。原寸の試験品質JPEGは手動保存時に生成します。顔保護なし・診断露出・暫定色です"
                         PhotoRollPreviewMode.DNG_TRIAL -> "DNGの試験表示です。ルック・顔検出は未適用で、色や明るさは暫定です。JPEG保存はまだ利用できません"
                         PhotoRollPreviewMode.STAGE_CLEAR_TRIAL -> "Stage Clear v1・強度0.5の試験表示です。撮影時WBと診断用の明るさを使用。顔検出・顔保護、W1とPixel固有の色変換は未対応で、色や明るさは暫定です。JPEG保存はまだ利用できません"
                         PhotoRollPreviewMode.PRIVATE_TRIAL -> "${result.bitmap.width}×${result.bitmap.height}・強度${trialStrengthLabel(requireNotNull(result.trialStrength))}の縮小試験JPEGです。顔保護なし・診断露出・撮影時WB/暫定色。共有写真へは保存しません"
-                        PhotoRollPreviewMode.STAGE_CLEAR -> "Stage Clear v1・強度0.5・表示用。JPEG書き出しは未接続です"
+                        PhotoRollPreviewMode.STAGE_CLEAR -> "Stage Clear v1・強度${trialStrengthLabel(requireNotNull(result.appliedStrength))}・表示用。完成JPEGは保存操作で確認できます"
                     })
+                    pendingPreview = null
                 }
                 is PhotoRollRenderResult.Unavailable -> selection = selection.finish(ticket, false, result.reason)
             }
@@ -262,6 +324,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
             }
             selection = selection.finish(ticket, false, message)
         } finally {
+            pendingPreview?.recycleDisplayPixels()
             cancellationOwner.finish(cancellation)
         }
       }
@@ -272,6 +335,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { if (selectedUri != null) backToList() else closeRoll() }) { Text(if (selectedUri == null) "撮影へ" else "一覧へ") }
                 Text(if (selectedUri == null) "カメラロール" else when (renderer.mode) {
+                    PhotoRollPreviewMode.MANUAL_TRIAL -> "DNG試験現像"
                     PhotoRollPreviewMode.DNG_TRIAL -> "DNG試験表示"
                     PhotoRollPreviewMode.STAGE_CLEAR_TRIAL -> "Stage Clear試験"
                     PhotoRollPreviewMode.PRIVATE_TRIAL -> "縮小試験JPEG"
@@ -282,6 +346,9 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                 CameraRollGrid(listing.items, foreground && !viewerPending && !permissionPending, Modifier.weight(1f), header = {
                     Column {
                         Text("写真・動画・DNG以外のRAWは標準ビューアで開きます。DNGはタップして試験現像できます", style = MaterialTheme.typography.bodySmall)
+                        if (renderer.mode == PhotoRollPreviewMode.MANUAL_TRIAL) Text(
+                            "DNGは最大24MPの試験品質で現像します。顔保護なし・診断露出・暫定色です。JPEG保存は手動のみで、原本は変更しません。",
+                            style = MaterialTheme.typography.bodySmall)
                         if (renderer.mode == PhotoRollPreviewMode.PRIVATE_TRIAL) Text(
                             "DNGは最大1024pxの試験現像です。顔保護なし・暫定色で、共有写真へは保存しません",
                             style = MaterialTheme.typography.bodySmall)
@@ -365,20 +432,25 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                     }
                 }
 
-            } else if (renderer.mode == PhotoRollPreviewMode.PRIVATE_TRIAL && trialEditor.session != null) {
+            } else if (strengthEditable && trialEditor.session != null) {
                 TrialStrengthEditorPane(trialEditor, { trialEditor }, foreground, selection.phase, renderStage, selection.message,
                     preview, comparison, comparisonLabel,
-                    change = { token, value -> trialEditor = trialEditor.change(token, value) },
+                    change = { token, parameter, value -> trialEditor = trialEditor.change(token, parameter, value) },
                     reset = ::resetTrialEdit,
                     apply = { token -> updateTrialEditor(trialEditor.apply(token)) },
                     cancel = ::cancelTrialEdit,
                     close = { token -> trialEditor = trialEditor.close(token) },
-                    retry = { explicitRetry = true; retry++ }, modifier = Modifier.weight(1f))
+                    retry = { explicitRetry = true; retry++ },
+                    saveable = saveableMode,
+                    trialQuality = renderer.mode == PhotoRollPreviewMode.MANUAL_TRIAL,
+                    adjustments = manualTrial,
+                    modifier = Modifier.weight(1f))
             } else {
                 val status = when (selection.phase) {
                     PhotoRollPhase.CHECKING -> "原本を確認中…"
                     PhotoRollPhase.RENDERING -> renderStage?.label ?: "DNGを処理中…"
                     PhotoRollPhase.DISPLAYED -> when (renderer.mode) {
+                        PhotoRollPreviewMode.MANUAL_TRIAL -> "試験品質JPEG・手動保存"
                         PhotoRollPreviewMode.DNG_TRIAL -> "試験表示 · ルック未適用"
                         PhotoRollPreviewMode.STAGE_CLEAR_TRIAL -> "Stage Clear試験 · 顔保護なし"
                         PhotoRollPreviewMode.PRIVATE_TRIAL -> "縮小試験JPEG · 顔保護なし"
@@ -389,14 +461,21 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                     PhotoRollPhase.EMPTY -> "原本の確認待ち"
                 }
                 Text(status, Modifier.semantics { liveRegion = LiveRegionMode.Polite }, style = MaterialTheme.typography.titleMedium)
+                if (manualTrial && selection.phase == PhotoRollPhase.DISPLAYED) Text(String.format(Locale.ROOT,
+                    "強度 %s・相対色温度 %+.0f・明るさ %+.1f EV",
+                    trialStrengthLabel(trialEditor.requestedStrength), trialEditor.requestedValues.temperature ?: 0.0,
+                    trialEditor.requestedValues.brightness ?: 0.0), style = MaterialTheme.typography.bodySmall)
                 if (selection.phase in setOf(PhotoRollPhase.CHECKING, PhotoRollPhase.RENDERING)) LinearProgressIndicator(Modifier.fillMaxWidth())
                 selection.message?.let { Text(it, Modifier.padding(vertical = 12.dp)) }
                 val image = preview
-                if (image != null && selection.phase == PhotoRollPhase.DISPLAYED && renderer.mode == PhotoRollPreviewMode.PRIVATE_TRIAL)
+                if (image != null && selection.phase == PhotoRollPhase.DISPLAYED && strengthEditable)
                     PhotoRollComparisonImage(image, comparison, foreground,
-                        "縮小試験JPEG（顔保護なし、診断露出・暫定色）", comparisonLabel,
+                        if (renderer.mode == PhotoRollPreviewMode.MANUAL_TRIAL) "保存前の縮小プレビュー（顔保護なし・暫定色）"
+                        else if (renderer.mode == PhotoRollPreviewMode.STAGE_CLEAR) "現像結果（表示用）"
+                        else "縮小試験JPEG（顔保護なし、診断露出・暫定色）", comparisonLabel,
                         Modifier.fillMaxWidth().weight(1f))
                 else if (image != null && selection.phase == PhotoRollPhase.DISPLAYED) Image(image.asImageBitmap(), when (renderer.mode) {
+                    PhotoRollPreviewMode.MANUAL_TRIAL -> "保存前の縮小プレビュー（顔保護なし・暫定色）"
                     PhotoRollPreviewMode.DNG_TRIAL -> "DNGの試験表示（ルック未適用）"
                     PhotoRollPreviewMode.STAGE_CLEAR_TRIAL -> "Stage Clearの試験表示（顔保護なし、色と明るさは暫定）"
                     PhotoRollPreviewMode.PRIVATE_TRIAL -> "縮小試験JPEG（顔保護なし、診断露出・暫定色）"
@@ -405,11 +484,19 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                     Modifier.fillMaxWidth().weight(1f), contentScale = ContentScale.Fit)
                 else Spacer(Modifier.weight(1f))
                 if (selection.phase == PhotoRollPhase.DISPLAYED) {
-                    if (renderer.mode == PhotoRollPreviewMode.PRIVATE_TRIAL) TextButton(enabled = foreground,
-                        onClick = { trialEditor = trialEditor.begin(tapStep = .01) }) { Text("強度を試す") }
+                    if (strengthEditable) TextButton(enabled = canBeginStrengthEdit(renderer.mode, foreground, savePending, saveSnapshot?.phase),
+                        onClick = { trialEditor = trialEditor.begin(tapStep = .01, adjustments = manualTrial) }) {
+                            Text(if (manualTrial) "強度・色・明るさを試す" else if (renderer.mode == PhotoRollPreviewMode.STAGE_CLEAR) "強度を調整" else "強度を試す") }
                     val owner = jpegSave
                     val saved = saveSnapshot
                     Text(if (owner == null) unavailableJpegSaveMessage(renderer.mode)
+                        else if (renderer.mode == PhotoRollPreviewMode.MANUAL_TRIAL) when {
+                            savePending || saved?.phase == PhotoRollSavePhase.SAVING -> "試験品質JPEGの手動保存を確認中…"
+                            saved?.phase == PhotoRollSavePhase.READY -> "試験品質の原寸JPEGを生成して手動保存します。顔保護なし・診断露出・暫定色です。24MP以下の対応DNGのみ利用できます"
+                            saved?.phase == PhotoRollSavePhase.PUBLISHED -> "試験品質JPEGの保存を確認しました。開く前に再確認します"
+                            saved?.phase == PhotoRollSavePhase.UNCONFIRMED -> "保存結果を確認できません。同じ保存操作を再照合します。別のJPEGは作りません"
+                            else -> "試験品質JPEGの保存状態が不明なため停止しました。保存済みとは表示しません"
+                        }
                         else if (savePending) "同じJPEG保存操作を確認中…" else when (saved?.phase) {
                         PhotoRollSavePhase.READY -> "完成JPEG ${owner.width}×${owner.height} を共有写真へ保存できます"
                         PhotoRollSavePhase.SAVING -> "同じJPEG保存操作を確認中…"
@@ -450,10 +537,12 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                                 }
                             }
                         }) { Text(if (savePending) "保存確認中…" else when (saved?.phase) {
-                            PhotoRollSavePhase.PUBLISHED -> "保存したJPEGを開く"
+                            PhotoRollSavePhase.PUBLISHED -> if (renderer.mode == PhotoRollPreviewMode.MANUAL_TRIAL)
+                                "試験品質JPEGを開く" else "保存したJPEGを開く"
                             PhotoRollSavePhase.UNCONFIRMED -> "同じ保存を確認"
                             PhotoRollSavePhase.SAVING -> "保存確認中…"
-                            else -> if (renderer.mode == PhotoRollPreviewMode.PRIVATE_TRIAL) "試験JPEG・共有保存なし"
+                            else -> if (renderer.mode == PhotoRollPreviewMode.MANUAL_TRIAL) "原寸の試験品質JPEGを生成・保存"
+                                else if (renderer.mode == PhotoRollPreviewMode.PRIVATE_TRIAL) "試験JPEG・共有保存なし"
                                 else if (owner == null) "JPEG保存は準備中" else "完成JPEGを保存"
                         }) }
                     notice?.let { Text(it, style = MaterialTheme.typography.bodySmall) }

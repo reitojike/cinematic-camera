@@ -26,7 +26,7 @@ internal data class JpegPublicationTarget(val captureId: String, val generation:
 
 internal data class JpegPublicationRecord(
     val target: JpegPublicationTarget,
-    val render: CompletedRender,
+    val render: JpegPublicationRender,
     val fingerprint: OriginalFingerprint,
     val revision: Long = 0,
     val phase: JpegPublicationPhase = JpegPublicationPhase.PREPARED,
@@ -55,7 +55,7 @@ internal class JpegPublicationJournal(
         }
     }
 
-    @Synchronized fun prepare(render: CompletedRender, fingerprint: OriginalFingerprint): JpegPublicationRecord {
+    @Synchronized fun prepare(render: JpegPublicationRender, fingerprint: OriginalFingerprint): JpegPublicationRecord {
         if (render.request.captureId != captureId || render.request.generation != generation) throw CaptureJournalConflict()
         render.requireFingerprint(fingerprint)
         read()?.let {
@@ -111,11 +111,14 @@ internal class JpegPublicationJournal(
 internal object JpegPublicationCodec {
     const val MAX_BYTES = 4096
     private const val MAGIC = 0x43434a50 // CCJP; separate from capture and ORIGINAL journals.
-    private const val VERSION = 2
+    private const val VERSION = 3
 
     fun encode(record: JpegPublicationRecord): ByteArray {
         val buffer = ByteArrayOutputStream()
-        val version = if (record.render.original != null || record.render.kind == RenderedResultKind.COMPLETE_ORIGINAL) VERSION else 1
+        val version = when (record.render) {
+            is ManualOriginalTrialRender -> 3
+            is CompletedRender -> if (record.render.original != null || record.render.kind == RenderedResultKind.COMPLETE_ORIGINAL) 2 else 1
+        }
         DataOutputStream(buffer).use { out ->
             out.writeInt(MAGIC); out.writeInt(version)
             out.writeUTF(record.target.captureId); out.writeLong(record.target.generation); out.writeUTF(record.target.token)
@@ -130,7 +133,15 @@ internal object JpegPublicationCodec {
             out.writeUTF(request.output.color); out.writeLong(request.output.bytes)
             out.writeUTF(render.rendererContract); out.writeInt(render.kind.ordinal); out.writeInt(render.face.ordinal); out.writeInt(render.exposure.ordinal)
             fingerprint(out, record.fingerprint)
-            if (version >= 2) OriginalEvidenceCodec.writeCompletion(out, render.original)
+            if (version == 2) OriginalEvidenceCodec.writeCompletion(out, render.original)
+            if (version == 3) {
+                val trial = render as ManualOriginalTrialRender
+                val g = trial.geometry
+                out.writeInt(g.sourceWidth); out.writeInt(g.sourceHeight); out.writeInt(g.sourceOrientation)
+                out.writeInt(g.sampledWidth); out.writeInt(g.sampledHeight); out.writeBoolean(g.fullCoverage)
+                fingerprint(out, trial.outputFingerprint)
+                out.writeDouble(trial.appliedStrength); out.writeDouble(trial.externalEv)
+            }
         }
         val payload = buffer.toByteArray()
         val encoded = payload + MessageDigest.getInstance("SHA-256").digest(payload)
@@ -168,9 +179,26 @@ internal object JpegPublicationCodec {
                 val renderer = text(input, 64); val kind = enumValue<RenderedResultKind>(input.readInt())
                 val face = enumValue<RenderedFaceState>(input.readInt()); val exposure = enumValue<RenderedExposureState>(input.readInt())
                 val fingerprint = fingerprint(input)
-                val original = if (version >= 2) OriginalEvidenceCodec.readCompletion(input) else null
-                if (version == 1 && kind == RenderedResultKind.COMPLETE_ORIGINAL) throw IOException("Invalid legacy JPEG result kind")
-                val render = CompletedRender(request, renderer, kind, face, exposure, original)
+                val render = if (version == 3) {
+                    if (renderer != ManualOriginalTrialRender.CONTRACT.renderer || kind != RenderedResultKind.MANUAL_ORIGINAL_TRIAL ||
+                        face != RenderedFaceState.NOT_RUN || exposure != RenderedExposureState.DIAGNOSTIC)
+                        throw IOException("Invalid manual trial JPEG result")
+                    val geometry = OriginalRasterGeometry(input.readInt(), input.readInt(), input.readInt(),
+                        input.readInt(), input.readInt(), when (input.readUnsignedByte()) {
+                            0 -> false; 1 -> true; else -> throw IOException("Invalid manual trial geometry flag")
+                        })
+                    val outputFingerprint = fingerprint(input)
+                    val strength = input.readDouble(); val externalEv = input.readDouble()
+                    ManualOriginalTrialRender(request, geometry, outputFingerprint, strength, externalEv,
+                        ManualOriginalTrialRender.adjustmentsFromRecipe(recipe, strength)).also {
+                        it.requireFingerprint(fingerprint)
+                    }
+                } else {
+                    val original = if (version == 2) OriginalEvidenceCodec.readCompletion(input) else null
+                    if (kind == RenderedResultKind.MANUAL_ORIGINAL_TRIAL || version == 1 && kind == RenderedResultKind.COMPLETE_ORIGINAL)
+                        throw IOException("Invalid legacy JPEG result kind")
+                    CompletedRender(request, renderer, kind, face, exposure, original)
+                }
                 if (input.available() != 0) throw IOException("Trailing JPEG journal data")
                 JpegPublicationRecord(target, render, fingerprint, revision, phase, uri)
             }

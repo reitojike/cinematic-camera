@@ -4,6 +4,7 @@ import dev.cinematic.p0.jpegrender.JpegGenerationRecipe
 import dev.cinematic.p0.jpegrender.JpegGenerationRequest
 import dev.cinematic.p0.jpegrender.TrialFoundationReuse
 import dev.cinematic.p0.jpegrender.TrialPreparedFoundation
+import dev.cinematic.p0.raw.PhotoAdjustments
 
 /** Single process opt-in owner. Lock order is registry -> session; a session never calls this registry. */
 internal object PrivateTrialReuseRegistry {
@@ -37,7 +38,7 @@ internal class PrivateTrialReuseSession internal constructor() : AutoCloseable {
     val closed: Boolean @Synchronized get() = stopped
 
     private data class Key(val source: SharedOriginalReference, val input: String,
-        val controls: RenderRecipeSnapshot, val edge: Int, val geometry: String)
+        val controls: RenderRecipeSnapshot, val edge: Int, val geometry: String, val adjustments: PhotoAdjustments)
     private class Entry(val key: Key, val foundation: TrialPreparedFoundation, var comparison: IntArray? = null)
 
     @Synchronized fun bind(request: AutoDevelopRequest): PrivateTrialReuseLease? {
@@ -118,7 +119,7 @@ internal class PrivateTrialReuseSession internal constructor() : AutoCloseable {
         if (!request.boundedTrial) return null
         val recipe = JpegGenerationRecipe.fromTrialSnapshot(request.recipe) ?: return null
         return Key(request.source, recipe.inputContract, recipe.controls, JpegGenerationRecipe.MAX_EDGE,
-            TrialPreparedFoundation.GEOMETRY_VERSION)
+            TrialPreparedFoundation.GEOMETRY_VERSION, recipe.adjustments)
     }
 
     companion object { const val MAX_PIXEL_BYTES = 16L * 1024 * 1024 }

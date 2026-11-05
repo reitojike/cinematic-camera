@@ -38,7 +38,7 @@ internal class PrivateTrialPhotoRollRenderer(context: Context, private val resou
     override fun render(request: PhotoRollRenderRequest, cancellation: CancellationSignal): PhotoRollRenderResult {
         require(request.mode == mode && request.lookVersion == "stage-clear-v1" && request.strength.isFinite() &&
             request.strength in 0.0..1.0 && request.maxEdge == maxEdge)
-        val recipe = JpegGenerationRecipe.trial(request.strength)
+        val recipe = JpegGenerationRecipe.trial(request.strength, request.adjustments)
         cancellation.throwIfCanceled()
         val initial = resources().developConditions(rendererAvailable = true)
         if (AutoDevelopPolicy.blockers(initial).isNotEmpty()) {
@@ -109,7 +109,7 @@ internal class PrivateTrialPhotoRollRenderer(context: Context, private val resou
                         preview.bitmap.width == output.width && preview.bitmap.height == output.height && preview.bitmap.colorSpace?.isSrgb == true)
                     val copied = copyPrivateTrialDisplay(preview.bitmap, preview.comparisonBitmap, cancellation)
                     return PhotoRollRenderResult.Preview(copied.after, mode, comparisonBitmap = copied.comparison,
-                        trialStrength = recipe.strength)
+                        trialStrength = recipe.strength, trialAdjustments = recipe.adjustments)
                 } finally { preview.close() }
             } finally { delivery.close() }
         } catch (failure: java.util.concurrent.CancellationException) {

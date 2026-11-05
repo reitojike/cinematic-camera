@@ -24,7 +24,7 @@ internal interface RenderedJpegRows {
 internal class RecoverablePhotoPublisher(
     private val journal: JpegPublicationJournal,
     private val rows: RenderedJpegRows,
-    private val render: CompletedRender,
+    private val render: JpegPublicationRender,
     supportedContracts: Set<RendererPublicationContract>,
     private val input: RenderedJpegInput,
     private val inspector: JpegInspector,

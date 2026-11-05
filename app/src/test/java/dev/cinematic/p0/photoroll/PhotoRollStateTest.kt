@@ -4,6 +4,20 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PhotoRollStateTest {
+    @Test fun completedEditCannotReplaceAnInFlightOrUncertainSaveOwner() {
+        for (mode in listOf(PhotoRollPreviewMode.STAGE_CLEAR, PhotoRollPreviewMode.MANUAL_TRIAL)) {
+            for (phase in listOf(null, PhotoRollSavePhase.SAVING, PhotoRollSavePhase.UNCONFIRMED, PhotoRollSavePhase.HOLD))
+                assertFalse(canBeginStrengthEdit(mode, true, false, phase))
+            for (phase in listOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED)) {
+                assertTrue(canBeginStrengthEdit(mode, true, false, phase))
+                assertFalse(canBeginStrengthEdit(mode, true, true, phase))
+                assertFalse(canBeginStrengthEdit(mode, false, false, phase))
+            }
+        }
+        assertTrue(canBeginStrengthEdit(PhotoRollPreviewMode.PRIVATE_TRIAL, true, false, null))
+        assertFalse(canBeginStrengthEdit(PhotoRollPreviewMode.PRIVATE_TRIAL, false, false, null))
+    }
+
     @Test fun captureSaveRecordingFinalizeAndUnknownBlockEntry() {
         assertTrue(canOpenPhotoRoll(false, false, false, false))
         for (flag in 0..3) {

@@ -14,6 +14,7 @@ internal class JpegGenerationRecipe private constructor(
     val strength: Double,
     val quality: Int,
     internal val isTrial: Boolean,
+    val adjustments: PhotoAdjustments = PhotoAdjustments(),
 ) {
     constructor(inputContract: String, controls: RenderRecipeSnapshot, strength: Double = .5, quality: Int = 95) :
         this(inputContract, controls, strength, quality, false)
@@ -22,16 +23,19 @@ internal class JpegGenerationRecipe private constructor(
         require(inputContract.matches(Regex("[A-Za-z0-9_.-]{1,64}")))
         require(strength.isFinite() && strength in 0.0..1.0 && quality in 1..100)
         require(controls.payload.toByteArray(Charsets.UTF_8).size <= 512)
+        require(isTrial || adjustments.neutral) { "Manual adjustment is enrolled only in private trials" }
         val policy = Base64.getUrlEncoder().withoutPadding().encodeToString(controls.payload.toByteArray(Charsets.UTF_8))
         snapshot = RenderRecipeSnapshot(if (isTrial) TRIAL_SCHEMA else SCHEMA, "input=$inputContract;controls=${controls.schema};policy=$policy;edge=$MAX_EDGE;" +
-            "strength=${java.lang.Double.toHexString(strength)};quality=$quality;color=sRGB-SDR;pixelProfile=preliminary")
+            "strength=${java.lang.Double.toHexString(strength)};quality=$quality;color=sRGB-SDR;pixelProfile=preliminary" +
+            if (adjustments.neutral) "" else ";adjust=${PhotoAdjustments.VERSION};warmth=${java.lang.Double.toHexString(adjustments.warmth)};ev=${java.lang.Double.toHexString(adjustments.exposureEv)}")
     }
     companion object {
         const val SCHEMA = "stage-clear-bounded-jpeg-v1"
         const val TRIAL_SCHEMA = "stage-clear-private-no-face-trial-v1"
-        /** Only strength varies. Input/controls/output remain the private trial policy, never completed output. */
-        fun trial(strength: Double = .5) = JpegGenerationRecipe(AndroidAsShotJpegFrames.CONTRACT,
-            AsShotNoFaceTrialControls.POLICY, strength, 95, true)
+        /** All edits are frozen; neutral adjustments preserve legacy snapshot bytes and pixels. */
+        fun trial(strength: Double = .5, adjustments: PhotoAdjustments = PhotoAdjustments()) =
+            JpegGenerationRecipe(AndroidAsShotJpegFrames.CONTRACT, AsShotNoFaceTrialControls.POLICY,
+                strength, 95, true, adjustments)
 
         /**
          * Pure restoration of the existing canonical private recipe format. Rebuilding the entire snapshot
@@ -45,7 +49,14 @@ internal class JpegGenerationRecipe private constructor(
             val strength = try { java.lang.Double.parseDouble(snapshot.payload.substring(start, end)) }
                 catch (_: NumberFormatException) { return null }
             if (!strength.isFinite() || strength !in 0.0..1.0) return null
-            return trial(strength).takeIf { it.snapshot == snapshot }
+            val adjustments = if (snapshot.payload.contains(";adjust=")) {
+                fun number(key: String): Double? = snapshot.payload.split(';')
+                    .singleOrNull { it.startsWith("$key=") }?.substringAfter('=')?.toDoubleOrNull()
+                val warmth = number("warmth") ?: return null
+                val ev = number("ev") ?: return null
+                try { PhotoAdjustments(warmth, ev) } catch (_: IllegalArgumentException) { return null }
+            } else PhotoAdjustments()
+            return trial(strength, adjustments).takeIf { it.snapshot == snapshot }
         }
         const val RENDERER = "stage-clear-bounded-jpeg-v1"
         const val MAX_EDGE = 1024

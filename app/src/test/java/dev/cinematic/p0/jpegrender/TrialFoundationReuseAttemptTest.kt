@@ -18,8 +18,8 @@ class TrialFoundationReuseAttemptTest {
     private fun image() = LinearSrgbImage(4, 4, FloatArray(48) { channel ->
         if (channel / 3 == 5) 1.3f else (.02 + (channel % 11) * .045).toFloat()
     })
-    private fun auto(strength: Double, generation: Long) = AutoDevelopRequest("synthetic_reuse", generation,
-        source, JpegGenerationRecipe.trial(strength).snapshot, JpegGenerationRecipe.TRIAL_SCHEMA, 1024, 1024,
+    private fun auto(strength: Double, generation: Long, adjustments: PhotoAdjustments = PhotoAdjustments()) = AutoDevelopRequest("synthetic_reuse", generation,
+        source, JpegGenerationRecipe.trial(strength, adjustments).snapshot, JpegGenerationRecipe.TRIAL_SCHEMA, 1024, 1024,
         AutoRenderQuality.PRIVATE_TRIAL_1024, RenderedFaceState.NOT_RUN, RenderedExposureState.DIAGNOSTIC, AutoInputProfile.UNKNOWN)
     private fun jpeg(request: AutoDevelopRequest) = JpegGenerationRequest(request.captureId, request.generation,
         request.source, requireNotNull(JpegGenerationRecipe.fromTrialSnapshot(request.recipe)))
@@ -36,8 +36,8 @@ class TrialFoundationReuseAttemptTest {
         var afterPostHashClose: () -> Unit = {}
         val pixels = mutableListOf<FloatArray>()
 
-        inner class Run(strength: Double, generation: Long, useReuse: Boolean = true) {
-            val definition = auto(strength, generation)
+        inner class Run(strength: Double, generation: Long, useReuse: Boolean = true, adjustments: PhotoAdjustments = PhotoAdjustments()) {
+            val definition = auto(strength, generation, adjustments)
             val request = jpeg(definition)
             val lease = if (useReuse) requireNotNull(session.bind(definition)) else null
             var commits = 0
@@ -97,13 +97,49 @@ class TrialFoundationReuseAttemptTest {
             }, probe)
         }
 
-        fun run(strength: Double = .5, generation: Long = 1, useReuse: Boolean = true) = Run(strength, generation, useReuse)
+        fun run(strength: Double = .5, generation: Long = 1, useReuse: Boolean = true,
+            adjustments: PhotoAdjustments = PhotoAdjustments()) = Run(strength, generation, useReuse, adjustments)
         fun expected(strength: Double): FloatArray {
             val input = image()
             val prepared = AsShotNoFaceTrialControls.prepare(input, AsShotNoFaceTrialControls.POLICY) { false }
             return StageClearLook.renderFromBase(R7Base.render(input, prepared.foundationRoi, prepared.externalEv),
                 prepared.faces, strength).image.copyPixels()
         }
+    }
+
+    @Test fun warmthAndExposureChangeRealEncodedPixelsAndInvalidateOnlyTheirFoundation() {
+        val f = Fixture()
+        f.run().attempt.renderTrial { false }
+        val originalPixels = f.pixels.last()
+        val edited = PhotoAdjustments(45.0, .7)
+        val warmed = f.run(generation = 2, adjustments = edited)
+        warmed.attempt.renderTrial { false }
+        assertFalse(originalPixels.contentEquals(f.pixels.last()))
+        val editedPixels = f.pixels.last()
+        assertEquals(2, f.frameLoads)
+        f.run(generation = 3, adjustments = edited).attempt.renderTrial { false }
+        assertArrayEquals(editedPixels, f.pixels.last(), 0f)
+        assertEquals(2, f.frameLoads)
+        val uncached = Fixture()
+        uncached.run(adjustments = edited, useReuse = false).attempt.renderTrial { false }
+        assertArrayEquals(editedPixels, uncached.pixels.last(), 0f)
+        f.run(generation = 4, adjustments = edited.copy(exposureEv = .8)).attempt.renderTrial { false }
+        assertEquals(3, f.frameLoads)
+        assertFalse(editedPixels.contentEquals(f.pixels.last()))
+        f.run(generation = 5).attempt.renderTrial { false }
+        assertEquals(4, f.frameLoads)
+        assertArrayEquals(originalPixels, f.pixels.last(), 0f)
+    }
+
+    @Test fun warmthAloneAndEvAloneEachReachTheEncoder() {
+        val f = Fixture()
+        f.run().attempt.renderTrial { false }
+        val neutral = f.pixels.last()
+        f.run(generation = 2, adjustments = PhotoAdjustments(warmth = 50.0)).attempt.renderTrial { false }
+        assertFalse(neutral.contentEquals(f.pixels.last()))
+        f.run(generation = 3, adjustments = PhotoAdjustments(exposureEv = 1.0)).attempt.renderTrial { false }
+        assertFalse(neutral.contentEquals(f.pixels.last()))
+        assertEquals(3, f.frameLoads)
     }
 
     @Test fun missThenStrengthHitsHaveExactlyTheUncachedPixelsAndBothOriginalHashes() {

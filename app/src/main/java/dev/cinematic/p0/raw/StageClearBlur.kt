@@ -57,9 +57,9 @@ internal object StageClearBlur {
         }
     }
 
-    private data class Samples(val first: Int, val weights: DoubleArray)
+    internal data class Samples(val first: Int, val weights: DoubleArray)
 
-    private fun samples(inputSize: Int, outputSize: Int, filter: Filter): Array<Samples> {
+    internal fun samples(inputSize: Int, outputSize: Int, filter: Filter): Array<Samples> {
         // Pillow's full-frame box endpoints are float32 even though coefficients are double.
         val scale = inputSize.toFloat().toDouble() / outputSize
         val footprint = max(scale, 1.0)
