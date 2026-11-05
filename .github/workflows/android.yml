@@ -36,7 +36,7 @@ jobs:
         with:
           cache-provider: basic
       - name: lint・unit・debug build
-        run: ./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :rawprobe:lintDebug :rawprobe:assembleDebug :rawprobe:assembleDebugAndroidTest --no-daemon
+        run: ./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :rawprobe:lintNormalDebug :rawprobe:assembleNormalDebug :rawprobe:assembleNormalDebugAndroidTest :rawprobe:lintLargeHeapDebug :rawprobe:assembleLargeHeapDebug :rawprobe:assembleLargeHeapDebugAndroidTest --no-daemon
       - name: Prepare isolated RAW diagnostic
         shell: bash
         run: |
@@ -44,7 +44,7 @@ jobs:
           readelf="$ANDROID_HOME/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
           for abi in arm64-v8a x86_64; do
             unzip -p app/build/outputs/apk/debug/app-debug.apk "lib/$abi/libcinematic_dng.so" > "$RUNNER_TEMP/normal-$abi.so"
-            unzip -p rawprobe/build/outputs/apk/debug/rawprobe-debug.apk "lib/$abi/libcinematic_dng.so" > "$RUNNER_TEMP/probe-$abi.so"
+            unzip -p rawprobe/build/outputs/apk/normal/debug/rawprobe-normal-debug.apk "lib/$abi/libcinematic_dng.so" > "$RUNNER_TEMP/probe-$abi.so"
             "$readelf" --dyn-syms --wide "$RUNNER_TEMP/normal-$abi.so" > "$RUNNER_TEMP/normal-$abi.symbols"
             "$readelf" --dyn-syms --wide "$RUNNER_TEMP/probe-$abi.so" > "$RUNNER_TEMP/probe-$abi.symbols"
             grep -F 'Java_dev_cinematic_p0_raw_NativeDngDecoder_decode' "$RUNNER_TEMP/normal-$abi.symbols"
@@ -52,10 +52,19 @@ jobs:
             grep -F 'Java_dev_cinematic_rawprobe_NativeFullResolutionProbe_inspect' "$RUNNER_TEMP/probe-$abi.symbols"
             ! grep -F 'Java_dev_cinematic_p0_raw_' "$RUNNER_TEMP/probe-$abi.symbols"
           done
+          aapt="$ANDROID_HOME/build-tools/36.0.0/aapt"
+          "$aapt" dump xmltree rawprobe/build/outputs/apk/normal/debug/rawprobe-normal-debug.apk AndroidManifest.xml > "$RUNNER_TEMP/rawprobe-normal.xml"
+          "$aapt" dump xmltree rawprobe/build/outputs/apk/largeHeap/debug/rawprobe-largeHeap-debug.apk AndroidManifest.xml > "$RUNNER_TEMP/rawprobe-large.xml"
+          grep -F 'package="dev.cinematic.rawprobe"' "$RUNNER_TEMP/rawprobe-normal.xml"
+          grep -E 'android:largeHeap.*\(type 0x12\)0x0$' "$RUNNER_TEMP/rawprobe-normal.xml"
+          grep -F 'package="dev.cinematic.rawprobe.largeheap"' "$RUNNER_TEMP/rawprobe-large.xml"
+          grep -E 'android:largeHeap.*\(type 0x12\)0xffffffff$' "$RUNNER_TEMP/rawprobe-large.xml"
           mkdir -p rawprobe/build/diagnostic
-          cp rawprobe/build/outputs/apk/debug/rawprobe-debug.apk rawprobe/build/diagnostic/
-          cp rawprobe/build/outputs/apk/androidTest/debug/rawprobe-debug-androidTest.apk rawprobe/build/diagnostic/
-          cp docs/RAW_PROBE.md tools/raw-probe/Invoke-RawProbe.ps1 rawprobe/build/diagnostic/
+          cp rawprobe/build/outputs/apk/normal/debug/rawprobe-normal-debug.apk rawprobe/build/diagnostic/rawprobe-debug.apk
+          cp rawprobe/build/outputs/apk/androidTest/normal/debug/rawprobe-normal-debug-androidTest.apk rawprobe/build/diagnostic/rawprobe-debug-androidTest.apk
+          cp rawprobe/build/outputs/apk/largeHeap/debug/rawprobe-largeHeap-debug.apk rawprobe/build/diagnostic/rawprobe-largeheap.apk
+          cp rawprobe/build/outputs/apk/androidTest/largeHeap/debug/rawprobe-largeHeap-debug-androidTest.apk rawprobe/build/diagnostic/rawprobe-largeheap-androidTest.apk
+          cp docs/RAW_PROBE.md tools/raw-probe/*.ps1 rawprobe/build/diagnostic/
           (cd rawprobe/build/diagnostic && sha256sum *.apk > SHA256SUMS.txt)
       - name: Isolated RAW diagnostic APKs
         uses: actions/upload-artifact@v7

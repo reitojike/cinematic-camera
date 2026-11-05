@@ -2,6 +2,7 @@ package dev.cinematic.rawprobe
 
 import android.app.ActivityManager
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.os.Build
 import android.os.Bundle
 import android.os.Debug
@@ -24,7 +25,7 @@ class MemoryPolicyTest {
         val emulator = Build.HARDWARE in setOf("goldfish", "ranchu")
         check(emulator || args.getString("allowPhysical") == "true")
         val context = instrumentation.targetContext
-        check(context.packageName == "dev.cinematic.rawprobe")
+        check(context.packageName in setOf("dev.cinematic.rawprobe", "dev.cinematic.rawprobe.largeheap"))
         val activity = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val system = ActivityManager.MemoryInfo().also(activity::getMemoryInfo)
         val process = Debug.MemoryInfo().also(Debug::getMemoryInfo)
@@ -34,6 +35,7 @@ class MemoryPolicyTest {
             .put("runId", args.getString("runId") ?: "manual")
             .put("process", "diagnostic-app-not-production-camera")
             .put("applicationId", context.packageName)
+            .put("largeHeapRequested", context.applicationInfo.flags and ApplicationInfo.FLAG_LARGE_HEAP != 0)
             .put("sdk", Build.VERSION.SDK_INT).put("hardware", Build.HARDWARE)
             .put("abi", Build.SUPPORTED_ABIS.firstOrNull()).put("emulator", emulator)
             .put("memoryClassMiB", activity.memoryClass).put("largeMemoryClassMiB", activity.largeMemoryClass)

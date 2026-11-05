@@ -1,14 +1,9 @@
 package dev.cinematic.rawprobe
 
-import android.app.ActivityManager
-import android.content.Context
 import android.os.Build
 import android.os.Bundle
 import android.os.CancellationSignal
-import android.os.Debug
 import android.os.ParcelFileDescriptor
-import android.os.PowerManager
-import android.os.SystemClock
 import android.system.Os
 import android.system.OsConstants
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -18,10 +13,6 @@ import java.io.File
 import java.io.IOException
 import java.io.RandomAccessFile
 import java.security.MessageDigest
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.atomic.AtomicReference
-import kotlin.concurrent.thread
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -39,7 +30,7 @@ class FullResolutionProbeTest {
         val args = InstrumentationRegistry.getArguments()
         check(args.getString("rawProbe") == "true")
         check(Build.HARDWARE in setOf("goldfish", "ranchu") || args.getString("allowPhysical") == "true")
-        check(context.packageName == "dev.cinematic.rawprobe")
+        check(context.packageName in setOf("dev.cinematic.rawprobe", "dev.cinematic.rawprobe.largeheap"))
     }
 
     private fun sha256(file: File): String {
@@ -55,52 +46,16 @@ class FullResolutionProbeTest {
         file.outputStream().buffered().use { writeSyntheticTrialDng(it, width, height, orientation) }
     }
 
-    private fun memory(): JSONObject {
-        val runtime = Runtime.getRuntime()
-        val process = Debug.MemoryInfo().also(Debug::getMemoryInfo)
-        val system = ActivityManager.MemoryInfo().also {
-            (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(it)
-        }
-        val rss = File("/proc/self/status").useLines { lines ->
-            lines.filter { it.startsWith("VmRSS:") || it.startsWith("VmHWM:") }.toList()
-        }
-        return JSONObject().put("elapsedMs", SystemClock.elapsedRealtime())
-            .put("managedUsedBytes", runtime.totalMemory() - runtime.freeMemory())
-            .put("nativeAllocatedBytes", Debug.getNativeHeapAllocatedSize()).put("pssKiB", process.totalPss)
-            .put("availableMemBytes", system.availMem).put("lowMemory", system.lowMemory)
-            .put("rssAndCumulativeHighWater", JSONArray(rss))
-            .put("thermalStatus", (context.getSystemService(Context.POWER_SERVICE) as PowerManager).currentThermalStatus)
-    }
-
     private fun decode(file: File, cancelAt: String? = null, preCancelled: Boolean = false): JSONObject {
         val hash = sha256(file)
         val signal = CancellationSignal().also { if (preCancelled) it.cancel() }
-        val stages = JSONArray()
-        val running = AtomicBoolean(true)
-        val managedMax = AtomicLong()
-        val nativeMax = AtomicLong()
-        val pssMax = AtomicLong()
-        val samplerFailure = AtomicReference<Throwable?>()
-        // Sampled maxima, not exact peaks. No forced GC or largeHeap.
-        val sampler = thread(name = "raw-probe-sampler", isDaemon = true) {
-            try {
-            var ticks = 0
-            while (running.get()) {
-                val runtime = Runtime.getRuntime()
-                managedMax.accumulateAndGet(runtime.totalMemory() - runtime.freeMemory(), ::maxOf)
-                nativeMax.accumulateAndGet(Debug.getNativeHeapAllocatedSize(), ::maxOf)
-                if (ticks++ % 10 == 0) pssMax.accumulateAndGet(Debug.getPss(), ::maxOf)
-                try { Thread.sleep(10) } catch (_: InterruptedException) { break }
-            }
-            } catch (failure: Throwable) { samplerFailure.set(failure) }
-        }
-        val start = SystemClock.elapsedRealtime()
+        val metrics = ProbeMetrics(context)
         val report = JSONObject().put("preCancelled", preCancelled).put("cancelAt", cancelAt ?: JSONObject.NULL)
         try {
             ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
                 Os.lseek(fd.fileDescriptor, 7, OsConstants.SEEK_SET)
                 val result = NativeFullResolutionProbe.inspect(fd.fd, signal) { stage ->
-                    stages.put(memory().put("stage", stage))
+                    metrics.stage(stage)
                     if (stage == cancelAt) signal.cancel()
                 }
                 assertEquals(7L, Os.lseek(fd.fileDescriptor, 0, OsConstants.SEEK_CUR))
@@ -111,18 +66,10 @@ class FullResolutionProbeTest {
             check(failure.message in setOf("DNG_CANCELLED", "DNG_MEMORY", "DNG_LIMIT", "DNG_SOURCE", "DNG_UNSUPPORTED"))
             report.put("status", "failure").put("code", failure.message)
         } finally {
-            running.set(false)
-            sampler.interrupt()
-            sampler.join(5000)
-            check(!sampler.isAlive && samplerFailure.get() == null) { "Memory sampler did not finish normally" }
+            metrics.stop()
         }
-        val elapsed = SystemClock.elapsedRealtime() - start
         assertEquals(hash, sha256(file))
-        return report.put("sourceUnchanged", true).put("elapsedMs", elapsed)
-            .put("stages", stages).put("after", memory())
-            .put("sampleIntervalMs", 10).put("pssSampleIntervalMs", 100)
-            .put("sampledManagedMaxBytes", managedMax.get()).put("sampledNativeMaxBytes", nativeMax.get())
-            .put("sampledPssMaxKiB", pssMax.get())
+        return metrics.appendTo(report.put("sourceUnchanged", true))
     }
 
     private fun save(name: String, report: JSONObject) {
@@ -137,7 +84,7 @@ class FullResolutionProbeTest {
         val file = File(context.cacheDir, "raw-probe-full.dng")
         try {
             for ((width, height) in listOf(4000 to 3000, 6000 to 4000)) {
-                val available = memory()
+                val available = memorySnapshot(context)
                 check(!available.getBoolean("lowMemory") && available.getLong("availableMemBytes") >= 1024L * 1024 * 1024)
                 var unrotated: JSONObject? = null
                 for (orientation in listOf(1, 6)) {

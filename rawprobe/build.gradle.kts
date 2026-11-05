@@ -21,10 +21,24 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    flavorDimensions += "heapPolicy"
+    productFlavors {
+        create("normal") {
+            dimension = "heapPolicy"
+            manifestPlaceholders["probeLargeHeap"] = "false"
+        }
+        create("largeHeap") {
+            dimension = "heapPolicy"
+            applicationIdSuffix = ".largeheap"
+            manifestPlaceholders["probeLargeHeap"] = "true"
+        }
+    }
     lint { abortOnError = true }
     sourceSets {
         getByName("main").assets.directories.add("../app/src/main/assets")
         getByName("androidTest").kotlin.directories.add("../app/src/androidTest/java/dev/cinematic/p0/testing")
+        // Compile the current production kernels for measurement; no forked algorithm copies.
+        getByName("androidTest").kotlin.directories.add("../app/src/main/java/dev/cinematic/p0/raw")
     }
 }
 

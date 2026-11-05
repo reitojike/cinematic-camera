@@ -1,5 +1,7 @@
 # 設計
 
+追加の実機比較依頼では標準product flavorを使い、診断のnormal/largeHeapを別packageへ分ける。どちらもdebug限定で通常appのmanifest/署名/保存/公開条件は変更しない。現行rawパッケージをテストsource setへ参照し、R7/Stage Clearをforkしない。入力生成・checksumを含む合成演算3回とnative原寸decodeは別試験とする。既存appは利用者が操作し、ADB dumpsysの集計値だけを観察する。largeHeapは試験条件であり製品採用判断ではない。
+
 既存の固定署名appとdataを維持したまま試せるよう、`:rawprobe`を別packageの小さい診断appとする。標準Android instrumentation/ActivityManager/Debug/PowerManagerだけで開始し、既存と同じpinned test依存を使う。release variantを無効化し、manifestにActivity/permissionを持たない。
 
 最初にmemory policyを記録し、同一API37 image・VM heap設定の別AVDでRAMだけを変える。起動ログのRAM自動補正、getprop、Android APIの実測を別々に保存する。8GB phoneと同条件だとは扱わない。ホスト資源不足時は大きいAVD/重いnative試験を保留し、他担当のAVDやcacheを操作しない。

@@ -1,5 +1,17 @@
 # P0 build evidence — 2026-11-01
 
+## 原寸DNG・heap診断（Issue #143 / spec026）
+
+- 別packageのdebug診断normal/largeHeapを用意。製品appの1024px/16MP/128MiB・half-size、JNI export、署名・保存・公開条件は維持する。
+- 最新mainを基点としたlocal通常appはlint/build/test APK・両ABI成功、82 suites/597 unit、failure/error0。Windowsの既存symlink4件はskipであり合格に数えない。診断は両flavorのlint・両ABI・test APK成功。最終headのCI/review証拠はPRを参照する。
+- 専用API37 x86_64 AVDで指定RAM4096→6144MiBを比較。Android totalMemは4,105,592,832→6,213,230,592 bytesへ増えたが、通常Runtime.maxMemoryは両方192MiB、memoryClass192/largeMemoryClass576MiBだった。以前の低いRAM指定には起動時4096MB自動補正ログがあり、指定値を実RAMとみなさない。
+- 4GB AVDで通常診断はlargeHeap=false/maxHeap192MiB、比較診断は別packageでtrue/576MiBを実測。製品appへのlargeHeap採用・処理中切替ではない。
+- 原寸nativeは4000×3000/6000×4000と各90度向きで通常・largeHeapとも成功（各3 JUnit）。half-size0、原寸16bit出力、回転寸法/四隅、原本SHA-256不変、キャンセル2種・64MiB/24MP上限・不正入力拒否・回復を確認。両heap条件の各出力summary/checksumは一致。通常条件の観測最大は12MPでnative約212MiB/PSS約233MiB、24MPで約418MiB/約439MiBだった。
+- 現行R7/Stage Clearソースを再利用した合成1024px演算は両heapで初回を含む3回成功し、全6回のchecksum一致。通常2048pxはMANAGED_MEMORYで停止、largeHeap2048pxは3回成功（約60.1/56.9/57.3秒、観測managed最大約362MiB/PSS約348MiB）。失敗結果も当該runIdで回収し、自動再試行しない。1536pxの比較は未実施。
+- 通常JNIの既存DNG/AS_SHOT/W1/上限等25件成功。read-onlyのdumpsys helperは対象不在を成功にせず、通常appの既存合成負荷中の集計回収にも成功。helperの失敗時回収・古いrun拒否・serial/写真情報除外を模擬出力でも検証した。
+- 両診断APK実物の別package/largeHeap false・true、権限、LibRaw/Pillow/Colour関連notice、両ABIのJNI隔離、個人path除外を確認。Git差分の公開検査/diff checkを実施。手順は[RAW_PROBE](RAW_PROBE.md)。
+- 全てdebug/合成/隔離AVDの結果でありPixel実測・配布版速度・真のピークではない。native decodeと現像演算は別工程で、最大値を合計しない。12/24MPのStage Clear→JPEG、実写の色/顔保護、実appの撮影優先・安定性、largeHeap製品採用は未確認。実機は本人操作で別途測定する。
+
 ## Result
 
 Final source compiled successfully with CameraX **1.6.2**, AGP 9.4.1, Kotlin / Compose compiler 2.4.21, Gradle 9.8.1, Oracle JDK 25.0.4.1, Android SDK Platform 37.0 and Build Tools 36.0.0.
