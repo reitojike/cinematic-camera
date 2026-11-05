@@ -5,3 +5,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "CinematicCameraP0"
 include(":app")
+include(":rawprobe")
