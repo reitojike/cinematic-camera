@@ -74,7 +74,8 @@ internal class PrivateTrialReuseSession internal constructor() : AutoCloseable {
 
     @Synchronized internal fun commit(lease: PrivateTrialReuseLease, request: JpegGenerationRequest,
         foundation: TrialPreparedFoundation) {
-        if (!accepts(lease, request) || !foundation.validFor(request) || foundation.pixelBytes > MAX_PIXEL_BYTES) return
+        if (!accepts(lease, request) || !foundation.validFor(request) ||
+            foundation.pixelBytes + foundation.previewFieldBytes > MAX_PIXEL_BYTES) return
         val key = key(lease.request) ?: return
         // No generation-keyed collection and no second base: replacement drops the preceding arrays.
         entry = Entry(key, foundation)
@@ -93,7 +94,7 @@ internal class PrivateTrialReuseSession internal constructor() : AutoCloseable {
         val cached = entry ?: return
         val count = width.toLong() * height
         if (cached.key != key(lease.request) || !geometry(cached, width, height) || count != pixels.size.toLong() ||
-            cached.foundation.pixelBytes + count * 4 > MAX_PIXEL_BYTES) return
+            cached.foundation.pixelBytes + cached.foundation.previewFieldBytes + count * 4 > MAX_PIXEL_BYTES) return
         cached.comparison = pixels
     }
 

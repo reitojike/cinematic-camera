@@ -8,9 +8,9 @@ import android.os.ParcelFileDescriptor
 import dev.cinematic.p0.raw.FaceMask
 import dev.cinematic.p0.raw.LinearSrgbImage
 import dev.cinematic.p0.raw.PhotoAdjustments
+import dev.cinematic.p0.raw.PreparedStageClearGlow
 import dev.cinematic.p0.raw.R7Base
 import dev.cinematic.p0.raw.R7PreviewInputs
-import dev.cinematic.p0.raw.StageClearLook
 import dev.cinematic.p0.raw.original.NativeOriginalRaster
 import dev.cinematic.p0.raw.original.OriginalFields
 import dev.cinematic.p0.raw.original.OriginalRasterFile
@@ -35,7 +35,7 @@ import org.json.JSONObject
 /** One caller-admitted IO session, never a queue/slot, saved image or face-protected completion.
  * The first render decodes an immutable, fingerprint-bound private snapshot to row-readable RGB16,
  * reduces it, closes all owners and deletes both files before retaining <=1024 AS_SHOT input.
- * Only that input and one R7 base survive calls. Returned software sRGB Bitmaps belong to callers.
+ * Only that input, one R7 base and its reduced Glow fields survive calls. Returned software sRGB Bitmaps belong to callers.
  * Source/capture/lifecycle invalidation and resource/memory admission belong to the existing factory.
  * A failed or stopped session never silently acquires a fresh decode attempt. */
 internal class Original24PreviewSession(
@@ -54,6 +54,10 @@ internal class Original24PreviewSession(
     private var asShot: LinearSrgbImage? = null
     private var base: LinearSrgbImage? = null
     private var baseAdjustments: PhotoAdjustments? = null
+    private var previewGlow: PreparedStageClearGlow? = null
+    internal val previewFieldBytes get() = previewGlow?.retainedFieldBytes ?: 0
+    internal var previewFieldBuilds = 0
+        private set
     private var resources: DngIoResources? = null
     private var sourceFd: ParcelFileDescriptor? = null
     private var rasterFd: ParcelFileDescriptor? = null
@@ -89,14 +93,17 @@ internal class Original24PreviewSession(
             resourceAdmission()
             val foundation = if (base != null && baseAdjustments == adjustments) requireNotNull(base) else {
                 // Drop the old base before allocating a replacement; warmth and EV both invalidate it.
-                base = null; baseAdjustments = null
+                base = null; baseAdjustments = null; previewGlow = null
                 original24PreviewFoundation(input, adjustments, stop).also {
                     originalCheckpoint(stop)
                     base = it; baseAdjustments = adjustments
                 }
             }
             val noProtection = FaceMask(foundation.width, foundation.height, FloatArray(foundation.pixelCount))
-            val image = StageClearLook.renderFromBase(foundation, noProtection, strength, stop).image
+            val glow = previewGlow ?: PreparedStageClearGlow.prepare(foundation) {
+                originalCheckpoint(stop)
+            }.also { previewGlow = it; previewFieldBuilds++ }
+            val image = glow.render(noProtection, strength) { originalCheckpoint(stop) }.image
             originalCheckpoint(stop)
             resourceAdmission()
             result = bitmap(image, stop)
@@ -105,7 +112,7 @@ internal class Original24PreviewSession(
             originalCheckpoint(stop)
             requireNotNull(result)
         } catch (error: Throwable) {
-            failed = true; asShot = null; base = null; baseAdjustments = null
+            failed = true; asShot = null; base = null; baseAdjustments = null; previewGlow = null
             failure = error
             result?.recycle()
             if (error is OutOfMemoryError) throw IOException("Original preview memory unavailable", error)
@@ -113,7 +120,7 @@ internal class Original24PreviewSession(
         } finally {
             try { releaseTransient() }
             catch (cleanup: Throwable) {
-                failed = true; asShot = null; base = null; baseAdjustments = null
+                failed = true; asShot = null; base = null; baseAdjustments = null; previewGlow = null
                 result?.recycle()
                 val primary = failure
                 if (primary == null) throw cleanup
@@ -146,7 +153,7 @@ internal class Original24PreviewSession(
             originalCheckpoint(stop)
             result
         } catch (error: Throwable) {
-            failed = true; asShot = null; base = null; baseAdjustments = null
+            failed = true; asShot = null; base = null; baseAdjustments = null; previewGlow = null
             failure = error
             result?.recycle()
             if (error is OutOfMemoryError) throw IOException("Original comparison memory unavailable", error)
@@ -154,7 +161,7 @@ internal class Original24PreviewSession(
         } finally {
             try { releaseTransient() }
             catch (cleanup: Throwable) {
-                failed = true; asShot = null; base = null; baseAdjustments = null
+                failed = true; asShot = null; base = null; baseAdjustments = null; previewGlow = null
                 result?.recycle()
                 val primary = failure
                 if (primary == null) throw cleanup
@@ -273,7 +280,7 @@ internal class Original24PreviewSession(
     override fun close() {
         requestStop()
         exclusive {
-            closed = true; asShot = null; base = null; baseAdjustments = null
+            closed = true; asShot = null; base = null; baseAdjustments = null; previewGlow = null
             releaseTransient()
         }
     }
