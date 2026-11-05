@@ -1,0 +1,9 @@
+# 設計
+
+既存の固定署名appとdataを維持したまま試せるよう、`:rawprobe`を別packageの小さい診断appとする。標準Android instrumentation/ActivityManager/Debug/PowerManagerだけで開始し、既存と同じpinned test依存を使う。release variantを無効化し、manifestにActivity/permissionを持たない。
+
+最初にmemory policyを記録し、同一API37 image・VM heap設定の別AVDでRAMだけを変える。起動ログのRAM自動補正、getprop、Android APIの実測を別々に保存する。8GB phoneと同条件だとは扱わない。ホスト資源不足時は大きいAVD/重いnative試験を保留し、他担当のAVDやcacheを操作しない。
+
+次に既存LibRaw adapterを再利用するnative full-size probeを、診断moduleに限ってcompileする。通常JNI entryとlibraw/WB/metadata検査を共用し、追加native exportは診断binaryだけにする。decodeの16bit native出力を検査して小さいsummaryへ変え、source FDは同期return/closeまで保持する。全画像のmanaged Float32化や新しいqueueは行わない。診断専用processの同期単体試験であり、製品の共通admission/撮影復帰は別の検証として残す。
+
+UI/保存の#142/#141のファイルを変更せず、main側はnative境界/診断buildと必要な既存回帰に限定する。LibRaw/Colour noticesは診断APKにも保持する。CIで通常appと診断moduleをbuildし、APKsと最小PowerShell手順をartifactへ含める。配布Release/固定署名・実機操作は行わず、Draft PRでreview/CIを得てmerge確認を待つ。

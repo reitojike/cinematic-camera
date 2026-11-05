@@ -9,6 +9,10 @@
 #include <new>
 #include <stdexcept>
 #include <vector>
+#ifdef CINEMATIC_ENABLE_RAW_PROBE
+#include <sstream>
+#include <string>
+#endif
 #include "w1_trial.h"
 #include "as_shot_xy.h"
 
@@ -38,10 +42,34 @@ void check(int result) {
     fail("DNG_UNSUPPORTED");
 }
 
-jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMode) {
+#ifdef CINEMATIC_ENABLE_RAW_PROBE
+// Compiled only into the separate diagnostic APK. No production admission or limit changes.
+struct ProbeReport {
+    JNIEnv* env;
+    jobject observer;
+    jmethodID onStage;
+    std::string json;
+    void stage(const char* name, const Cancellation& cancel) const {
+        jstring text = env->NewStringUTF(name);
+        if (!text) fail("DNG_MEMORY");
+        env->CallVoidMethod(observer, onStage, text);
+        env->DeleteLocalRef(text);
+        if (cancel.cancelled()) fail("DNG_CANCELLED");
+    }
+};
+#endif
+
+jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMode
+#ifdef CINEMATIC_ENABLE_RAW_PROBE
+                 , ProbeReport* probe = nullptr
+#endif
+) {
     if (fd < 0 || longEdge < 1 || longEdge > 1024 || !signal || (wbMode != 0 && wbMode != 1)) fail("DNG_UNSUPPORTED");
     Cancellation cancel{env, signal, env->GetMethodID(env->GetObjectClass(signal), "isCanceled", "()Z")};
     if (!cancel.isCancelled || cancel.cancelled()) fail("DNG_CANCELLED");
+#ifdef CINEMATIC_ENABLE_RAW_PROBE
+    if (probe) probe->stage("snapshot", cancel);
+#endif
     struct stat file{};
     if (fstat(fd, &file) || !S_ISREG(file.st_mode) || file.st_size <= 0) fail("DNG_SOURCE");
     if (static_cast<uint64_t>(file.st_size) > kMaxFileBytes) fail("DNG_LIMIT");
@@ -66,6 +94,10 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
         raw.set_exifparser_handler(cinematic::AsShotXyMetadata::capture, &asShotMetadata);
     }
     raw.imgdata.rawparams.max_raw_memory_mb = 128;
+#ifdef CINEMATIC_ENABLE_RAW_PROBE
+    // A fixed diagnostic ceiling, not increased automatically after a failure.
+    if (probe) { raw.imgdata.rawparams.max_raw_memory_mb = 512; probe->stage("open", cancel); }
+#endif
     raw.set_progress_handler(progress, &cancel);
     const int opened = raw.open_buffer(encoded.data(), encoded.size());
     check(opened); // Preserve LibRaw cancellation/memory/source failures over partial metadata errors.
@@ -81,7 +113,11 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
     const auto& sizes = raw.imgdata.sizes;
     const int sourceWidth = sizes.width, sourceHeight = sizes.height;
     const uint64_t count = static_cast<uint64_t>(sizes.raw_width) * sizes.raw_height;
-    if (!count || count > kMaxRawPixels) fail("DNG_LIMIT");
+    uint64_t pixelLimit = kMaxRawPixels;
+#ifdef CINEMATIC_ENABLE_RAW_PROBE
+    if (probe) pixelLimit = 24'000'000;
+#endif
+    if (!count || count > pixelLimit) fail("DNG_LIMIT");
     // DefaultScale can otherwise amplify an accepted RAW during LibRaw's stretch().
     // First preview route supports square pixels and no Fuji diagonal-layout expansion.
     if (!std::isfinite(sizes.pixel_aspect) || sizes.pixel_aspect != 1.0 || raw.is_fuji_rotated() ||
@@ -103,6 +139,9 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
 
     auto& params = raw.imgdata.params;
     params.half_size = 1;
+#ifdef CINEMATIC_ENABLE_RAW_PROBE
+    if (probe) params.half_size = 0;
+#endif
     params.use_fuji_rotate = 0; // No geometry expansion; EXIF orientation is applied by make_mem_image.
     params.output_color = 1; // LibRaw linear sRGB/D65, not camera RGB or R7 base.
     params.output_bps = 16;
@@ -125,6 +164,9 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
     params.fbdd_noiserd = 0;
     params.threshold = 0.f;
     params.med_passes = 0;
+#ifdef CINEMATIC_ENABLE_RAW_PROBE
+    if (probe) probe->stage("unpack", cancel);
+#endif
     check(raw.unpack());
     if (raw.error_count()) fail("DNG_UNSUPPORTED");
     if (wbMode == 1) cinematic::validateW1Processing(raw.imgdata.rawdata.color, requestedWb);
@@ -134,15 +176,55 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
         try { cinematic::validateW1Processing(raw.imgdata.rawdata.color, requestedWb); }
         catch (const std::runtime_error&) { fail("DNG_UNSUPPORTED"); }
     }
+#ifdef CINEMATIC_ENABLE_RAW_PROBE
+    if (probe) probe->stage("process", cancel);
+#endif
     check(raw.dcraw_process());
     if (raw.error_count()) fail("DNG_UNSUPPORTED");
     int error = 0;
+#ifdef CINEMATIC_ENABLE_RAW_PROBE
+    if (probe) probe->stage("make_image", cancel);
+#endif
     std::unique_ptr<libraw_processed_image_t, decltype(&LibRaw::dcraw_clear_mem)> image(
         raw.dcraw_make_mem_image(&error), LibRaw::dcraw_clear_mem);
     check(error);
     if (!image || image->type != LIBRAW_IMAGE_BITMAP || image->bits != 16 || image->colors != 3 ||
         !image->width || !image->height ||
         image->data_size != static_cast<uint64_t>(image->width) * image->height * 6) fail("DNG_UNSUPPORTED");
+#ifdef CINEMATIC_ENABLE_RAW_PROBE
+    if (probe) {
+        if (static_cast<uint64_t>(image->width) * image->height > pixelLimit) fail("DNG_LIMIT");
+        probe->stage("summarize", cancel);
+        const auto* values = reinterpret_cast<const uint16_t*>(image->data);
+        uint64_t digest = 14695981039346656037ULL;
+        for (size_t i = 0; i < image->data_size; ++i) {
+            if ((i & 65535) == 0 && cancel.cancelled()) fail("DNG_CANCELLED");
+            digest = (digest ^ image->data[i]) * 1099511628211ULL;
+        }
+        std::ostringstream result;
+        result << "{\"sourceWidth\":" << sourceWidth << ",\"sourceHeight\":" << sourceHeight
+               << ",\"width\":" << image->width << ",\"height\":" << image->height
+               << ",\"halfSize\":0,\"bits\":16,\"colors\":3,\"dataBytes\":" << image->data_size
+               << ",\"checksumKind\":\"fnv1a64-diagnostic-not-security\",\"checksum\":\""
+               << std::hex << digest << std::dec << "\",\"samples\":[";
+        bool first = true;
+        for (unsigned y : {0U, static_cast<unsigned>(image->height / 2), static_cast<unsigned>(image->height - 1)})
+            for (unsigned x : {0U, static_cast<unsigned>(image->width / 2), static_cast<unsigned>(image->width - 1)}) {
+                if (!first) result << ',';
+                first = false;
+                const size_t i = (static_cast<size_t>(y) * image->width + x) * 3;
+                result << '[' << x << ',' << y << ',' << values[i] << ',' << values[i + 1] << ',' << values[i + 2] << ']';
+            }
+        result << "]}";
+        // No full-sized Java output; free every native image/snapshot before the final measurement.
+        image.reset();
+        raw.recycle();
+        std::vector<unsigned char>().swap(encoded);
+        probe->json = result.str();
+        probe->stage("released", cancel);
+        return nullptr;
+    }
+#endif
     const double scale = std::min(1.0, static_cast<double>(longEdge) / std::max(image->width, image->height));
     const int width = std::max(1, static_cast<int>(std::floor(image->width * scale)));
     const int height = std::max(1, static_cast<int>(std::floor(image->height * scale)));
@@ -187,6 +269,27 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
 }
 } // namespace
 
+#ifdef CINEMATIC_ENABLE_RAW_PROBE
+extern "C" JNIEXPORT jstring JNICALL
+Java_dev_cinematic_rawprobe_NativeFullResolutionProbe_inspect(JNIEnv* env, jobject, jint fd,
+                                                            jobject signal, jobject observer) {
+    try {
+        if (!observer) fail("DNG_UNSUPPORTED");
+        jmethodID onStage = env->GetMethodID(env->GetObjectClass(observer), "onStage", "(Ljava/lang/String;)V");
+        if (!onStage) return nullptr;
+        ProbeReport report{env, observer, onStage, {}};
+        decodeDng(env, fd, 1024, signal, 0, &report);
+        return env->NewStringUTF(report.json.c_str());
+    } catch (const std::bad_alloc&) {
+        if (!env->ExceptionCheck()) env->ThrowNew(env->FindClass("java/io/IOException"), "DNG_MEMORY");
+    } catch (const std::exception& error) {
+        if (!env->ExceptionCheck()) env->ThrowNew(env->FindClass("java/io/IOException"), error.what());
+    } catch (...) {
+        if (!env->ExceptionCheck()) env->ThrowNew(env->FindClass("java/io/IOException"), "DNG_UNSUPPORTED");
+    }
+    return nullptr;
+}
+#else
 extern "C" JNIEXPORT jobject JNICALL
 Java_dev_cinematic_p0_raw_NativeDngDecoder_decode(JNIEnv* env, jobject, jint fd, jint longEdge, jobject signal, jint wbMode) {
     try { return decodeDng(env, fd, longEdge, signal, wbMode); }
@@ -199,3 +302,4 @@ Java_dev_cinematic_p0_raw_NativeDngDecoder_decode(JNIEnv* env, jobject, jint fd,
     }
     return nullptr;
 }
+#endif

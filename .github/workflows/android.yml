@@ -36,7 +36,34 @@ jobs:
         with:
           cache-provider: basic
       - name: lint・unit・debug build
-        run: ./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
+        run: ./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :rawprobe:lintDebug :rawprobe:assembleDebug :rawprobe:assembleDebugAndroidTest --no-daemon
+      - name: Prepare isolated RAW diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          readelf="$ANDROID_HOME/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          for abi in arm64-v8a x86_64; do
+            unzip -p app/build/outputs/apk/debug/app-debug.apk "lib/$abi/libcinematic_dng.so" > "$RUNNER_TEMP/normal-$abi.so"
+            unzip -p rawprobe/build/outputs/apk/debug/rawprobe-debug.apk "lib/$abi/libcinematic_dng.so" > "$RUNNER_TEMP/probe-$abi.so"
+            "$readelf" --dyn-syms --wide "$RUNNER_TEMP/normal-$abi.so" > "$RUNNER_TEMP/normal-$abi.symbols"
+            "$readelf" --dyn-syms --wide "$RUNNER_TEMP/probe-$abi.so" > "$RUNNER_TEMP/probe-$abi.symbols"
+            grep -F 'Java_dev_cinematic_p0_raw_NativeDngDecoder_decode' "$RUNNER_TEMP/normal-$abi.symbols"
+            ! grep -F 'Java_dev_cinematic_rawprobe_' "$RUNNER_TEMP/normal-$abi.symbols"
+            grep -F 'Java_dev_cinematic_rawprobe_NativeFullResolutionProbe_inspect' "$RUNNER_TEMP/probe-$abi.symbols"
+            ! grep -F 'Java_dev_cinematic_p0_raw_' "$RUNNER_TEMP/probe-$abi.symbols"
+          done
+          mkdir -p rawprobe/build/diagnostic
+          cp rawprobe/build/outputs/apk/debug/rawprobe-debug.apk rawprobe/build/diagnostic/
+          cp rawprobe/build/outputs/apk/androidTest/debug/rawprobe-debug-androidTest.apk rawprobe/build/diagnostic/
+          cp docs/RAW_PROBE.md tools/raw-probe/Invoke-RawProbe.ps1 rawprobe/build/diagnostic/
+          (cd rawprobe/build/diagnostic && sha256sum *.apk > SHA256SUMS.txt)
+      - name: Isolated RAW diagnostic APKs
+        uses: actions/upload-artifact@v7
+        with:
+          name: cinematic-raw-probe-debug
+          path: rawprobe/build/diagnostic/
+          if-no-files-found: error
+          retention-days: 7
       - name: DNG test runner登録を確認
         shell: bash
         run: |
