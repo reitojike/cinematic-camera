@@ -36,7 +36,8 @@ import androidx.compose.ui.unit.dp
  * Unconnected editor control: continuous relative drag, +/- one supplied step on either side of the thumb.
  * [interactionKey] must change on photo/session/reset/exit. The caller owns values and validates input tokens.
  * [value] is display-only; [valueNow] must read the owner's current draft even before recomposition.
- * The change callback must update that owner synchronously. Do not pass a getter over a captured display value.
+ * The callback must update the owner's current Session with its captured input token, synchronously.
+ * Do not read a captured display value or write a captured old Session snapshot back into the owner.
  * No default range, step, temperature unit, persistence or render scheduling is selected by this component.
  */
 @Composable
@@ -58,9 +59,9 @@ internal fun PhotoEditBar(
     val currentOnValueChange by rememberUpdatedState(onValueChange)
     val color = MaterialTheme.colorScheme.primary.copy(alpha = if (enabled) 1f else .38f)
     val trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) .24f else .12f)
-    fun dispatch(input: PhotoEditBarUpdate, key: Any) = dispatchPhotoEditBarInput(scale, key, currentKey,
+    fun dispatch(input: PhotoEditBarInput?, key: Any) = dispatchPhotoEditBarInput(scale, key, currentKey,
         currentEnabled, currentReadValue, input, currentOnValueChange)
-    fun step(direction: Int) = dispatch(PhotoEditBarUpdate(stepDirection = direction), interactionKey)
+    fun step(direction: Int) = dispatch(PhotoEditBarInput.Step(direction), interactionKey)
 
     Column(modifier) {
         Row(Modifier.fillMaxWidth()) {
@@ -76,7 +77,7 @@ internal fun PhotoEditBar(
                 if (!enabled) disabled()
                 else {
                     setProgress { fraction ->
-                        fraction.isFinite() && dispatch(PhotoEditBarUpdate(scale.atFraction(fraction.toDouble())), interactionKey)
+                        fraction.isFinite() && dispatch(PhotoEditBarInput.SetValue(scale.atFraction(fraction.toDouble())), interactionKey)
                     }
                     customActions = listOfNotNull(
                         scale.step(value, -1)?.let { CustomAccessibilityAction("$label を1段下げる") { step(-1) } },
@@ -112,7 +113,7 @@ internal fun PhotoEditBar(
                             event.changes.none { it.id != down.id && it.pressed }
                         val update = gesture.update(change.position.x, change.position.y, change.pressed, allowed)
                         if (update.consume) change.consume()
-                        dispatch(update, key)
+                        dispatch(update.input, key)
                     }
                 }
             }) {

@@ -27,11 +27,19 @@ internal data class PhotoEditScale(val minimum: Double, val maximum: Double, val
 
     fun atFraction(fraction: Double): Double {
         require(fraction.isFinite())
+        if (fraction <= 0.0) return minimum
+        if (fraction >= 1.0) return maximum
         return (minimum + fraction.coerceIn(0.0, 1.0) * span).coerceIn(minimum, maximum)
     }
 }
 
-internal data class PhotoEditBarUpdate(val value: Double? = null, val consume: Boolean = false, val stepDirection: Int = 0)
+internal sealed interface PhotoEditBarInput {
+    data class RelativeDrag(val fractionDelta: Double) : PhotoEditBarInput
+    data class Step(val direction: Int) : PhotoEditBarInput
+    data class SetValue(val value: Double) : PhotoEditBarInput
+}
+
+internal data class PhotoEditBarUpdate(val input: PhotoEditBarInput? = null, val consume: Boolean = false)
 
 /**
  * One pointer, relative horizontal drag, or a single +/- tap beside the thumb. A tap never seeks.
@@ -39,18 +47,18 @@ internal data class PhotoEditBarUpdate(val value: Double? = null, val consume: B
  * Shared by the Compose adapter and pure input tests; it owns no photo, job or persistent state.
  */
 internal class PhotoEditBarGesture(
-    private val scale: PhotoEditScale,
-    private val startValue: Double,
+    scale: PhotoEditScale,
+    startValue: Double,
     private val downX: Float,
     private val downY: Float,
-    private val trackLeft: Float,
+    trackLeft: Float,
     private val trackWidth: Float,
     private val touchSlop: Float,
-    private val thumbRadius: Float,
+    thumbRadius: Float,
 ) {
     private var dragging = false
     private var previousX = downX
-    private var draggedValue = startValue
+    private val tapDirection: Int
     var ended = false
         private set
 
@@ -58,6 +66,12 @@ internal class PhotoEditBarGesture(
         require(scale.contains(startValue))
         require(listOf(downX, downY, trackLeft, trackWidth, touchSlop, thumbRadius).all { it.isFinite() })
         require(trackWidth > 0f && touchSlop >= 0f && thumbRadius >= 0f)
+        val thumbX = trackLeft + scale.fraction(startValue) * trackWidth
+        tapDirection = when {
+            downX < thumbX - thumbRadius -> -1
+            downX > thumbX + thumbRadius -> 1
+            else -> 0
+        }
     }
 
     fun update(x: Float, y: Float, pressed: Boolean, allowed: Boolean): PhotoEditBarUpdate {
@@ -75,20 +89,14 @@ internal class PhotoEditBarGesture(
         if (!dragging && abs(dx) > touchSlop) dragging = true
         if (!pressed) ended = true
         if (dragging) {
-            // Starting anywhere on the bar preserves the current value, rather than jumping to the finger.
-            // Discard outward motion at an endpoint so reversing immediately changes the value again.
-            val fraction = scale.fraction(draggedValue) + (x.toDouble() - previousX) / trackWidth
+            // Only pointer motion is retained. The dispatcher applies each delta to the actual owner's draft.
+            // Advance even at an endpoint, so outward motion is discarded rather than retraced on reversal.
+            val fractionDelta = (x.toDouble() - previousX) / trackWidth
             previousX = x
-            draggedValue = scale.atFraction(fraction)
-            return PhotoEditBarUpdate(draggedValue, consume = true)
+            val input = fractionDelta.takeIf { it != 0.0 }?.let { PhotoEditBarInput.RelativeDrag(it) }
+            return PhotoEditBarUpdate(input, consume = true)
         }
         if (pressed) return PhotoEditBarUpdate()
-        val thumbX = trackLeft + scale.fraction(startValue) * trackWidth
-        val direction = when {
-            downX < thumbX - thumbRadius -> -1
-            downX > thumbX + thumbRadius -> 1
-            else -> 0
-        }
-        return PhotoEditBarUpdate(consume = true, stepDirection = direction)
+        return PhotoEditBarUpdate(tapDirection.takeIf { it != 0 }?.let { PhotoEditBarInput.Step(it) }, consume = true)
     }
 }

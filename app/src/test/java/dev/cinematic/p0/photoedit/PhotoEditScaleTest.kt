@@ -6,67 +6,90 @@ import org.junit.Test
 class PhotoEditScaleTest {
     private val scale = PhotoEditScale(0.0, 1.0, 0.1) // Fixture step, not a product default.
 
-    private fun gesture(value: Double = .5, x: Float = 50f, y: Float = 24f) =
-        PhotoEditBarGesture(scale, value, x, y, trackLeft = 10f, trackWidth = 100f, touchSlop = 5f, thumbRadius = 8f)
+    private inner class Driver(start: Double = .5, x: Float = 50f) {
+        var value = start
+        val gesture = PhotoEditBarGesture(scale, start, x, 24f, 10f, 100f, 5f, 8f)
+        private val key = Any()
+        fun send(x: Float, y: Float = 24f, pressed: Boolean = true, allowed: Boolean = true): PhotoEditBarUpdate {
+            val update = gesture.update(x, y, pressed, allowed)
+            dispatchPhotoEditBarInput(scale, key, key, allowed, { value }, update.input) { value = it }
+            return update
+        }
+    }
 
     @Test fun aDistantBarTapChangesOnlyOneStepRatherThanSeekingTheFinger() {
-        assertEquals(1, gesture(x = 105f).update(105f, 24f, false, true).stepDirection)
-        assertEquals(-1, gesture(x = 15f).update(15f, 24f, false, true).stepDirection)
+        val right = Driver(x = 105f)
+        right.send(105f, pressed = false)
+        assertEquals(.6, right.value, 1e-12)
+        val left = Driver(x = 15f)
+        left.send(15f, pressed = false)
+        assertEquals(.4, left.value, 1e-12)
     }
 
     @Test fun tapUsesTheContinuousValueWithoutSnappingItToADifferentGrid() {
-        val tap = gesture(.337, 100f).update(100f, 24f, false, true)
-        assertEquals(.437, scale.step(.337, tap.stepDirection)!!, 1e-12)
+        val tap = Driver(.337, 100f)
+        tap.send(100f, pressed = false)
+        assertEquals(.437, tap.value, 1e-12)
     }
 
     @Test fun tappingTheThumbDoesNotChangeTheValue() {
         for (x in listOf(53f, 60f, 67f)) {
-            val tap = gesture(x = x).update(x, 24f, false, true)
-            assertNull(tap.value)
-            assertEquals(0, tap.stepDirection)
+            val tap = Driver(x = x)
+            assertNull(tap.send(x, pressed = false).input)
+            assertEquals(.5, tap.value, 0.0)
         }
     }
 
     @Test fun dragStartsWithoutAJumpAndKeepsSubStepChangesBeforeFingerUp() {
-        val drag = gesture(x = 90f)
-        assertNull(drag.update(94f, 24f, true, true).value)
-        assertEquals(.563, drag.update(96.3f, 24f, true, true).value!!, 1e-7)
-        assertEquals(.578, drag.update(97.8f, 24f, true, true).value!!, 1e-7)
-        assertFalse(drag.ended)
-        val released = drag.update(97.8f, 24f, false, true)
-        assertEquals(.578, released.value!!, 1e-7)
+        val drag = Driver(x = 90f)
+        assertNull(drag.send(94f).input)
+        drag.send(96.3f)
+        assertEquals(.563, drag.value, 1e-7)
+        drag.send(97.8f)
+        assertEquals(.578, drag.value, 1e-7)
+        assertFalse(drag.gesture.ended)
+        val released = drag.send(97.8f, pressed = false)
+        assertNull(released.input)
+        assertEquals(.578, drag.value, 1e-7)
         assertTrue(released.consume)
-        assertTrue(drag.ended)
-        assertNull(drag.update(40f, 24f, false, true).value)
+        assertTrue(drag.gesture.ended)
+        assertNull(drag.send(40f, pressed = false).input)
     }
 
     @Test fun draggedValueClampsAtBothEndpointsAndReversesWithoutRetracingOutwardMotion() {
-        val drag = gesture()
-        assertEquals(1.0, drag.update(250f, 24f, true, true).value!!, 0.0)
-        assertEquals(.95, drag.update(245f, 24f, true, true).value!!, 1e-12)
-        assertEquals(0.0, drag.update(-250f, 24f, true, true).value!!, 0.0)
-        assertEquals(.05, drag.update(-245f, 24f, true, true).value!!, 1e-12)
+        val drag = Driver()
+        drag.send(250f)
+        assertEquals(1.0, drag.value, 0.0)
+        drag.send(245f)
+        assertEquals(.95, drag.value, 1e-12)
+        drag.send(-250f)
+        assertEquals(0.0, drag.value, 0.0)
+        drag.send(-245f)
+        assertEquals(.05, drag.value, 1e-12)
     }
 
     @Test fun verticalScrollNeverEmitsATapOnRelease() {
-        val scroll = gesture(x = 100f)
-        assertEquals(PhotoEditBarUpdate(), scroll.update(101f, 40f, true, true))
-        assertTrue(scroll.ended)
-        assertNull(scroll.update(100f, 24f, false, true).value)
+        val scroll = Driver(x = 100f)
+        assertEquals(PhotoEditBarUpdate(), scroll.send(101f, y = 40f))
+        assertTrue(scroll.gesture.ended)
+        assertNull(scroll.send(100f, pressed = false).input)
+        assertEquals(.5, scroll.value, 0.0)
     }
 
     @Test fun cancelledConsumedDisabledOrExtraPointerInputCannotBecomeATap() {
-        // Compose maps all four interruptions to allowed=false.
         for (pressed in listOf(true, false)) {
-            val input = gesture(x = 100f)
-            assertEquals(PhotoEditBarUpdate(), input.update(100f, 24f, pressed, false))
-            assertTrue(input.ended)
-            assertNull(input.update(100f, 24f, false, true).value)
+            val input = Driver(x = 100f)
+            assertEquals(PhotoEditBarUpdate(), input.send(100f, pressed = pressed, allowed = false))
+            assertTrue(input.gesture.ended)
+            assertNull(input.send(100f, pressed = false).input)
+            assertEquals(.5, input.value, 0.0)
         }
-        val drag = gesture()
-        assertNotNull(drag.update(75f, 24f, true, true).value)
-        assertNull(drag.update(80f, 24f, true, false).value)
-        assertNull(drag.update(90f, 24f, false, true).value)
+        val drag = Driver()
+        assertNotNull(drag.send(75f).input)
+        val accepted = drag.value
+        assertNull(drag.send(80f, allowed = false).input)
+        assertNull(drag.send(90f, pressed = false).input)
+        assertEquals("Pointer cancel must not roll accepted edits back", accepted, drag.value, 0.0)
     }
 
     @Test fun endpointTapsDoNotWrapAndRemainingDistanceMayBeLessThanAStep() {
@@ -93,5 +116,11 @@ class PhotoEditScaleTest {
         assertEquals(-25.0, supplied.atFraction(0.0), 0.0)
         assertEquals(75.0, supplied.atFraction(1.0), 0.0)
         assertEquals(.3734, supplied.fraction(12.34), 1e-12)
+    }
+
+    @Test fun normalizedEndpointsRemainExactEvenWhenTheSpanRoundsAwayTheSmallEndpoint() {
+        val wide = PhotoEditScale(-1e16, 1.0, 2.0)
+        assertEquals(wide.minimum, wide.atFraction(0.0), 0.0)
+        assertEquals(wide.maximum, wide.atFraction(1.0), 0.0)
     }
 }
