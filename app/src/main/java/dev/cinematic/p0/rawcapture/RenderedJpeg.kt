@@ -46,10 +46,11 @@ internal data class RenderedJpegRequest(
     }
 }
 
-internal enum class RenderedResultKind { COMPLETE_STAGE_CLEAR, TRIAL_PREVIEW }
+internal enum class RenderedResultKind { COMPLETE_STAGE_CLEAR, TRIAL_PREVIEW, COMPLETE_ORIGINAL }
 internal enum class RenderedFaceState { VERIFIED_FACES, VERIFIED_NONE, NOT_RUN, FAILED }
 internal enum class RenderedExposureState { SUPPORTED, DIAGNOSTIC, UNKNOWN }
-internal data class RendererPublicationContract(val renderer: String, val recipeSchema: String)
+internal data class RendererPublicationContract(val renderer: String, val recipeSchema: String,
+    val originalDeclaration: OriginalRenderDeclaration? = null)
 
 /** Only the renderer integration may report success. No production renderer is enrolled by this PR. */
 internal data class CompletedRender(
@@ -58,12 +59,22 @@ internal data class CompletedRender(
     val kind: RenderedResultKind,
     val face: RenderedFaceState,
     val exposure: RenderedExposureState,
+    val original: OriginalRenderCompletion? = null,
 ) {
     init { require(rendererContract.matches(Regex("[A-Za-z0-9_.-]{1,64}"))) }
     fun requirePublishable(supportedContracts: Set<RendererPublicationContract>) {
-        if (RendererPublicationContract(rendererContract, request.recipe.schema) !in supportedContracts || kind != RenderedResultKind.COMPLETE_STAGE_CLEAR ||
+        val validKind = when (kind) {
+            RenderedResultKind.COMPLETE_ORIGINAL -> original?.matches(request, rendererContract, face, exposure) == true
+            RenderedResultKind.COMPLETE_STAGE_CLEAR -> original == null
+            RenderedResultKind.TRIAL_PREVIEW -> false
+        }
+        if (RendererPublicationContract(rendererContract, request.recipe.schema, original?.declaration) !in supportedContracts || !validKind ||
             face !in setOf(RenderedFaceState.VERIFIED_FACES, RenderedFaceState.VERIFIED_NONE) ||
             exposure != RenderedExposureState.SUPPORTED) throw IOException("Render result is not supported for publication")
+    }
+    fun requireFingerprint(fingerprint: OriginalFingerprint) {
+        if (kind == RenderedResultKind.COMPLETE_ORIGINAL && original?.outputFingerprint != fingerprint ||
+            kind != RenderedResultKind.COMPLETE_ORIGINAL && original != null) throw IOException("Original output fingerprint is not bound to this completion")
     }
 }
 

@@ -450,3 +450,13 @@ snapshotをjob/publisherへcacheせず、検査/表示decodeの呼出し終了�
 attempt・出力FPと別の公開台帳/URIを保持し、renderer/公開ownerを取得せず、別jobの復旧を妨げない。
 PUBLISHEDは履歴として保持するが、実観測なしのfresh公開確認・Completed変換は拒否する。
 既存schemaの読取とprivate/manualの互換は維持する。この限定修正はprofile/顔EV/geometryの新strict証跡を実装しない。
+
+### 新strict原寸の保存側契約
+
+既存requestへ未観測の原寸要求を明示し、固定policyと同attemptの実観測を分離する。
+`OriginalRenderEvidence`の小さな値型とembedded codecを既存AutoDevelop/公開台帳へ接続し、別queue/controller/journalは増やさない。
+成功の観測にはsource/recipe/世代/attemptのbinding、profileの実ID/版、検出器・測光・geometry方針、実EVと入力gridの全coverageを含める。
+close後の独立検査FPをownerが付加し、Completed/復旧/公開の各段階で同じ証跡を照合する。
+旧FULLの事前成功値はstrictへ変換せず、旧manual/privateの契約を維持する。
+field/geometryのproducer採用と実policy IDは#78/#79との確認後に行い、登録0を維持する。
+新しい原寸renderer、資源確認、撮影投入、原寸PoC、画素処理と編集UIはこの保存側変更に含めない。

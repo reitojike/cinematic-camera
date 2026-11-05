@@ -160,3 +160,7 @@ T045の設計とT046〜049の実装/実測を区別する。原寸のprofile/顔
 - [x] T050 [US2] 観測欠落からのCompleted補完と公開開始を拒否し、旧FULLのRENDERED/PUBLISHINGだけを保留する。履歴/attempt/出力FP・他job/private/manualを保持し、保留commit故障も検証する（FR-006/007/009、SC-001/002/005）。
 
 T050はT046の先行部分のみ。requestの事前成功宣言とreceiptの既定値、profile/顔EV/原寸coverageの証跡・台帳拡張はT046の残件である。
+
+- [x] T051 [US2] 新strict宣言/実観測を同attemptとclose後の出力FPに結び付け、既存両台帳と公開gateへ保存・照合する。旧版/欠落/取り違え/原寸偽装/4KiB容量/commit故障とmanual/private互換を検証する（T046の保存側、FR-006/007/009、SC-001/002/005）。
+
+T051は保存側の契約であり、#78/#79へのfield/geometry採用、実profile/検出器/EV policyの採用、T047〜049のproducer・資源確認・撮影投入・実機受入を完了にしない。

@@ -15,7 +15,7 @@ class AutoDevelopRunnerTest {
         SharedOriginalReference("content://test/original/1", fingerprint, OriginalGrant.APP_OWNED),
         RenderRecipeSnapshot("test-v1", "fixed-strength-0.5"), "test-renderer-v1", 2000, 1500,
         AutoRenderQuality.FINAL_ORIGINAL, RenderedFaceState.VERIFIED_NONE, RenderedExposureState.SUPPORTED,
-        AutoInputProfile.SUPPORTED)
+        AutoInputProfile.SUPPORTED).forStrictOriginal()
     private val allowed = AutoDevelopConditions(true, false, false, false, true, true, true, true)
 
     @Test fun unknownConditionsAndCaptureReservationsDoNotBeginOrTouchSource() {
@@ -51,10 +51,11 @@ class AutoDevelopRunnerTest {
         assertEquals(1, f.backend.publishes)
     }
 
-    @Test fun previewUnknownFaceExposureAndProfileNeverStartAutomaticWork() {
-        for (request in listOf(request().copy(quality = AutoRenderQuality.PREVIEW),
-            request().copy(face = RenderedFaceState.NOT_RUN), request().copy(exposure = RenderedExposureState.DIAGNOSTIC),
-            request().copy(profile = AutoInputProfile.UNKNOWN))) {
+    @Test fun legacyAndPreviewRequestsNeverStartAutomaticWork() {
+        val legacy = request().forLegacyOriginal(2000, 1500)
+        for (request in listOf(legacy, legacy.copy(quality = AutoRenderQuality.PREVIEW),
+            legacy.copy(face = RenderedFaceState.NOT_RUN), legacy.copy(exposure = RenderedExposureState.DIAGNOSTIC),
+            legacy.copy(profile = AutoInputProfile.UNKNOWN))) {
             val f = Fixture(request)
             f.admission.updateConditions(allowed)
             assertEquals(AutoRunStatus.HELD, f.runner.advance().status)
@@ -195,7 +196,7 @@ class AutoDevelopRunnerTest {
         for (change in listOf<(AutoRenderReceipt) -> AutoRenderReceipt>(
             { it.copy(request = it.request.copy(generation = 2)) },
             { it.copy(request = it.request.copy(recipe = it.request.recipe.copy(payload = "different"))) },
-            { it.copy(request = it.request.copy(quality = AutoRenderQuality.PREVIEW)) },
+            { it.copy(request = it.request.forLegacyOriginal(2000, 1500).copy(quality = AutoRenderQuality.PREVIEW)) },
             { it.copy(output = it.output.copy(width = 512, height = 384)) },
         )) {
             val f = Fixture()
@@ -318,8 +319,9 @@ class AutoDevelopRunnerTest {
     }
 
     @Test fun readableLegacyMissingObservationHoldsOnlyThatJobAndPreservesItsArtifact() {
+        for (request in listOf(request(), request().forLegacyOriginal(2000, 1500)))
         for (phase in listOf(AutoJobPhase.RENDERED, AutoJobPhase.PUBLISHING)) {
-            val f = Fixture()
+            val f = Fixture(request)
             f.journal.start(0)
             val rendered = f.journal.rendered(1, fingerprint)
             val legacy = rendered.copy(phase = phase)
@@ -370,6 +372,88 @@ class AutoDevelopRunnerTest {
         }
     }
 
+    @Test fun staleAttemptUnsupportedProfileAndIncompleteCoverageNeverAcquireAPublisher() {
+        val changes: List<(AutoRenderReceipt) -> AutoRenderReceipt> = listOf(
+            { it.copy(original = null) },
+            { it.copy(original = it.original!!.copy(binding = it.original.binding.copy(attemptId = "0".repeat(32)))) },
+            { it.copy(original = it.original!!.copy(profileState = AutoInputProfile.UNKNOWN)) },
+            { it.copy(original = it.original!!.copy(geometry = it.original.geometry.copy(fullCoverage = false))) },
+        )
+        for (change in changes) {
+            val f = Fixture(); f.admission.updateConditions(allowed); f.backend.receiptChange = change
+            assertEquals(AutoRunStatus.HELD, f.runner.advance().status)
+            assertEquals(AutoJobReason.INVALID_OUTPUT, f.journal.read()!!.reason)
+            assertEquals(0, f.backend.publisherInstances)
+            assertTrue(f.backend.closed)
+        }
+    }
+
+    @Test fun readableLegacyWithOldFaceExposureClaimsIsHeldWithoutUpgradingItsArtifact() {
+        val legacy = request().forLegacyOriginal(2000, 1500)
+        val f = Fixture(legacy); f.journal.start(0)
+        val receipt = AutoRenderReceipt(legacy, JpegOutputDescription(2000, 1500, 1, "sRGB", 3))
+        val rendered = f.journal.rendered(1, fingerprint, receipt)
+        f.admission.updateConditions(allowed)
+        assertEquals(AutoRunStatus.HELD, f.runner.advance().status)
+        assertEquals(AutoJobReason.MISSING_ORIGINAL_EVIDENCE, f.journal.read()!!.reason)
+        assertEquals(rendered.outputFingerprint, f.journal.read()!!.outputFingerprint)
+        assertEquals(rendered.observed, f.journal.read()!!.observed)
+        assertEquals(0, f.backend.publisherInstances)
+        assertThrows(IOException::class.java) { f.journal.read()!!.completed() }
+    }
+
+    @Test fun oversizedSuccessEvidenceIsHeldAfterCloseWithoutPublishingOrRetryingTheRenderer() {
+        val policy = RenderPolicyVersion("p".repeat(64), 1)
+        val request = request().copy(rendererContract = "r".repeat(64),
+            source = request().source.copy(uri = "content://test/" + "x".repeat(1024 - "content://test/".length)),
+            recipe = RenderRecipeSnapshot("s".repeat(64), "\u0000".repeat(1024)),
+            originalDeclaration = OriginalRenderDeclaration(policy, policy, policy, policy, -4.0, 4.0))
+        val f = Fixture(request); f.admission.updateConditions(allowed)
+        assertEquals(AutoRunStatus.HELD, f.runner.advance().status)
+        val held = f.journal.read()!!
+        assertEquals(AutoJobReason.INVALID_OUTPUT, held.reason)
+        assertEquals(request, held.request)
+        assertNotNull(held.attemptId)
+        assertTrue(f.backend.closed)
+        assertEquals(0, f.backend.publisherInstances)
+        repeat(3) { assertEquals(AutoRunStatus.HELD, f.runner.advance().status) }
+        assertEquals(1, f.backend.starts)
+    }
+
+    @Test fun publicationCapacityFailureKeepsTheSealedArtifactAndStopsFurtherPublicationWakes() {
+        val f = Fixture(); f.admission.updateConditions(allowed); f.backend.publicationTooLarge = true
+        assertEquals(AutoRunStatus.HELD, f.runner.advance().status)
+        val held = f.journal.read()!!
+        assertEquals(AutoJobReason.INVALID_OUTPUT, held.reason)
+        assertEquals(fingerprint, held.outputFingerprint)
+        assertNotNull(held.observed!!.original)
+        repeat(3) { assertEquals(AutoRunStatus.HELD, f.runner.advance().status) }
+        assertEquals(1, f.backend.publisherInstances)
+        assertEquals(1, f.backend.starts)
+        assertEquals(0, f.backend.publishes)
+    }
+
+    @Test fun existingQueuedWithoutAttemptCapacityIsHeldBeforeSourceIoEvenAcrossCommitFaults() {
+        val request = request().nearAttemptCapacity()
+        for (fault in listOf("none", "before", "after", "readback")) {
+            val f = Fixture()
+            f.storage.bytes = AutoDevelopCodec.encode(AutoDevelopRecord(request)) // Previously accepted metadata.
+            f.storage.invalidOutputFault = fault
+            f.admission.updateConditions(allowed)
+            if (fault != "none") assertThrows(IOException::class.java) { f.runner.advance() }
+            repeat(3) { assertEquals(AutoRunStatus.HELD, f.runner.advance().status) }
+            val held = f.journal.read()!!
+            assertEquals(request, held.request)
+            assertEquals(AutoJobReason.INVALID_OUTPUT, held.reason)
+            assertEquals(1L, held.revision)
+            assertNull(held.attemptId)
+            assertEquals(0, f.backend.verifications)
+            assertEquals(0, f.backend.starts)
+            assertEquals(0, f.backend.publisherInstances)
+            assertFalse(f.runner.hasUnreleasedResources)
+        }
+    }
+
     private inner class Fixture(request: AutoDevelopRequest = request(), cancellationIo: java.util.concurrent.Executor? = null) {
         val storage = MemoryStorage()
         val journal = AutoDevelopJournal("capture", 1, storage)
@@ -383,6 +467,7 @@ class AutoDevelopRunnerTest {
         var bytes: ByteArray? = null
         var interruptedFault = "none"
         var missingObservationFault = "none"
+        var invalidOutputFault = "none"
         private var failNextRead = false
         override fun read(maxBytes: Int): ByteArray? {
             if (failNextRead) { failNextRead = false; throw IOException("readback fault") }
@@ -395,6 +480,8 @@ class AutoDevelopRunnerTest {
                     interruptedFault.also { interruptedFault = "none" }
                 record.phase == AutoJobPhase.HELD && record.reason == AutoJobReason.MISSING_OBSERVATION ->
                     missingObservationFault.also { missingObservationFault = "none" }
+                record.phase == AutoJobPhase.HELD && record.reason == AutoJobReason.INVALID_OUTPUT ->
+                    invalidOutputFault.also { invalidOutputFault = "none" }
                 else -> "none"
             }
             if (fault == "before") throw IOException("before interrupted commit")
@@ -416,7 +503,8 @@ class AutoDevelopRunnerTest {
         var sourceChanged = false
         var publishFails = false
         var publicationCloseFails = false
-        var adapterQuality = AutoRenderQuality.FINAL_ORIGINAL
+        var publicationTooLarge = false
+        var adapterQuality = AutoRenderQuality.FINAL_ORIGINAL_STRICT
         val attempts = mutableListOf<String>()
         var onRender: () -> Unit = {}
         var onCancel: () -> Unit = {}
@@ -424,7 +512,7 @@ class AutoDevelopRunnerTest {
         var receiptChange: (AutoRenderReceipt) -> AutoRenderReceipt = { it }
         override val hasUnreleasedResources get() = false
         override fun releaseResources() {}
-        override fun supports(request: AutoDevelopRequest) = adapterQuality == AutoRenderQuality.FINAL_ORIGINAL
+        override fun supports(request: AutoDevelopRequest) = adapterQuality == AutoRenderQuality.FINAL_ORIGINAL_STRICT
         override fun verifyOriginal(request: AutoDevelopRequest, shouldStop: () -> Boolean) {
             verifications++
             if (sourceChanged) throw DngContentChanged()
@@ -439,7 +527,7 @@ class AutoDevelopRunnerTest {
                     onRender()
                     if (renderUnsupported) throw AutoRenderUnsupported()
                     if (renderFails) throw IOException("render fault")
-                    return receiptChange(AutoRenderReceipt(request, JpegOutputDescription(2000, 1500, 1, "sRGB", 3)))
+                    return receiptChange(request.syntheticReceipt(attemptId, 2000, 1500, 3))
                 }
                 override fun close() { if (closeFails) throw IOException("close fault"); closed = true }
                 override fun requestStop() = onCancel()
@@ -454,6 +542,7 @@ class AutoDevelopRunnerTest {
                 override fun releaseResources() { if (publicationCloseFails) throw IOException("publication close fault") }
                 override fun advance(shouldStop: () -> Boolean): JpegPublicationPhase {
                     beforePublish()
+                    if (publicationTooLarge) throw JpegPublicationTooLarge()
                     if (publishFails) throw IOException("lost acknowledgement")
                     publishes++
                     return JpegPublicationPhase.PUBLISHED

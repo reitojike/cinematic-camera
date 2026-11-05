@@ -2,15 +2,41 @@
 
 ## 目的と現状
 
-本契約は原寸JPEG保存・撮影後自動現像の後続設計であり、実装済み宣言ではない。
-現在の`AutoDevelopRequest.publishable`は実行前の顔・EV・profile成功を要求するが、
-実際のcontrols準備は`JpegGenerationAttempt`のdecode後に行われる。
-`AutoRenderReceipt`にはprofile証跡がなく、`AutoDevelopRecord.completed()`には要求値からの補完経路がある。
-実FULL providerを登録する前に、処理の宣言と、同attemptで得た成功の証跡を分ける。
+本契約は原寸JPEG保存・撮影後自動現像の保存側契約であり、実rendererの成立や有効化を意味しない。
+旧`FINAL_ORIGINAL`の事前成功値は読取互換だけに残し、新しいstrict要求と区別する。
+controls準備は`JpegGenerationAttempt`のdecode後に行われるため、要求の宣言と同attemptの観測を分離する。
+観測がない旧記録からのCompleted補完は行わない。
 新たな画像解析preflight・controller・queueは作らず、既存Runner/backend/attempt/台帳を使う。
 
 現在のFULL登録0、撮影callerのintentなし、1024px private試験、手動bounded契約は維持する。
 検証済みprofile・顔・EVを仮の定数や要求値から補完しない。
+
+## 保存側の型と版
+
+`FINAL_ORIGINAL_STRICT`は`OriginalRenderDeclaration`で入力/geometry/検出器/測光の定義ID・版とEV範囲を固定する。
+要求のwidth/heightは0/0を未観測の明示表現とし、顔NOT_RUN・露出UNKNOWN・profile UNKNOWNを要求する。
+これは実寸法ではない。実寸法は同attemptの観測から取得し、Completedには実寸法だけを渡す。
+
+`OriginalRasterGeometry`のsourceWidth/sourceHeightはgeometry方針で解釈した有効領域・標準crop後、物理向き適用前の原寸である。
+sourceOrientationはEXIFの1〜8、sampledWidth/sampledHeightは物理向き適用後で追加resizeより前の入力画素gridを表す。
+全原画素の処理完了をfullCoverageで報告し、gridと出力寸法の両方を原寸へ照合する。
+row/tile処理でもよいが、headerを読んだだけでfullCoverageを立てない。縮小入力を拡大してもこのgridを原寸へ変更しない。
+
+`OriginalRenderObservation`は同capture/世代/attempt/source FP/固定recipe hash/rendererへのbindingと、実profileのID・版・状態、
+入力/geometry/検出器/測光のID・版、有限な実EVとgeometryを保持する。recipe hashはschemaとpayloadを長さ区切りで計算する。
+実profileの採用判定は、登録されたproducerの入力policyが行う。保存側はその観測とID・版を保持・照合し、名前から採用を推定しない。
+これらのfieldのproducerへの採用、geometryの具体的なdecoder対応と実IDは#78/#79との確認事項であり、合意・実装済みとは扱わない。
+
+writer/engineの実close後の独立JPEG検査を経て、ownerが出力FPと観測を`OriginalRenderCompletion`へ結び付ける。
+公開契約のkeyにも固定宣言を含め、証跡やkindを外して旧契約へ降格することを拒否する。公開時の実hashはこのFPとも照合する。
+AutoDevelopはstrict拡張を版3、JPEG公開は版2へ保存し、旧manual/privateのencode形式は維持する。
+旧FULLは読めるまま当該jobを保留し、既知の出力・URI・PUBLISHED履歴を保持する。未知版/破損によるinventory保留とは区別する。
+
+両台帳の4KiB上限を維持する。AutoDevelopの成功metadataはcommit前に検査し、超過時は切り詰めず保留する。
+新規要求は将来の32字ASCII attempt IDとUTF長2byte分も確保する。既存QUEUEDでも同じ容量検査を原本read前に行い、
+開始台帳が収まらない要求の再hashを繰り返さず当該jobを保留する。容量はURI/payloadの実encode長で判定する。
+JPEG公開は新規準備時に将来のMediaStore URI分の容量も確保し、URI追加で上限を超える要求から行を挿入しない。
+実ID/producerは未登録であり、合成producer/policyの登録はテストだけへ限定する。
 
 ## 宣言・実行前確認・実観測
 
