@@ -37,18 +37,33 @@ class CameraRollPermissionsAndroidTest {
         val folder = "Pictures/CinematicSynthetic_${UUID.randomUUID().toString().replace("-", "")}/"
         val videoFolder = folder.replace("Pictures/", "Movies/")
         val foreign = mutableListOf<Uri>()
-        fun shell(command: String): String = ParcelFileDescriptor.AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command))
-            .bufferedReader().use { it.readText() }
+        fun shell(command: String): String {
+            // Supply a script to a real shell: executeShellCommand itself is not a shell parser.
+            val descriptors = instrumentation.uiAutomation.executeShellCommandRw("sh")
+            return ParcelFileDescriptor.AutoCloseInputStream(descriptors[0]).use { output ->
+                ParcelFileDescriptor.AutoCloseOutputStream(descriptors[1]).use { input ->
+                    input.write("($command) 2>&1\n".toByteArray(Charsets.UTF_8))
+                }
+                output.bufferedReader().readText()
+            }
+        }
         fun foreignRow(name: String, mime: String, bytes: ByteArray, video: Boolean = false): Uri {
             val collection = "content://media/external_primary/${if (video) "video" else "images"}/media"
-            val inserted = shell("content insert --uri $collection --bind _display_name:s:$name --bind mime_type:s:$mime " +
+            shell("content insert --uri $collection --bind _display_name:s:$name --bind mime_type:s:$mime " +
                 "--bind relative_path:s:${if (video) videoFolder else folder} --bind is_pending:i:1")
-            val value = Regex("content://media/external_primary/${if (video) "video" else "images"}/media/[0-9]+").find(inserted)?.value
-                ?: error("Synthetic shell insert failed")
+            // The standard content CLI need not print an insert URI. Locate this unique pending
+            // fixture by its generated folder and exact name, not by an insert stdout convention.
+            val found = shell("content query --uri '$collection?includePending=1' --projection _id " +
+                "--where \"_display_name='$name' AND relative_path='${if (video) videoFolder else folder}'\"")
+            val id = Regex("_id=([0-9]+)").findAll(found).toList().singleOrNull()?.groupValues?.get(1)
+                ?: error("Synthetic shell row could not be identified uniquely")
+            val value = "$collection/$id"
             val uri = Uri.parse(value).also { foreign += it }
             val encoded = Base64.encodeToString(bytes, Base64.NO_WRAP)
             check(!shell("echo '$encoded' | base64 -d | content write --uri $value").contains("Error"))
-            check(shell("content update --uri $value --bind is_pending:i:0").contains("Updated 1"))
+            shell("content update --uri $value --bind is_pending:i:0")
+            val published = shell("content query --uri $value --projection _id:is_pending")
+            check(published.contains("_id=$id, is_pending=0")) { "Synthetic shell row was not published" }
             return uri
         }
         val owned = requireNotNull(resolver.insert(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), ContentValues().apply {
