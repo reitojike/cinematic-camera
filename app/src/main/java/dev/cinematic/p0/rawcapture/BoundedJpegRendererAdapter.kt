@@ -22,13 +22,23 @@ internal class BoundedJpegRendererAdapter(
     override val contract = if (recipe.isTrial) RendererPublicationContract(JpegGenerationRecipe.TRIAL_SCHEMA, JpegGenerationRecipe.TRIAL_SCHEMA)
         else JpegGenerationRecipe.PUBLICATION_CONTRACT
     override val quality = if (recipe.isTrial) AutoRenderQuality.PRIVATE_TRIAL_1024 else AutoRenderQuality.MANUAL_BOUNDED_1024_PRELIMINARY
-    override fun supports(request: AutoDevelopRequest) = (if (recipe.isTrial) request.boundedTrial else request.boundedManual) && request.recipe == recipe.snapshot &&
-        controls.contract == recipe.controls.schema
+    private fun recipeFor(request: AutoDevelopRequest): JpegGenerationRecipe? {
+        val selected = if (recipe.isTrial) {
+            if (!request.boundedTrial) return null
+            JpegGenerationRecipe.fromTrialSnapshot(request.recipe) ?: return null
+        } else {
+            if (!request.boundedManual || request.recipe != recipe.snapshot) return null
+            recipe
+        }
+        return selected.takeIf { controls.contract == it.controls.schema }
+    }
+    override fun supports(request: AutoDevelopRequest) = recipeFor(request) != null
     override fun createAttempt(request: AutoDevelopRequest, attemptId: String, io: AutoRenderIo): AutoRenderAttempt {
-        if (!supports(request)) throw AutoRenderUnsupported()
+        // Freeze this request's validated strength; another request cannot replace an attempt's recipe.
+        val selectedRecipe = recipeFor(request) ?: throw AutoRenderUnsupported()
         // Factory must construct without opening resources, as with the existing adapter contract.
         val frameOwner = frames(request, io)
-        val generation = JpegGenerationAttempt(JpegGenerationRequest(request.captureId, request.generation, request.source, recipe),
+        val generation = JpegGenerationAttempt(JpegGenerationRequest(request.captureId, request.generation, request.source, selectedRecipe),
             object : PrivateJpegTarget {
                 override val captureId = request.captureId
                 override val generation = request.generation
@@ -40,7 +50,7 @@ internal class BoundedJpegRendererAdapter(
             }, encoder, inspector)
         return object : AutoRenderAttempt {
             override fun render(shouldStop: () -> Boolean): AutoRenderReceipt {
-                if (recipe.isTrial) {
+                if (selectedRecipe.isTrial) {
                     val result = generation.renderTrial(shouldStop)
                     if (result.request.captureId != request.captureId || result.request.generation != request.generation ||
                         result.request.source != request.source || result.request.recipe != request.recipe) throw IOException("Foreign private trial JPEG")

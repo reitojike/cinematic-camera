@@ -25,13 +25,15 @@ internal class PrivateTrialPhotoRollRenderer(context: Context, private val resou
         }
 
     override fun render(request: PhotoRollRenderRequest, cancellation: CancellationSignal): PhotoRollRenderResult {
-        require(request.mode == mode && request.lookVersion == "stage-clear-v1" && request.strength == .5f && request.maxEdge == maxEdge)
+        require(request.mode == mode && request.lookVersion == "stage-clear-v1" && request.strength.isFinite() &&
+            request.strength in 0.0..1.0 && request.maxEdge == maxEdge)
+        val recipe = JpegGenerationRecipe.trial(request.strength)
         cancellation.throwIfCanceled()
         val initial = resources().developConditions(rendererAvailable = true)
         if (AutoDevelopPolicy.blockers(initial).isNotEmpty()) return unavailableConditions()
         request.onStage(PhotoRollRenderStage.TRIAL_WAIT)
-        val handle = await(AndroidAutoDevelopQueue.preparePrivateTrial(app, request.original.reference), cancellation)
-        require(handle.request.source == request.original.reference && handle.request.recipe == JpegGenerationRecipe.trial().snapshot)
+        val handle = await(AndroidAutoDevelopQueue.preparePrivateTrial(app, request.original.reference, recipe) { cancellation.isCanceled }, cancellation)
+        require(handle.request.source == request.original.reference && handle.request.recipe == recipe.snapshot)
         val issuing = Any()
         var stopped = false
         var issued = false
@@ -82,7 +84,8 @@ internal class PrivateTrialPhotoRollRenderer(context: Context, private val resou
                         observed.exposure == RenderedExposureState.DIAGNOSTIC && output.width in 1..maxEdge && output.height in 1..maxEdge &&
                         preview.bitmap.width == output.width && preview.bitmap.height == output.height && preview.bitmap.colorSpace?.isSrgb == true)
                     val copied = copyPrivateTrialDisplay(preview.bitmap, preview.comparisonBitmap, cancellation)
-                    return PhotoRollRenderResult.Preview(copied.after, mode, comparisonBitmap = copied.comparison)
+                    return PhotoRollRenderResult.Preview(copied.after, mode, comparisonBitmap = copied.comparison,
+                        trialStrength = recipe.strength)
                 } finally { preview.close() }
             } finally { delivery.close() }
         } catch (_: java.util.concurrent.CancellationException) {

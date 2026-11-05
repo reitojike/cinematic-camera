@@ -1,0 +1,26 @@
+# 設計
+
+## 状態と入力
+
+既存PhotoEditSessionを強度だけで開き、未採用の色温度・明るさは値もscaleもnullとする。
+TrialStrengthEditorは原本参照、要求強度、実表示強度、編集sessionをprocess内だけに保持する。
+表示ticketはowner/revision/strengthで、永続queueのIDや世代ではない。draft変更だけではticketを更新せず、完了時・取消による復帰・pauseで要求を失効させる。
+PhotoEditBarは実ownerの最新値を同期getterで読み、captured tokenを現在sessionへ適用する。合法なpointer upでは最後の入力後に完了通知し、取消されたgestureからは通知しない。
+キー押下で変更を受理したら端点repeatも消費してfocusを保ち、up時に一度反映する。reset/取消/再選択の古いupはtokenで拒否する。
+
+## 現像と境界
+
+Doubleの強度をprivate recipe snapshotへ固定する。既存schemaの正規形を再構築して全体一致で検証し、既定0.5のpayloadとjournal形式は変えない。
+BoundedJpegRendererAdapterはrequestごとにimmutable recipeを復元する。Android queueはIO executor内、prepareInteractiveのfence前に取消を確認する。
+PhotoRollScreenは要求変更時に旧CancellationSignalを同期で取消し、画像とselectionを失効させる。元の共通coordinatorが実資源解放を待つ。UI側に別queueや独自世代を作らない。
+private handleの原本・recipe、readbackの実request/結果強度、UI ticketを連鎖して照合する。表示と比較は既存の同一原本の基準を使い、強度0をRAWそのものと扱わない。
+
+## 独立作業との分離
+
+#151のAutoDevelopJournal/AutoDevelopRunnerおよび既存の保存テスト・specs/016は変更しない。RenderRequestや公開gate、原寸PoC、native処理も変更しない。
+色温度・明るさと永続設定の仕様判断を追加せず、公開JPEG保存への接続は後続作業とする。
+
+## 検証
+
+純粋入力/編集状態、実snapshotとadapter、IO取消境界を単体テストで確認する。既存アプリunitの回帰、lint、Androidテストコードのコンパイルを実施し、native/APK buildは通常CIで確認する。
+追加のローカル重いnative buildやエミュレータ試験は行わず、実機の画質・操作感・撮影競合の合格は保留する。

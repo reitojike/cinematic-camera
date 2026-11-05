@@ -342,7 +342,7 @@ class DngTrialRendererTest {
         val renderer = StageClearTrialRenderer(context.contentResolver) { resources }
         val request = PhotoRollRenderRequest(original, mode = renderer.mode, maxEdge = renderer.maxEdge, onStage = { stages++ })
         for (invalid in listOf(request.copy(mode = PhotoRollPreviewMode.STAGE_CLEAR), request.copy(maxEdge = 513),
-            request.copy(strength = Float.NaN), request.copy(strength = 1f), request.copy(lookVersion = "unknown"))) {
+            request.copy(strength = Double.NaN), request.copy(strength = 1.0), request.copy(lookVersion = "unknown"))) {
             assertTrue(renderer.render(invalid, CancellationSignal()) is PhotoRollRenderResult.Unavailable)
         }
         val blocked = StageClearTrialRenderer(context.contentResolver) { resources.copy(thermalStatus = null) }
