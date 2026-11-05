@@ -424,3 +424,14 @@ FINAL_ORIGINAL品質だけを撮影前に記録し、検証済みprofile・顔�
 現在の撮影入口は意図なしが既定であり、自動現像を有効にしない。後続の投入には、明示意図、正常な全形式受領、
 SHARED_ONLYと同原本fingerprint、実FINAL providerの成立が必要となる。希望品質を成功品質へ変換せず、
 未成立のproviderへ実行要求を作らない。新しい台帳・queue・UI・画像処理を追加しない。
+
+## JPEG再読込のencoded snapshot
+
+既知のencoded長は割当前に1〜32MiBを検査し、正確なByteArrayへ64KiB以下のchunkで読み、最後に追加1byteで
+EOFを確認する。short/long/零read/IO/close/取消の失敗を成功へ変換しない。未知長は従来の32MiB上限を維持する。
+snapshotは配列を内部で生成・所有し、mutable配列/ByteBufferを返さず、読取stream・opaque codec source・hashだけを提供する。
+private trialの同じsnapshotからhash/EXIF/codec検査と表示decodeを行い、publisherも既知出力長を検査へ渡す。
+snapshotをjob/publisherへcacheせず、検査/表示decodeの呼出し終了後は解放可能にする。失敗closeのstreamは既存trackerが保持する。
+
+これはencoded配列の重複保持削減であり、codec内部の複製ゼロや6000×4000対応を意味しない。32MiB上限・
+1024既定・私有出力・原本の前後照合・実close後の共通slot解放を維持する。Float32画像/rendererの全解像度メモリは別の残件である。

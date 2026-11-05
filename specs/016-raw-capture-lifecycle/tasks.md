@@ -136,3 +136,11 @@ production controls登録・photoroll接続・実観測・Pixel実機は上記�
 - [x] T041 [US2] 旧版opt-out、意図不変、完全/部分受領、中断/late/restart、create commit前後/readback喪失と出力open順序を人工ファイル・fault台帳で検証する（SC-001/002/003）。
 
 撮影からの自動submit、実FINAL provider/全解像度メモリ・画質/Pixel性能はこの意図保存の完了に含めない。
+
+## Phase 13: JPEG再読込のencoded snapshot
+
+- [x] T042 [US2] 既知長を割当前に検証し、正確な1配列へchunk/EOF確認付きで読み込むprivate snapshotを実装する。未知長上限/取消/IO/close失敗とmutable非公開を維持する（FR-004/005/008/009）。
+- [x] T043 [US2] private readbackのhash/検査/表示を同snapshotへ接続し、publisherは既知出力長を検査へ渡す。default inspectorも長さを検査し、原本照合/slot/世代/非公開条件を維持する（FR-001/004/005/007/010）。
+- [x] T044 [US2] 既知short/long/零read/取消/read-close故障、未知長、source変更後のsnapshot不変、default長さ照合とnative JPEG/向き/破損/private回帰を確認する（SC-001/002/003/005）。
+
+encoded配列の重複削減を全解像度renderer/codec内部コピー/Pixel性能の合格へ置換しない。

@@ -8,15 +8,11 @@ import android.net.Uri
 import android.os.ParcelFileDescriptor
 import androidx.annotation.RequiresApi
 import java.io.Closeable
-import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.nio.file.Files
-import java.nio.ByteBuffer
-import java.security.MessageDigest
 
 /** Owns ORIGINAL reads and distinct attempt outputs. No source/provisional/delete capability is handed to adapters. */
 @RequiresApi(29)
@@ -144,27 +140,15 @@ internal class AndroidAutoDevelopBackend(
         val description = requireNotNull(record.observed).output
         releaseResources()
         verifyOriginal(request, shouldStop)
-        val buffer = ByteArrayOutputStream(minOf(expected.bytes.toInt(), 64 * 1024))
-        resources.input(files(requireNotNull(record.attemptId)).openRead()).use { input ->
-            val chunk = ByteArray(32 * 1024)
-            while (true) {
-                if (shouldStop()) throw DngVerificationStopped()
-                val count = input.read(chunk)
-                if (count < 0) break
-                if (buffer.size().toLong() + count > expected.bytes) throw DngContentChanged()
-                buffer.write(chunk, 0, count)
-            }
-        }
-        val bytes = buffer.toByteArray()
-        val fingerprint = OriginalFingerprint(bytes.size.toLong(), MessageDigest.getInstance("SHA-256").digest(bytes)
-            .joinToString("") { "%02x".format(it) })
-        if (fingerprint != expected) throw DngContentChanged()
-        val inspection = AndroidJpegInspector().inspect({ ByteArrayInputStream(bytes) }, shouldStop)
+        val encoded = EncodedJpegSnapshot.read({ resources.input(files(requireNotNull(record.attemptId)).openRead()) },
+            expected.bytes, shouldStop)
+        if (encoded.fingerprint != expected) throw DngContentChanged()
+        val inspection = AndroidJpegInspector().inspectSnapshot(encoded, shouldStop)
         if (inspection.fingerprint != expected || inspection.output != description) throw DngContentChanged()
         var ownedImage: Bitmap? = null
         try {
             if (shouldStop()) throw DngVerificationStopped()
-            val bitmap = ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(bytes))) { decoder, info, _ ->
+            val bitmap = ImageDecoder.decodeBitmap(encoded.source()) { decoder, info, _ ->
                 if (info.size.width != description.width || info.size.height != description.height) throw IOException("Private JPEG dimensions changed")
                 decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
                 decoder.setTargetColorSpace(ColorSpace.get(ColorSpace.Named.SRGB))
