@@ -73,6 +73,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         includeFolders = pageCursor == null))
     val cancellationOwner = remember { PhotoRollWorkOwner<CancellationSignal> { it.cancel() } }
     val navigation = remember { CameraRollNavigation() }
+    val listingWork = remember { CameraRollListingWork() }
 
     fun closeRoll() { navigation.exit(); cancellationOwner.cancel(); close() }
     fun backToList() { cancellationOwner.cancel(); explicitRetry = false; selectedUri = null; preview = null; comparison = null; comparisonLabel = null; pageCursor = null; selection = selection.clear(); retry++ }
@@ -124,7 +125,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
             val query = currentQuery
             val previous = listing
             if (query.after == null) listing = PhotoRollListing(emptyList())
-            val ticket = Any()
+            val ticket = listingWork.begin(query, accessEpoch)
             val cancellation = CancellationSignal()
             cancellationOwner.begin(cancellation)
             loadingTicket = ticket
@@ -132,13 +133,19 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                 val page = withContext(Dispatchers.IO) {
                     repository.list(cancellation, query)
                 }
-                if (currentQuery == query && currentForeground && !cancellation.isCanceled) {
+                listingWork.commit(ticket, currentQuery, accessEpoch,
+                    selectedUri == null && navigation.canOpenViewer(currentForeground, cancellation.isCanceled), cancellation.isCanceled) {
                     listing = if (query.after == null) page else page.copy(
                         items = (previous.items + page.items).distinctBy { it.uri }, folders = previous.folders)
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { listing = PhotoRollListing(emptyList(), "一覧を取得できません。撮影へ戻り、再度開いてください。端末内DNGはFilesからも選べます") }
-            finally { cancellationOwner.finish(cancellation); if (loadingTicket === ticket) loadingTicket = null }
+            catch (_: Exception) {
+                listingWork.commit(ticket, currentQuery, accessEpoch,
+                    selectedUri == null && navigation.canOpenViewer(currentForeground, cancellation.isCanceled), cancellation.isCanceled) {
+                    listing = PhotoRollListing(emptyList(), "一覧を取得できません。撮影へ戻り、再度開いてください。端末内DNGはFilesからも選べます")
+                }
+            }
+            finally { listingWork.finish(ticket); cancellationOwner.finish(cancellation); if (loadingTicket === ticket) loadingTicket = null }
             return@repeatOnLifecycle
         }
         selection = selection.select(source)
