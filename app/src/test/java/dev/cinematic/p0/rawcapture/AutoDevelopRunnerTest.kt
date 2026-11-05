@@ -317,6 +317,59 @@ class AutoDevelopRunnerTest {
         assertThrows(IOException::class.java) { AutoDevelopJournal("other", 1, f.storage).read() }
     }
 
+    @Test fun readableLegacyMissingObservationHoldsOnlyThatJobAndPreservesItsArtifact() {
+        for (phase in listOf(AutoJobPhase.RENDERED, AutoJobPhase.PUBLISHING)) {
+            val f = Fixture()
+            f.journal.start(0)
+            val rendered = f.journal.rendered(1, fingerprint)
+            val legacy = rendered.copy(phase = phase)
+            f.storage.bytes = AutoDevelopCodec.encode(legacy)
+            f.admission.updateConditions(allowed)
+            repeat(3) { assertEquals(AutoRunStatus.HELD, f.runner.advance().status) }
+            val held = f.journal.read()!!
+            assertEquals(AutoJobReason.MISSING_OBSERVATION, held.reason)
+            assertEquals(legacy.attemptId, held.attemptId)
+            assertEquals(legacy.attemptCount, held.attemptCount)
+            assertEquals(fingerprint, held.outputFingerprint)
+            assertEquals(0, f.backend.starts)
+            assertEquals(0, f.backend.verifications)
+            assertEquals(0, f.backend.publisherInstances)
+            assertFalse(f.runner.hasUnreleasedResources)
+        }
+    }
+
+    @Test fun historicalPublishedWithoutObservationStaysHistoricalAndDoesNotRecreatePublication() {
+        val f = Fixture()
+        f.journal.start(0)
+        val published = f.journal.rendered(1, fingerprint).copy(phase = AutoJobPhase.PUBLISHED)
+        f.storage.bytes = AutoDevelopCodec.encode(published)
+        f.admission.updateConditions(allowed)
+        repeat(3) { assertEquals(AutoRunStatus.PUBLISHED, f.runner.advance().status) }
+        assertEquals(published, f.journal.read())
+        assertThrows(IOException::class.java) { f.runner.confirmPublished { false } }
+        assertEquals(0, f.backend.publisherInstances)
+        assertEquals(0, f.backend.starts)
+    }
+
+    @Test fun missingObservationHoldCommitFaultNeverCreatesAPublisherOnRecovery() {
+        for (fault in listOf("before", "after", "readback")) {
+            val f = Fixture()
+            f.journal.start(0)
+            val original = f.journal.rendered(1, fingerprint)
+            f.admission.updateConditions(allowed)
+            f.storage.missingObservationFault = fault
+            assertThrows(IOException::class.java) { f.runner.advance() }
+            assertFalse(f.runner.hasUnreleasedResources)
+            assertEquals(AutoRunStatus.HELD, f.runner.advance().status)
+            val held = f.journal.read()!!
+            assertEquals(original.attemptId, held.attemptId)
+            assertEquals(original.outputFingerprint, held.outputFingerprint)
+            assertEquals(AutoJobReason.MISSING_OBSERVATION, held.reason)
+            assertEquals(0, f.backend.publisherInstances)
+            assertEquals(0, f.backend.starts)
+        }
+    }
+
     private inner class Fixture(request: AutoDevelopRequest = request(), cancellationIo: java.util.concurrent.Executor? = null) {
         val storage = MemoryStorage()
         val journal = AutoDevelopJournal("capture", 1, storage)
@@ -329,6 +382,7 @@ class AutoDevelopRunnerTest {
     private class MemoryStorage : AtomicJournalStorage {
         var bytes: ByteArray? = null
         var interruptedFault = "none"
+        var missingObservationFault = "none"
         private var failNextRead = false
         override fun read(maxBytes: Int): ByteArray? {
             if (failNextRead) { failNextRead = false; throw IOException("readback fault") }
@@ -336,8 +390,13 @@ class AutoDevelopRunnerTest {
         }
         override fun replace(contents: ByteArray) {
             val record = AutoDevelopCodec.decode(contents)
-            val fault = interruptedFault.takeIf { record.phase == AutoJobPhase.RETRYABLE && record.reason == AutoJobReason.INTERRUPTED } ?: "none"
-            if (fault != "none") interruptedFault = "none"
+            val fault = when {
+                record.phase == AutoJobPhase.RETRYABLE && record.reason == AutoJobReason.INTERRUPTED ->
+                    interruptedFault.also { interruptedFault = "none" }
+                record.phase == AutoJobPhase.HELD && record.reason == AutoJobReason.MISSING_OBSERVATION ->
+                    missingObservationFault.also { missingObservationFault = "none" }
+                else -> "none"
+            }
             if (fault == "before") throw IOException("before interrupted commit")
             bytes = contents.clone()
             if (fault == "after") throw IOException("after interrupted commit")

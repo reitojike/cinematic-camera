@@ -442,3 +442,11 @@ snapshotをjob/publisherへcacheせず、検査/表示decodeの呼出し終了�
 実装は既存Runner/backendのsource/資源確認とattempt、現像/公開台帳を拡張し、別controllerや二重画像解析preflightを増やさない。
 新FULLはprofileを含む実証跡を必須とし、旧記録の欠落・私有試験・1024用memory許可を成功へ補完しない。
 現在の登録0を維持したまま#78/#79とのproducer契約・移行/故障試験を先に確定する。設計の完了は実FULLの有効化ではない。
+
+### 実観測がない旧FULLの保全
+
+`AutoDevelopRecord.completed()`は実観測を必須とし、要求の寸法/顔/露出から成功を補完しない。
+読める旧FULLのRENDERED/PUBLISHINGは、実観測欠落時に当該jobだけMISSING_OBSERVATIONで保留する。
+attempt・出力FPと別の公開台帳/URIを保持し、renderer/公開ownerを取得せず、別jobの復旧を妨げない。
+PUBLISHEDは履歴として保持するが、実観測なしのfresh公開確認・Completed変換は拒否する。
+既存schemaの読取とprivate/manualの互換は維持する。この限定修正はprofile/顔EV/geometryの新strict証跡を実装しない。

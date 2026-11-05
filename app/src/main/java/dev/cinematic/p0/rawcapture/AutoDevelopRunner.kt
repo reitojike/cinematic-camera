@@ -127,6 +127,12 @@ internal class AutoDevelopRunner(
         var record = journal.read() ?: throw IOException("Auto-develop request missing")
         if (record.phase == AutoJobPhase.PUBLISHED) return result(AutoRunStatus.PUBLISHED, record)
         if (record.phase == AutoJobPhase.HELD) return result(AutoRunStatus.HELD, record)
+        // A readable legacy FULL record is not corrupt inventory. Preserve its artifact/attempt
+        // and any publication journal/URI, but never reconstruct success from request metadata.
+        if (record.request.quality == AutoRenderQuality.FINAL_ORIGINAL && record.observed == null &&
+            record.phase in setOf(AutoJobPhase.RENDERED, AutoJobPhase.PUBLISHING)) {
+            return result(AutoRunStatus.HELD, journal.hold(record.revision, AutoJobReason.MISSING_OBSERVATION))
+        }
         if (record.phase == AutoJobPhase.RETRYABLE && slot == null) return result(AutoRunStatus.RETRYABLE, record)
         if (!supports(record.request)) {
             if (slot != null) throw IOException("Live renderer contract changed")
@@ -251,6 +257,7 @@ internal class AutoDevelopRunner(
             if (attempt != null && !closeRender() || !releaseIo()) throw IOException("Develop resources remain open")
             val record = journal.read() ?: throw CaptureJournalConflict()
             if (record.phase != AutoJobPhase.PUBLISHED || !isCurrent() || !supports(record.request)) throw CaptureJournalConflict()
+            val expected = record.completed() // Historical success without observations cannot acquire a publisher.
             if (slot == null) slot = admit() ?: throw IOException("Develop execution is occupied or blocked")
             val stop = { shouldStop() || stopped() }
             if (stop()) throw DngVerificationStopped()
@@ -258,7 +265,7 @@ internal class AutoDevelopRunner(
             owner.releaseResources()
             val checked = owner.confirmPublished(stop)
             if (stop() || owner.hasUnreleasedResources || checked.phase != JpegPublicationPhase.PUBLISHED ||
-                checked.uri == null || checked.render != record.completed()) throw IOException("Published JPEG could not be confirmed")
+                checked.uri == null || checked.render != expected) throw IOException("Published JPEG could not be confirmed")
             return checked
         } finally {
             if (attempt == null && releaseIo()) { slot?.let(admission::completeAfterResourcesClosed); slot = null }
