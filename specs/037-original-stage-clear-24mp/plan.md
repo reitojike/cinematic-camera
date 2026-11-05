@@ -1,0 +1,45 @@
+# 実装計画
+
+新raw/original package、独立native原寸RGB16 FD出力、行単位のFloat32私有raster、標準Bitmap JPEG圧縮を接続する。
+既存R7点演算とPillow係数を再利用し、Look性能担当のアルゴリズム置換を重複実装しない。
+global log-luma/blur/肌重み・段2/3の自動強度・顔減光再計算・最終shoulderの依存を維持する。
+percentileはFloat bit radixの2-pass選択とDouble線形補間で全面sort配列を避ける。
+scratchは2GiB、同時生存面とdisk/managed/native/Bitmap/codecを別予算として検証する。新codec依存や製品largeHeapを先行採用しない。
+
+まず小型の全段・中間結果を既存実装と比較し、nativeのcrop/向き/色・全行、故障/取消を試験する。
+その後12MP/24MPへ同じ経路を拡大する。原寸JPEG artifact→保存owner→同じ結果の表示までをMVPの完了境界にする。
+native/重いビルド・実機は他担当の診断と重ねず、未実施を明記する。
+
+## UIとの境界
+
+`AndroidManualOriginalTrialSaves.renderPreview(context, source, strength, conditions, adjustments, shouldStop)`
+は既存queueの`CompletableFuture<ManualOriginalTrialPreview>`を返す。
+deliveryの`save`は同一recipe/世代の`ManualOriginalTrialHandle`、`claimBitmap()`は独立software sRGB表示を一度だけ移譲する。
+`claimComparisonBitmap()`は向き/寸法が同じ別所有のBeforeを移譲し、`comparisonDescription`で撮影時WBのRAW基準表示
+（R7・ルック・手動調整なし、暫定色）と明示する。撮影時JPEGと混同しない。
+未受領deliveryは`close()`で両方を解放する。既存16MP private rendererへ24MPを通して代用しない。
+
+`prepare(...)`だけでも同じ原本・強度・全調整値のretained handleへ冪等に戻るが、JPEG生成や共有行insertはしない。
+header preflightの寸法は`handle.geometry.outputWidth/outputHeight`であり、完成画素の証拠ではない。
+handleは`request`、`appliedStrength`、`appliedAdjustments`、`state`、`matches(source)`を公開する。
+手動保存・同じ共有結果の再確認は`advance(freshConditions, shouldStop)`を呼び、同じURI/同じhashを既存publisherで再検査する。
+raw ownerを取り出してqueue/admissionを迂回する入口は公開しない。
+
+UIはMANUAL_TRIAL専用bridgeで全設定・原本・世代を照合し、縮小プレビュー／原寸は保存時生成・顔保護なし・暫定色を表示する。
+保存中や結果不明時に編集を進めず、UNKNOWN/HOLDから別insertを始めない。
+Future取消だけをclose確認としない。保存取消時は`handle.requestStop()`、renderer/lifecycle破棄時は`discardPreview(context)`を呼ぶ。
+個々の旧previewの遅延取消からglobal discardを呼ばず、その呼出しの`shouldStop`で世代を照合する。
+capture/条件不成立はnative取消とcache epoch無効化を行い、実資源close後だけpermitを返す。
+
+縮小previewはAS_SHOT1024とR7 base一つを保持し、強度のみの変更ではbaseを再利用する。
+warmth/EV変更はR7を更新する。未変更AS_SHOTで診断測光→相対WB→R7の外部EVへuser EV加算の順を共用する。
+原寸saveは同じ値を行単位で適用し、表示用Bitmapの拡大で作らない。
+
+## 置換可能な境界
+
+数値比較は回帰検出であり、PCとのbit一致は製品合格条件ではない。
+`OriginalFields`の再構成/ぼかし、`OriginalStageClear24`の点演算/行passは独立して置換できる。
+現行はメモリ節約のため全面Floatを私有ファイルへ退避するため、pass間の読書き・rowコピーの時間も測定対象とする。
+LibRaw出力RGB16と標準JPEG圧縮用Bitmapは全面native bufferが残る。managed/native/PSS/一時保存領域を分けて測る。
+標準RenderEffect/HardwareRendererやGPU候補は、見た目・線形/HDR保持・コピー/同期・メモリ・端末時間を比較して採否を決める。
+標準APIへの変更だけで高速化や画質互換を保証しない。

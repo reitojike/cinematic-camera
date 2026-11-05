@@ -22,7 +22,7 @@ class PhotoRollActivity : ComponentActivity() {
         val repository = PhotoRollRepository(contentResolver, packageName)
         resourceObserver = PhotoRollResourceObserver(applicationContext, DevelopExecution::updateConditions)
         renderer = if (Build.VERSION.SDK_INT >= 29)
-            PrivateTrialPhotoRollRenderer(applicationContext, resourceObserver::snapshot)
+            ManualTrialPhotoRollRenderer(applicationContext, resourceObserver::snapshot)
         else object : PhotoRollRenderer {
             override val mode = PhotoRollPreviewMode.PRIVATE_TRIAL
             override fun render(request: PhotoRollRenderRequest, cancellation: android.os.CancellationSignal) =

@@ -16,6 +16,8 @@
 #endif
 #include "w1_trial.h"
 #include "as_shot_xy.h"
+#include "original_raster_sink.h"
+#include <fcntl.h>
 
 namespace {
 constexpr uint64_t kMaxFileBytes = 64ULL * 1024 * 1024;
@@ -65,8 +67,10 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
                  , ProbeReport* probe = nullptr
 #endif
+                 , cinematic::OriginalRasterSink* original = nullptr, bool geometryOnly = false
 ) {
     if (fd < 0 || longEdge < 1 || longEdge > 1024 || !signal || (wbMode != 0 && wbMode != 1)) fail("DNG_UNSUPPORTED");
+    if (geometryOnly && !original) fail("DNG_UNSUPPORTED");
     Cancellation cancel{env, signal, env->GetMethodID(env->GetObjectClass(signal), "isCanceled", "()Z")};
     if (!cancel.isCancelled || cancel.cancelled()) fail("DNG_CANCELLED");
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
@@ -102,6 +106,7 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
         raw.set_exifparser_handler(cinematic::AsShotXyMetadata::capture, &asShotMetadata);
     }
     raw.imgdata.rawparams.max_raw_memory_mb = 128;
+    if (original) raw.imgdata.rawparams.max_raw_memory_mb = 512; // Separate, fixed original-trial policy only.
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
     // A fixed diagnostic ceiling, not increased automatically after a failure.
     if (probe) { raw.imgdata.rawparams.max_raw_memory_mb = probe->baseline && !probe->baseline->isLarge() ? 128 : 512; probe->stage("open", cancel); }
@@ -109,6 +114,7 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
     raw.set_progress_handler(progress, &cancel);
     const int opened = raw.open_buffer(encoded.data(), encoded.size());
     check(opened); // Preserve LibRaw cancellation/memory/source failures over partial metadata errors.
+    if (original) original->parse(encoded, raw);
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
     if (probe && probe->baseline) probe->baseline->validateOpen(raw);
 #endif
@@ -124,7 +130,7 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
     const auto& sizes = raw.imgdata.sizes;
     const int sourceWidth = sizes.width, sourceHeight = sizes.height;
     const uint64_t count = static_cast<uint64_t>(sizes.raw_width) * sizes.raw_height;
-    uint64_t pixelLimit = kMaxRawPixels;
+    uint64_t pixelLimit = original ? 32'000'000 : kMaxRawPixels;
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
     if (probe) pixelLimit = probe->baseline ? probe->baseline->pixelLimit() : 24'000'000;
 #endif
@@ -137,6 +143,12 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
     // First route is single-frame three-colour Bayer DNG; no thumbnails or arbitrary RAW formats.
     if (!identity.dng_version || identity.raw_count != 1 || identity.colors != 3 ||
         identity.filters == 0 || identity.filters == 9 || identity.is_foveon) fail("DNG_UNSUPPORTED");
+    if (geometryOnly) {
+        // Reuse the exact original TIFF/LibRaw geometry gates; no unpack, processing or image allocation.
+        // applyCrop and actual image dimensions remain mandatory later in the full decode path.
+        if (cancel.cancelled()) fail("DNG_CANCELLED");
+        return nullptr;
+    }
     if (wbMode == 0) {
         // Missing camera WB may trigger LibRaw's automatic fallback even with use_auto_wb=0.
         for (int c = 0; c < 3; ++c)
@@ -150,6 +162,7 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
 
     auto& params = raw.imgdata.params;
     params.half_size = 1;
+    if (original) params.half_size = 0;
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
     if (probe) params.half_size = 0;
 #endif
@@ -180,6 +193,7 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
 #endif
     check(raw.unpack());
     if (raw.error_count()) fail("DNG_UNSUPPORTED");
+    if (original) original->applyCrop(raw);
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
     if (probe && probe->baseline) probe->baseline->applyCrop(raw);
 #endif
@@ -205,6 +219,14 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
     if (!image || image->type != LIBRAW_IMAGE_BITMAP || image->bits != 16 || image->colors != 3 ||
         !image->width || !image->height ||
         image->data_size != static_cast<uint64_t>(image->width) * image->height * 6) fail("DNG_UNSUPPORTED");
+    if (original) {
+        // File output keeps full RGB outside Java. Free RAW/snapshot before row writes.
+        raw.recycle();
+        std::vector<unsigned char>().swap(encoded);
+        original->write(*image, [&] { if (cancel.cancelled()) fail("DNG_CANCELLED"); });
+        image.reset();
+        return nullptr;
+    }
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
     if (probe && probe->baseline) {
         raw.recycle();
@@ -248,6 +270,8 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
         return nullptr;
     }
 #endif
+
+
     const double scale = std::min(1.0, static_cast<double>(longEdge) / std::max(image->width, image->height));
     const int width = std::max(1, static_cast<int>(std::floor(image->width * scale)));
     const int height = std::max(1, static_cast<int>(std::floor(image->height * scale)));
@@ -355,6 +379,51 @@ extern "C" JNIEXPORT jobject JNICALL
 Java_dev_cinematic_p0_raw_NativeDngDecoder_decode(JNIEnv* env, jobject, jint fd, jint longEdge, jobject signal, jint wbMode) {
     try { return decodeDng(env, fd, longEdge, signal, wbMode); }
     catch (const std::bad_alloc&) {
+        if (!env->ExceptionCheck()) env->ThrowNew(env->FindClass("java/io/IOException"), "DNG_MEMORY");
+    } catch (const std::exception& error) {
+        if (!env->ExceptionCheck()) env->ThrowNew(env->FindClass("java/io/IOException"), error.what());
+    } catch (...) {
+        if (!env->ExceptionCheck()) env->ThrowNew(env->FindClass("java/io/IOException"), "DNG_UNSUPPORTED");
+    }
+    return nullptr;
+}
+#endif
+
+#ifndef CINEMATIC_ENABLE_RAW_PROBE
+extern "C" JNIEXPORT jintArray JNICALL
+Java_dev_cinematic_p0_raw_original_NativeOriginalRaster_preflight24(JNIEnv* env, jobject, jint fd, jobject signal) {
+    try {
+        cinematic::OriginalRasterSink sink(-1); // Metadata-only: no output descriptor or raster owner.
+        decodeDng(env, fd, 1024, signal, 0, &sink, true);
+        if (env->ExceptionCheck()) return nullptr;
+        const auto geometry = sink.preflightGeometry();
+        jintArray result = env->NewIntArray(static_cast<jsize>(geometry.size()));
+        if (!result) return nullptr;
+        env->SetIntArrayRegion(result, 0, static_cast<jsize>(geometry.size()), geometry.data());
+        return env->ExceptionCheck() ? nullptr : result;
+    } catch (const std::bad_alloc&) {
+        if (!env->ExceptionCheck()) env->ThrowNew(env->FindClass("java/io/IOException"), "DNG_MEMORY");
+    } catch (const std::exception& error) {
+        if (!env->ExceptionCheck()) env->ThrowNew(env->FindClass("java/io/IOException"), error.what());
+    } catch (...) {
+        if (!env->ExceptionCheck()) env->ThrowNew(env->FindClass("java/io/IOException"), "DNG_UNSUPPORTED");
+    }
+    return nullptr;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_dev_cinematic_p0_raw_original_NativeOriginalRaster_decode24(JNIEnv* env, jobject, jint fd, jint outputFd, jobject signal) {
+    try {
+        struct stat source{}, target{};
+        const int flags = fcntl(outputFd, F_GETFL);
+        if (fd < 0 || outputFd < 0 || flags < 0 || (flags & O_ACCMODE) == O_RDONLY ||
+            fstat(fd, &source) || fstat(outputFd, &target) || !S_ISREG(target.st_mode) || target.st_size != 0 ||
+            (source.st_dev == target.st_dev && source.st_ino == target.st_ino)) fail("ORIGINAL_RASTER_TARGET");
+        cinematic::OriginalRasterSink sink(outputFd);
+        decodeDng(env, fd, 1024, signal, 0, &sink);
+        if (env->ExceptionCheck()) return nullptr;
+        return env->NewStringUTF(sink.report().c_str());
+    } catch (const std::bad_alloc&) {
         if (!env->ExceptionCheck()) env->ThrowNew(env->FindClass("java/io/IOException"), "DNG_MEMORY");
     } catch (const std::exception& error) {
         if (!env->ExceptionCheck()) env->ThrowNew(env->FindClass("java/io/IOException"), error.what());

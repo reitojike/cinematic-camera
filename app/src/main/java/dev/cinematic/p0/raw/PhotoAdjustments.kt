@@ -37,5 +37,6 @@ internal data class PhotoAdjustments(val warmth: Double = 0.0, val exposureEv: D
 
     companion object {
         const val VERSION = "relative-rb-half-stop-r7-ev-v1"
+        val NONE = PhotoAdjustments()
     }
 }

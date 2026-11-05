@@ -9,7 +9,7 @@ import dev.cinematic.p0.raw.PhotoAdjustments
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.Flow
 
 internal enum class PhotoRollSavePhase { READY, SAVING, PUBLISHED, UNCONFIRMED, HOLD }
 internal data class PhotoRollSaveSnapshot(val phase: PhotoRollSavePhase, val uri: String? = null)
@@ -22,7 +22,7 @@ internal fun interface PhotoRollJpegPublisher {
  * retain one operation for retries, serialize advance, recheck the original, and hold UNKNOWN.
  */
 internal interface PhotoRollJpegSaveOwner {
-    val snapshots: StateFlow<PhotoRollSaveSnapshot>
+    val snapshots: Flow<PhotoRollSaveSnapshot>
     val snapshot: PhotoRollSaveSnapshot
     /** 0/0 until a deferred manual render has produced and inspected its full-size JPEG. */
     val width: Int

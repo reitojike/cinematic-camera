@@ -48,14 +48,14 @@ internal object R7Base {
         repeat(input.pixelCount) { require(roi[it] in 0f..1f) { "Foundation ROI must be within 0..1" } }
     }
 
-    private fun profile(input: LinearSrgbImage): LinearSrgbImage = labLayer(input) { lab ->
+    internal fun profile(input: LinearSrgbImage): LinearSrgbImage = labLayer(input) { lab ->
             val c = hypot(lab[1].toDouble(), lab[2].toDouble())
             val h = hue(lab)
             val angle = Math.toRadians(h - R7BaseV1.PROFILE_SHIFT * band(h, 300.0, 50.0) * unit((c - .03) / .07))
             lab[1] = (c * cos(angle)).toFloat(); lab[2] = (c * sin(angle)).toFloat()
     }
 
-    private fun skin(input: LinearSrgbImage): LinearSrgbImage = labLayer(input) { lab ->
+    internal fun skin(input: LinearSrgbImage): LinearSrgbImage = labLayer(input) { lab ->
             val c = hypot(lab[1].toDouble(), lab[2].toDouble())
             val h = hue(lab)
             val weight = StageClearColor.skinWeight(lab[0].toDouble(), c, h)
@@ -90,7 +90,7 @@ internal object R7Base {
         }
     }
 
-    private fun foundation(input: LinearSrgbImage, roi: FloatPlane, ev: Double): LinearSrgbImage {
+    internal fun foundation(input: LinearSrgbImage, roi: FloatPlane, ev: Double): LinearSrgbImage {
         val gain = 2.0.pow(ev + R7BaseV1.BRIGHTNESS_EV + R7BaseV1.FOUNDATION_EV)
         require(gain.isFinite() && gain > 0) { "Exposure gain must be finite and positive" }
         val values = DoubleArray(3)
@@ -116,7 +116,7 @@ internal object R7Base {
         }
     }
 
-    private fun vibrance(input: LinearSrgbImage): LinearSrgbImage = labLayer(input) { lab ->
+    internal fun vibrance(input: LinearSrgbImage): LinearSrgbImage = labLayer(input) { lab ->
         val l = lab[0].toDouble(); val c = hypot(lab[1].toDouble(), lab[2].toDouble()); val h = hue(lab)
         val skin = band(h, 50.0, 40.0) * unit((c - .015) / .03) * unit(1 - (c - .13) / .05)
         val neutral = unit((c - .012) / .03) * unit(1 - (l - .72) / .2)
@@ -124,7 +124,7 @@ internal object R7Base {
         lab[1] = (lab[1] * gain).toFloat(); lab[2] = (lab[2] * gain).toFloat()
     }
 
-    private fun crisp(input: LinearSrgbImage): LinearSrgbImage {
+    internal fun crisp(input: LinearSrgbImage): LinearSrgbImage {
         val tone = pixels(input) { p, out ->
             val y = max(luma(input, p).toDouble(), 1e-8)
             var target = y * y / (y + R7BaseV1.BLACK)

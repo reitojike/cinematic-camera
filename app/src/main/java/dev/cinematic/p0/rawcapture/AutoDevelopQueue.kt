@@ -272,6 +272,13 @@ internal class AutoDevelopQueue(
             }
         } catch (failure: RuntimeException) { scheduled.set(false); throw failure }
     }
+    /** Manual-original trial shares this serial owner, but never enters auto inventory or auto publication. */
+    internal fun <T> manualOriginalIo(action: () -> T): CompletableFuture<T> = onIo {
+        check(!initializationHeld) { "Auto-develop inventory is held" }
+        if (resourceOwner?.second?.hasUnreleasedResources == true) throw java.io.IOException("Develop resources remain held")
+        action()
+    }
+
     private fun <T> onIo(action: () -> T): CompletableFuture<T> {
         val future = CompletableFuture<T>()
         try { io.execute { try {

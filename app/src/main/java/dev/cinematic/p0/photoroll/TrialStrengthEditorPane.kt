@@ -109,9 +109,11 @@ internal fun TrialStrengthEditorPane(
                     message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     TextButton(onClick = retry, enabled = foreground) { Text("原本を確認して再試行") }
                 }
-                Text("左右タップは1刻み。強度0はRAW基準表示とは異なります。比較は画像を長押しして確認できます。",
+                Text("左右タップは1刻み。強度0はRAW基準表示とは異なります。" +
+                    if (comparison != null && comparisonLabel != null) "比較は画像を長押しして確認できます。"
+                    else "この画像の現像前比較は準備できていません。",
                     style = MaterialTheme.typography.bodySmall)
-                Text(if (trialQuality) "試験品質です。顔保護なし・診断露出・暫定色で、完成品質ではありません。設定は一時的です。調整を閉じ、表示した強度のJPEGを手動保存してください。"
+                Text(if (trialQuality) "試験品質です。顔保護なし・診断露出・暫定色で、完成品質ではありません。設定は一時的です。調整を閉じ、表示した調整値のJPEGを手動保存してください。"
                     else if (saveable) "設定はこの画面内で一時的です。調整を閉じ、表示した強度のJPEGを保存してください。"
                     else "最大1024px・顔保護なし・診断露出・暫定色の試験表示です。共有保存はできません。設定は一時的で、再選択・画面再生成で強度50に戻ります。",
                     style = MaterialTheme.typography.bodySmall)

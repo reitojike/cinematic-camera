@@ -83,6 +83,7 @@ internal class AndroidRenderedJpegOperation private constructor(context: Context
     private val files = RenderedJpegFiles(File(app.noBackupFilesDir, "raw-captures"), captureId, generation)
     private var publisherOwner: RecoverablePhotoPublisher? = null
     fun createOutput(): OutputStream = files.createOutput()
+    fun openOutputRead(): InputStream = files.openRead()
 
     companion object {
         // Do not evict a live operation: failed closes and AtomicFile ownership survive every retry.
@@ -96,7 +97,7 @@ internal class AndroidRenderedJpegOperation private constructor(context: Context
         }
     }
 
-    @Synchronized fun publisher(render: CompletedRender, supportedContracts: Set<RendererPublicationContract>, isCurrent: () -> Boolean): RecoverablePhotoPublisher {
+    @Synchronized fun publisher(render: JpegPublicationRender, supportedContracts: Set<RendererPublicationContract>, isCurrent: () -> Boolean): RecoverablePhotoPublisher {
         if (publisherOwner != null) throw IOException("Retain the existing JPEG publisher for retries")
         require(render.request.captureId == captureId && render.request.generation == generation)
         render.requirePublishable(supportedContracts)

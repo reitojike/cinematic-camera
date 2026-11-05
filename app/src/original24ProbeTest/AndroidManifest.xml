@@ -1,0 +1,3 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <instrumentation android:name="androidx.test.runner.AndroidJUnitRunner" android:targetPackage="dev.cinematic.p0.original24probe" />
+</manifest>

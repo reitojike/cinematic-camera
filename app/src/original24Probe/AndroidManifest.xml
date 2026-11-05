@@ -1,0 +1,11 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission tools:node="removeAll" />
+    <uses-feature tools:node="removeAll" />
+    <permission tools:node="removeAll" />
+    <application android:label="Original 24MP Synthetic Probe" tools:replace="android:label">
+        <activity tools:node="removeAll" />
+        <service tools:node="removeAll" />
+        <provider tools:node="removeAll" />
+        <receiver tools:node="removeAll" />
+    </application>
+</manifest>

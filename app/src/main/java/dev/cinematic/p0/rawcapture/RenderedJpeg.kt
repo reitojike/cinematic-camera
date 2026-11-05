@@ -46,33 +46,46 @@ internal data class RenderedJpegRequest(
     }
 }
 
-internal enum class RenderedResultKind { COMPLETE_STAGE_CLEAR, TRIAL_PREVIEW, COMPLETE_ORIGINAL }
+internal enum class RenderedResultKind { COMPLETE_STAGE_CLEAR, TRIAL_PREVIEW, COMPLETE_ORIGINAL, MANUAL_ORIGINAL_TRIAL }
 internal enum class RenderedFaceState { VERIFIED_FACES, VERIFIED_NONE, NOT_RUN, FAILED }
 internal enum class RenderedExposureState { SUPPORTED, DIAGNOSTIC, UNKNOWN }
 internal data class RendererPublicationContract(val renderer: String, val recipeSchema: String,
     val originalDeclaration: OriginalRenderDeclaration? = null)
 
+/** One publication state machine, with separate strict and explicitly admitted manual-trial proofs. */
+internal sealed interface JpegPublicationRender {
+    val request: RenderedJpegRequest
+    val rendererContract: String
+    val kind: RenderedResultKind
+    val face: RenderedFaceState
+    val exposure: RenderedExposureState
+    /** Legacy strict evidence; a manual trial never acquires this proof. */
+    val original: OriginalRenderCompletion? get() = null
+    fun requirePublishable(supportedContracts: Set<RendererPublicationContract>)
+    fun requireFingerprint(fingerprint: OriginalFingerprint)
+}
+
 /** Only the renderer integration may report success. No production renderer is enrolled by this PR. */
 internal data class CompletedRender(
-    val request: RenderedJpegRequest,
-    val rendererContract: String,
-    val kind: RenderedResultKind,
-    val face: RenderedFaceState,
-    val exposure: RenderedExposureState,
-    val original: OriginalRenderCompletion? = null,
-) {
+    override val request: RenderedJpegRequest,
+    override val rendererContract: String,
+    override val kind: RenderedResultKind,
+    override val face: RenderedFaceState,
+    override val exposure: RenderedExposureState,
+    override val original: OriginalRenderCompletion? = null,
+) : JpegPublicationRender {
     init { require(rendererContract.matches(Regex("[A-Za-z0-9_.-]{1,64}"))) }
-    fun requirePublishable(supportedContracts: Set<RendererPublicationContract>) {
+    override fun requirePublishable(supportedContracts: Set<RendererPublicationContract>) {
         val validKind = when (kind) {
             RenderedResultKind.COMPLETE_ORIGINAL -> original?.matches(request, rendererContract, face, exposure) == true
             RenderedResultKind.COMPLETE_STAGE_CLEAR -> original == null
-            RenderedResultKind.TRIAL_PREVIEW -> false
+            RenderedResultKind.TRIAL_PREVIEW, RenderedResultKind.MANUAL_ORIGINAL_TRIAL -> false
         }
         if (RendererPublicationContract(rendererContract, request.recipe.schema, original?.declaration) !in supportedContracts || !validKind ||
             face !in setOf(RenderedFaceState.VERIFIED_FACES, RenderedFaceState.VERIFIED_NONE) ||
             exposure != RenderedExposureState.SUPPORTED) throw IOException("Render result is not supported for publication")
     }
-    fun requireFingerprint(fingerprint: OriginalFingerprint) {
+    override fun requireFingerprint(fingerprint: OriginalFingerprint) {
         if (kind == RenderedResultKind.COMPLETE_ORIGINAL && original?.outputFingerprint != fingerprint ||
             kind != RenderedResultKind.COMPLETE_ORIGINAL && original != null) throw IOException("Original output fingerprint is not bound to this completion")
     }
