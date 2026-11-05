@@ -65,7 +65,9 @@ internal class AutoDevelopJournal(
     @Synchronized fun prepare(request: AutoDevelopRequest): AutoDevelopRecord {
         if (request.captureId != captureId || request.generation != generation) throw CaptureJournalConflict()
         read()?.let { if (it.request != request) throw CaptureJournalConflict(); return it }
-        return persist(AutoDevelopRecord(request))
+        val prepared = AutoDevelopRecord(request)
+        AutoDevelopCodec.requireAttemptCapacity(prepared)
+        return persist(prepared)
     }
     @Synchronized fun start(revision: Long): AutoDevelopRecord {
         val current = current(revision)
@@ -131,6 +133,11 @@ internal object AutoDevelopCodec {
     const val MAX_BYTES = 4096
     private const val MAGIC = 0x43434144 // CCAD; independent of receipt and JPEG publication.
     private const val VERSION = 3
+    /** start adds one writeUTF field: two length bytes plus the fixed 32 ASCII attempt ID. */
+    fun requireAttemptCapacity(queued: AutoDevelopRecord) {
+        require(queued.phase == AutoJobPhase.QUEUED && queued.attemptId == null)
+        if (encode(queued).size + 2 + 32 > MAX_BYTES) throw AutoDevelopJournalTooLarge()
+    }
     fun encode(record: AutoDevelopRecord): ByteArray {
         val buffer = ByteArrayOutputStream()
         val version = if (record.request.originalDeclaration != null || record.observed?.original != null) VERSION else 2

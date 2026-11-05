@@ -33,6 +33,8 @@ AutoDevelopはstrict拡張を版3、JPEG公開は版2へ保存し、旧manual/pr
 旧FULLは読めるまま当該jobを保留し、既知の出力・URI・PUBLISHED履歴を保持する。未知版/破損によるinventory保留とは区別する。
 
 両台帳の4KiB上限を維持する。AutoDevelopの成功metadataはcommit前に検査し、超過時は切り詰めず保留する。
+新規要求は将来の32字ASCII attempt IDとUTF長2byte分も確保する。既存QUEUEDでも同じ容量検査を原本read前に行い、
+開始台帳が収まらない要求の再hashを繰り返さず当該jobを保留する。容量はURI/payloadの実encode長で判定する。
 JPEG公開は新規準備時に将来のMediaStore URI分の容量も確保し、URI追加で上限を超える要求から行を挿入しない。
 実ID/producerは未登録であり、合成producer/policyの登録はテストだけへ限定する。
 

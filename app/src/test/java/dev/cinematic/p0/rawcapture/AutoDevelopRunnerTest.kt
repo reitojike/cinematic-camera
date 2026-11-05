@@ -433,6 +433,27 @@ class AutoDevelopRunnerTest {
         assertEquals(0, f.backend.publishes)
     }
 
+    @Test fun existingQueuedWithoutAttemptCapacityIsHeldBeforeSourceIoEvenAcrossCommitFaults() {
+        val request = request().nearAttemptCapacity()
+        for (fault in listOf("none", "before", "after", "readback")) {
+            val f = Fixture()
+            f.storage.bytes = AutoDevelopCodec.encode(AutoDevelopRecord(request)) // Previously accepted metadata.
+            f.storage.invalidOutputFault = fault
+            f.admission.updateConditions(allowed)
+            if (fault != "none") assertThrows(IOException::class.java) { f.runner.advance() }
+            repeat(3) { assertEquals(AutoRunStatus.HELD, f.runner.advance().status) }
+            val held = f.journal.read()!!
+            assertEquals(request, held.request)
+            assertEquals(AutoJobReason.INVALID_OUTPUT, held.reason)
+            assertEquals(1L, held.revision)
+            assertNull(held.attemptId)
+            assertEquals(0, f.backend.verifications)
+            assertEquals(0, f.backend.starts)
+            assertEquals(0, f.backend.publisherInstances)
+            assertFalse(f.runner.hasUnreleasedResources)
+        }
+    }
+
     private inner class Fixture(request: AutoDevelopRequest = request(), cancellationIo: java.util.concurrent.Executor? = null) {
         val storage = MemoryStorage()
         val journal = AutoDevelopJournal("capture", 1, storage)
@@ -446,6 +467,7 @@ class AutoDevelopRunnerTest {
         var bytes: ByteArray? = null
         var interruptedFault = "none"
         var missingObservationFault = "none"
+        var invalidOutputFault = "none"
         private var failNextRead = false
         override fun read(maxBytes: Int): ByteArray? {
             if (failNextRead) { failNextRead = false; throw IOException("readback fault") }
@@ -458,6 +480,8 @@ class AutoDevelopRunnerTest {
                     interruptedFault.also { interruptedFault = "none" }
                 record.phase == AutoJobPhase.HELD && record.reason == AutoJobReason.MISSING_OBSERVATION ->
                     missingObservationFault.also { missingObservationFault = "none" }
+                record.phase == AutoJobPhase.HELD && record.reason == AutoJobReason.INVALID_OUTPUT ->
+                    invalidOutputFault.also { invalidOutputFault = "none" }
                 else -> "none"
             }
             if (fault == "before") throw IOException("before interrupted commit")

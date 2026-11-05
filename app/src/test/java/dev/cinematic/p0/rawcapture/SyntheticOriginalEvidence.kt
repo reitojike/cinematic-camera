@@ -27,3 +27,17 @@ internal fun AutoDevelopRequest.syntheticReceipt(attemptId: String, width: Int, 
     return AutoRenderReceipt(this, output, RenderedFaceState.VERIFIED_NONE, RenderedExposureState.SUPPORTED,
         syntheticObservation(attemptId, output))
 }
+
+internal fun AutoDevelopRequest.nearAttemptCapacity(): AutoDevelopRequest {
+    val policy = RenderPolicyVersion("p".repeat(64), 1)
+    val prefix = "content://test/"
+    val uri = prefix + "\uD83D\uDE00".repeat((1024 - prefix.length) / 4)
+    return (1..1024).asSequence().map { size ->
+        copy(rendererContract = "r".repeat(64), source = source.copy(uri = uri),
+            recipe = RenderRecipeSnapshot("s".repeat(64), "\u0000".repeat(size)),
+            originalDeclaration = OriginalRenderDeclaration(policy, policy, policy, policy, -4.0, 4.0))
+    }.first {
+        try { AutoDevelopCodec.encode(AutoDevelopRecord(it)).size in (AutoDevelopCodec.MAX_BYTES - 33)..AutoDevelopCodec.MAX_BYTES }
+        catch (_: AutoDevelopJournalTooLarge) { false }
+    }
+}

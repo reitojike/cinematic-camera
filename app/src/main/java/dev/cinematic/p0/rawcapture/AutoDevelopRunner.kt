@@ -140,6 +140,12 @@ internal class AutoDevelopRunner(
             if (slot != null) throw IOException("Live renderer contract changed")
             return result(AutoRunStatus.HELD, journal.hold(record.revision, AutoJobReason.UNSUPPORTED))
         }
+        if (record.phase == AutoJobPhase.QUEUED) {
+            try { AutoDevelopCodec.requireAttemptCapacity(record) }
+            catch (_: AutoDevelopJournalTooLarge) {
+                return result(AutoRunStatus.HELD, journal.hold(record.revision, AutoJobReason.INVALID_OUTPUT))
+            }
+        }
         if (slot == null) slot = admit() ?: return result(AutoRunStatus.BLOCKED, record)
         if (renderPending && record.phase == AutoJobPhase.RENDERING) {
             record = finishRender(record)

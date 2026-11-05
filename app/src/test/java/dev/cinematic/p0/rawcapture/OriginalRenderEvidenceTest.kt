@@ -158,6 +158,25 @@ class OriginalRenderEvidenceTest {
         assertNull(storage.bytes)
     }
 
+    @Test fun unicodeUriCannotConsumeTheSpaceNeededByTheFutureAttemptIntent() {
+        val request = request().nearAttemptCapacity()
+        val queued = AutoDevelopRecord(request)
+        assertTrue(AutoDevelopCodec.encode(queued).size <= AutoDevelopCodec.MAX_BYTES)
+        assertThrows(AutoDevelopJournalTooLarge::class.java) {
+            AutoDevelopCodec.encode(queued.copy(phase = AutoJobPhase.RENDERING, attemptId = attempt, attemptCount = 1))
+        }
+        val storage = MemoryStorage()
+        assertThrows(AutoDevelopJournalTooLarge::class.java) { AutoDevelopJournal("capture", 1, storage).prepare(request) }
+        assertNull(storage.bytes)
+        val fitting = request.copy(recipe = request.recipe.copy(payload = request.recipe.payload.dropLast(1)))
+        val journal = AutoDevelopJournal("capture", 1, storage)
+        journal.prepare(fitting)
+        val started = journal.start(0)
+        assertEquals(AutoJobPhase.RENDERING, started.phase)
+        assertTrue(AutoDevelopCodec.encode(started).size <= AutoDevelopCodec.MAX_BYTES)
+        assertEquals(started, journal.read())
+    }
+
     private fun longRequest(length: Int): AutoDevelopRequest {
         val id = RenderPolicyVersion("p".repeat(64), 1)
         return request().copy(captureId = "c".repeat(64), rendererContract = "r".repeat(64),
