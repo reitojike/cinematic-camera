@@ -72,6 +72,43 @@ class PrivateTrialReuseInstrumentationTest {
         } finally { session.close() }
     }
 
+    @Test fun unknownObservationDuringStrengthReadbackStopsOnlyThatAttemptAndPreservesOriginal() {
+        val session = PrivateTrialReuseRegistry.openSession()
+        try {
+            Fixture().use { f ->
+                val first = f.ready(.5, session)
+                f.read(first).close()
+                val changed = f.ready(.75, session)
+                assertNotNull(changed.comparisonCopy(requireNotNull(PrivateTrialReuseRegistry.forRequest(changed.request))))
+
+                var injected = false
+                try {
+                    val stopped = assertThrows(java.util.concurrent.CancellationException::class.java) {
+                        f.read(changed, shouldStop = {
+                            if (!injected) {
+                                injected = true
+                                // One unknown observation after admission, while the private JPEG is read back.
+                                DevelopExecution.updateConditions(AutoDevelopConditions())
+                            }
+                            false // Cancellation is from the admitted slot, not a caller-requested stop.
+                        }, includeCoordinatorStop = true)
+                    }
+                    assertTrue(injected)
+                    assertEquals("Private trial validation cancelled", stopped.message)
+                    // The global unknown observation also invalidates trial reuse; the next
+                    // read validates its encoded JPEG and source without retaining stale pixels.
+                    assertNull(PrivateTrialReuseRegistry.forRequest(changed.request))
+                    f.assertOriginalAndUnpublished(changed)
+                } finally { DevelopExecution.updateConditions(allowed) }
+
+                // The failed read closed its owner and released admission: the same generated JPEG
+                // can be inspected again without modifying the DNG or publishing a result.
+                f.read(changed).close()
+                f.assertOriginalAndUnpublished(changed)
+            }
+        } finally { session.close() }
+    }
+
     @Test fun cachedComparisonCannotBypassFreshJpegValidationOrCancellation() {
         val session = PrivateTrialReuseRegistry.openSession()
         try {
@@ -454,7 +491,7 @@ class PrivateTrialReuseInstrumentationTest {
                 interactive = true, observations = { allowed }, allowPublication = { false }) { true }
         }
         fun read(record: AutoDevelopRecord, counter: DecodeCounter = DecodeCounter(),
-            shouldStop: () -> Boolean = { false }): PrivateTrialPreview {
+            shouldStop: () -> Boolean = { false }, includeCoordinatorStop: Boolean = false): PrivateTrialPreview {
             // The real backend is tested directly solely to observe comparison-frame factory/load counts.
             // Its reads still hold the same process-wide admission slot and use the queue's actual JPEG.
             val backend = AndroidAutoDevelopBackend(context, record.request,
@@ -486,7 +523,9 @@ class PrivateTrialReuseInstrumentationTest {
                 admitted = DevelopExecution.tryStartObserved(allowed)
             }
             val slot = checkNotNull(admitted) { "Timed out after 60 seconds waiting for real readback admission" }
-            try { return backend.privatePreview(record, shouldStop) }
+            try { return backend.privatePreview(record) {
+                shouldStop() || (includeCoordinatorStop && DevelopExecution.shouldStop(slot))
+            } }
             finally {
                 backend.releaseResources()
                 check(!backend.hasUnreleasedResources)
