@@ -2,6 +2,7 @@ package dev.cinematic.p0.rawcapture
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.ImageDecoder
 import android.media.ExifInterface
 import android.net.Uri
 import android.os.Build
@@ -40,6 +41,26 @@ class RenderedJpegInstrumentationTest {
     private fun fingerprint(bytes: ByteArray) = OriginalFingerprint(bytes.size.toLong(),
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) })
 
+    @Test fun knownLengthAndSharedSnapshotMatchNativeInspectionWithoutExposingMutableSource() {
+        val original = syntheticJpeg()
+        val source = original.clone()
+        val snapshot = EncodedJpegSnapshot.read({ ByteArrayInputStream(source) }, source.size.toLong()) { false }
+        source.fill(0)
+        val inspector = AndroidJpegInspector()
+        val expected = inspector.inspect({ ByteArrayInputStream(original) }) { false }
+        assertEquals(expected, inspector.inspect({ ByteArrayInputStream(original) }, original.size.toLong()) { false })
+        assertEquals(expected, inspector.inspectSnapshot(snapshot) { false })
+        val bitmap = ImageDecoder.decodeBitmap(snapshot.source())
+        try { assertEquals(16, bitmap.width); assertEquals(12, bitmap.height) } finally { bitmap.recycle() }
+        assertArrayEquals(original, snapshot.openRead().use { it.readBytes() })
+        listOf(original.size.toLong() - 1, original.size.toLong() + 1).forEach { length ->
+            assertThrows(IOException::class.java) { inspector.inspect({ ByteArrayInputStream(original) }, length) { false } }
+        }
+        for (invalid in listOf(original.copyOf(original.size - 2), byteArrayOf(-1, -40, -1, -39))) {
+            assertThrows(IOException::class.java) { inspector.inspect({ ByteArrayInputStream(invalid) }, invalid.size.toLong()) { false } }
+        }
+    }
+
     @Test fun nativeInspectorAcceptsCompleteSrgbAndRejectsTruncationCorruptionAndExifRotation() {
         val jpeg = syntheticJpeg()
         assertEquals(ExifInterface.ORIENTATION_UNDEFINED, ExifInterface(ByteArrayInputStream(jpeg))
@@ -60,6 +81,8 @@ class RenderedJpegInstrumentationTest {
             for (orientation in 2..8) {
                 ExifInterface(file).apply { setAttribute(ExifInterface.TAG_ORIENTATION, orientation.toString()); saveAttributes() }
                 assertThrows(IOException::class.java) { inspect(file.readBytes()) }
+                val rotated = file.readBytes()
+                assertThrows(IOException::class.java) { inspector.inspect({ ByteArrayInputStream(rotated) }, rotated.size.toLong()) { false } }
             }
         } finally { check(file.delete()) }
         assertThrows(IOException::class.java) { inspector.inspect({ ByteArrayInputStream(jpeg) }, { true }) }

@@ -63,7 +63,7 @@ internal class RecoverablePhotoPublisher(
         checkContinue(stop)
         if (current == null) {
             verifyOriginal(resources, stop)
-            val inspection = inspector.inspect({ resources.input(input.openJpeg()) }, stop)
+            val inspection = inspector.inspect({ resources.input(input.openJpeg()) }, render.request.output.bytes, stop)
             if (inspection.output != render.request.output || inspection.fingerprint.bytes != inspection.output.bytes) {
                 throw IOException("Completed JPEG metadata does not match the request")
             }
