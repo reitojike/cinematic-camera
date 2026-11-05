@@ -35,12 +35,15 @@ import androidx.compose.ui.unit.dp
 /**
  * Unconnected editor control: continuous relative drag, +/- one supplied step on either side of the thumb.
  * [interactionKey] must change on photo/session/reset/exit. The caller owns values and validates input tokens.
+ * [value] is display-only; [valueNow] must read the owner's current draft even before recomposition.
+ * The change callback must update that owner synchronously. Do not pass a getter over a captured display value.
  * No default range, step, temperature unit, persistence or render scheduling is selected by this component.
  */
 @Composable
 internal fun PhotoEditBar(
     label: String,
     value: Double,
+    valueNow: () -> Double,
     scale: PhotoEditScale,
     interactionKey: Any,
     enabled: Boolean,
@@ -49,18 +52,15 @@ internal fun PhotoEditBar(
     modifier: Modifier = Modifier,
 ) {
     require(scale.contains(value))
-    val currentValue by rememberUpdatedState(value)
+    val currentReadValue by rememberUpdatedState(valueNow)
     val currentKey by rememberUpdatedState(interactionKey)
     val currentEnabled by rememberUpdatedState(enabled)
     val currentOnValueChange by rememberUpdatedState(onValueChange)
     val color = MaterialTheme.colorScheme.primary.copy(alpha = if (enabled) 1f else .38f)
     val trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) .24f else .12f)
-    fun dispatch(next: Double?, key: Any): Boolean {
-        if (next == null || !currentEnabled || currentKey != key || !scale.contains(next) || next == currentValue) return false
-        currentOnValueChange(next)
-        return true
-    }
-    fun step(direction: Int) = dispatch(scale.step(currentValue, direction), interactionKey)
+    fun dispatch(input: PhotoEditBarUpdate, key: Any) = dispatchPhotoEditBarInput(scale, key, currentKey,
+        currentEnabled, currentReadValue, input, currentOnValueChange)
+    fun step(direction: Int) = dispatch(PhotoEditBarUpdate(stepDirection = direction), interactionKey)
 
     Column(modifier) {
         Row(Modifier.fillMaxWidth()) {
@@ -76,7 +76,7 @@ internal fun PhotoEditBar(
                 if (!enabled) disabled()
                 else {
                     setProgress { fraction ->
-                        fraction.isFinite() && dispatch(scale.atFraction(fraction.toDouble()), interactionKey)
+                        fraction.isFinite() && dispatch(PhotoEditBarUpdate(scale.atFraction(fraction.toDouble())), interactionKey)
                     }
                     customActions = listOfNotNull(
                         scale.step(value, -1)?.let { CustomAccessibilityAction("$label を1段下げる") { step(-1) } },
@@ -101,7 +101,9 @@ internal fun PhotoEditBar(
                     val width = size.width - 2 * inset
                     if (!enabled || !currentEnabled || currentKey != key || width <= 0f ||
                         currentEvent.changes.any { it.id != down.id && it.pressed }) return@awaitEachGesture
-                    val gesture = PhotoEditBarGesture(scale, currentValue, down.position.x, down.position.y,
+                    val startValue = currentReadValue()
+                    if (!scale.contains(startValue)) return@awaitEachGesture
+                    val gesture = PhotoEditBarGesture(scale, startValue, down.position.x, down.position.y,
                         inset, width, viewConfiguration.touchSlop, inset)
                     while (!gesture.ended) {
                         val event = awaitPointerEvent()
@@ -110,7 +112,7 @@ internal fun PhotoEditBar(
                             event.changes.none { it.id != down.id && it.pressed }
                         val update = gesture.update(change.position.x, change.position.y, change.pressed, allowed)
                         if (update.consume) change.consume()
-                        dispatch(update.value, key)
+                        dispatch(update, key)
                     }
                 }
             }) {

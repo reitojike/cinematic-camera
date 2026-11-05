@@ -31,7 +31,7 @@ internal data class PhotoEditScale(val minimum: Double, val maximum: Double, val
     }
 }
 
-internal data class PhotoEditBarUpdate(val value: Double? = null, val consume: Boolean = false)
+internal data class PhotoEditBarUpdate(val value: Double? = null, val consume: Boolean = false, val stepDirection: Int = 0)
 
 /**
  * One pointer, relative horizontal drag, or a single +/- tap beside the thumb. A tap never seeks.
@@ -89,6 +89,6 @@ internal class PhotoEditBarGesture(
             downX > thumbX + thumbRadius -> 1
             else -> 0
         }
-        return PhotoEditBarUpdate(scale.step(startValue, direction), consume = true)
+        return PhotoEditBarUpdate(consume = true, stepDirection = direction)
     }
 }

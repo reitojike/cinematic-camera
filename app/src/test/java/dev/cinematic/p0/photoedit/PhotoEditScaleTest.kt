@@ -10,16 +10,21 @@ class PhotoEditScaleTest {
         PhotoEditBarGesture(scale, value, x, y, trackLeft = 10f, trackWidth = 100f, touchSlop = 5f, thumbRadius = 8f)
 
     @Test fun aDistantBarTapChangesOnlyOneStepRatherThanSeekingTheFinger() {
-        assertEquals(.6, gesture(x = 105f).update(105f, 24f, false, true).value!!, 1e-12)
-        assertEquals(.4, gesture(x = 15f).update(15f, 24f, false, true).value!!, 1e-12)
+        assertEquals(1, gesture(x = 105f).update(105f, 24f, false, true).stepDirection)
+        assertEquals(-1, gesture(x = 15f).update(15f, 24f, false, true).stepDirection)
     }
 
     @Test fun tapUsesTheContinuousValueWithoutSnappingItToADifferentGrid() {
-        assertEquals(.437, gesture(.337, 100f).update(100f, 24f, false, true).value!!, 1e-12)
+        val tap = gesture(.337, 100f).update(100f, 24f, false, true)
+        assertEquals(.437, scale.step(.337, tap.stepDirection)!!, 1e-12)
     }
 
     @Test fun tappingTheThumbDoesNotChangeTheValue() {
-        for (x in listOf(53f, 60f, 67f)) assertNull(gesture(x = x).update(x, 24f, false, true).value)
+        for (x in listOf(53f, 60f, 67f)) {
+            val tap = gesture(x = x).update(x, 24f, false, true)
+            assertNull(tap.value)
+            assertEquals(0, tap.stepDirection)
+        }
     }
 
     @Test fun dragStartsWithoutAJumpAndKeepsSubStepChangesBeforeFingerUp() {
