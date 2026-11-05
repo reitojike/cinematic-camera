@@ -23,9 +23,9 @@ internal class RawCaptureSession(
         handoff.releaseResources()
     }
 
-    fun prepare(expected: Set<RawOutput>): Map<RawOutput, OutputStream> {
+    fun prepare(expected: Set<RawOutput>, developIntent: CaptureDevelopIntent? = null): Map<RawOutput, OutputStream> {
         try {
-            val receipt = store.create(expected)
+            val receipt = store.create(expected, developIntent)
             expected.forEach { outputs[it] = store.openOutput(receipt.revision, it) }
             return outputs.toMap()
         } catch (failure: Throwable) {

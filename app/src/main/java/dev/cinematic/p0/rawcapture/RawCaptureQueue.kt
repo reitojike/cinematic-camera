@@ -86,7 +86,8 @@ internal class RawCaptureQueue(
         if (visible) requestWork()
     }
 
-    fun prepare(id: String, expected: Set<RawOutput>, observer: RawCaptureObserver): RawCaptureTicket {
+    fun prepare(id: String, expected: Set<RawOutput>, observer: RawCaptureObserver,
+        developIntent: CaptureDevelopIntent? = null): RawCaptureTicket {
         requireCaptureId(id)
         require(RawOutput.DNG in expected)
         val ticket = RawCaptureTicket(id, admission.newBlocker(), observer)
@@ -97,7 +98,7 @@ internal class RawCaptureQueue(
         ticket.serial.execute(prepareIo) {
             try {
                 val session = sessionFactory(id).also { ticket.session = it }
-                val outputs = session.prepare(expected)
+                val outputs = session.prepare(expected, developIntent)
                 if (ticket.interrupted) interruptOnIo(ticket)
                 else emit(ticket, RawCaptureNotice.Prepared(outputs))
             } catch (failure: Exception) {
