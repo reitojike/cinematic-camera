@@ -55,8 +55,16 @@ internal class AndroidAutoDevelopBackend(
     override fun supports(request: AutoDevelopRequest) = request == this.request && catalog.find(request) != null
     override fun verifyOriginal(request: AutoDevelopRequest, shouldStop: () -> Boolean) {
         checkRequest(request)
-        releaseResources()
-        DngContentVerifier.verify(request.source.fingerprint, { resources.input(readOriginal()) }, shouldStop)
+        val reuse = if (request.boundedTrial) PrivateTrialReuseRegistry.forRequest(request) else null
+        var releasing = true
+        try {
+            releaseResources()
+            releasing = false
+            DngContentVerifier.verify(request.source.fingerprint, { resources.input(readOriginal()) }, shouldStop)
+        } catch (failure: Throwable) {
+            validationFailed(reuse, failure, releasing || hasUnreleasedResources)
+            throw failure
+        }
     }
     private fun readOriginal(): InputStream = resolver.openInputStream(Uri.parse(request.source.uri)) ?: throw IOException("Shared original unavailable")
 
@@ -109,10 +117,36 @@ internal class AndroidAutoDevelopBackend(
     }
     override fun inspect(request: AutoDevelopRequest, attemptId: String, shouldStop: () -> Boolean): JpegInspection {
         checkRequest(request)
-        releaseResources()
-        val output = files(attemptId)
-        output.sealCompleted() // Invalid/missing output is validation failure, not a resource close failure.
-        return AndroidJpegInspector().inspect({ resources.input(output.openRead()) }, shouldStop)
+        val reuse = if (request.boundedTrial) PrivateTrialReuseRegistry.forRequest(request) else null
+        var releasing = true
+        try {
+            releaseResources()
+            releasing = false
+            val output = files(attemptId)
+            output.sealCompleted() // Invalid/missing output is validation failure, not a resource close failure.
+            return AndroidJpegInspector().inspect({ resources.input(output.openRead()) }, shouldStop)
+        } catch (failure: Throwable) {
+            validationFailed(reuse, failure, releasing || hasUnreleasedResources)
+            throw failure
+        }
+    }
+
+    /** Runner can convert validation errors into HELD without entering the display path. */
+    private fun validationFailed(reuse: PrivateTrialReuseLease?, failure: Throwable, closeFailed: Boolean) {
+        if (reuse == null) return // Completed/legacy owners retain their existing error/cleanup behavior.
+        fun normalCancellation(value: Throwable): Boolean =
+            (value is java.util.concurrent.CancellationException || value is android.os.OperationCanceledException ||
+                value is DngVerificationStopped) && value.suppressed.all(::normalCancellation)
+        if (closeFailed || !normalCancellation(failure)) {
+            reuse.invalidate()
+            return
+        }
+        // Ordinary supersession preserves the prior entry only after positively acknowledging close.
+        try { releaseResources() }
+        catch (cleanup: Throwable) {
+            reuse.invalidate()
+            if (cleanup !== failure) failure.addSuppressed(cleanup)
+        }
     }
     override fun publication(record: AutoDevelopRecord, isCurrent: () -> Boolean): AutoDevelopPublication {
         checkRequest(record.request)

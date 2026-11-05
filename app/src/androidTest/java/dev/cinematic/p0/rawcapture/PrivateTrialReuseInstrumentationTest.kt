@@ -9,6 +9,7 @@ import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.jpegrender.JpegFrame
 import dev.cinematic.p0.jpegrender.JpegGenerationRecipe
+import dev.cinematic.p0.jpegrender.JpegGenerationRequest
 import dev.cinematic.p0.testing.writeSyntheticTrialDng
 import java.io.File
 import java.nio.ByteBuffer
@@ -157,6 +158,62 @@ class PrivateTrialReuseInstrumentationTest {
         } finally { session.close() }
     }
 
+    @Test fun runnerPreverificationFailureInvalidatesAnExistingVerifiedEntryBeforeHolding() {
+        val session = PrivateTrialReuseRegistry.openSession()
+        try {
+            Fixture().use { f ->
+                val first = f.ready(.5, session)
+                f.read(first).close()
+                val pending = f.prepared(.75, session)
+                val lease = requireNotNull(PrivateTrialReuseRegistry.forRequest(pending.request))
+                assertNotNull(lease.comparisonCopy(24, 32))
+                f.changeOwnSyntheticSource()
+                val backend = f.backend(pending.request)
+                val runner = f.runner(pending.request, backend)
+                val held = runner.advance()
+                assertEquals(AutoRunStatus.HELD, held.status)
+                assertEquals(AutoJobReason.SOURCE_CHANGED, requireNotNull(held.record).reason)
+                assertNull(held.record?.attemptId)
+                assertNull(lease.comparisonCopy(24, 32))
+                assertNull(PrivateTrialReuseRegistry.forRequest(pending.request))
+                assertFalse(runner.hasUnreleasedResources)
+                assertFalse(backend.hasUnreleasedResources)
+            }
+        } finally { session.close() }
+    }
+
+    @Test fun runnerIndependentFinalInspectionFailureInvalidatesTheJustCommittedFoundation() {
+        val session = PrivateTrialReuseRegistry.openSession()
+        try {
+            Fixture().use { f ->
+                val pending = f.prepared(.5, session)
+                val actual = f.backend(pending.request)
+                var sawCommittedFoundation = false
+                val fault = object : AutoDevelopBackend by actual {
+                    override fun inspect(request: AutoDevelopRequest, attemptId: String,
+                        shouldStop: () -> Boolean): JpegInspection {
+                        val lease = requireNotNull(PrivateTrialReuseRegistry.forRequest(request))
+                        sawCommittedFoundation = lease.load(JpegGenerationRequest(request.captureId,
+                            request.generation, request.source, JpegGenerationRecipe.trial(.5))) != null
+                        check(sawCommittedFoundation) { "Inject only after the attempt committed a verified foundation" }
+                        // Corrupt this fixture's closed output after attempt completion, before independent inspection.
+                        f.output(attemptId).writeBytes("synthetic final inspection fault".toByteArray())
+                        return actual.inspect(request, attemptId, shouldStop)
+                    }
+                }
+                val runner = f.runner(pending.request, fault)
+                val held = runner.advance()
+                assertTrue(sawCommittedFoundation)
+                assertEquals(AutoRunStatus.HELD, held.status)
+                assertEquals(AutoJobReason.INVALID_OUTPUT, requireNotNull(held.record).reason)
+                assertNull(PrivateTrialReuseRegistry.forRequest(pending.request))
+                assertFalse(runner.hasUnreleasedResources)
+                assertFalse(actual.hasUnreleasedResources)
+                f.assertOriginalAndUnpublished(requireNotNull(held.record))
+            }
+        } finally { session.close() }
+    }
+
     private class DecodeCounter { var factories = 0; var loads = 0; var closeFailures = 0 }
 
     private inner class Fixture : AutoCloseable {
@@ -187,10 +244,15 @@ class PrivateTrialReuseInstrumentationTest {
                 throw failure
             }
         }
-        fun ready(strength: Double, session: PrivateTrialReuseSession?): AutoDevelopRecord {
+        fun prepared(strength: Double, session: PrivateTrialReuseSession?): AutoDevelopRecord {
             val handle = AndroidAutoDevelopQueue.preparePrivateTrial(context, source,
                 JpegGenerationRecipe.trial(strength), reuseSession = session).get(60, TimeUnit.SECONDS)
             latest = handle
+            return requireNotNull(journal(handle.request.generation).read())
+        }
+        fun ready(strength: Double, session: PrivateTrialReuseSession?): AutoDevelopRecord {
+            prepared(strength, session)
+            val handle = requireNotNull(latest)
             var status = handle.status().get(60, TimeUnit.SECONDS)
             if (status.phase in setOf(PrivateTrialPhase.PREPARED, PrivateTrialPhase.RUNNING))
                 status = handle.start(allowed).get(60, TimeUnit.SECONDS)
@@ -200,9 +262,18 @@ class PrivateTrialReuseInstrumentationTest {
                 status = handle.status().get(60, TimeUnit.SECONDS)
             }
             assertEquals(PrivateTrialPhase.READY, status.phase)
-            return requireNotNull(AutoDevelopJournal(handle.request.id, handle.request.generation,
-                AndroidAtomicJournalStorage(File(directory, "renders"), handle.request.generation.toString(),
-                    CaptureJournalFile.AUTO_DEVELOP)).read())
+            return requireNotNull(journal(handle.request.generation).read())
+        }
+        private fun journal(generation: Long) = AutoDevelopJournal(ManualDevelopRequests.identity(source), generation,
+            AndroidAtomicJournalStorage(File(directory, "renders"), generation.toString(), CaptureJournalFile.AUTO_DEVELOP))
+        fun backend(request: AutoDevelopRequest) = AndroidAutoDevelopBackend(context, request,
+            AutoRendererCatalog(listOf(BoundedJpegRendererAdapter.privateTrial(PrivateTrialReuseRegistry::forRequest))))
+        fun runner(request: AutoDevelopRequest, backend: AutoDevelopBackend): AutoDevelopRunner {
+            // The queue's prepared job is disabled and has no start intent. This isolated fault harness alone
+            // advances it, synchronously, under the same coordinator; it never constructs a publication owner.
+            assertEquals(PrivateTrialPhase.PREPARED, latest!!.status().get(60, TimeUnit.SECONDS).phase)
+            return AutoDevelopRunner(journal(request.generation), DevelopExecution.coordinator, backend,
+                interactive = true, observations = { allowed }, allowPublication = { false }) { true }
         }
         fun read(record: AutoDevelopRecord, counter: DecodeCounter = DecodeCounter(),
             shouldStop: () -> Boolean = { false }): PrivateTrialPreview {
@@ -236,8 +307,8 @@ class PrivateTrialReuseInstrumentationTest {
                 check(DevelopExecution.completeAfterResourcesClosed(slot))
             }
         }
-        fun output(record: AutoDevelopRecord): File {
-            val attempt = requireNotNull(record.attemptId)
+        fun output(record: AutoDevelopRecord): File = output(requireNotNull(record.attemptId))
+        fun output(attempt: String): File {
             check(attempt.matches(Regex("[0-9a-f]{32}")))
             return File(directory, "auto-attempts/$attempt/renders/1/output.jpg").canonicalFile.also {
                 check(it.path.startsWith(directory.path + File.separator) && it.isFile)
