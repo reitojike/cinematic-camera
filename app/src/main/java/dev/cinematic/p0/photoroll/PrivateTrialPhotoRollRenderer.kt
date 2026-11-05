@@ -16,6 +16,16 @@ import java.util.concurrent.TimeoutException
 @RequiresApi(29)
 internal class PrivateTrialPhotoRollRenderer(context: Context, private val resources: () -> PhotoRollResources) : PhotoRollRenderer {
     private val app = context.applicationContext
+    private val reuseLock = Any()
+    private var reuseSession: PrivateTrialReuseSession? = null
+    override fun discardTransientInputs() = synchronized(reuseLock) {
+        reuseSession?.close()
+        reuseSession = null
+    }
+    private fun currentReuseSession() = synchronized(reuseLock) {
+        reuseSession?.takeUnless { it.closed }
+            ?: PrivateTrialReuseRegistry.openSession().also { reuseSession = it }
+    }
     override val mode = PhotoRollPreviewMode.PRIVATE_TRIAL
     override val maxEdge = JpegGenerationRecipe.MAX_EDGE
     override val maxSourceBytes = 64L * 1024 * 1024
@@ -30,9 +40,14 @@ internal class PrivateTrialPhotoRollRenderer(context: Context, private val resou
         val recipe = JpegGenerationRecipe.trial(request.strength)
         cancellation.throwIfCanceled()
         val initial = resources().developConditions(rendererAvailable = true)
-        if (AutoDevelopPolicy.blockers(initial).isNotEmpty()) return unavailableConditions()
+        if (AutoDevelopPolicy.blockers(initial).isNotEmpty()) {
+            discardTransientInputs()
+            return unavailableConditions()
+        }
+        val session = currentReuseSession()
         request.onStage(PhotoRollRenderStage.TRIAL_WAIT)
-        val handle = await(AndroidAutoDevelopQueue.preparePrivateTrial(app, request.original.reference, recipe) { cancellation.isCanceled }, cancellation)
+        val handle = await(AndroidAutoDevelopQueue.preparePrivateTrial(app, request.original.reference, recipe,
+            reuseSession = session) { cancellation.isCanceled }, cancellation)
         require(handle.request.source == request.original.reference && handle.request.recipe == recipe.snapshot)
         val issuing = Any()
         var stopped = false
@@ -58,6 +73,7 @@ internal class PrivateTrialPhotoRollRenderer(context: Context, private val resou
             while (status.phase in setOf(PrivateTrialPhase.PREPARED, PrivateTrialPhase.RUNNING)) {
                 cancellation.throwIfCanceled()
                 if (AutoDevelopPolicy.blockers(resources().developConditions(rendererAvailable = true)).isNotEmpty()) {
+                    discardTransientInputs()
                     cancellation.cancel()
                     return unavailableConditions()
                 }
@@ -92,6 +108,7 @@ internal class PrivateTrialPhotoRollRenderer(context: Context, private val resou
             cancellation.throwIfCanceled()
             return PhotoRollRenderResult.Unavailable("試験処理が中断・変更されました。原本を確認して再試行してください")
         } catch (_: OutOfMemoryError) {
+            discardTransientInputs()
             cancellation.cancel()
             return PhotoRollRenderResult.Unavailable("試験表示のメモリが足りません。他のアプリを閉じて再試行してください")
         } catch (failure: Exception) {
