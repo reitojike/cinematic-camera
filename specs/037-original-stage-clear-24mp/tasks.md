@@ -21,5 +21,5 @@
 - [x] mask-only countの0/49/50・0.5・不正値/取消・後段RGB破損拒否と画像回帰を確認する。
 - [x] 拡大行cacheのbitwise/端/HDR/1px/任意順/並行読込・payloadを検証し、旧式と同条件で測る。
 - [x] trace有無の全画素一致、primary failureとclose保持、固定段階の完了/失敗記録を検証する。
-- [ ] 合成12MP/24MPの段階別時間とmicrobenchmarkを測り、改善効果・支配段階・実機未確認を区別する。
+- [x] 合成12MP/24MPの段階別時間とmicrobenchmarkを測り、改善効果・支配段階・実機未確認を区別する。
 - [ ] 最終headで公開検査・lint/unit/両ABI build・CI/canonical/独立レビューを行い、条件を満たして通常mergeする。

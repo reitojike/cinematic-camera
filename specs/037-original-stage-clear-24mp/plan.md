@@ -64,3 +64,22 @@ R7、skin field、Glow、near-white、Mist、Orton、Character、顔count/p90、
 mask-only/旧RGB通読、横補間cache/旧行式のmicrobenchmarkは同じ入力・交互順で測り、処理全体やPixelへ換算しない。
 全体合成12MP/24MPは同じnative/原寸/JPEG/再読込の経路で段階別に測り、旧縦断値との環境差・samplingを明記する。
 プレビューfield再利用/GPUの担当範囲と重複させず、利益が実測できない変更は採用しない。
+
+### 診断の再現入口
+
+`-PcinematicOriginal24Probe=true` の独立application ID `dev.cinematic.p0.original24probe` と専用エミュレータを使う。
+通常の撮影アプリへ診断APKを上書きせず、AGP・ABI・AVD設定をbaseline/candidateで揃え、各APK hashを固定・記録する。
+各instrumentationは新しい32桁lowercase hexの`runId`を要求し、私有`files/`の同じIDのJSONだけを回収する。
+`status=success`と`complete=true`、instrumentation成功を照合し、途中レポートを成功扱いにしない。
+
+- `OriginalFieldRowBenchmarkTest`: `originalFieldRowBenchmark=true`。25×17 CUBIC fieldを6000×4000へ各3回走査し、
+  旧式/再利用を交互順で比較する。全画素raw-bit checksum、wall/thread CPU時間、追加payloadを記録する。
+- `OriginalMaskCountBenchmarkTest`: `original24=true`、`maskCountSize=12MP|24MP|BOTH`、
+  `maskCountMask=NONE|MIXED|BOTH`。同じ合成raster/maskで各3組を交互順に比較する。
+  論理RGB読込量は物理ディスクのcold-read量を意味しない。
+- `Original24PipelineTest`: `original24=true`、`original24Stages=true`、`size=SMALL|12MP|24MP`。
+  native原寸処理・全段Look・JPEG圧縮・同じJPEGの検査と再decodeを含む。UI表示/共有公開の時間は含まない。
+
+全クラスのpackageは`dev.cinematic.p0.jpegrender.original`、runnerは`androidx.test.runner.AndroidJUnitRunner`。
+fixture作成/原本識別は全体timerより前であり、sampler負荷は全体時間に含む。段階合計と全体時間は同値を要求しない。
+メモリ値はsampling間隔とmanaged/native/PSSを併記し、瞬間的な真のpeakや他端末の上限を保証しない。
