@@ -34,9 +34,9 @@ class PhotoEditSessionTest {
             Triple(PhotoEditParameter.BRIGHTNESS, -.237, -.137),
         )) {
             session = session.change(session.inputToken, field, continuous)
-            assertEquals(continuous, session.draft[field], 0.0)
+            assertEquals(continuous, requireNotNull(session.draft[field]), 0.0)
             session = session.step(session.inputToken, field, 1)
-            assertEquals(stepped, session.draft[field], 1e-12)
+            assertEquals(stepped, requireNotNull(session.draft[field]), 1e-12)
         }
     }
 
@@ -102,5 +102,17 @@ class PhotoEditSessionTest {
         assertThrows(IllegalArgumentException::class.java) {
             PhotoEditSession.open(source(), scales, confirmed, defaults.copy(strength = 1.0))
         }
+    }
+
+    @Test fun strengthOnlyEditingDoesNotInventOtherControlValuesOrRanges() {
+        val session = PhotoEditSession.open(source(), PhotoEditScales(.01), PhotoEditValues(.5), PhotoEditValues(.5))
+        val changed = session.change(session.inputToken, PhotoEditParameter.STRENGTH, .75)
+        assertEquals(.75, changed.draft.strength, 0.0)
+        assertNull(changed.draft.temperature)
+        assertNull(changed.draft.brightness)
+        assertSame(changed, changed.change(changed.inputToken, PhotoEditParameter.TEMPERATURE, 4000.0))
+        assertSame(changed, changed.change(changed.inputToken, PhotoEditParameter.BRIGHTNESS, 1.0))
+        assertEquals(.76, changed.step(changed.inputToken, PhotoEditParameter.STRENGTH, 1).draft.strength, 1e-12)
+        assertEquals(.5, changed.cancel(changed.inputToken).draft.strength, 0.0)
     }
 }

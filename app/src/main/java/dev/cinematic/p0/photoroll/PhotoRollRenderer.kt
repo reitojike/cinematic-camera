@@ -16,7 +16,7 @@ internal data class PhotoRollOriginal(val uri: Uri, val fingerprint: OriginalFin
 internal data class PhotoRollRenderRequest(
     val original: PhotoRollOriginal,
     val lookVersion: String = "stage-clear-v1",
-    val strength: Float = 0.5f,
+    val strength: Double = 0.5,
     val maxEdge: Int = 1024,
     val mode: PhotoRollPreviewMode = PhotoRollPreviewMode.STAGE_CLEAR,
     val explicitRetry: Boolean = false,
@@ -32,6 +32,8 @@ internal sealed interface PhotoRollRenderResult {
         val jpegSave: PhotoRollJpegSave? = null,
         /** Independent display-owned pixels. Same source, orientation and dimensions as [bitmap]. */
         val comparisonBitmap: Bitmap? = null,
+        /** Frozen strength of a checked private artifact, never the UI's current draft. */
+        val trialStrength: Double? = null,
     ) : PhotoRollRenderResult {
         val comparisonLabel get() = comparisonBitmap?.let {
             "RAWの基準表示（撮影時WB・暫定色、露出補正・ルックなし）"
