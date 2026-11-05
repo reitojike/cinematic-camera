@@ -2,6 +2,7 @@ package dev.cinematic.p0.rawcapture
 
 import android.content.ContentValues
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.os.Build
 import android.provider.MediaStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -10,6 +11,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.jpegrender.JpegFrame
 import dev.cinematic.p0.jpegrender.JpegGenerationRecipe
 import dev.cinematic.p0.jpegrender.JpegGenerationRequest
+import dev.cinematic.p0.jpegrender.TrialPreparedFoundation
 import dev.cinematic.p0.testing.writeSyntheticTrialDng
 import java.io.File
 import java.nio.ByteBuffer
@@ -282,6 +284,77 @@ class PrivateTrialReuseInstrumentationTest {
         } finally { session.close() }
     }
 
+    @Test fun runnerRejectsAnotherValidJpegAndInvalidatesTheProducingAttemptFoundation() {
+        val session = PrivateTrialReuseRegistry.openSession()
+        try {
+            Fixture().use { f ->
+                val pending = f.prepared(.5, session)
+                val actual = f.backend(pending.request)
+                var replacedWithValidJpeg = false
+                val fault = object : AutoDevelopBackend by actual {
+                    override fun inspect(request: AutoDevelopRequest, attemptId: String,
+                        shouldStop: () -> Boolean): JpegInspection {
+                        val lease = requireNotNull(PrivateTrialReuseRegistry.forRequest(request))
+                        assertNotNull(lease.load(JpegGenerationRequest(request.captureId, request.generation,
+                            request.source, JpegGenerationRecipe.trial(.5))))
+                        f.replaceWithDifferentValidJpeg(attemptId)
+                        replacedWithValidJpeg = true
+                        return actual.inspect(request, attemptId, shouldStop)
+                    }
+                }
+                val runner = f.runner(pending.request, fault)
+                val held = runner.advance()
+                assertTrue(replacedWithValidJpeg)
+                assertEquals(AutoRunStatus.HELD, held.status)
+                assertEquals(AutoJobReason.INVALID_OUTPUT, requireNotNull(held.record).reason)
+                assertNull(PrivateTrialReuseRegistry.forRequest(pending.request))
+                assertFalse(runner.hasUnreleasedResources)
+                assertFalse(actual.hasUnreleasedResources)
+                f.assertOriginalAndUnpublished(requireNotNull(held.record))
+            }
+        } finally { session.close() }
+    }
+
+    @Test fun rejectedOldAttemptInspectionCannotInvalidateANewerBindingOfTheSameRequest() {
+        val session = PrivateTrialReuseRegistry.openSession()
+        try {
+            Fixture().use { f ->
+                val pending = f.prepared(.5, session)
+                val generation = JpegGenerationRequest(pending.request.captureId, pending.request.generation,
+                    pending.request.source, JpegGenerationRecipe.trial(.5))
+                val actual = f.backend(pending.request)
+                var rebound: PrivateTrialReuseLease? = null
+                var verified: TrialPreparedFoundation? = null
+                val fault = object : AutoDevelopBackend by actual {
+                    override fun inspect(request: AutoDevelopRequest, attemptId: String,
+                        shouldStop: () -> Boolean): JpegInspection {
+                        val previous = requireNotNull(PrivateTrialReuseRegistry.forRequest(request))
+                        verified = requireNotNull(previous.load(generation))
+                        // Same immutable request, new authority: the old producer must retain its old lease.
+                        rebound = requireNotNull(PrivateTrialReuseRegistry.bind(session, request))
+                        assertSame(verified, rebound!!.load(generation))
+                        f.replaceWithDifferentValidJpeg(attemptId)
+                        return actual.inspect(request, attemptId, shouldStop)
+                    }
+                }
+                val runner = f.runner(pending.request, fault)
+                val held = runner.advance()
+                assertEquals(AutoRunStatus.HELD, held.status)
+                assertEquals(AutoJobReason.INVALID_OUTPUT, requireNotNull(held.record).reason)
+                assertSame(verified, requireNotNull(rebound).load(generation))
+                assertNotNull(PrivateTrialReuseRegistry.forRequest(pending.request))
+                val foreignAttempt = if (held.record?.attemptId == "a".repeat(32)) "b".repeat(32) else "a".repeat(32)
+                assertThrows(java.io.IOException::class.java) {
+                    actual.inspect(pending.request, foreignAttempt) { false }
+                }
+                assertSame(verified, requireNotNull(rebound).load(generation))
+                assertFalse(actual.hasUnreleasedResources)
+                assertFalse(runner.hasUnreleasedResources)
+                f.assertOriginalAndUnpublished(requireNotNull(held.record))
+            }
+        } finally { session.close() }
+    }
+
     /** Tiny native inputs may be half-sized before physical orientation. Use only inspected output geometry. */
     private fun AutoDevelopRecord.comparisonCopy(lease: PrivateTrialReuseLease?): IntArray? {
         val output = requireNotNull(observed).output
@@ -387,6 +460,18 @@ class PrivateTrialReuseInstrumentationTest {
             return File(directory, "auto-attempts/$attempt/renders/1/output.jpg").canonicalFile.also {
                 check(it.path.startsWith(directory.path + File.separator) && it.isFile)
             }
+        }
+        fun replaceWithDifferentValidJpeg(attempt: String) {
+            val file = output(attempt)
+            val original = AndroidJpegInspector().inspect({ file.inputStream() }) { false }.output
+            val bitmap = Bitmap.createBitmap(if (original.width == 2) 3 else 2,
+                if (original.height == 3) 4 else 3, Bitmap.Config.ARGB_8888)
+            try {
+                bitmap.eraseColor(Color.rgb(35, 95, 155))
+                file.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.JPEG, 95, it)) }
+            } finally { bitmap.recycle() }
+            val replacement = AndroidJpegInspector().inspect({ file.inputStream() }) { false }.output
+            assertNotEquals(original, replacement) // Valid codec bytes, deliberately different real dimensions.
         }
         fun assertOriginalAndUnpublished(record: AutoDevelopRecord) {
             DngContentVerifier.verify(source.fingerprint, { resolver.openInputStream(uri)!! })

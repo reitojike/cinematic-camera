@@ -35,6 +35,10 @@ internal class AndroidAutoDevelopBackend(
     private var publishedAttempt: String? = null
     private val previewOwnership = Any()
     private var comparisonFrames: OwnedJpegFrameSource? = null
+    private data class PrivateReceipt(val request: AutoDevelopRequest, val attemptId: String,
+        val output: JpegOutputDescription, val reuse: PrivateTrialReuseLease)
+    private var privateAttemptToken: Any? = null
+    private var privateReceipt: PrivateReceipt? = null // Immutable metadata only, never retained pixels.
 
     override fun privatePreviewStopAction(): (() -> Unit)? = synchronized(previewOwnership) {
         comparisonFrames?.let { exact -> { exact.requestStop() } }
@@ -87,6 +91,10 @@ internal class AndroidAutoDevelopBackend(
     }
     override fun createAttempt(request: AutoDevelopRequest, attemptId: String): AutoRenderAttempt {
         checkRequest(request)
+        val reuse = if (request.boundedTrial) PrivateTrialReuseRegistry.forRequest(request) else null
+        val token = Any()
+        privateAttemptToken = token
+        privateReceipt = null
         val adapter = catalog.find(request) ?: throw IOException("Final renderer unavailable")
         val output = files(attemptId)
         var rendering = false
@@ -106,7 +114,12 @@ internal class AndroidAutoDevelopBackend(
         return object : AutoRenderAttempt {
             override fun render(shouldStop: () -> Boolean): AutoRenderReceipt {
                 rendering = true
-                try { return engine.render(shouldStop) }
+                try {
+                    return engine.render(shouldStop).also { receipt ->
+                        if (reuse != null && privateAttemptToken === token)
+                            privateReceipt = PrivateReceipt(request, attemptId, receipt.output, reuse)
+                    }
+                }
                 finally { rendering = false }
             }
             override fun requestStop() = engine.requestStop()
@@ -118,15 +131,23 @@ internal class AndroidAutoDevelopBackend(
     }
     override fun inspect(request: AutoDevelopRequest, attemptId: String, shouldStop: () -> Boolean): JpegInspection {
         checkRequest(request)
-        val reuse = if (request.boundedTrial) PrivateTrialReuseRegistry.forRequest(request) else null
+        val recorded = privateReceipt
+        val expected = recorded?.takeIf { it.request == request && it.attemptId == attemptId }
+        // A producing attempt's capability must never be replaced with a newer binding's lease.
+        val reuse = if (recorded != null) expected?.reuse
+            else if (request.boundedTrial) PrivateTrialReuseRegistry.forRequest(request) else null
         val stop = privateValidationStop(reuse, shouldStop)
         var releasing = true
         try {
+            if (recorded != null && expected == null) throw IOException("Private inspection belongs to another attempt")
             releaseResources()
             releasing = false
             val output = files(attemptId)
             output.sealCompleted() // Invalid/missing output is validation failure, not a resource close failure.
-            return AndroidJpegInspector().inspect({ resources.input(output.openRead()) }, stop)
+            val inspection = AndroidJpegInspector().inspect({ resources.input(output.openRead()) }, stop)
+            if (expected != null && (inspection.output != expected.output || inspection.fingerprint.bytes != expected.output.bytes))
+                throw IOException("Private JPEG inspection differs from the renderer receipt")
+            return inspection
         } catch (failure: Throwable) {
             validationFailed(reuse, failure, releasing || hasUnreleasedResources)
             throw failure
