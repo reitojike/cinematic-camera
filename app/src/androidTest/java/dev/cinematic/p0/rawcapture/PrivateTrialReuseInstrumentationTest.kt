@@ -446,7 +446,15 @@ class PrivateTrialReuseInstrumentationTest {
                     }
                 }
             }
-            val slot = requireNotNull(DevelopExecution.tryStartObserved(allowed))
+            // Completing the previous read wakes the real queue, whose READY reconciliation may
+            // briefly acquire this slot too. Wait for actual admission; never release another owner.
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60)
+            var admitted = DevelopExecution.tryStartObserved(allowed)
+            while (admitted == null && System.nanoTime() < deadline) {
+                Thread.sleep(20)
+                admitted = DevelopExecution.tryStartObserved(allowed)
+            }
+            val slot = checkNotNull(admitted) { "Timed out after 60 seconds waiting for real readback admission" }
             try { return backend.privatePreview(record, shouldStop) }
             finally {
                 backend.releaseResources()
