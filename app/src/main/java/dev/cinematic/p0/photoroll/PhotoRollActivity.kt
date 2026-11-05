@@ -14,13 +14,14 @@ import dev.cinematic.p0.rawcapture.DevelopExecution
 class PhotoRollActivity : ComponentActivity() {
     private var foreground by mutableStateOf(false)
     private lateinit var resourceObserver: PhotoRollResourceObserver
+    private lateinit var renderer: PhotoRollRenderer
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val repository = PhotoRollRepository(contentResolver, packageName)
         resourceObserver = PhotoRollResourceObserver(applicationContext, DevelopExecution::updateConditions)
-        val renderer: PhotoRollRenderer = if (Build.VERSION.SDK_INT >= 29)
+        renderer = if (Build.VERSION.SDK_INT >= 29)
             PrivateTrialPhotoRollRenderer(applicationContext, resourceObserver::snapshot)
         else object : PhotoRollRenderer {
             override val mode = PhotoRollPreviewMode.PRIVATE_TRIAL
@@ -33,7 +34,11 @@ class PhotoRollActivity : ComponentActivity() {
     }
 
     override fun onResume() { super.onResume(); foreground = true; resourceObserver.foreground(true) }
-    override fun onPause() { foreground = false; resourceObserver.foreground(false); super.onPause() }
+    override fun onPause() { foreground = false; renderer.discardTransientInputs(); resourceObserver.foreground(false); super.onPause() }
+    @Suppress("OVERRIDE_DEPRECATION")
+    override fun onLowMemory() { if (::renderer.isInitialized) renderer.discardTransientInputs(); super.onLowMemory() }
+    @Suppress("OVERRIDE_DEPRECATION")
+    override fun onTrimMemory(level: Int) { if (::renderer.isInitialized) renderer.discardTransientInputs(); super.onTrimMemory(level) }
     override fun onStart() { super.onStart(); resourceObserver.start() }
     override fun onStop() { resourceObserver.stop(); super.onStop() }
 }

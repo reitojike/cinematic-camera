@@ -1,0 +1,38 @@
+package dev.cinematic.p0.jpegrender
+
+import dev.cinematic.p0.raw.LinearSrgbImage
+
+/** The only retained pixel foundation: immutable R7 pixels and small, checked geometry/exposure metadata.
+ * Never retains an as-shot image, ROI, face mask, decoder, stream, or an Android display owner. */
+internal class TrialPreparedFoundation(
+    val base: LinearSrgbImage,
+    val sourceWidth: Int,
+    val sourceHeight: Int,
+    val physicallyOriented: Boolean,
+    val externalEv: Double,
+    val geometryVersion: String = GEOMETRY_VERSION,
+) {
+    val pixelBytes: Long get() = base.width.toLong() * base.height * 3 * 4
+
+    internal fun validFor(request: JpegGenerationRequest): Boolean =
+        request.recipe.isTrial && JpegGenerationRecipe.fromTrialSnapshot(request.recipe.snapshot) != null &&
+            geometryVersion == GEOMETRY_VERSION && physicallyOriented && externalEv.isFinite() &&
+            sourceWidth > 0 && sourceHeight > 0 && base.width in 1..JpegGenerationRecipe.MAX_EDGE &&
+            base.height in 1..JpegGenerationRecipe.MAX_EDGE &&
+            minOf(base.width, base.height) <= minOf(sourceWidth, sourceHeight) &&
+            maxOf(base.width, base.height) <= maxOf(sourceWidth, sourceHeight)
+
+    companion object {
+        /** Bump whenever the native physical orientation/bounded scaling or R7 foundation changes. */
+        const val GEOMETRY_VERSION = "physical-bounded-1024-r7-final-v1"
+    }
+}
+
+/** Optional private-session optimization. A lease must recheck its epoch/binding on every access.
+ * Completed/manual publication paths must neither read nor mutate this optimization. */
+internal interface TrialFoundationReuse {
+    fun load(request: JpegGenerationRequest): TrialPreparedFoundation?
+    /** Only after successful JPEG inspection, post-source hash and positively closed attempt resources. */
+    fun commit(request: JpegGenerationRequest, foundation: TrialPreparedFoundation)
+    fun invalidate()
+}

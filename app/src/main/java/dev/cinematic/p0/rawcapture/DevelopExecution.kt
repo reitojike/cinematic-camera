@@ -10,6 +10,7 @@ internal object DevelopExecution {
         queue = owner
     }
     fun updateConditions(observations: AutoDevelopConditions) {
+        if (AutoDevelopPolicy.blockers(observations).isNotEmpty()) PrivateTrialReuseRegistry.invalidateAll()
         val owner = queue
         if (owner == null) coordinator.updateConditions(observations) else owner.updateConditions(observations)
     }
@@ -18,7 +19,10 @@ internal object DevelopExecution {
     fun requestStop(attempt: AutoDevelopCoordinator.Attempt) { coordinator.requestStop(attempt); queue?.stopObserved(attempt) }
     fun completeAfterResourcesClosed(attempt: AutoDevelopCoordinator.Attempt): Boolean =
         coordinator.completeAfterResourcesClosed(attempt).also { released -> if (released) queue?.wake() }
-    fun reserveCapture() = queue?.reserveCapture() ?: coordinator.reserveCapture()
+    fun reserveCapture() = run {
+        PrivateTrialReuseRegistry.invalidateAll()
+        queue?.reserveCapture() ?: coordinator.reserveCapture()
+    }
     fun releaseCapture(reservation: AutoDevelopCoordinator.CaptureReservation) {
         val owner = queue
         if (owner == null) coordinator.releaseCapture(reservation) else owner.releaseCapture(reservation)

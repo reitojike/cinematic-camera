@@ -52,6 +52,8 @@ internal sealed interface PhotoRollRenderResult {
  * Cancellation is a request; the serial permit remains held until render returns.
  */
 internal interface PhotoRollRenderer {
+    /** Discard only optional in-memory input reuse. Never release an in-flight native/IO owner here. */
+    fun discardTransientInputs() {}
     val mode: PhotoRollPreviewMode get() = PhotoRollPreviewMode.STAGE_CLEAR
     val maxSourceBytes: Long get() = PhotoRollRepository.MAX_SOURCE_BYTES
     val maxEdge: Int get() = 1024

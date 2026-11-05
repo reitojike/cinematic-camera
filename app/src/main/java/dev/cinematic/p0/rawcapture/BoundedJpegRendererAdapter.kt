@@ -18,6 +18,7 @@ internal class BoundedJpegRendererAdapter(
     private val controls: JpegControlsProvider,
     private val encoder: LinearJpegEncoder,
     private val inspector: JpegInspector,
+    private val reuse: (AutoDevelopRequest) -> TrialFoundationReuse? = { null },
 ) : RendererAdapter {
     override val contract = if (recipe.isTrial) RendererPublicationContract(JpegGenerationRecipe.TRIAL_SCHEMA, JpegGenerationRecipe.TRIAL_SCHEMA)
         else JpegGenerationRecipe.PUBLICATION_CONTRACT
@@ -36,6 +37,7 @@ internal class BoundedJpegRendererAdapter(
     override fun createAttempt(request: AutoDevelopRequest, attemptId: String, io: AutoRenderIo): AutoRenderAttempt {
         // Freeze this request's validated strength; another request cannot replace an attempt's recipe.
         val selectedRecipe = recipeFor(request) ?: throw AutoRenderUnsupported()
+        val trialReuse = if (selectedRecipe.isTrial) reuse(request) else null
         // Factory must construct without opening resources, as with the existing adapter contract.
         val frameOwner = frames(request, io)
         val generation = JpegGenerationAttempt(JpegGenerationRequest(request.captureId, request.generation, request.source, selectedRecipe),
@@ -47,7 +49,7 @@ internal class BoundedJpegRendererAdapter(
             }, frameOwner, controls, { reference ->
                 if (reference != request.source) throw CaptureJournalConflict()
                 io.openOriginal()
-            }, encoder, inspector)
+            }, encoder, inspector, trialReuse)
         return object : AutoRenderAttempt {
             override fun render(shouldStop: () -> Boolean): AutoRenderReceipt {
                 if (selectedRecipe.isTrial) {
@@ -65,14 +67,16 @@ internal class BoundedJpegRendererAdapter(
             }
             override fun requestStop() = frameOwner.requestStop()
             override fun close() {
-                generation.releaseResources()
-                frameOwner.close() // Only actual acknowledgement permits the backend/coordinator to release.
+                try {
+                    generation.releaseResources()
+                    frameOwner.close() // Only actual acknowledgement permits the backend/coordinator to release.
+                } catch (failure: Throwable) { trialReuse?.invalidate(); throw failure }
             }
         }
     }
     companion object {
-        fun privateTrial(): BoundedJpegRendererAdapter = BoundedJpegRendererAdapter(JpegGenerationRecipe.trial(),
+        fun privateTrial(reuse: (AutoDevelopRequest) -> TrialFoundationReuse? = { null }): BoundedJpegRendererAdapter = BoundedJpegRendererAdapter(JpegGenerationRecipe.trial(),
             { request, io -> AndroidOwnedJpegFrames(io, request.source) }, AsShotNoFaceTrialControls,
-            AndroidSrgbJpegEncoder, AndroidJpegInspector())
+            AndroidSrgbJpegEncoder, AndroidJpegInspector(), reuse)
     }
 }
