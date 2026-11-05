@@ -2,6 +2,8 @@ package dev.cinematic.p0.photoroll
 
 import android.content.ContentResolver
 import android.content.ContentUris
+import android.content.Intent
+import android.content.ClipData
 import android.net.Uri
 import android.os.Build
 import android.os.CancellationSignal
@@ -12,28 +14,76 @@ import dev.cinematic.p0.rawcapture.DngContentVerifier
 import dev.cinematic.p0.rawcapture.OriginalGrant
 import dev.cinematic.p0.rawcapture.isDngRowUri
 
-internal data class PhotoRollItem(val uri: String, val name: String)
+internal data class PhotoRollItem(val uri: String, val name: String,
+    val kind: CameraRollKind = CameraRollKind.DNG, val mime: String = "image/x-adobe-dng",
+    val addedSeconds: Long = 0, val durationMillis: Long? = null)
 internal data class PhotoRollListing(val items: List<PhotoRollItem>, val message: String? = null)
 internal class PhotoRollSourceFailure(val userMessage: String) : Exception(userMessage)
 
 /** No write methods: selection does not import or mirror a DNG. */
 internal class PhotoRollRepository(private val resolver: ContentResolver, private val packageName: String) {
     fun list(signal: CancellationSignal): PhotoRollListing {
-        if (Build.VERSION.SDK_INT < 29) return PhotoRollListing(emptyList(), "端末内DNGをFilesから選んでください")
+        if (Build.VERSION.SDK_INT < 29) return PhotoRollListing(emptyList(), "撮影物の一覧はAndroid 10以降で利用できます。端末内DNGはFilesから選べます")
         val items = mutableListOf<PhotoRollItem>()
-        val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        val columns = arrayOf(MediaStore.Images.Media._ID, MediaStore.Images.Media.DISPLAY_NAME)
-        val where = "${MediaStore.Images.Media.OWNER_PACKAGE_NAME} = ? AND ${MediaStore.Images.Media.IS_PENDING} = 0 AND " +
-            "(${MediaStore.Images.Media.MIME_TYPE} = ? OR ${MediaStore.Images.Media.DISPLAY_NAME} LIKE ?)"
-        resolver.query(collection, columns, where,
-            arrayOf(packageName, "image/x-adobe-dng", "%.dng"), "${MediaStore.Images.Media.DATE_ADDED} DESC", signal)?.use { cursor ->
-            while (items.size < 200 && cursor.moveToNext()) {
-                signal.throwIfCanceled()
-                items += PhotoRollItem(ContentUris.withAppendedId(collection, cursor.getLong(0)).toString(),
-                    cursor.getString(1) ?: "DNG")
+        for (video in listOf(false, true)) {
+            signal.throwIfCanceled()
+            val collection = if (video) MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                else MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            val columns = mutableListOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME,
+                MediaStore.MediaColumns.MIME_TYPE, MediaStore.MediaColumns.DATE_ADDED)
+            if (video) columns += MediaStore.Video.VideoColumns.DURATION
+            val where = "${MediaStore.MediaColumns.OWNER_PACKAGE_NAME} = ? AND ${MediaStore.MediaColumns.IS_PENDING} = 0" +
+                if (Build.VERSION.SDK_INT >= 30) " AND ${MediaStore.MediaColumns.IS_TRASHED} = 0" else ""
+            val cursor = resolver.query(collection, columns.toTypedArray(), where, arrayOf(packageName),
+                "${MediaStore.MediaColumns.DATE_ADDED} DESC, ${MediaStore.MediaColumns._ID} DESC", signal)
+                ?: throw PhotoRollSourceFailure("撮影物の一覧を確認できません。戻って再試行してください")
+            cursor.use {
+                var count = 0
+                while (count < 200 && it.moveToNext()) {
+                    signal.throwIfCanceled()
+                    count++
+                    val name = it.getString(1) ?: if (video) "動画" else "写真"
+                    val mime = it.getString(2)
+                    val kind = cameraRollKind(name, mime, video) ?: continue
+                    items += PhotoRollItem(ContentUris.withAppendedId(collection, it.getLong(0)).toString(), name,
+                        kind, mime ?: "image/x-adobe-dng", if (it.isNull(3)) 0 else it.getLong(3),
+                        if (video && !it.isNull(4) && it.getLong(4) > 0) it.getLong(4) else null)
+                }
             }
         }
-        return PhotoRollListing(items, "このアプリが保存したDNG候補（最新200件まで）。他の端末内DNGはFilesから選べます")
+        return PhotoRollListing(newestCameraRollItems(items), "このアプリが保存した写真・動画・DNG（最新200件まで）")
+    }
+
+    /** List metadata is never a durable read grant or proof that a row remains published. */
+    fun viewIntent(item: PhotoRollItem, signal: CancellationSignal): Intent {
+        if (Build.VERSION.SDK_INT < 29 || item.kind == CameraRollKind.DNG)
+            throw PhotoRollSourceFailure("DNGは原本を確認して現像画面で開いてください")
+        val uri = Uri.parse(item.uri)
+        val expectedCollection = if (item.kind == CameraRollKind.VIDEO) "video" else "images"
+        if (uri.scheme != "content" || uri.authority != "media" ||
+            uri.pathSegments.size != 4 || uri.pathSegments[0] != MediaStore.VOLUME_EXTERNAL_PRIMARY ||
+            uri.pathSegments[1] != expectedCollection || uri.pathSegments[2] != "media" ||
+            uri.lastPathSegment?.toLongOrNull()?.let { it > 0 } != true) throw PhotoRollSourceFailure("撮影物の参照を確認できません")
+        val columns = mutableListOf(MediaStore.MediaColumns.OWNER_PACKAGE_NAME, MediaStore.MediaColumns.IS_PENDING,
+            MediaStore.MediaColumns.VOLUME_NAME, MediaStore.MediaColumns.MIME_TYPE, MediaStore.MediaColumns.DISPLAY_NAME)
+        if (Build.VERSION.SDK_INT >= 30) columns += MediaStore.MediaColumns.IS_TRASHED
+        signal.throwIfCanceled()
+        val mime = resolver.query(uri, columns.toTypedArray(), null, null, null, signal)?.use { cursor ->
+            if (!cursor.moveToFirst() || cursor.getString(0) != packageName || cursor.isNull(1) || cursor.getInt(1) != 0 ||
+                cursor.getString(2) != MediaStore.VOLUME_EXTERNAL_PRIMARY ||
+                (Build.VERSION.SDK_INT >= 30 && (cursor.isNull(5) || cursor.getInt(5) != 0))) null
+            else cursor.getString(3)?.takeIf {
+                cameraRollKind(cursor.getString(4) ?: "", it, item.kind == CameraRollKind.VIDEO) == item.kind
+            }
+        } ?: throw PhotoRollSourceFailure("写真・動画が見つからないか、アクセスできません。一覧に戻って再試行してください")
+        signal.throwIfCanceled()
+        resolver.openAssetFileDescriptor(uri, "r", signal)?.use { signal.throwIfCanceled() }
+            ?: throw PhotoRollSourceFailure("写真・動画を読み取れません。一覧に戻って再試行してください")
+        signal.throwIfCanceled()
+        return Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime).apply {
+            clipData = ClipData.newRawUri("撮影物", uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
     }
 
     fun check(uri: Uri, fromFiles: Boolean, shouldStop: () -> Boolean, maxBytes: Long = MAX_SOURCE_BYTES,

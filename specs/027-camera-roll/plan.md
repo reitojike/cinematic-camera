@@ -1,0 +1,16 @@
+# 実装方針
+
+PhotoRollRepositoryの画像queryを自app所有の画像/動画2collectionに拡張し、それぞれ最大200件を取得した後に
+DATE_ADDEDと完全URIで安定sortし、統合200件へ制限する。pendingとtrashをSQLで除外する。
+候補情報はDNGの権威として流用せず、既存checkOriginalとcommon ownerを維持する。
+
+CameraRollGridは可視セルだけを構成する。標準ContentResolver.loadThumbnailの256px要求をIO上・最大2並列で行い、
+セル離脱/背景化でCancellationSignalを取り消す。戻ってきたBitmapはComposeが使うため明示recycleしない。
+例外・OOMは当該thumbnailの代替表示に限定し、DNG選択や撮影を不能にしない。
+
+JPEG/動画は外部遷移前に同じURIのowner/pending/volume/trash/MIMEとread-only FDを再確認する。
+Main threadへ戻った時点のforegroundと取消状態を確認し、ACTION_VIEWにread grantと同じURIのClipDataだけを付ける。
+標準viewerを使うという合意済み設計を維持し、再生ライブラリや写真権限を増やさない。
+
+原本の書込能力やMediaStore insert/deleteは製品コードへ追加しない。合成試験のcleanupは当該試験が作成したURIのみ。
+現像前後比較はspec025の別契約とし、一覧に私有試験JPEGを公開項目として混入させない。
