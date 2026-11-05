@@ -12,6 +12,7 @@
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
 #include <sstream>
 #include <string>
+#include "baseline_small.h"
 #endif
 #include "w1_trial.h"
 #include "as_shot_xy.h"
@@ -49,6 +50,7 @@ struct ProbeReport {
     jobject observer;
     jmethodID onStage;
     std::string json;
+    cinematic::BaselineSmall* baseline = nullptr;
     void stage(const char* name, const Cancellation& cancel) const {
         jstring text = env->NewStringUTF(name);
         if (!text) fail("DNG_MEMORY");
@@ -73,6 +75,9 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
     struct stat file{};
     if (fstat(fd, &file) || !S_ISREG(file.st_mode) || file.st_size <= 0) fail("DNG_SOURCE");
     if (static_cast<uint64_t>(file.st_size) > kMaxFileBytes) fail("DNG_LIMIT");
+#ifdef CINEMATIC_ENABLE_RAW_PROBE
+    if (probe && probe->baseline && static_cast<uint64_t>(file.st_size) > probe->baseline->byteLimit()) fail("DNG_LIMIT");
+#endif
     // A bounded in-memory snapshot avoids SIGBUS if an external provider truncates the file.
     // pread also preserves the provider's descriptor offset; no persistent DNG copy is made.
     std::vector<unsigned char> encoded(static_cast<size_t>(file.st_size));
@@ -83,6 +88,9 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
         offset += static_cast<size_t>(read);
     }
 
+#ifdef CINEMATIC_ENABLE_RAW_PROBE
+    if (probe && probe->baseline) probe->baseline->parse(encoded);
+#endif
     // Construct after encoded: LibRaw releases all references before the snapshot is destroyed.
     cinematic::W1Metadata metadata(encoded.size());
     cinematic::AsShotXyMetadata asShotMetadata(encoded.size());
@@ -96,11 +104,14 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
     raw.imgdata.rawparams.max_raw_memory_mb = 128;
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
     // A fixed diagnostic ceiling, not increased automatically after a failure.
-    if (probe) { raw.imgdata.rawparams.max_raw_memory_mb = 512; probe->stage("open", cancel); }
+    if (probe) { raw.imgdata.rawparams.max_raw_memory_mb = probe->baseline && !probe->baseline->isLarge() ? 128 : 512; probe->stage("open", cancel); }
 #endif
     raw.set_progress_handler(progress, &cancel);
     const int opened = raw.open_buffer(encoded.data(), encoded.size());
     check(opened); // Preserve LibRaw cancellation/memory/source failures over partial metadata errors.
+#ifdef CINEMATIC_ENABLE_RAW_PROBE
+    if (probe && probe->baseline) probe->baseline->validateOpen(raw);
+#endif
     std::array<float, 3> requestedWb{};
     int observedTags = -1; // UNKNOWN unless a metadata-derived user WB is actually used.
     bool whiteXyCompat = false;
@@ -115,7 +126,7 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
     const uint64_t count = static_cast<uint64_t>(sizes.raw_width) * sizes.raw_height;
     uint64_t pixelLimit = kMaxRawPixels;
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
-    if (probe) pixelLimit = 24'000'000;
+    if (probe) pixelLimit = probe->baseline ? probe->baseline->pixelLimit() : 24'000'000;
 #endif
     if (!count || count > pixelLimit) fail("DNG_LIMIT");
     // DefaultScale can otherwise amplify an accepted RAW during LibRaw's stretch().
@@ -169,6 +180,9 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
 #endif
     check(raw.unpack());
     if (raw.error_count()) fail("DNG_UNSUPPORTED");
+#ifdef CINEMATIC_ENABLE_RAW_PROBE
+    if (probe && probe->baseline) probe->baseline->applyCrop(raw);
+#endif
     if (wbMode == 1) cinematic::validateW1Processing(raw.imgdata.rawdata.color, requestedWb);
     if (whiteXyCompat) {
         // raw2image_start restores this exact colour state; attest the matrix that will be used.
@@ -192,6 +206,15 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
         !image->width || !image->height ||
         image->data_size != static_cast<uint64_t>(image->width) * image->height * 6) fail("DNG_UNSUPPORTED");
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
+    if (probe && probe->baseline) {
+        raw.recycle();
+        std::vector<unsigned char>().swap(encoded);
+        jobject result = probe->baseline->frame(env, probe->observer, *image, [&] { probe->stage("pack_row", cancel); });
+        image.reset();
+        if (!result || env->ExceptionCheck()) return nullptr;
+        probe->stage("released", cancel);
+        return result;
+    }
     if (probe) {
         if (static_cast<uint64_t>(image->width) * image->height > pixelLimit) fail("DNG_LIMIT");
         probe->stage("summarize", cancel);
@@ -270,6 +293,44 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
 } // namespace
 
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
+extern "C" JNIEXPORT jobject JNICALL
+Java_dev_cinematic_rawprobe_NativeBaselineProbe_decodeLarge(JNIEnv* env, jobject, jint fd, jobject signal, jobject observer) {
+    try {
+        if (!observer) fail("DNG_UNSUPPORTED");
+        jmethodID onStage = env->GetMethodID(env->GetObjectClass(observer), "onStage", "(Ljava/lang/String;)V");
+        if (!onStage) return nullptr;
+        cinematic::BaselineSmall baseline(true);
+        ProbeReport report{env, observer, onStage, {}, &baseline};
+        return decodeDng(env, fd, 1024, signal, 0, &report);
+    } catch (const std::bad_alloc&) {
+        if (!env->ExceptionCheck()) env->ThrowNew(env->FindClass("java/io/IOException"), "DNG_MEMORY");
+    } catch (const std::exception& error) {
+        if (!env->ExceptionCheck()) env->ThrowNew(env->FindClass("java/io/IOException"), error.what());
+    } catch (...) {
+        if (!env->ExceptionCheck()) env->ThrowNew(env->FindClass("java/io/IOException"), "DNG_UNSUPPORTED");
+    }
+    return nullptr;
+}
+
+extern "C" JNIEXPORT jobject JNICALL
+Java_dev_cinematic_rawprobe_NativeBaselineProbe_decode(JNIEnv* env, jobject, jint fd, jobject signal, jobject observer) {
+    try {
+        if (!observer) fail("DNG_UNSUPPORTED");
+        jmethodID onStage = env->GetMethodID(env->GetObjectClass(observer), "onStage", "(Ljava/lang/String;)V");
+        if (!onStage) return nullptr;
+        cinematic::BaselineSmall baseline;
+        ProbeReport report{env, observer, onStage, {}, &baseline};
+        return decodeDng(env, fd, 1024, signal, 0, &report);
+    } catch (const std::bad_alloc&) {
+        if (!env->ExceptionCheck()) env->ThrowNew(env->FindClass("java/io/IOException"), "DNG_MEMORY");
+    } catch (const std::exception& error) {
+        if (!env->ExceptionCheck()) env->ThrowNew(env->FindClass("java/io/IOException"), error.what());
+    } catch (...) {
+        if (!env->ExceptionCheck()) env->ThrowNew(env->FindClass("java/io/IOException"), "DNG_UNSUPPORTED");
+    }
+    return nullptr;
+}
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_cinematic_rawprobe_NativeFullResolutionProbe_inspect(JNIEnv* env, jobject, jint fd,
                                                             jobject signal, jobject observer) {
