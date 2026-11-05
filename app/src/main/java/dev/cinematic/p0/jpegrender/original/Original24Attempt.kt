@@ -34,7 +34,7 @@ internal data class Original24TrialJpeg(val request: Original24Request, val outp
 
 /** Existing IO/coordinator's synchronous attempt. Does not create a queue, publish, or enroll a renderer. */
 internal class Original24Attempt(context: Context, private val request: Original24Request, private val io: AutoRenderIo,
-    private val scratchDirectory: File) : AutoCloseable {
+    private val scratchDirectory: File, private val trace: OriginalStageTrace? = null) : AutoCloseable {
     private val context = context.applicationContext
     private val active = AtomicBoolean(false)
     private var started = false
@@ -59,18 +59,19 @@ internal class Original24Attempt(context: Context, private val request: Original
             val stop = { signal.isCanceled || shouldStop() }
             fun checkpoint() = originalCheckpoint(stop)
             fun verify() = DngContentVerifier.verify(request.source.fingerprint, { resources.input(io.openOriginal()) }, stop)
-            checkpoint(); Original24Resources.requireAvailable(context); verify()
+            checkpoint(); Original24Resources.requireAvailable(context)
+            originalStage(trace, OriginalStage.SOURCE_VERIFY_BEFORE) { verify() }
             val work = OriginalRasterWorkspace(scratchDirectory).also { workspace = it }
             // The decode pass can produce at most 144MB RGB16. Leave the row-renderer and reserve disk intact.
             if (scratchDirectory.usableSpace < 2L * 1024 * 1024 * 1024) throw IOException("Insufficient original workspace")
             // Bind the exact native input to the fingerprint, even if a provider changes its URI/FD mapping.
             // This is one bounded attempt snapshot, removed after confirmed success; never a permanent mirror.
             val snapshot = File(scratchDirectory, "source-snapshot.dng")
-            DngContentVerifier.copy(request.source.fingerprint, { resources.input(io.openOriginal()) }, {
+            originalStage(trace, OriginalStage.SOURCE_SNAPSHOT) { DngContentVerifier.copy(request.source.fingerprint, { resources.input(io.openOriginal()) }, {
                 resources.output(java.nio.file.Files.newOutputStream(snapshot.toPath(),
                     java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE,
                     java.nio.file.LinkOption.NOFOLLOW_LINKS))
-            }, stop)
+            }, stop) }
             val raw = File(scratchDirectory, "source-linear.rgb16")
             check(raw.createNewFile())
             rasterFd = ParcelFileDescriptor.open(raw, ParcelFileDescriptor.MODE_READ_WRITE)
@@ -79,9 +80,10 @@ internal class Original24Attempt(context: Context, private val request: Original
                 override val fd get() = immutableFd.fd
                 override fun close() = immutableFd.close()
             }
-            val metadata = JSONObject(NativeOriginalRaster.decode24(requireNotNull(sourceFd).fd,
-                requireNotNull(rasterFd).fd, signal))
-            closeDescriptorOwners()
+            val metadata = JSONObject(originalStage(trace, OriginalStage.NATIVE_DECODE) {
+                NativeOriginalRaster.decode24(requireNotNull(sourceFd).fd, requireNotNull(rasterFd).fd, signal)
+            })
+            originalStage(trace, OriginalStage.DECODE_CLOSE) { closeDescriptorOwners() }
             checkpoint(); Original24Resources.requireAvailable(context)
             val width = metadata.getInt("width"); val height = metadata.getInt("height")
             validateOriginalSize(width, height)
@@ -97,10 +99,14 @@ internal class Original24Attempt(context: Context, private val request: Original
                 throw IOException("Original raster observations differ")
             val source = OriginalRasterFile(raw, width, height, 2).also { rawRaster = it }
             val scale = min(1.0, 1024.0 / max(width, height))
-            val analysis = OriginalFields.reduce(source, max(4, floor(width * scale).toInt()), max(4, floor(height * scale).toInt()),
-                3, stop) { rgb, out -> rgb.copyInto(out) }.reducedRgb()
-            val controls = R7PreviewInputs.prepare(R7PreviewInputs.AsShotInput(analysis,
-                R7PreviewInputs.Source.LIBRAW_PRELIMINARY_AS_SHOT), emptyList(), stop)
+            val analysis = originalStage(trace, OriginalStage.ANALYSIS_REDUCE) {
+                OriginalFields.reduce(source, max(4, floor(width * scale).toInt()), max(4, floor(height * scale).toInt()),
+                    3, stop) { rgb, out -> rgb.copyInto(out) }.reducedRgb()
+            }
+            val controls = originalStage(trace, OriginalStage.CONTROL_PREPARE) {
+                R7PreviewInputs.prepare(R7PreviewInputs.AsShotInput(analysis,
+                    R7PreviewInputs.Source.LIBRAW_PRELIMINARY_AS_SHOT), emptyList(), stop)
+            }
             val ev = controls.exposure.externalBaseEv + request.adjustments.exposureEv
             // Match the bounded preview's relative WB BEFORE R7 without a full-frame Float copy.
             val red = 2.0.pow(request.adjustments.warmth / 200.0)
@@ -115,20 +121,24 @@ internal class Original24Attempt(context: Context, private val request: Original
                     consume(y, row)
                 }
             }
-            val rendered = OriginalStageClear24(work).render(adjusted, ev, request.strength, stop = stop)
+            val rendered = OriginalStageClear24(work, trace).render(adjusted, ev, request.strength, stop = stop)
             checkpoint(); Original24Resources.requireAvailable(context)
             val digest = MessageDigest.getInstance("SHA-256")
             var encodedBytes = 0L
-            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            var bitmap: Bitmap? = null
             try {
-                bitmap.setHasAlpha(false)
+                originalStage(trace, OriginalStage.BITMAP_PACK) {
+                // Retain before invoking the observer: a reporting failure must also recycle it.
+                val packed = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { bitmap = it }
+                packed.setHasAlpha(false)
                 val row = IntArray(width)
                 rendered.raster.rows(stop) { y, rgb ->
                     row.indices.forEach { x -> row[x] = (255 shl 24) or (channel(rgb[x * 3]) shl 16) or
                         (channel(rgb[x * 3 + 1]) shl 8) or channel(rgb[x * 3 + 2]) }
-                    bitmap.setPixels(row, 0, width, 0, y, width, 1)
+                    packed.setPixels(row, 0, width, 0, y, width, 1)
                 }
-                resources.output(io.openOutput()).use { output ->
+                }
+                originalStage(trace, OriginalStage.JPEG_ENCODE) { resources.output(io.openOutput()).use { output ->
                     val bounded = object : OutputStream() {
                         override fun write(value: Int) = write(byteArrayOf(value.toByte()), 0, 1)
                         override fun write(bytes: ByteArray, offset: Int, count: Int) {
@@ -141,25 +151,29 @@ internal class Original24Attempt(context: Context, private val request: Original
                         override fun close() = throw IOException("Codec must not close owner output")
                     }
                     checkpoint()
-                    if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 95, bounded)) throw IOException("Original JPEG codec failed")
+                    if (!requireNotNull(bitmap).compress(Bitmap.CompressFormat.JPEG, 95, bounded)) throw IOException("Original JPEG codec failed")
                     bounded.flush(); checkpoint()
-                }
-            } finally { bitmap.recycle() }
+                } }
+            } finally { bitmap?.recycle() }
             val fingerprint = OriginalFingerprint(encodedBytes, digest.digest().joinToString("") { "%02x".format(it) })
-            val observed = AndroidJpegInspector().inspect({ resources.input(io.openOutputRead()) }, encodedBytes, stop)
+            val observed = originalStage(trace, OriginalStage.JPEG_INSPECT) {
+                AndroidJpegInspector().inspect({ resources.input(io.openOutputRead()) }, encodedBytes, stop)
+            }
             if (observed.fingerprint != fingerprint || observed.output.width != width || observed.output.height != height ||
                 observed.output.orientation != 1 || observed.output.color != "sRGB") throw IOException("Original JPEG readback differs")
-            verify(); checkpoint()
-            closeOwners()
+            originalStage(trace, OriginalStage.SOURCE_VERIFY_AFTER) { verify() }; checkpoint()
+            originalStage(trace, OriginalStage.RESOURCE_CLOSE) { closeOwners() }
             checkpoint()
-            check(raw.delete())
-            check(snapshot.delete())
-            work.disposeConfirmed()
+            originalStage(trace, OriginalStage.SCRATCH_CLEANUP) {
+                check(raw.delete())
+                check(snapshot.delete())
+                work.disposeConfirmed()
+            }
             checkpoint()
             return Original24TrialJpeg(request, observed.output, fingerprint, geometry, ev, observedGeometry)
         } catch (error: Throwable) { failure = error; throw error }
         finally {
-            try { closeOwners() }
+            try { originalStage(trace, OriginalStage.RESOURCE_CLOSE) { closeOwners() } }
             catch (cleanup: Throwable) {
                 val primary = failure
                 if (primary == null) throw cleanup

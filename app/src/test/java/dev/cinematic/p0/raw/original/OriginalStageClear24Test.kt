@@ -57,6 +57,62 @@ class OriginalStageClear24Test {
         }
     }
 
+    @Test fun tracePreservesAllPixelBitsAndFaceCountBoundaryStillRunsTheSameGuard() {
+        val width = 48; val height = 32
+        val rgb = FloatArray(width * height * 3) { 1.2f }
+        val roi = FloatPlane(width, height, FloatArray(width * height))
+        val base = R7Base.render(LinearSrgbImage(width, height, rgb), roi, .23)
+        for (count in listOf(0, 49, 50)) {
+            val weights = FloatArray(width * height) { if (it < count) 1f else .5f }
+            val expected = StageClearLook.renderFromBase(base, FaceMask(width, height, weights), .5)
+            var first: FloatArray? = null
+            for (enabled in listOf(false, true)) {
+                val events = mutableListOf<Pair<OriginalStage, Boolean>>()
+                val trace = if (enabled) OriginalStageTrace { stage, _, complete -> events += stage to complete } else null
+                val root = Files.createTempDirectory("original-trace-bits").toFile()
+                val work = OriginalRasterWorkspace(java.io.File(root, "attempt"))
+                try {
+                    val actual = OriginalStageClear24(work, trace).render(MemoryRaster(width, height, rgb), .23, .5,
+                        faces = OriginalMask { y, row -> weights.copyInto(row, 0, y * width, (y + 1) * width) })
+                    val output = pixels(actual.raster)
+                    compare(expected.image.copyPixels(), output, "face count $count")
+                    assertEquals(expected.faceCutFactor, actual.faceCutFactor, 1e-6)
+                    if (count == 50) assertTrue(actual.faceCutFactor < 1.0)
+                    if (first == null) first = output else output.indices.forEach {
+                        assertEquals("trace must not alter sample $it", first!![it].toRawBits(), output[it].toRawBits())
+                    }
+                    if (enabled) {
+                        assertTrue(events.all { it.second })
+                        assertEquals(count == 50, events.any { it.first == OriginalStage.FACE_PERCENTILE })
+                    } else assertTrue(events.isEmpty())
+                } finally { work.disposeConfirmed(); check(root.delete()) }
+            }
+        }
+    }
+
+    @Test fun corruptLayerRgbStillFailsAtTheNextReadWithoutReturningOutput() {
+        for (short in listOf(false, true)) {
+            val width = 16; val height = 12
+            val root = Files.createTempDirectory("original-layer-fault").toFile()
+            val work = OriginalRasterWorkspace(java.io.File(root, "attempt"))
+            val events = mutableListOf<Pair<OriginalStage, Boolean>>()
+            val trace = OriginalStageTrace { stage, _, complete -> events += stage to complete }
+            try {
+                assertThrows(java.io.IOException::class.java) {
+                    OriginalStageClear24(work, trace).render(MemoryRaster(width, height,
+                        FloatArray(width * height * 3) { .3f }), .23, .5, stage = { name, raster ->
+                        if (name == "character_cap") java.io.RandomAccessFile(raster.file, "rw").use {
+                            if (short) it.setLength(0) else it.write(byteArrayOf(0, 0, 0xc0.toByte(), 0x7f))
+                        }
+                    })
+                }
+                assertTrue(events.contains(OriginalStage.FACE_COUNT to true))
+                assertTrue(events.contains(OriginalStage.SHOULDER to false))
+                assertFalse(work.hasPendingOwners)
+            } finally { work.disposeConfirmed(); check(root.delete()) }
+        }
+    }
+
     @Test fun cancellationAndBudgetFailureDoNotReturnPartialRasterAsSuccess() {
         val root = Files.createTempDirectory("original-row-fault").toFile()
         val source = MemoryRaster(12, 8, FloatArray(12 * 8 * 3) { .2f })

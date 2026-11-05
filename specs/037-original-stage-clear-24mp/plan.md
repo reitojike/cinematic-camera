@@ -45,3 +45,41 @@ warmth/EV変更はR7を更新する。未変更AS_SHOTで診断測光→相対WB
 LibRaw出力RGB16と標準JPEG圧縮用Bitmapは全面native bufferが残る。managed/native/PSS/一時保存領域を分けて測る。
 標準RenderEffect/HardwareRendererやGPU候補は、見た目・線形/HDR保持・コピー/同期・メモリ・端末時間を比較して採否を決める。
 標準APIへの変更だけで高速化や画質互換を保証しない。
+
+## 原寸の段階別計測と重複処理削減（Issue #164）
+
+顔画素countは幅/高さとmaskだけで全行を検査する。RGB検証はp90/最終shoulderの実読込で維持し、
+不正・短い・非finite rasterを成功出力としない。50到達で打ち切らず後方の不正maskも検出する。
+補間fieldはimmutable値を所有し、横方向のDouble積和→FloatだけをLINEAR最大2行/CUBIC最大4行保持する。
+縦方向のdy順・Float丸めを維持し、任意行順・巻戻し・並行読込をinstance lockで保護する。
+tone25×17→6000×4000の1chでは追加Float payloadは最大96,000bytes。field数やchannel数を含む総量とは区別する。
+全出力planeやfield値の複製は追加せず、cache対象外の軸順/縮小/1pxを従来経路へ戻す。
+
+nullableな固定enum observerを既存original attempt/行rendererへ渡す。未接続では時計・event生成をしない。
+各段の処理失敗をprimaryとし、observer失敗はそれを隠さない。ログはopt-inの合成診断私有JSONだけへ記録する。
+native区間はLibRaw読込/処理/RGB16書込を含む一括区間で、内部の個別時間を推測しない。
+R7、skin field、Glow、near-white、Mist、Orton、Character、顔count/p90、shoulder、Bitmap、JPEG、
+再読込、原本再照合、close/cleanupを分ける。再実行の同名区間は別レコードとし、observer IOや未計測処理の時間を合算へ紛れ込ませない。
+
+mask-only/旧RGB通読、横補間cache/旧行式のmicrobenchmarkは同じ入力・交互順で測り、処理全体やPixelへ換算しない。
+全体合成12MP/24MPは同じnative/原寸/JPEG/再読込の経路で段階別に測り、旧縦断値との環境差・samplingを明記する。
+プレビューfield再利用/GPUの担当範囲と重複させず、利益が実測できない変更は採用しない。
+
+### 診断の再現入口
+
+`-PcinematicOriginal24Probe=true` の独立application ID `dev.cinematic.p0.original24probe` と専用エミュレータを使う。
+通常の撮影アプリへ診断APKを上書きせず、AGP・ABI・AVD設定をbaseline/candidateで揃え、各APK hashを固定・記録する。
+各instrumentationは新しい32桁lowercase hexの`runId`を要求し、私有`files/`の同じIDのJSONだけを回収する。
+`status=success`と`complete=true`、instrumentation成功を照合し、途中レポートを成功扱いにしない。
+
+- `OriginalFieldRowBenchmarkTest`: `originalFieldRowBenchmark=true`。25×17 CUBIC fieldを6000×4000へ各3回走査し、
+  旧式/再利用を交互順で比較する。全画素raw-bit checksum、wall/thread CPU時間、追加payloadを記録する。
+- `OriginalMaskCountBenchmarkTest`: `original24=true`、`maskCountSize=12MP|24MP|BOTH`、
+  `maskCountMask=NONE|MIXED|BOTH`。同じ合成raster/maskで各3組を交互順に比較する。
+  論理RGB読込量は物理ディスクのcold-read量を意味しない。
+- `Original24PipelineTest`: `original24=true`、`original24Stages=true`、`size=SMALL|12MP|24MP`。
+  native原寸処理・全段Look・JPEG圧縮・同じJPEGの検査と再decodeを含む。UI表示/共有公開の時間は含まない。
+
+全クラスのpackageは`dev.cinematic.p0.jpegrender.original`、runnerは`androidx.test.runner.AndroidJUnitRunner`。
+fixture作成/原本識別は全体timerより前であり、sampler負荷は全体時間に含む。段階合計と全体時間は同値を要求しない。
+メモリ値はsampling間隔とmanaged/native/PSSを併記し、瞬間的な真のpeakや他端末の上限を保証しない。
