@@ -85,9 +85,12 @@ internal class JpegGenerationAttempt(
                 checkpoint()
                 if (trial) prepared.validateTrial(frame.image, request.recipe.controls)
                 else prepared.validate(frame.image, request.recipe.controls)
-                base = R7Base.render(frame.image, prepared.foundationRoi, prepared.externalEv, stop)
+                // Meter the unchanged as-shot input first: auto metering must not cancel the user's EV.
+                val adjusted = request.recipe.adjustments.applyWarmth(frame.image, stop)
+                base = R7Base.render(adjusted, prepared.foundationRoi,
+                    prepared.externalEv + request.recipe.adjustments.exposureEv, stop)
                 if (trialReuse != null) candidate = TrialPreparedFoundation(base, frame.sourceWidth, frame.sourceHeight,
-                    frame.physicallyOriented, prepared.externalEv)
+                    frame.physicallyOriented, prepared.externalEv, adjustments = request.recipe.adjustments)
             }
             val result = StageClearLook.renderFromBase(base, prepared.faces, request.recipe.strength, stop).image
             checkpoint()

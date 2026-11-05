@@ -1,6 +1,7 @@
 package dev.cinematic.p0.jpegrender
 
 import dev.cinematic.p0.raw.LinearSrgbImage
+import dev.cinematic.p0.raw.PhotoAdjustments
 
 /** The only retained pixel foundation: immutable R7 pixels and small, checked geometry/exposure metadata.
  * Never retains an as-shot image, ROI, face mask, decoder, stream, or an Android display owner. */
@@ -11,11 +12,13 @@ internal class TrialPreparedFoundation(
     val physicallyOriented: Boolean,
     val externalEv: Double,
     val geometryVersion: String = GEOMETRY_VERSION,
+    val adjustments: PhotoAdjustments = PhotoAdjustments(),
 ) {
     val pixelBytes: Long get() = base.width.toLong() * base.height * 3 * 4
 
     internal fun validFor(request: JpegGenerationRequest): Boolean =
         request.recipe.isTrial && JpegGenerationRecipe.fromTrialSnapshot(request.recipe.snapshot) != null &&
+            adjustments == request.recipe.adjustments &&
             geometryVersion == GEOMETRY_VERSION && physicallyOriented && externalEv.isFinite() &&
             sourceWidth > 0 && sourceHeight > 0 && base.width in 1..JpegGenerationRecipe.MAX_EDGE &&
             base.height in 1..JpegGenerationRecipe.MAX_EDGE &&
