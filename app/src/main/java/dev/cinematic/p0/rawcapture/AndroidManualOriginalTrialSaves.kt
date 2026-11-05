@@ -156,7 +156,7 @@ internal object AndroidManualOriginalTrialSaves {
                 }
                 if (stop() || DevelopExecution.shouldStop(slot) || currentRequest != handle.request || sessionEpoch != previewEpoch.get())
                     throw java.util.concurrent.CancellationException("Trial preview stopped")
-                val delivery = ManualOriginalTrialPreview(handle, requireNotNull(bitmap), requireNotNull(comparison))
+                val delivery = ManualOriginalTrialPreview(handle, requireNotNull(bitmap), comparison)
                 delivered = true
                 return delivery
             } finally {
@@ -306,11 +306,12 @@ internal object AndroidManualOriginalTrialSaves {
     /** UI claims this one independent software bitmap, or closes an abandoned delivery. */
     internal class ManualOriginalTrialPreview(val save: ManualOriginalTrialHandle, private var owned: Bitmap?,
         private var ownedComparison: Bitmap?) : Closeable {
-        val comparisonDescription = "撮影時WBのRAW基準表示（R7・ルック・手動調整なし、暫定色）"
+        val comparisonDescription = ownedComparison?.let { "撮影時WBのRAW基準表示（R7・ルック・手動調整なし、暫定色）" }
         init {
             val after = requireNotNull(owned)
-            val before = requireNotNull(ownedComparison)
-            require(after !== before && after.width == before.width && after.height == before.height)
+            ownedComparison?.let { before ->
+                require(after !== before && after.width == before.width && after.height == before.height)
+            }
         }
         @Synchronized fun claimBitmap(): Bitmap = requireNotNull(owned).also { owned = null }
         @Synchronized fun claimComparisonBitmap(): Bitmap? = ownedComparison?.also { ownedComparison = null }

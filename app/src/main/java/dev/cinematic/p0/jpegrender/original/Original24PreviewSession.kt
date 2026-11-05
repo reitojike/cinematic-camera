@@ -124,8 +124,10 @@ internal class Original24PreviewSession(
 
     /** Caller-owned Before from cached, physically oriented AS_SHOT input. Uses the capture's WB
      * and preliminary LibRaw basis; no R7, Look, manual warmth or manual EV is applied. It is a
-     * separate software sRGB Bitmap, never the returned After or a saved/completed image. */
-    fun comparisonBitmap(shouldStop: () -> Boolean = { false }): Bitmap = exclusive {
+     * separate software sRGB Bitmap, never the returned After or a saved/completed image.
+     * Bitmap allocation/conversion OOM alone is optional; source/close/cancel checks remain fatal. */
+    fun comparisonBitmap(createBitmap: (LinearSrgbImage, () -> Boolean) -> Bitmap = ::bitmap,
+        shouldStop: () -> Boolean = { false }): Bitmap? = exclusive {
         check(Looper.myLooper() != Looper.getMainLooper()) { "Original preview requires existing IO owner" }
         check(!closed && !failed && !stopped) { "Original preview session is unavailable" }
         val input = checkNotNull(asShot) { "Original preview input has not been acquired" }
@@ -137,11 +139,12 @@ internal class Original24PreviewSession(
             resourceAdmission()
             verifyOriginal(stop)
             resourceAdmission()
-            result = bitmap(input, stop)
+            try { result = createBitmap(input, stop) }
+            catch (_: OutOfMemoryError) { result = null } // bitmap() recycles any partially created Bitmap.
             verifyOriginal(stop)
             releaseTransient()
             originalCheckpoint(stop)
-            requireNotNull(result)
+            result
         } catch (error: Throwable) {
             failed = true; asShot = null; base = null; baseAdjustments = null
             failure = error

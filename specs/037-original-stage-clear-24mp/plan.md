@@ -18,6 +18,8 @@ deliveryの`save`は同一recipe/世代の`ManualOriginalTrialHandle`、`claimBi
 `claimComparisonBitmap()`は向き/寸法が同じ別所有のBeforeを移譲し、`comparisonDescription`で撮影時WBのRAW基準表示
 （R7・ルック・手動調整なし、暫定色）と明示する。撮影時JPEGと混同しない。
 未受領deliveryは`close()`で両方を解放する。既存16MP private rendererへ24MPを通して代用しない。
+BeforeのBitmap確保/変換だけのOOMでは、原本・close・取消確認に成功すれば比較を省略しAfterと保存handleを残す。
+その場合`claimComparisonBitmap()`と`comparisonDescription`はnullとなり、UIで比較不可を案内する。
 
 `prepare(...)`だけでも同じ原本・強度・全調整値のretained handleへ冪等に戻るが、JPEG生成や共有行insertはしない。
 header preflightの寸法は`handle.geometry.outputWidth/outputHeight`であり、完成画素の証拠ではない。

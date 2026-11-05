@@ -12,6 +12,7 @@ import dev.cinematic.p0.rawcapture.SharedOriginalReference
 import dev.cinematic.p0.testing.writeSyntheticTrialDng
 import java.io.ByteArrayInputStream
 import java.io.File
+import java.io.FilterInputStream
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -31,20 +32,81 @@ class Original24PreviewSessionInstrumentationTest {
         try {
             assertThrows(IllegalStateException::class.java) { session.comparisonBitmap() }
             val after = session.render(.2).also { bitmaps += it }
-            val before = session.comparisonBitmap().also { bitmaps += it }
+            val before = requireNotNull(session.comparisonBitmap()).also { bitmaps += it }
             assertNotSame(after, before)
             assertEquals(after.width, before.width)
             assertEquals(after.height, before.height)
             assertEquals(Bitmap.Config.ARGB_8888, before.config)
             assertTrue(before.colorSpace?.isSrgb == true)
             session.render(.8, PhotoAdjustments(80.0, .9)).also { bitmaps += it }
-            val beforeAfterEdits = session.comparisonBitmap().also { bitmaps += it }
+            val beforeAfterEdits = requireNotNull(session.comparisonBitmap()).also { bitmaps += it }
             assertNotSame(before, beforeAfterEdits)
             assertArrayEquals(pixels(before), pixels(beforeAfterEdits))
             assertFalse(session.hasUnreleasedResources)
             session.close()
             assertThrows(IllegalStateException::class.java) { session.comparisonBitmap() }
         } finally { session.close(); bitmaps.forEach { it.recycle() } }
+    }
+
+    @Test fun comparisonAllocationOomPreservesVerifiedAfterAndReusableSession() = fixture { input, root, source ->
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        var reads = 0
+        val session = Original24PreviewSession(source, File(root, "preview"),
+            { Original24Resources.requireAvailable(context) }, preflight(input)) { reads++; input.inputStream() }
+        val bitmaps = mutableListOf<Bitmap>()
+        try {
+            val after = session.render(.5).also { bitmaps += it }
+            val afterPixels = pixels(after)
+            val beforeReads = reads
+            assertNull(session.comparisonBitmap(createBitmap = { _, _ -> throw OutOfMemoryError("synthetic bitmap allocation") }))
+            assertEquals(2, reads - beforeReads) // Both source fences still complete after the optional OOM.
+            assertFalse(after.isRecycled)
+            assertArrayEquals(afterPixels, pixels(after))
+            assertFalse(session.hasUnreleasedResources)
+            requireNotNull(session.comparisonBitmap()).also { bitmaps += it }
+            session.render(.7).also { bitmaps += it }
+        } finally { session.close(); bitmaps.forEach { it.recycle() } }
+    }
+
+    @Test fun optionalComparisonOomDoesNotMaskSourceCancelCloseAdmissionOrIoFailure() {
+        for (mode in listOf("source", "cancel", "close", "admission", "io")) fixture { input, root, source ->
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            var failClose = false
+            var failAdmission = false
+            var cancel = false
+            var created = false
+            val session = Original24PreviewSession(source, File(root, "preview"), {
+                Original24Resources.requireAvailable(context)
+                if (failAdmission) throw IOException("synthetic resource admission failure")
+            }, preflight(input)) {
+                object : FilterInputStream(input.inputStream()) {
+                    override fun close() { if (failClose) throw IOException("synthetic postcheck close failure"); super.close() }
+                }
+            }
+            try {
+                session.render(.5).recycle()
+                failAdmission = mode == "admission"
+                assertThrows(IOException::class.java) {
+                    session.comparisonBitmap(createBitmap = { _, _ ->
+                        created = true
+                        when (mode) {
+                            "source" -> input.writeBytes(input.readBytes().also { it[it.lastIndex] = (it.last().toInt() xor 1).toByte() })
+                            "cancel" -> cancel = true
+                            "close" -> failClose = true
+                            "io" -> throw IOException("synthetic bitmap IO failure")
+                        }
+                        throw OutOfMemoryError("synthetic bitmap allocation")
+                    }, shouldStop = { cancel })
+                }
+                assertEquals(mode != "admission", created)
+                assertEquals(mode == "close", session.hasUnreleasedResources)
+                assertThrows(IllegalStateException::class.java) { session.render(.6) }
+            } finally {
+                failClose = false
+                session.close()
+            }
+            assertFalse(session.hasUnreleasedResources)
+        }
     }
 
     @Test fun independentlyOwnedPreviewReusesReducedInputAndAppliesAllThreeControls() = fixture { input, root, source ->

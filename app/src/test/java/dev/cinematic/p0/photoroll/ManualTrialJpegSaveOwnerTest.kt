@@ -20,5 +20,8 @@ class ManualTrialJpegSaveOwnerTest {
             manualSaveSnapshot(ManualOriginalTrialSaveState(ManualOriginalTrialSavePhase.UNCONFIRMED)).phase)
         assertEquals(PhotoRollSavePhase.HOLD,
             manualSaveSnapshot(ManualOriginalTrialSaveState(ManualOriginalTrialSavePhase.HOLD)).phase)
+        assertEquals(PhotoRollSavePhase.HOLD, manualSaveVisibleSnapshot(
+            ManualOriginalTrialSaveState(ManualOriginalTrialSavePhase.HOLD),
+            PhotoRollSaveSnapshot(PhotoRollSavePhase.UNCONFIRMED)).phase)
     }
 }

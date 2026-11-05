@@ -21,6 +21,12 @@ internal fun manualSaveSnapshot(state: ManualOriginalTrialSaveState): PhotoRollS
     ManualOriginalTrialSavePhase.HOLD -> PhotoRollSaveSnapshot(PhotoRollSavePhase.HOLD)
 }
 
+internal fun manualSaveVisibleSnapshot(core: ManualOriginalTrialSaveState,
+    local: PhotoRollSaveSnapshot?): PhotoRollSaveSnapshot {
+    val observed = manualSaveSnapshot(core)
+    return if (observed.phase == PhotoRollSavePhase.HOLD) observed else local ?: observed
+}
+
 /** A UI view of one durable generation. The raw owner keeps publication and retry authority. */
 @TargetApi(29)
 internal class ManualTrialJpegSaveOwner(
@@ -29,8 +35,8 @@ internal class ManualTrialJpegSaveOwner(
 ) : PhotoRollJpegSaveOwner {
     private val running = AtomicBoolean(false)
     private val localFailure = MutableStateFlow<PhotoRollSaveSnapshot?>(null)
-    override val snapshots = combine(handle.state, localFailure) { core, local -> local ?: manualSaveSnapshot(core) }
-    override val snapshot get() = localFailure.value ?: manualSaveSnapshot(handle.state.value)
+    override val snapshots = combine(handle.state, localFailure, ::manualSaveVisibleSnapshot)
+    override val snapshot get() = manualSaveVisibleSnapshot(handle.state.value, localFailure.value)
     override val width get() = handle.geometry.outputWidth
     override val height get() = handle.geometry.outputHeight
     override val appliedStrength: Double get() = handle.appliedStrength
