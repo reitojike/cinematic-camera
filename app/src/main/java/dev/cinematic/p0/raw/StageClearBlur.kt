@@ -26,10 +26,10 @@ internal object StageClearBlur {
         val pixels = FloatArray(input.pixelCount * 3)
         repeat(3) { channel ->
             val values = FloatArray(input.pixelCount) { input[it * 3 + channel] }
-            val blurred = plane(FloatPlane(input.width, input.height, values), radiusFraction)
+            val blurred = plane(FloatPlane.takeOwnership(input.width, input.height, values), radiusFraction)
             repeat(input.pixelCount) { pixels[it * 3 + channel] = blurred[it] }
         }
-        return LinearSrgbImage(input.width, input.height, pixels)
+        return LinearSrgbImage.takeOwnership(input.width, input.height, pixels)
     }
 
     internal fun reducedSize(width: Int, height: Int, radiusFraction: Double): Pair<Int, Int> {
@@ -108,7 +108,7 @@ internal object StageClearBlur {
                 values[y * width + x] = value.toFloat()
             }
         }
-        return FloatPlane(width, input.height, values)
+        return FloatPlane.takeOwnership(width, input.height, values)
     }
 
     private fun vertical(input: FloatPlane, height: Int, filter: Filter): FloatPlane {
@@ -124,6 +124,6 @@ internal object StageClearBlur {
                 values[y * input.width + x] = value.toFloat()
             }
         }
-        return FloatPlane(input.width, height, values)
+        return FloatPlane.takeOwnership(input.width, height, values)
     }
 }

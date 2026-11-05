@@ -23,7 +23,7 @@ internal object StageClearCharacter {
             val i = (row * image.width + col) * 3
             repeat(3) { output[i + it] = image[i + it] * weight }
         } }
-        return LinearSrgbImage(image.width, image.height, output)
+        return LinearSrgbImage.takeOwnership(image.width, image.height, output)
     }
 
     internal fun vibrance(image: LinearSrgbImage, amount: Double): LinearSrgbImage {
@@ -46,7 +46,7 @@ internal object StageClearCharacter {
             lab[2] *= gain
             StageClearColor.toRgb(lab, output, p * 3)
         }
-        return LinearSrgbImage(image.width, image.height, output)
+        return LinearSrgbImage.takeOwnership(image.width, image.height, output)
     }
 
     private fun unit(value: Float) = value.coerceIn(0f, 1f)

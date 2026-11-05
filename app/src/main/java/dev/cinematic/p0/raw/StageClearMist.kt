@@ -24,7 +24,7 @@ internal object StageClearMist {
         val mixed = FloatArray(glowed.pixelCount * 3) { i ->
             glowed[i] + amount.toFloat() * (mist[i] - glowed[i])
         }
-        return Result(LinearSrgbImage(glowed.width, glowed.height, mixed), amount)
+        return Result(LinearSrgbImage.takeOwnership(glowed.width, glowed.height, mixed), amount)
     }
 
     internal fun blackMist(glowed: LinearSrgbImage, skinWeight: FloatPlane): LinearSrgbImage {
@@ -56,7 +56,7 @@ internal object StageClearMist {
                 .pow(StageClearMistV1.SOURCE_POWER.toFloat())
             repeat(3) { c -> source[p * 3 + c] = glowed[p * 3 + c] * weight }
         }
-        val sourceImage = LinearSrgbImage(glowed.width, glowed.height, source)
+        val sourceImage = LinearSrgbImage.takeOwnership(glowed.width, glowed.height, source)
         val halo = FloatArray(source.size)
         for ((radius, weight) in kernels) {
             val blurred = StageClearBlur.rgb(sourceImage, radius)
@@ -66,7 +66,7 @@ internal object StageClearMist {
             val protect = 1f - StageClearMistV1.SKIN_PROTECT.toFloat() * skinWeight[i / 3]
             glowed[i] + StageClearMistV1.MIST_AMOUNT.toFloat() * halo[i] * protect
         }
-        return LinearSrgbImage(glowed.width, glowed.height, output)
+        return LinearSrgbImage.takeOwnership(glowed.width, glowed.height, output)
     }
 
     private fun validateSkin(glowed: LinearSrgbImage, skinWeight: FloatPlane) {

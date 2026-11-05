@@ -15,6 +15,27 @@ internal object StageClearGlow {
     fun render(base: LinearSrgbImage, strength: Double = StageClearV1.DEFAULT_STRENGTH): LinearSrgbImage {
         require(strength.isFinite() && strength in 0.0..1.0) { "Strength must be within 0..1" }
         if (strength == 0.0) return base // stage_clear.render bypasses glow at zero.
+        // Source, excess, bloom, halation and skin temporaries belong to addLight's frame.
+        // Keep only its pixels/protection while the full-size diffusion blur runs.
+        val layer = addLight(base, strength)
+        val values = layer.pixels
+        val protect = layer.protection
+        // Snapshot is intentional: diffusion writes to values after reading this image.
+        val glowed = LinearSrgbImage(base.width, base.height, values)
+        val diffusionAmount = (StageClearGlowV1.DIFFUSION * strength).toFloat()
+        if (diffusionAmount == 0f) return glowed
+        val soft = StageClearBlur.rgb(glowed, StageClearGlowV1.DIFFUSION_RADIUS)
+        for (i in values.indices) {
+            val blurred = soft[i].coerceIn(0f, 1f)
+            val clipped = values[i].coerceIn(0f, 1f)
+            values[i] += diffusionAmount * (blurred - clipped * blurred) * protect[i / 3]
+        }
+        return LinearSrgbImage.takeOwnership(base.width, base.height, values)
+    }
+
+    private data class LightLayer(val pixels: FloatArray, val protection: FloatArray)
+
+    private fun addLight(base: LinearSrgbImage, strength: Double): LightLayer {
         val count = base.pixelCount
         val threshold = StageClearGlowV1.THRESHOLD.toFloat()
         val thresholdSpan = (1 - StageClearGlowV1.THRESHOLD).toFloat()
@@ -27,13 +48,13 @@ internal object StageClearGlow {
             val scale = excess[p] / max(y, 1e-6f)
             repeat(3) { c -> source[i + c] = base[i + c] * scale }
         }
-        val sourceImage = LinearSrgbImage(base.width, base.height, source)
+        val sourceImage = LinearSrgbImage.takeOwnership(base.width, base.height, source)
         val bloom = FloatArray(source.size)
         for ((radius, weight) in kernels) {
             val blurred = StageClearBlur.rgb(sourceImage, radius)
             for (i in bloom.indices) bloom[i] += weight * blurred[i]
         }
-        val halation = StageClearBlur.plane(FloatPlane(base.width, base.height, excess),
+        val halation = StageClearBlur.plane(FloatPlane.takeOwnership(base.width, base.height, excess),
             StageClearGlowV1.HALATION_RADIUS)
         val skin = skinWeight(base)
         val protect = FloatArray(count) { 1f - StageClearGlowV1.SKIN_PROTECT.toFloat() * skin[it] }
@@ -47,20 +68,11 @@ internal object StageClearGlow {
                 values[i] = base[i] + (bloomAmount * bloom[i] + halationAmount * warm) * protect[p]
             }
         }
-        val glowed = LinearSrgbImage(base.width, base.height, values)
-        val diffusionAmount = (StageClearGlowV1.DIFFUSION * strength).toFloat()
-        if (diffusionAmount == 0f) return glowed
-        val soft = StageClearBlur.rgb(glowed, StageClearGlowV1.DIFFUSION_RADIUS)
-        for (i in values.indices) {
-            val blurred = soft[i].coerceIn(0f, 1f)
-            val clipped = values[i].coerceIn(0f, 1f)
-            values[i] += diffusionAmount * (blurred - clipped * blurred) * protect[i / 3]
-        }
-        return LinearSrgbImage(base.width, base.height, values)
+        return LightLayer(values, protect)
     }
 
     private fun smoothSkin(raw: FloatPlane): FloatPlane {
         val blurred = StageClearBlur.plane(raw, StageClearGlowV1.SKIN_RADIUS)
-        return FloatPlane(raw.width, raw.height, FloatArray(raw.width * raw.height) { blurred[it].coerceIn(0f, 1f) })
+        return FloatPlane.takeOwnership(raw.width, raw.height, FloatArray(raw.width * raw.height) { blurred[it].coerceIn(0f, 1f) })
     }
 }
