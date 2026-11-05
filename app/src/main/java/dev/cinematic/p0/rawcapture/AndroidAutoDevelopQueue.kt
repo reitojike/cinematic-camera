@@ -1,6 +1,7 @@
 package dev.cinematic.p0.rawcapture
 
 import android.content.Context
+import android.util.Log
 import androidx.annotation.RequiresApi
 import java.io.File
 import java.io.IOException
@@ -8,7 +9,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.CompletableFuture
 import dev.cinematic.p0.jpegrender.JpegGenerationRecipe
 
-/** Unconnected process owner. No production renderer is enrolled and no requests are fabricated from trial output. */
+/** One process owner. Restore fixed requests, never fabricate production requests from trial output. */
 @RequiresApi(29)
 internal object AndroidAutoDevelopQueue {
     private var owner: AutoDevelopQueue? = null
@@ -46,6 +47,11 @@ internal object AndroidAutoDevelopQueue {
 
     private fun create(context: Context): AutoDevelopQueue {
         val root = File(context.noBackupFilesDir, "raw-captures")
+        fun journal(captureId: String, generation: Long): AutoDevelopJournal {
+            val directory = RenderedJpegFiles(root, captureId, generation).generationRoot()
+            return AutoDevelopJournal(captureId, generation,
+                AndroidAtomicJournalStorage(requireNotNull(directory.parentFile), generation.toString(), CaptureJournalFile.AUTO_DEVELOP))
+        }
         val catalog = AutoRendererCatalog(adapters + BoundedJpegRendererAdapter.privateTrial()) // Completed/full auto enrollment remains empty.
         return AutoDevelopQueue(Executors.newSingleThreadExecutor { command ->
             Thread(command, "auto-develop").apply { priority = Thread.MIN_PRIORITY }
@@ -57,9 +63,14 @@ internal object AndroidAutoDevelopQueue {
                 original.uri != request.source.uri || original.fingerprint != request.source.fingerprint)) {
                 throw IOException("Shared original handoff is not confirmed")
             }
-            val directory = RenderedJpegFiles(root, request.captureId, request.generation).generationRoot()
-            AutoDevelopJournal(request.captureId, request.generation,
-                AndroidAtomicJournalStorage(requireNotNull(directory.parentFile), request.generation.toString(), CaptureJournalFile.AUTO_DEVELOP))
-        }, backendFactory = { request -> AndroidAutoDevelopBackend(context, request, catalog) }).also(DevelopExecution::attach)
+            journal(request.captureId, request.generation)
+        }, backendFactory = { request -> AndroidAutoDevelopBackend(context, request, catalog) }).also { queue ->
+            // First task on the existing IO owner, ahead of manual/private prepare. Failure retains this owner.
+            queue.restore { AutoDevelopInventory(root, { id, generation -> journal(id, generation).read() }).load() }
+                .whenComplete { _, failure ->
+                    if (failure != null) Log.w("CinematicRaw", "AUTO_INVENTORY_HELD type=${failure.javaClass.simpleName}")
+                }
+            DevelopExecution.attach(queue)
+        }
     }
 }

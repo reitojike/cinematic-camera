@@ -182,3 +182,19 @@ PREVIEW adapterを拒否し、原本不変・JPEG公開0・実資源解放後の
   claimed後UI所有、CLOSING中claim拒否、close故障の所有保持/ack再試行は専用JVMで確認する。
 - 完成用routeをprivate試験の代用にせず、private1件と既存9件のnative10件を分けて記録する。
 - UIの実選択・表示・背景化・撮影復帰、対応端末の実DNG/画質/性能、OS kill/電源断はこの合成検証の合格に含めない。
+
+## 共通owner初期化時の復旧試験
+
+JVMの`AutoDevelopInventoryTest`/`AutoDevelopQueueTest`で、全世代・sidecar・要求不一致・未知版・破損した新世代・
+列挙失敗の全件保留、初期化順序、失敗後の追加投入拒否、manual/privateの待機/生成済み非自動実行、
+同成功artifactの公開再開を確認する。システムの別名を含むtrusted rootは正規化し、子redirectは拒否する。
+
+実Android factory/AtomicFileの確認は、他の試験でsingletonを作る前の新しい隔離instrumentation processで実行する。
+
+```text
+adb -s <isolated-emulator> shell am instrument -w -e isolated true -e class dev.cinematic.p0.rawcapture.AutoDevelopInventoryInstrumentationTest dev.cinematic.p0.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+実`Context.noBackupFilesDir`へ一意な合成private要求とbackup-only台帳を置き、後着prepareより先の復旧、
+同attemptのRETRYABLE/明示retry待ち、仮JPEG保持、共有JPEG台帳なしを確認する。実画像/撮影/Pixel性能は検証しない。
+復旧は共通queueのlazy初期化時であり、撮影からの新規要求作成・完成rendererの登録・自動現像の有効化とは別である。
