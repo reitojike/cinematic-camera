@@ -121,3 +121,10 @@ production controls登録・photoroll接続・実観測・Pixel実機は上記�
 
 - [x] T035 [US2] 固定private-trial品質/recipeの専用handle・状態と同queue/実FD所有を接続し、復旧後もcompleted/publishへ進まないことを検証する（#129/#131、FR-005/006/008/009）。
 - [x] T036 [US2] 同attemptのfresh private readbackと未claim/claim所有を接続し、取消直前/直後・世代変更・実close・同byte列decode・原本不変・共有公開0をtrial routeの単体/合成nativeで検証する（#129/#131、FR-001/004/005/006/008/010）。
+
+## Phase 11: 起動時の現像要求復旧
+
+- [ ] T037 [US2] `AutoDevelopInventory`と既存Android queueの初期IOで全世代の台帳を検査・一括復旧する。未知/破損/redirect/不完全列挙はprocess owner全体を保留し、後着prepareより先に復旧する（T017/T034先行部分、FR-005/006/008）。
+- [ ] T038 [US2] 実一時directoryとfault台帳でsidecar、未知/破損新世代、ID/世代不一致、列挙失敗、初期化失敗後の投入拒否、manual/privateの非自動実行、中断retryと成功artifact保持を検証する（SC-001/002/003）。
+
+完成renderer/固定recipe生成・撮影からの新規要求投入・Pixel性能/画質は今回の復旧部品に含めず、T017/020/021/034全体を完了にしない。

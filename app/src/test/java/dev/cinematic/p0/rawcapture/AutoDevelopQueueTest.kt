@@ -137,6 +137,80 @@ class AutoDevelopQueueTest {
         assertEquals(AutoJobPhase.QUEUED, f.journal(old).read()!!.phase)
     }
 
+    @Test fun inventoryLoadsOnIoBeforeLaterSubmissionAndOnlyOnce() {
+        val f = Fixture()
+        val old = request()
+        f.journal(old).prepare(old)
+        var read = false
+        val restored = f.queue.restore { read = true; listOf(old) }
+        assertFalse(read)
+        val submitted = f.queue.submit(request("later"))
+        f.queue.updateConditions(allowed)
+        f.io.drain()
+        assertTrue(read)
+        assertFalse(restored.isCompletedExceptionally)
+        assertFalse(submitted.isCompletedExceptionally)
+        assertEquals(2, f.starts.get())
+        val second = f.queue.restore { error("A live owner must not rescan") }
+        f.io.drain()
+        assertTrue(second.isCompletedExceptionally)
+    }
+
+    @Test fun inventoryFailureKeepsLaterAutoAndInteractiveAllocationHeld() {
+        val f = Fixture()
+        val restored = f.queue.restore { throw IOException("Synthetic incomplete inventory") }
+        val submitted = f.queue.submit(request())
+        var allocated = false
+        val manual = f.queue.preparePrivateTrial("capture") { allocated = true; error("Must not allocate") }
+        f.queue.updateConditions(allowed)
+        f.io.drain()
+        assertTrue(restored.isCompletedExceptionally)
+        assertTrue(submitted.isCompletedExceptionally)
+        assertTrue(manual.isCompletedExceptionally)
+        assertFalse(allocated)
+        assertEquals(0, f.starts.get())
+        assertNull(f.journal(request()).read())
+    }
+
+    @Test fun restoredPrivateTrialNeverAutomaticallyRendersOrPublishes() {
+        val f = Fixture()
+        val memory = MemoryStorage()
+        val trial = ManualDevelopRequests(request().source, memory).prepare(
+            dev.cinematic.p0.jpegrender.JpegGenerationRecipe.trial().snapshot)
+        val journal = f.journal(trial)
+        journal.prepare(trial)
+        val output = AutoRenderReceipt(trial, JpegOutputDescription(16, 12, 1, "sRGB", 3),
+            RenderedFaceState.NOT_RUN, RenderedExposureState.DIAGNOSTIC)
+        journal.start(0); journal.rendered(1, trial.source.fingerprint, output)
+        val before = journal.read()
+        f.queue.restore { listOf(trial) }
+        f.queue.updateConditions(allowed)
+        f.io.drain()
+        assertEquals(before, journal.read())
+        assertEquals(0, f.starts.get())
+        assertEquals(AutoJobPhase.RENDERED, journal.read()!!.phase)
+    }
+
+    @Test fun restoredCompletedArtifactResumesPublicationWithoutRenderingAgain() {
+        val f = Fixture()
+        val request = request()
+        val journal = f.journal(request)
+        journal.prepare(request); journal.start(0); journal.rendered(1, request.source.fingerprint)
+        val before = journal.read()!!
+        journal.publishing(before.revision)
+        f.queue.restore { listOf(request) }
+        f.queue.updateConditions(allowed.copy(recordingOrFinalizing = true))
+        f.io.drain()
+        assertEquals(AutoJobPhase.PUBLISHING, journal.read()!!.phase)
+        assertEquals(0, f.starts.get())
+        f.queue.updateConditions(allowed)
+        f.io.drain()
+        assertEquals(AutoJobPhase.PUBLISHED, journal.read()!!.phase)
+        assertEquals(before.attemptId, journal.read()!!.attemptId)
+        assertEquals(before.outputFingerprint, journal.read()!!.outputFingerprint)
+        assertEquals(0, f.starts.get())
+    }
+
     private class ManualExecutor : Executor {
         private val tasks = ArrayDeque<Runnable>()
         override fun execute(command: Runnable) { tasks.addLast(command) }
