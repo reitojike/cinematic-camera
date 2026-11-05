@@ -12,6 +12,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -446,6 +447,11 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                     adjustments = manualTrial,
                     modifier = Modifier.weight(1f))
             } else {
+                // The details can exceed the viewport in landscape or at larger font sizes.
+                // Give the preview a useful bounded height and keep the save actions scrollable.
+                BoxWithConstraints(Modifier.weight(1f)) {
+                    val imageHeight = (maxHeight * .46f).coerceIn(220.dp, 440.dp)
+                    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                 val status = when (selection.phase) {
                     PhotoRollPhase.CHECKING -> "原本を確認中…"
                     PhotoRollPhase.RENDERING -> renderStage?.label ?: "DNGを処理中…"
@@ -473,7 +479,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                         if (renderer.mode == PhotoRollPreviewMode.MANUAL_TRIAL) "保存前の縮小プレビュー（顔保護なし・暫定色）"
                         else if (renderer.mode == PhotoRollPreviewMode.STAGE_CLEAR) "現像結果（表示用）"
                         else "縮小試験JPEG（顔保護なし、診断露出・暫定色）", comparisonLabel,
-                        Modifier.fillMaxWidth().weight(1f))
+                        Modifier.fillMaxWidth().height(imageHeight))
                 else if (image != null && selection.phase == PhotoRollPhase.DISPLAYED) Image(image.asImageBitmap(), when (renderer.mode) {
                     PhotoRollPreviewMode.MANUAL_TRIAL -> "保存前の縮小プレビュー（顔保護なし・暫定色）"
                     PhotoRollPreviewMode.DNG_TRIAL -> "DNGの試験表示（ルック未適用）"
@@ -481,8 +487,8 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                     PhotoRollPreviewMode.PRIVATE_TRIAL -> "縮小試験JPEG（顔保護なし、診断露出・暫定色）"
                     PhotoRollPreviewMode.STAGE_CLEAR -> "現像結果（表示用）"
                 },
-                    Modifier.fillMaxWidth().weight(1f), contentScale = ContentScale.Fit)
-                else Spacer(Modifier.weight(1f))
+                    Modifier.fillMaxWidth().height(imageHeight), contentScale = ContentScale.Fit)
+                else Spacer(Modifier.height(imageHeight))
                 if (selection.phase == PhotoRollPhase.DISPLAYED) {
                     if (strengthEditable) TextButton(enabled = canBeginStrengthEdit(renderer.mode, foreground, savePending, saveSnapshot?.phase),
                         onClick = { trialEditor = trialEditor.begin(tapStep = .01, adjustments = manualTrial) }) {
@@ -550,6 +556,8 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                 Text("原本は読み取り専用で参照します。コピー・上書き・公開は行いません", style = MaterialTheme.typography.bodySmall)
                 TextButton(enabled = foreground && selection.phase !in setOf(PhotoRollPhase.CHECKING, PhotoRollPhase.RENDERING),
                     onClick = { explicitRetry = true; retry++ }) { Text("原本を確認して再試行") }
+                    }
+                }
             }
         }
     }
