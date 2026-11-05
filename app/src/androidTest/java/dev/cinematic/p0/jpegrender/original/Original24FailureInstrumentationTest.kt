@@ -5,6 +5,8 @@ import android.os.Build
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.rawcapture.*
+import dev.cinematic.p0.raw.original.OriginalStage
+import dev.cinematic.p0.raw.original.OriginalStageTrace
 import dev.cinematic.p0.testing.writeSyntheticTrialDng
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -77,13 +79,39 @@ class Original24FailureInstrumentationTest {
         f.verifyOriginal()
     }
 
-    private fun withFixture(action: (Fixture) -> Unit) {
+    @Test fun bitmapReportingFailureCannotPublishOrRestartTheAttempt() {
+        val diagnosticFailure = IOException("Synthetic bitmap report failure")
+        val trace = OriginalStageTrace { stage, _, _ -> if (stage == OriginalStage.BITMAP_PACK) throw diagnosticFailure }
+        withFixture(trace) { f ->
+            assertSame(diagnosticFailure, f.requireFailedAttempt())
+            assertEquals(0, f.outputOpens)
+            assertFalse(f.attempt.hasUnreleasedResources)
+            f.requireRerenderRejected()
+        }
+    }
+
+    @Test fun failedReportingCannotHideThePrivateWriteFailure() {
+        val diagnosticFailure = IOException("Synthetic codec report failure")
+        val trace = OriginalStageTrace { stage, _, complete ->
+            if (stage == OriginalStage.JPEG_ENCODE && !complete) throw diagnosticFailure
+        }
+        withFixture(trace) { f ->
+            f.failWrite = true
+            val actual = f.requireFailedAttempt()
+            assertSame(f.writeFailure, actual)
+            assertTrue(actual.suppressed.contains(diagnosticFailure))
+            assertTrue(f.outputCloseAcknowledged)
+            assertFalse(f.attempt.hasUnreleasedResources)
+        }
+    }
+
+    private fun withFixture(trace: OriginalStageTrace? = null, action: (Fixture) -> Unit) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         assumeTrue(context.packageName == "dev.cinematic.p0.original24probe")
         val args = InstrumentationRegistry.getArguments()
         check(args.getString("original24") == "true")
         check(Build.HARDWARE in setOf("ranchu", "goldfish") || args.getString("allowPhysical") == "true")
-        val f = Fixture(context)
+        val f = Fixture(context, trace)
         try { action(f) } finally {
             // Close only our retained producer. Failed private scratch/output is intentionally kept;
             // no recursive cleanup can erase the evidence or hide an uncertain resource owner.
@@ -94,7 +122,7 @@ class Original24FailureInstrumentationTest {
         }
     }
 
-    private class Fixture(context: Context) {
+    private class Fixture(context: Context, trace: OriginalStageTrace?) {
         private val root = File(context.noBackupFilesDir, "original24-failure-${UUID.randomUUID()}")
             .also { check(it.mkdir()) }
         private val original = File(root, "synthetic.dng")
@@ -109,6 +137,7 @@ class Original24FailureInstrumentationTest {
         var afterWrite: () -> Unit = {}
         var outputOpens = 0
         var writeCalls = 0
+        var writeFailure: IOException? = null
         var closeCalls = 0
         var readbackCalls = 0
         var outputCloseAcknowledged = false
@@ -127,7 +156,7 @@ class Original24FailureInstrumentationTest {
                         writeCalls++
                         if (failWrite) {
                             delegate.write(bytes, offset, 1)
-                            throw IOException("Injected private JPEG write failure")
+                            throw IOException("Injected private JPEG write failure").also { writeFailure = it }
                         }
                         delegate.write(bytes, offset, count)
                         afterWrite()
@@ -158,13 +187,14 @@ class Original24FailureInstrumentationTest {
             }
         }
         val attempt = Original24Attempt(context, Original24Request("TRIAL24_synthetic_failure", 1, source), io,
-            File(root, "scratch"))
+            File(root, "scratch"), trace)
 
-        fun requireFailedAttempt() {
+        fun requireFailedAttempt(): Throwable {
             var result: Original24TrialJpeg? = null
-            assertThrows(Exception::class.java) { result = attempt.render { false } }
+            val failure = assertThrows(Exception::class.java) { result = attempt.render { false } }
             assertNull("A failed producer cannot provide evidence to construct a publication proof", result)
             verifyOriginal()
+            return failure
         }
 
         fun requireRerenderRejected() {

@@ -10,7 +10,7 @@ internal fun interface OriginalMask { fun row(y: Int, weights: FloatArray)
 
 /** Full-size CPU reference using private row rasters and globally shared analysis/blur fields.
  * Returns pixels only: neither verified input/face/AE metadata nor CompletedRender/publication authority. */
-internal class OriginalStageClear24(private val work: OriginalRasterWorkspace) {
+internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, private val trace: OriginalStageTrace? = null) {
     private val luma = StageClearV1.LUMA
     private fun y(row: FloatArray, i: Int) = row[i] * luma[0] + row[i + 1] * luma[1] + row[i + 2] * luma[2]
     private fun image(width: Int, row: FloatArray) = LinearSrgbImage.takeOwnership(width, 1, row)
@@ -28,23 +28,28 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace) {
         fun emit(name: String, raster: OriginalRasterFile): OriginalRasterFile {
             originalCheckpoint(stop); stage(name, raster); originalCheckpoint(stop); return raster
         }
-        fun rowStep(previous: OriginalRasterFile, name: String,
+        fun rowStep(previous: OriginalRasterFile, name: String, timing: OriginalStage,
             transform: (Int, FloatArray) -> FloatArray): OriginalRasterFile {
-            val next = emit(name, work.map(previous, stop, transform))
+            val next = emit(name, originalStage(trace, timing) { work.map(previous, stop, transform) })
             work.release(previous)
             return next
         }
-        var base = emit("r7_profile", work.map(input, stop) { _, row -> values(R7Base.profile(image(width, row))) })
+        var base = emit("r7_profile", originalStage(trace, OriginalStage.R7_PROFILE) {
+            work.map(input, stop) { _, row -> values(R7Base.profile(image(width, row))) }
+        })
         val cell = .04 * max(width, height)
-        val tone = OriginalFields.reduce(base, max(4, round(width / cell).toInt()), max(4, round(height / cell).toInt()),
+        val toneRow = FloatArray(width)
+        val (tone, percentiles) = originalStage(trace, OriginalStage.R7_TONE_ANALYSIS) {
+        val field = OriginalFields.reduce(base, max(4, round(width / cell).toInt()), max(4, round(height / cell).toInt()),
             1, stop, OriginalFilter.CUBIC) { rgb, out ->
             out.indices.forEach { p -> out[p] = log2(max(y(rgb, p * 3).toDouble(), 1e-5)).toFloat() }
         }
-        val toneRow = FloatArray(width)
         val percentiles = OriginalQuantiles.evaluate(OriginalSamples { consumer ->
-            repeat(height) { yy -> originalCheckpoint(stop); tone.row(yy, toneRow); toneRow.forEach { consumer.accept(it) } }
+            repeat(height) { yy -> originalCheckpoint(stop); field.row(yy, toneRow); toneRow.forEach { consumer.accept(it) } }
         }, stop, .5, .92)
-        base = rowStep(base, "r7_tone") { yy, row ->
+        field to percentiles
+        }
+        base = rowStep(base, "r7_tone", OriginalStage.R7_TONE_APPLY) { yy, row ->
             tone.row(yy, toneRow)
             FloatArray(row.size) { i ->
                 val value = toneRow[i / 3].toDouble()
@@ -54,42 +59,45 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace) {
             }
         }
         val roiRow = FloatArray(width)
-        base = rowStep(base, "r7_foundation") { yy, row ->
+        base = rowStep(base, "r7_foundation", OriginalStage.R7_FOUNDATION) { yy, row ->
             foundation.row(yy, roiRow); checkMask(roiRow)
             values(R7Base.foundation(image(width, row), FloatPlane(width, 1, roiRow), externalEv))
         }
-        base = rowStep(base, "r7_vibrance") { _, row -> values(R7Base.vibrance(image(width, row))) }
-        base = rowStep(base, "r7_crisp") { _, row -> values(R7Base.crisp(image(width, row))) }
-        base = rowStep(base, "r7_skin") { _, row -> values(R7Base.skin(image(width, row))) }
+        base = rowStep(base, "r7_vibrance", OriginalStage.R7_VIBRANCE) { _, row -> values(R7Base.vibrance(image(width, row))) }
+        base = rowStep(base, "r7_crisp", OriginalStage.R7_CRISP) { _, row -> values(R7Base.crisp(image(width, row))) }
+        base = rowStep(base, "r7_skin", OriginalStage.R7_SKIN) { _, row -> values(R7Base.skin(image(width, row))) }
 
-        val skin = OriginalFields.blur(base, StageClearGlowV1.SKIN_RADIUS, 1, stop) { rgb, out ->
+        val skin = originalStage(trace, OriginalStage.SKIN_FIELD) { OriginalFields.blur(base, StageClearGlowV1.SKIN_RADIUS, 1, stop) { rgb, out ->
             val frame = image(width, rgb); val lab = FloatArray(3)
             out.indices.forEach { p ->
                 StageClearColor.toLab(frame, p * 3, lab)
                 out[p] = StageClearColor.skinWeight(lab[0].toDouble(), hypot(lab[1].toDouble(), lab[2].toDouble()),
                     (Math.toDegrees(atan2(lab[2].toDouble(), lab[1].toDouble())) + 360) % 360).toFloat()
             }
-        }
+        } }
         val skinRow = FloatArray(width)
-        val glowed = if (strength == 0.0) base else glow(base, skin, strength, stop).also {
+        val glowed = if (strength == 0.0) base else originalStage(trace, OriginalStage.GLOW) { glow(base, skin, strength, stop) }.also {
             work.release(base); emit("glow", it)
         }
         fun layer(source: OriginalRasterFile): OriginalRasterFile {
-            var nearWhite = 0L
-            source.rows(stop) { _, row -> repeat(width) { p -> if (y(row, p * 3) > StageClearMistV1.NEAR_WHITE.toFloat()) nearWhite++ } }
+            val nearWhite = originalStage(trace, OriginalStage.NEAR_WHITE) {
+            var count = 0L
+            source.rows(stop) { _, row -> repeat(width) { p -> if (y(row, p * 3) > StageClearMistV1.NEAR_WHITE.toFloat()) count++ } }
+            count
+            }
             val ratio = ((nearWhite.toDouble() / (width.toLong() * height) - StageClearMistV1.AUTO_START) /
                 StageClearMistV1.AUTO_SPAN).coerceIn(0.0, 1.0)
             val amount = (1 - StageClearMistV1.AUTO_REDUCTION * ratio) * strength
-            var current = if (strength == 0.0) source else mist(source, skin, amount, stop).also { emit("mist", it) }
+            var current = if (strength == 0.0) source else originalStage(trace, OriginalStage.MIST) { mist(source, skin, amount, stop) }.also { emit("mist", it) }
             if (amount != 0.0) {
-                val next = orton(current, skin, amount, stop)
+                val next = originalStage(trace, OriginalStage.ORTON) { orton(current, skin, amount, stop) }
                 if (current !== source) work.release(current)
                 current = emit("orton", next)
             }
             val aspect = width.toDouble() / height
             val xx = FloatArray(width) { ((it.toFloat() + .5f) / width * 2f - 1f) * min(aspect, 1.0).toFloat() }
             val faceRow = FloatArray(width)
-            val result = work.map(current, stop) { yy, row ->
+            val result = originalStage(trace, OriginalStage.CHARACTER_CAP) { work.map(current, stop) { yy, row ->
                 val py = ((yy.toFloat() + .5f) / height * 2f - 1f) / max(aspect, 1.0).toFloat()
                 val vignette = FloatArray(row.size) { i ->
                     val radius = sqrt(xx[i / 3] * xx[i / 3] + py * py)
@@ -99,33 +107,38 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace) {
                 val vibrant = StageClearCharacter.vibrance(image(width, vignette), StageClearCharacterV1.VIBRANCE * strength)
                 faces.row(yy, faceRow); checkMask(faceRow)
                 values(StageClearProtections.skinChromaCap(vibrant, FaceMask(width, 1, faceRow)))
-            }
+            } }
             if (current !== source) work.release(current)
             return emit("character_cap", result)
         }
         var layered = layer(glowed)
         val faceRow = FloatArray(width)
-        var faceCount = 0
-        layered.rows(stop) { yy, _ -> faces.row(yy, faceRow); checkMask(faceRow); faceRow.forEach { if (it > .5f) faceCount++ } }
+        val faceCount = originalStage(trace, OriginalStage.FACE_COUNT) {
+            countOriginalMaskPixels(width, height, faces, stop)
+        }
         val cut = if (faceCount < 50) 1.0 else {
-            val top = OriginalQuantiles.evaluate(OriginalSamples { consumer ->
+            val top = originalStage(trace, OriginalStage.FACE_PERCENTILE) { OriginalQuantiles.evaluate(OriginalSamples { consumer ->
                 layered.rows(stop) { yy, rgb ->
                     faces.row(yy, faceRow); checkMask(faceRow)
                     repeat(width) { p -> if (faceRow[p] > .5f)
                         consumer.accept(StageClearProtections.encode(y(rgb, p * 3).toDouble()).toFloat()) }
                 }
-            }, stop, .9)[0]
+            }, stop, .9)[0] }
             if (top <= StageClearV1.FACE_LIMIT) 1.0 else max(StageClearProtections.decode(StageClearV1.FACE_LIMIT) /
                 StageClearProtections.decode(top), 2.0.pow(-StageClearV1.MAX_CUT_EV))
         }
         if (cut < 1.0) {
             work.release(layered)
-            val scaled = work.map(glowed, stop) { _, row -> FloatArray(row.size) { (row[it] * cut).toFloat() } }
+            val scaled = originalStage(trace, OriginalStage.FACE_SCALE) {
+                work.map(glowed, stop) { _, row -> FloatArray(row.size) { (row[it] * cut).toFloat() } }
+            }
             layered = layer(scaled)
             work.release(scaled)
         }
         work.release(glowed)
-        val final = emit("shoulder", work.map(layered, stop) { _, row -> values(StageClearProtections.shoulder(image(width, row))) })
+        val final = emit("shoulder", originalStage(trace, OriginalStage.SHOULDER) {
+            work.map(layered, stop) { _, row -> values(StageClearProtections.shoulder(image(width, row))) }
+        })
         work.release(layered)
         return Result(final, cut)
     }

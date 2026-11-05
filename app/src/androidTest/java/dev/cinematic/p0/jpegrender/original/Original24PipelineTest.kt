@@ -5,6 +5,7 @@ import android.os.Build
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.rawcapture.*
+import dev.cinematic.p0.raw.original.OriginalStageTrace
 import dev.cinematic.p0.testing.writeSyntheticTrialDng
 import java.io.File
 import java.nio.file.Files
@@ -57,10 +58,21 @@ class Original24PipelineTest {
                         override fun openOutputRead() = output.inputStream()
                     }
                     val request = Original24Request("synthetic_original", index + 1L, source, strength)
-                    val attempt = Original24Attempt(context, request, io, File(root, "scratch-$orientation-$index"))
                     val metrics = OriginalProbeMetrics(context)
                     val report = JSONObject().put("orientation", orientation).put("strength", strength).put("status", "STARTED")
                     reports.put(report)
+                    val timings = JSONArray()
+                    val trace = if (args.getString("original24Stages") == "true") {
+                        report.put("stageTimings", timings).put("stageTimingScope",
+                            "flat inclusive CPU-and-IO spans; repeated stages are separate calls; observer IO and unlabelled overhead excluded")
+                        OriginalStageTrace { stage, elapsed, completed ->
+                            timings.put(JSONObject().put("stage", stage.name).put("elapsedNanos", elapsed)
+                                .put("completed", completed).put("sequence", timings.length()))
+                            // Private synthetic diagnostic witness only. Never logs a source URI or image content.
+                            reportFile.writeText(all.toString(2))
+                        }
+                    } else null
+                    val attempt = Original24Attempt(context, request, io, File(root, "scratch-$orientation-$index"), trace)
                     var failure: Throwable? = null
                     try {
                         metrics.stage("before")

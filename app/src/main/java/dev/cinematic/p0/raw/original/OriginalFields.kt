@@ -23,14 +23,28 @@ internal class OriginalField(
     private val columns = originalWeights(width, outputWidth, filter)
     private val rows = originalWeights(height, outputHeight, filter)
     private val verticalFirst = height - outputHeight > 0 && height.toLong() - outputHeight > 2L * (width - outputWidth)
+    // The reduced field transfers its immutable values to this owner. Cache only separable Float
+    // intermediates, never the field or a full output image. Other resize policies keep the old path.
+    private val cacheCapacity = if (!verticalFirst && width > 1 && height > 1 &&
+        outputWidth >= width && outputHeight >= height && (outputWidth > width || outputHeight > height)) {
+        when (filter) { OriginalFilter.LINEAR -> 2; OriginalFilter.CUBIC -> 4; OriginalFilter.BOX -> 0 }
+    } else 0
+    private var horizontalCache: HorizontalRows? = null
+    internal val rowCachePayloadBytes: Long
+        @Synchronized get() = horizontalCache?.payloadBytes ?: 0L
     init { require(channels in 1..3 && values.size == width * height * channels) }
     fun reducedRgb(): dev.cinematic.p0.raw.LinearSrgbImage {
         require(channels == 3 && max(width, height) <= 1024)
         return dev.cinematic.p0.raw.LinearSrgbImage(width, height, values)
     }
-    fun row(y: Int, output: FloatArray) {
+    @Synchronized fun row(y: Int, output: FloatArray) {
         require(y in 0 until outputHeight && output.size == outputWidth * channels)
         val vertical = rows[y]
+        if (cacheCapacity > 0 && vertical.weights.size <= cacheCapacity) {
+            val cache = horizontalCache ?: HorizontalRows(cacheCapacity).also { horizontalCache = it }
+            cache.row(vertical, output)
+            return
+        }
         repeat(outputWidth) { x ->
             val horizontal = columns[x]
             repeat(channels) { c ->
@@ -50,6 +64,49 @@ internal class OriginalField(
                     sum += value.toFloat() * vertical.weights[dy]
                 }
                 output[x * channels + c] = sum.toFloat()
+            }
+        }
+    }
+
+    /** All access occurs under row's instance lock, including non-monotonic and concurrent reads. */
+    private inner class HorizontalRows(capacity: Int) {
+        private val sourceRows = IntArray(capacity) { -1 }
+        private val data = arrayOfNulls<FloatArray>(capacity)
+        private val selected = IntArray(capacity)
+        val payloadBytes get() = data.sumOf { (it?.size ?: 0).toLong() * Float.SIZE_BYTES }
+
+        fun row(vertical: OriginalWeights, output: FloatArray) {
+            val end = vertical.first + vertical.weights.size
+            for (dy in vertical.weights.indices) {
+                val source = vertical.first + dy
+                var slot = sourceRows.indexOf(source)
+                if (slot < 0) {
+                    // Protect every contributor needed by this destination row, regardless of order.
+                    slot = sourceRows.indexOfFirst { it < vertical.first || it >= end }
+                    check(slot >= 0)
+                    val buffer = data[slot] ?: FloatArray(outputWidth * channels).also { data[slot] = it }
+                    horizontal(source, buffer)
+                    sourceRows[slot] = source
+                }
+                selected[dy] = slot
+            }
+            for (i in output.indices) {
+                var sum = 0.0
+                for (dy in vertical.weights.indices) sum += requireNotNull(data[selected[dy]])[i] * vertical.weights[dy]
+                output[i] = sum.toFloat()
+            }
+        }
+
+        private fun horizontal(source: Int, output: FloatArray) {
+            for (x in columns.indices) {
+                val horizontal = columns[x]
+                repeat(channels) { c ->
+                    var value = 0.0
+                    for (dx in horizontal.weights.indices)
+                        value += values[(source * width + horizontal.first + dx) * channels + c] * horizontal.weights[dx]
+                    // Exactly the old horizontal-first Float rounding, before the dy accumulation.
+                    output[x * channels + c] = value.toFloat()
+                }
             }
         }
     }
