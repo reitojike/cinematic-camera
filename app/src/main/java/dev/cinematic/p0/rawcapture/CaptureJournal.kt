@@ -163,14 +163,14 @@ internal class CaptureJournal(private val captureId: String, private val storage
 internal object CaptureReceiptCodec {
     const val MAX_BYTES = 4096
     private const val MAGIC = 0x4343524a // CCRJ
-    private const val VERSION = 3
+    private const val VERSION = 4
     private const val DIGEST_BYTES = 32
 
     fun encode(receipt: CaptureReceipt): ByteArray {
         val buffer = ByteArrayOutputStream()
         DataOutputStream(buffer).use { out ->
             out.writeInt(MAGIC)
-            out.writeInt(VERSION)
+            out.writeInt(if (receipt.developIntent?.originalDeclaration != null) VERSION else 3)
             out.writeByte(receipt.captureId.length)
             out.write(receipt.captureId.toByteArray(Charsets.US_ASCII))
             out.writeLong(receipt.revision)
@@ -182,10 +182,12 @@ internal object CaptureReceiptCodec {
             receipt.originalFingerprint?.sha256?.chunked(2)?.forEach { out.writeByte(it.toInt(16)) }
             out.writeByte(if (receipt.developIntent == null) 0 else 1)
             receipt.developIntent?.let { intent ->
-                out.writeByte(0) // Explicit, stable code for requested FINAL_ORIGINAL; not an observed quality.
+                out.writeByte(if (intent.requestedQuality == AutoRenderQuality.FINAL_ORIGINAL_STRICT) 1 else 0)
                 out.writeUTF(intent.rendererContract)
                 out.writeUTF(intent.recipe.schema)
                 out.writeUTF(intent.recipe.payload)
+                if (intent.requestedQuality == AutoRenderQuality.FINAL_ORIGINAL_STRICT)
+                    OriginalEvidenceCodec.writeDeclaration(out, intent.originalDeclaration)
             }
         }
         val payload = buffer.toByteArray()
@@ -237,9 +239,17 @@ internal object CaptureReceiptCodec {
                 val intent = if (version < 3) null else when (input.readUnsignedByte()) {
                     0 -> null
                     1 -> {
-                        if (input.readUnsignedByte() != 0) throw IOException("Unknown requested capture quality")
+                        val quality = when (input.readUnsignedByte()) {
+                            0 -> AutoRenderQuality.FINAL_ORIGINAL
+                            1 -> if (version >= 4) AutoRenderQuality.FINAL_ORIGINAL_STRICT
+                                else throw IOException("Strict capture intent requires version four")
+                            else -> throw IOException("Unknown requested capture quality")
+                        }
                         val renderer = input.readUTF()
-                        CaptureDevelopIntent(RenderRecipeSnapshot(input.readUTF(), input.readUTF()), renderer)
+                        val recipe = RenderRecipeSnapshot(input.readUTF(), input.readUTF())
+                        val declaration = if (quality == AutoRenderQuality.FINAL_ORIGINAL_STRICT)
+                            OriginalEvidenceCodec.readDeclaration(input) else null
+                        CaptureDevelopIntent(recipe, renderer, quality, declaration)
                     }
                     else -> throw IOException("Invalid capture develop intent flag")
                 }
