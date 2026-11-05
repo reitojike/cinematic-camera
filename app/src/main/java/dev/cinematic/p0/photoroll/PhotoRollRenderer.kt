@@ -6,6 +6,7 @@ import android.os.CancellationSignal
 import dev.cinematic.p0.rawcapture.OriginalFingerprint
 import dev.cinematic.p0.rawcapture.OriginalGrant
 import dev.cinematic.p0.rawcapture.SharedOriginalReference
+import dev.cinematic.p0.raw.PhotoAdjustments
 
 /** A checked shared original. Open only with ContentResolver's read-only stream/FD APIs. */
 internal data class PhotoRollOriginal(val uri: Uri, val fingerprint: OriginalFingerprint, val grant: OriginalGrant) {
@@ -17,6 +18,7 @@ internal data class PhotoRollRenderRequest(
     val original: PhotoRollOriginal,
     val lookVersion: String = "stage-clear-v1",
     val strength: Double = 0.5,
+    val adjustments: PhotoAdjustments = PhotoAdjustments(),
     val maxEdge: Int = 1024,
     val mode: PhotoRollPreviewMode = PhotoRollPreviewMode.STAGE_CLEAR,
     val explicitRetry: Boolean = false,
@@ -35,8 +37,10 @@ internal sealed interface PhotoRollRenderResult {
         val comparisonBitmap: Bitmap? = null,
         /** Frozen strength of a checked private artifact, never the UI's current draft. */
         val trialStrength: Double? = null,
+        val trialAdjustments: PhotoAdjustments? = null,
         /** Frozen strength of this saveable render, checked before editing or Save. */
         val appliedStrength: Double? = null,
+        val appliedAdjustments: PhotoAdjustments? = null,
         /** What the same-size Before pixels represent; required for completed-render comparison. */
         val comparisonDescription: String? = null,
     ) : PhotoRollRenderResult {

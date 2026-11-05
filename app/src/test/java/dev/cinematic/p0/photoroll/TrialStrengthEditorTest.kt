@@ -3,6 +3,8 @@ package dev.cinematic.p0.photoroll
 import dev.cinematic.p0.rawcapture.OriginalFingerprint
 import dev.cinematic.p0.rawcapture.OriginalGrant
 import dev.cinematic.p0.rawcapture.SharedOriginalReference
+import dev.cinematic.p0.photoedit.PhotoEditParameter
+import dev.cinematic.p0.photoedit.PhotoEditValues
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -108,5 +110,42 @@ class TrialStrengthEditorTest {
         assertNull(state.bind(source.copy(fingerprint = OriginalFingerprint(12, "b".repeat(64)))))
         assertNull(state.bind(source.copy(uri = "content://example.test/images/2")))
         assertNull(state.bind(source.copy(grant = OriginalGrant.APP_OWNED)))
+    }
+
+    @Test fun threeAdjustmentsShareOneTicketAndRejectStalePreview() {
+        val initial = TrialStrengthEditor.empty(PhotoEditValues(.5, 0.0, 0.0))
+        var state = requireNotNull(initial.bind(source)).shown(initial.ticket, initial.requestedValues)
+            .begin(.01, adjustments = true)
+        val token = state.session!!.inputToken
+        val oldTicket = state.ticket
+        state = state.change(token, PhotoEditParameter.TEMPERATURE, 20.0)
+            .change(token, PhotoEditParameter.BRIGHTNESS, .3)
+            .change(token, PhotoEditParameter.STRENGTH, .37)
+        assertEquals(oldTicket, state.ticket)
+        state = state.apply(token)
+        assertEquals(PhotoEditValues(.37, 20.0, .3), state.requestedValues)
+        assertNull(state.displayedValues)
+        assertSame(state, state.shown(oldTicket, PhotoEditValues(.5, 0.0, 0.0)))
+        state = state.shown(state.ticket, PhotoEditValues(.37, 20.0, .3))
+        assertEquals(state.requestedValues, state.displayedValues)
+        assertNull(state.close(token).session)
+    }
+
+    @Test fun cancelRestoresAllValuesAndResetInvalidatesOldFinger() {
+        val initial = TrialStrengthEditor.empty(PhotoEditValues(.5, 0.0, 0.0))
+        var state = requireNotNull(initial.bind(source)).shown(initial.ticket, initial.requestedValues)
+            .begin(.01, adjustments = true)
+        val token = state.session!!.inputToken
+        state = state.change(token, PhotoEditParameter.TEMPERATURE, 40.0).apply(token)
+        val pending = state.ticket
+        val cancelled = state.cancel(token)
+        assertEquals(PhotoEditValues(.5, 0.0, 0.0), cancelled.requestedValues)
+        assertFalse(cancelled.accepts(pending))
+        assertSame(cancelled, cancelled.shown(pending, PhotoEditValues(.5, 40.0, 0.0)))
+        val reopened = cancelled.shown(cancelled.ticket, cancelled.requestedValues).begin(.01, adjustments = true)
+        val reset = reopened.change(reopened.session!!.inputToken, PhotoEditParameter.BRIGHTNESS, 1.0)
+            .reset(reopened.session!!.inputToken)
+        assertEquals(PhotoEditValues(.5, 0.0, 0.0), reset.session!!.draft)
+        assertSame(reset, reset.change(reopened.session!!.inputToken, PhotoEditParameter.BRIGHTNESS, 1.0))
     }
 }

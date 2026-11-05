@@ -5,6 +5,7 @@ import dev.cinematic.p0.rawcapture.JpegPublicationPhase
 import dev.cinematic.p0.rawcapture.JpegPublicationRecord
 import dev.cinematic.p0.rawcapture.RendererPublicationContract
 import dev.cinematic.p0.rawcapture.SharedOriginalReference
+import dev.cinematic.p0.raw.PhotoAdjustments
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,9 +24,11 @@ internal fun interface PhotoRollJpegPublisher {
 internal interface PhotoRollJpegSaveOwner {
     val snapshots: StateFlow<PhotoRollSaveSnapshot>
     val snapshot: PhotoRollSaveSnapshot
+    /** 0/0 until a deferred manual render has produced and inspected its full-size JPEG. */
     val width: Int
     val height: Int
     val appliedStrength: Double? get() = null
+    val appliedAdjustments: PhotoAdjustments? get() = null
     fun matches(source: SharedOriginalReference, mode: PhotoRollPreviewMode): Boolean
     fun advance(shouldStop: () -> Boolean): PhotoRollSaveSnapshot
 }

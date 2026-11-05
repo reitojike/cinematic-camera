@@ -14,6 +14,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import dev.cinematic.p0.photoedit.PhotoEditBar
 import dev.cinematic.p0.photoedit.PhotoEditInputToken
+import dev.cinematic.p0.photoedit.PhotoEditParameter
 import java.util.Locale
 
 internal fun trialStrengthLabel(value: Double) = String.format(Locale.ROOT, "%.1f", value * 100).removeSuffix(".0")
@@ -30,7 +31,7 @@ internal fun TrialStrengthEditorPane(
     preview: Bitmap?,
     comparison: Bitmap?,
     comparisonLabel: String?,
-    change: (PhotoEditInputToken, Double) -> Unit,
+    change: (PhotoEditInputToken, PhotoEditParameter, Double) -> Unit,
     reset: (PhotoEditInputToken) -> Unit,
     apply: (PhotoEditInputToken) -> Unit,
     cancel: (PhotoEditInputToken) -> Unit,
@@ -38,10 +39,12 @@ internal fun TrialStrengthEditorPane(
     retry: () -> Unit,
     saveable: Boolean = false,
     trialQuality: Boolean = false,
+    adjustments: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val session = state.session ?: return
     val token = session.inputToken
+    val displayedStrength = state.displayedStrength
     BoxWithConstraints(modifier.fillMaxSize()) {
         val controlsMaxHeight = maxHeight * .5f
         Column(Modifier.fillMaxSize()) {
@@ -55,11 +58,11 @@ internal fun TrialStrengthEditorPane(
             }, Modifier.semantics { liveRegion = LiveRegionMode.Polite }, style = MaterialTheme.typography.titleMedium)
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                if (preview != null && phase == PhotoRollPhase.DISPLAYED && state.displayedStrength != null)
+                if (preview != null && phase == PhotoRollPhase.DISPLAYED && displayedStrength != null)
                     PhotoRollComparisonImage(preview, comparison, foreground,
-                        if (trialQuality) "試験品質の現像プレビュー・強度${trialStrengthLabel(state.displayedStrength)}"
-                        else if (saveable) "現像プレビュー・強度${trialStrengthLabel(state.displayedStrength)}"
-                        else "試験JPEG・強度${trialStrengthLabel(state.displayedStrength)}（保存不可・顔未適用）",
+                        if (trialQuality) "原寸保存前の縮小プレビュー・強度${trialStrengthLabel(displayedStrength)}"
+                        else if (saveable) "現像プレビュー・強度${trialStrengthLabel(displayedStrength)}"
+                        else "試験JPEG・強度${trialStrengthLabel(displayedStrength)}（保存不可・顔未適用）",
                         comparisonLabel, Modifier.fillMaxSize())
                 else Text(if (busy) "処理が終わると結果を表示します" else "画像はまだ確認できません")
             }
@@ -68,13 +71,31 @@ internal fun TrialStrengthEditorPane(
                 PhotoEditBar("Stage Clear 強度（0〜100）", session.draft.strength,
                     valueNow = { readState().session?.draft?.strength ?: Double.NaN },
                     scale = session.scales.strength, interactionKey = token, enabled = foreground,
-                    formatValue = ::trialStrengthLabel, onValueChange = { change(token, it) },
+                    formatValue = ::trialStrengthLabel,
+                    onValueChange = { change(token, PhotoEditParameter.STRENGTH, it) },
                     onValueChangeFinished = { apply(token) })
+                if (adjustments) {
+                    val warmth = requireNotNull(session.draft.temperature)
+                    val exposureEv = requireNotNull(session.draft.brightness)
+                    PhotoEditBar("色温度（相対・K値ではありません）", warmth,
+                        valueNow = { readState().session?.draft?.temperature ?: Double.NaN },
+                        scale = requireNotNull(session.scales.temperature), interactionKey = token, enabled = foreground,
+                        formatValue = { String.format(Locale.ROOT, "%+.0f", it) },
+                        onValueChange = { change(token, PhotoEditParameter.TEMPERATURE, it) },
+                        onValueChangeFinished = { apply(token) })
+                    PhotoEditBar("明るさ（EV）", exposureEv,
+                        valueNow = { readState().session?.draft?.brightness ?: Double.NaN },
+                        scale = requireNotNull(session.scales.brightness), interactionKey = token, enabled = foreground,
+                        formatValue = { String.format(Locale.ROOT, "%+.1f", it) },
+                        onValueChange = { change(token, PhotoEditParameter.BRIGHTNESS, it) },
+                        onValueChangeFinished = { apply(token) })
+                }
                 Text(if (state.hasUnappliedChanges) "ドラッグ中は数値を変更し、指を離すと画像を更新します"
                     else "指定 ${trialStrengthLabel(session.draft.strength)} / 現像要求 ${trialStrengthLabel(state.requestedStrength)}",
                     style = MaterialTheme.typography.bodySmall)
                 Row(Modifier.fillMaxWidth()) {
-                    TextButton(onClick = { reset(token) }, enabled = foreground, modifier = Modifier.weight(1f)) { Text("強度50に戻す") }
+                    TextButton(onClick = { reset(token) }, enabled = foreground, modifier = Modifier.weight(1f)) {
+                        Text(if (adjustments) "調整をリセット" else "強度50に戻す") }
                     TextButton(onClick = { cancel(token) }, enabled = foreground, modifier = Modifier.weight(1f)) { Text("取消") }
                 }
                 Row(Modifier.fillMaxWidth()) {
