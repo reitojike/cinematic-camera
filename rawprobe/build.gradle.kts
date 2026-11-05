@@ -49,7 +49,8 @@ dependencies {
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("junit:junit:4.13.2")
-    // Match the versions already selected by :app's instrumentation classpath.
+    // Explicit minimum versions for the standalone probe's instrumentation classpath.
+    // These test-only constraints do not update :app's dependencies.
     constraints {
         androidTestImplementation("androidx.annotation:annotation-jvm:1.9.1")
         androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
