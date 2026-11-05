@@ -35,7 +35,8 @@ class PhotoRollJpegSaveTest {
 
     @Test fun trialModesAreRejectedBeforeCreatingAnyPublisher() {
         var factories = 0
-        for (mode in listOf(PhotoRollPreviewMode.DNG_TRIAL, PhotoRollPreviewMode.STAGE_CLEAR_TRIAL, PhotoRollPreviewMode.PRIVATE_TRIAL)) {
+        for (mode in listOf(PhotoRollPreviewMode.DNG_TRIAL, PhotoRollPreviewMode.STAGE_CLEAR_TRIAL,
+            PhotoRollPreviewMode.PRIVATE_TRIAL, PhotoRollPreviewMode.MANUAL_TRIAL)) {
             try {
                 PhotoRollJpegSave.prepare(source, mode, render, supported, { true }) {
                     factories++; PhotoRollJpegPublisher { record() }
@@ -83,6 +84,7 @@ class PhotoRollJpegSaveTest {
         val owner = prepare { PhotoRollJpegPublisher { record() } }
         assertTrue(owner.matches(source, PhotoRollPreviewMode.STAGE_CLEAR))
         assertFalse(owner.matches(source, PhotoRollPreviewMode.STAGE_CLEAR_TRIAL))
+        assertFalse(owner.matches(source, PhotoRollPreviewMode.MANUAL_TRIAL))
         assertFalse(owner.matches(source.copy(uri = source.uri + "0"), PhotoRollPreviewMode.STAGE_CLEAR))
         assertFalse(owner.matches(source.copy(grant = OriginalGrant.USER_SELECTED), PhotoRollPreviewMode.STAGE_CLEAR))
     }

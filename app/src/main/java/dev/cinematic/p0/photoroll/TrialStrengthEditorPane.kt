@@ -36,7 +36,8 @@ internal fun TrialStrengthEditorPane(
     cancel: (PhotoEditInputToken) -> Unit,
     close: (PhotoEditInputToken) -> Unit,
     retry: () -> Unit,
-    completed: Boolean = false,
+    saveable: Boolean = false,
+    trialQuality: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val session = state.session ?: return
@@ -56,7 +57,8 @@ internal fun TrialStrengthEditorPane(
             Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                 if (preview != null && phase == PhotoRollPhase.DISPLAYED && state.displayedStrength != null)
                     PhotoRollComparisonImage(preview, comparison, foreground,
-                        if (completed) "現像プレビュー・強度${trialStrengthLabel(state.displayedStrength)}"
+                        if (trialQuality) "試験品質の現像プレビュー・強度${trialStrengthLabel(state.displayedStrength)}"
+                        else if (saveable) "現像プレビュー・強度${trialStrengthLabel(state.displayedStrength)}"
                         else "試験JPEG・強度${trialStrengthLabel(state.displayedStrength)}（保存不可・顔未適用）",
                         comparisonLabel, Modifier.fillMaxSize())
                 else Text(if (busy) "処理が終わると結果を表示します" else "画像はまだ確認できません")
@@ -79,7 +81,7 @@ internal fun TrialStrengthEditorPane(
                     TextButton(onClick = { close(token) }, enabled = foreground && !state.hasUnappliedChanges &&
                         phase == PhotoRollPhase.DISPLAYED && state.displayedStrength == state.requestedStrength,
                         modifier = Modifier.weight(1f)) {
-                        Text(if (completed) "調整を閉じて保存へ" else "編集を閉じる")
+                        Text(if (saveable) "調整を閉じて保存へ" else "編集を閉じる")
                     }
                 }
                 if (phase == PhotoRollPhase.BLOCKED) {
@@ -88,7 +90,8 @@ internal fun TrialStrengthEditorPane(
                 }
                 Text("左右タップは1刻み。強度0はRAW基準表示とは異なります。比較は画像を長押しして確認できます。",
                     style = MaterialTheme.typography.bodySmall)
-                Text(if (completed) "設定はこの画面内で一時的です。調整を閉じ、表示した強度のJPEGを保存してください。"
+                Text(if (trialQuality) "試験品質です。顔保護なし・診断露出・暫定色で、完成品質ではありません。設定は一時的です。調整を閉じ、表示した強度のJPEGを手動保存してください。"
+                    else if (saveable) "設定はこの画面内で一時的です。調整を閉じ、表示した強度のJPEGを保存してください。"
                     else "最大1024px・顔保護なし・診断露出・暫定色の試験表示です。共有保存はできません。設定は一時的で、再選択・画面再生成で強度50に戻ります。",
                     style = MaterialTheme.typography.bodySmall)
             }

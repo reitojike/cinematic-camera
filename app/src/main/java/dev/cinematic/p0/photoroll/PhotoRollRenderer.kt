@@ -29,13 +29,13 @@ internal sealed interface PhotoRollRenderResult {
     data class Preview(
         val bitmap: Bitmap,
         val mode: PhotoRollPreviewMode,
-        /** Optional retained completed-JPEG owner; trial renderers must leave this null. */
-        val jpegSave: PhotoRollJpegSave? = null,
+        /** Optional retained owner. Manual-trial publication uses a distinct explicit contract. */
+        val jpegSave: PhotoRollJpegSaveOwner? = null,
         /** Independent display-owned pixels. Same source, orientation and dimensions as [bitmap]. */
         val comparisonBitmap: Bitmap? = null,
         /** Frozen strength of a checked private artifact, never the UI's current draft. */
         val trialStrength: Double? = null,
-        /** Frozen strength of a publishable completed render, checked before editing or Save. */
+        /** Frozen strength of this saveable render, checked before editing or Save. */
         val appliedStrength: Double? = null,
         /** What the same-size Before pixels represent; required for completed-render comparison. */
         val comparisonDescription: String? = null,
@@ -60,6 +60,8 @@ internal fun PhotoRollRenderResult.Preview.recycleDisplayPixels() {
  * Called serially off the UI thread, only while this screen is foreground.
  * Validate actual DNG structure/camera/metadata and honor cancellation between stages.
  * STAGE_CLEAR must reject unknown face/exposure/input support, never invent defaults.
+ * MANUAL_TRIAL is a separate, explicitly labeled manual-publication contract; never use
+ * the completed-quality publisher for a diagnostic render.
  * Diagnostic trial modes must explicitly label unresolved inputs and disabled face protection.
  * Do not write, copy, delete or publish an original or a JPEG here.
  * Preview must be software sRGB, correctly oriented and bounded by request.maxEdge.
