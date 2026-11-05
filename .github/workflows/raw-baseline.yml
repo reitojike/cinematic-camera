@@ -5,6 +5,8 @@ on:
     paths:
       - 'tools/raw_baseline/**'
       - 'app/src/androidTest/assets/w1_trial_v1.json'
+      - 'app/src/androidTest/assets/as_shot_white_xy_v1.json'
+      - 'app/src/main/cpp/as_shot_xy.*'
       - 'app/src/main/java/dev/cinematic/p0/raw/StageClearV1.kt'
       - 'app/src/test/resources/stage_clear_protections_v1.csv.gz'
       - 'app/src/test/resources/stage_clear_blur_v1.csv.gz'
@@ -26,6 +28,8 @@ on:
     paths:
       - 'tools/raw_baseline/**'
       - 'app/src/androidTest/assets/w1_trial_v1.json'
+      - 'app/src/androidTest/assets/as_shot_white_xy_v1.json'
+      - 'app/src/main/cpp/as_shot_xy.*'
       - 'app/src/main/java/dev/cinematic/p0/raw/StageClearV1.kt'
       - 'app/src/test/resources/stage_clear_protections_v1.csv.gz'
       - 'app/src/test/resources/stage_clear_blur_v1.csv.gz'

@@ -80,6 +80,7 @@ internal enum class DngPreviewFailure { BUSY, CANCELLED, SOURCE, LIMIT, UNSUPPOR
 
 internal enum class DngWhiteBalanceMode { AS_SHOT, W1_ONLY_TRIAL }
 internal enum class DngInputQuality { AS_SHOT_PRELIMINARY, W1_ONLY_PRELIMINARY }
+internal enum class DngWhiteBalanceBasis { LIBRAW_CAMERA, W1_TRIAL, RAW_TAG_WHITE_XY_LEGACY_DUAL }
 
 /** Requested pre-normalization LibRaw user_mul, not the eventual internal scale. */
 internal data class DngRequestedUserWb(val red: Float, val green: Float, val blue: Float)
@@ -91,6 +92,8 @@ internal data class DngWhiteBalanceSummary(
     val forwardMatrixPresent: Boolean?,
     val lookTablePresent: Boolean?,
     val opcodeList2Present: Boolean?,
+    val basis: DngWhiteBalanceBasis = DngWhiteBalanceBasis.LIBRAW_CAMERA,
+    val thirdCalibrationPresent: Boolean? = null,
 ) {
     val pixelProfileApplied: Boolean get() = false
     companion object {
@@ -113,9 +116,11 @@ internal class NativeDngPixels(
 ) {
     val whiteBalance: DngWhiteBalanceSummary get() = if (wbMode == 0) DngWhiteBalanceSummary.asShot() else
         DngWhiteBalanceSummary(
-            DngInputQuality.W1_ONLY_PRELIMINARY,
+            if (wbMode == 2) DngInputQuality.AS_SHOT_PRELIMINARY else DngInputQuality.W1_ONLY_PRELIMINARY,
             DngRequestedUserWb(requestedRed, requestedGreen, requestedBlue),
             observedTags and 1 != 0, observedTags and 2 != 0, observedTags and 4 != 0,
+            if (wbMode == 2) DngWhiteBalanceBasis.RAW_TAG_WHITE_XY_LEGACY_DUAL else DngWhiteBalanceBasis.W1_TRIAL,
+            if (wbMode == 2) observedTags and 8 != 0 else null,
         )
 }
 

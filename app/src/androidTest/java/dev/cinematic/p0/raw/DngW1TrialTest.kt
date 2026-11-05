@@ -73,7 +73,9 @@ class DngW1TrialTest {
     }
 
     @Test fun whiteXyTrialWorksWhenExistingAsShotCamMulIsUnavailable() = fixture(case("xy-4")).use { file ->
-        assertError("DNG_UNSUPPORTED") { native(file.file, mode = 0) }
+        val asShot = native(file.file, mode = 0)
+        assertEquals(DngWhiteBalanceBasis.RAW_TAG_WHITE_XY_LEGACY_DUAL, asShot.whiteBalance.basis)
+        assertEquals(DngInputQuality.AS_SHOT_PRELIMINARY, asShot.whiteBalance.quality)
         assertTrue(native(file.file).pixels.any { it > 0f })
     }
 
