@@ -77,9 +77,9 @@ class PrivateTrialReuseInstrumentationTest {
                 val record = f.ready(.5, session)
                 f.read(record).close()
                 val cancelledLease = requireNotNull(PrivateTrialReuseRegistry.forRequest(record.request))
-                assertNotNull(cancelledLease.comparisonCopy(24, 32))
-                assertThrows(DngVerificationStopped::class.java) { f.read(record, shouldStop = { true }) }
-                assertNotNull(cancelledLease.comparisonCopy(24, 32))
+                assertNotNull(record.comparisonCopy(cancelledLease))
+                assertThrows(java.util.concurrent.CancellationException::class.java) { f.read(record, shouldStop = { true }) }
+                assertNotNull(record.comparisonCopy(cancelledLease))
                 val resumed = DecodeCounter()
                 f.read(record, resumed).close()
                 assertEquals("Normal cancellation with confirmed close preserves the verified entry", 0, resumed.loads)
@@ -87,11 +87,11 @@ class PrivateTrialReuseInstrumentationTest {
                 val recovered = f.ready(.75, session)
                 f.read(recovered).close()
                 val corruptLease = requireNotNull(PrivateTrialReuseRegistry.forRequest(recovered.request))
-                assertNotNull(corruptLease.comparisonCopy(24, 32))
+                assertNotNull(recovered.comparisonCopy(corruptLease))
                 // This test's private output only. The generated DNG is never changed here.
                 f.output(recovered).writeBytes("synthetic corrupt JPEG".toByteArray())
                 assertThrows(java.io.IOException::class.java) { f.read(recovered) }
-                assertNull(corruptLease.comparisonCopy(24, 32))
+                assertNull(recovered.comparisonCopy(corruptLease))
                 f.assertOriginalAndUnpublished(recovered)
             }
         } finally { session.close() }
@@ -104,9 +104,9 @@ class PrivateTrialReuseInstrumentationTest {
                 val record = f.ready(.5, session)
                 f.read(record).close()
                 val lease = requireNotNull(PrivateTrialReuseRegistry.forRequest(record.request))
-                assertNotNull(lease.comparisonCopy(24, 32))
+                assertNotNull(record.comparisonCopy(lease))
                 PrivateTrialReuseRegistry.invalidateAll() // Same entry point used by lifecycle/capture invalidation.
-                assertNull(lease.comparisonCopy(24, 32))
+                assertNull(record.comparisonCopy(lease))
                 assertNull(PrivateTrialReuseRegistry.forRequest(record.request))
 
                 val next = PrivateTrialReuseRegistry.openSession()
@@ -114,13 +114,13 @@ class PrivateTrialReuseInstrumentationTest {
                     val restored = f.ready(.75, next)
                     f.read(restored).close()
                     val previous = requireNotNull(PrivateTrialReuseRegistry.forRequest(restored.request))
-                    assertNotNull(previous.comparisonCopy(24, 32))
+                    assertNotNull(restored.comparisonCopy(previous))
                     val changedSource = restored.request.source.copy(grant = OriginalGrant.USER_SELECTED)
                     val changed = restored.request.copy(source = changedSource,
                         captureId = ManualDevelopRequests.identity(changedSource))
                     PrivateTrialReuseRegistry.bind(next, changed)
-                    assertNull(previous.comparisonCopy(24, 32))
-                    assertNull(PrivateTrialReuseRegistry.forRequest(changed)?.comparisonCopy(24, 32))
+                    assertNull(restored.comparisonCopy(previous))
+                    assertNull(restored.comparisonCopy(PrivateTrialReuseRegistry.forRequest(changed)))
                     f.assertOriginalAndUnpublished(record)
                 } finally { next.close() }
             }
@@ -134,12 +134,12 @@ class PrivateTrialReuseInstrumentationTest {
                 val record = f.ready(.5, session)
                 f.read(record).close()
                 val lease = requireNotNull(PrivateTrialReuseRegistry.forRequest(record.request))
-                assertNotNull(lease.comparisonCopy(24, 32))
+                assertNotNull(record.comparisonCopy(lease))
                 f.changeOwnSyntheticSource()
                 val counter = DecodeCounter()
                 assertThrows(DngContentChanged::class.java) { f.read(record, counter) }
                 assertEquals(0, counter.loads)
-                assertNull(lease.comparisonCopy(24, 32))
+                assertNull(record.comparisonCopy(lease))
             }
         } finally { session.close() }
     }
@@ -166,7 +166,7 @@ class PrivateTrialReuseInstrumentationTest {
                 f.read(first).close()
                 val pending = f.prepared(.75, session)
                 val lease = requireNotNull(PrivateTrialReuseRegistry.forRequest(pending.request))
-                assertNotNull(lease.comparisonCopy(24, 32))
+                assertNotNull(first.comparisonCopy(lease))
                 f.changeOwnSyntheticSource()
                 val backend = f.backend(pending.request)
                 val runner = f.runner(pending.request, backend)
@@ -174,7 +174,7 @@ class PrivateTrialReuseInstrumentationTest {
                 assertEquals(AutoRunStatus.HELD, held.status)
                 assertEquals(AutoJobReason.SOURCE_CHANGED, requireNotNull(held.record).reason)
                 assertNull(held.record?.attemptId)
-                assertNull(lease.comparisonCopy(24, 32))
+                assertNull(first.comparisonCopy(lease))
                 assertNull(PrivateTrialReuseRegistry.forRequest(pending.request))
                 assertFalse(runner.hasUnreleasedResources)
                 assertFalse(backend.hasUnreleasedResources)
@@ -212,6 +212,80 @@ class PrivateTrialReuseInstrumentationTest {
                 f.assertOriginalAndUnpublished(requireNotNull(held.record))
             }
         } finally { session.close() }
+    }
+
+    @Test fun actualInspectionAndEveryPrivateReadbackStopKeepVerifiedPixelsAfterPositiveClose() {
+        val session = PrivateTrialReuseRegistry.openSession()
+        try {
+            Fixture().use { f ->
+                val record = f.ready(.5, session)
+                f.read(record).close()
+                val lease = requireNotNull(PrivateTrialReuseRegistry.forRequest(record.request))
+                val before = requireNotNull(record.comparisonCopy(lease))
+                val backend = f.backend(record.request)
+                var inspectionChecks = 0
+                backend.inspect(record.request, requireNotNull(record.attemptId)) { inspectionChecks++; false }
+                assertTrue(inspectionChecks > 0)
+                // Interrupt each actual snapshot/EXIF/codec/post-codec checkpoint, including stop=true at entry.
+                for (stopAt in 1..inspectionChecks) {
+                    var checks = 0
+                    assertThrows(java.util.concurrent.CancellationException::class.java) {
+                        backend.inspect(record.request, requireNotNull(record.attemptId)) { ++checks >= stopAt }
+                    }
+                    assertFalse(backend.hasUnreleasedResources)
+                    assertArrayEquals(before, record.comparisonCopy(lease))
+                }
+                var readbackChecks = 0
+                f.read(record, shouldStop = { readbackChecks++; false }).close()
+                assertTrue(readbackChecks > inspectionChecks)
+                // Include the later comparison, post-original-hash and pre-commit checkpoints, not only entry.
+                for (stopAt in 1..readbackChecks) {
+                    var checks = 0
+                    assertThrows(java.util.concurrent.CancellationException::class.java) {
+                        f.read(record, shouldStop = { ++checks >= stopAt })
+                    }
+                    assertArrayEquals(before, record.comparisonCopy(lease))
+                }
+                f.assertOriginalAndUnpublished(record)
+            }
+        } finally { session.close() }
+    }
+
+    @Test fun actualCorruptJpegRemainsAnIoFailureWhenStopIsRequestedAfterItsLastPoll() {
+        val session = PrivateTrialReuseRegistry.openSession()
+        try {
+            Fixture().use { f ->
+                val record = f.ready(.5, session)
+                f.read(record).close()
+                val lease = requireNotNull(PrivateTrialReuseRegistry.forRequest(record.request))
+                assertNotNull(record.comparisonCopy(lease))
+                f.output(record).writeBytes("synthetic corrupt JPEG without markers".toByteArray())
+                val backend = f.backend(record.request)
+                var checks = 0
+                var stopRequested = false
+                // Small-file snapshot: entry, read, EOF, close, then first inspection poll. Model a stop
+                // racing immediately after that last poll and before the actual marker validation fails.
+                assertThrows(java.io.IOException::class.java) {
+                    backend.inspect(record.request, requireNotNull(record.attemptId)) {
+                        val sampled = stopRequested
+                        if (++checks == 5) stopRequested = true
+                        sampled
+                    }
+                }
+                assertTrue(stopRequested)
+                assertEquals(5, checks)
+                assertFalse(backend.hasUnreleasedResources)
+                assertNull(record.comparisonCopy(lease))
+                assertNull(PrivateTrialReuseRegistry.forRequest(record.request))
+                f.assertOriginalAndUnpublished(record)
+            }
+        } finally { session.close() }
+    }
+
+    /** Tiny native inputs may be half-sized before physical orientation. Use only inspected output geometry. */
+    private fun AutoDevelopRecord.comparisonCopy(lease: PrivateTrialReuseLease?): IntArray? {
+        val output = requireNotNull(observed).output
+        return lease?.comparisonCopy(output.width, output.height)
     }
 
     private class DecodeCounter { var factories = 0; var loads = 0; var closeFailures = 0 }
