@@ -170,3 +170,9 @@ T051は保存側の契約であり、#78/#79へのfield/geometry採用、実prof
 - [x] T052 [US2] 実bounded/manual/private producerのJPEG FPを同attemptの一過性結果として渡し、実close後の独立検査との一致だけを既存台帳へ固定する。同寸法同長改変、close/停止、成功commit故障、明示retry、旧復旧互換を検証する（FR-004/005/006/007/009、SC-001/002/003/005）。
 
 T052は出力FPの受渡しのみ。原寸の実producer/policy採用・基準JPEGのFULL昇格・自動公開/撮影投入は含めない。
+
+## Phase 16: 撮影時のstrict要求snapshot
+
+- [x] T053 [US2] 撮影時の固定strict宣言をCaptureReceipt版4へ保持し、正常全形式受領・同capture/FPのSHARED_ONLYから未観測の同一要求を再生成する。旧intent非昇格、更新/復旧・commit応答喪失、容量境界、不一致/中断/部分受領と重複生成を検証する（T048の保存・要求生成部分、FR-001/006/008/009、SC-001/002/003）。
+
+T053はsnapshot保存と純粋な要求生成のみ。T048のprocess owner投入・重複通知/再起動接続、実producer/資源確認、撮影caller、実機受入と自動公開は未完了のままとする。

@@ -470,3 +470,14 @@ bounded/manual/private adapterは`JpegGenerationAttempt`が書込み・readback�
 明示retryの別attemptでのみ一過性結果を捨てる。一致したFPは既存台帳のoutputFingerprintへ保存し、schemaを変えない。
 旧RENDERED/PUBLISHINGは既存の保存済みFPで復旧し、過去の記録をproducer照合済みと読み替えない。
 これは基準JPEG/1024試験のFULL昇格や実producer/policy採用、自動公開・撮影投入を行わない境界変更である。
+
+### 撮影時strict宣言の保存と要求再生成
+
+`CaptureDevelopIntent`は新strict品質と固定`OriginalRenderDeclaration`を対で保持し、CaptureReceipt版4へ保存する。
+宣言なしの旧FINAL intentとopt-outは従来の版3で書き、版1〜3の読取/意味を維持してstrictへ補完しない。
+旧appは版4を未知版として保全停止するため、版4記録を捨てず対応版で復旧する。現在の撮影callerはintentなしであり、通常撮影の書込は版3のままである。
+宣言は実profile・顔/EV・寸法の成功値ではなく、撮影時の入力/geometry/検出器/測光policyとEV範囲の要求である。
+原寸要求の純粋な再生成は正常FILES_RECEIVED・全期待形式受領・原本FPと、同capture/FPのSHARED_ONLY記録だけを対象にし、
+記録済URIと固定recipe/renderer/宣言から世代1の未観測strict要求を作る。同じsnapshotは同じ要求を返し、時刻/乱数/現在設定を使わない。
+これは共有原本の現時点の読取/権限/内容一致やprovider成立の証明ではなく、将来のIO ownerは台帳を読み直し、既存の原本照合を維持する。
+撮影callerはintentなしのままとし、queue投入・catalog登録・自動公開を接続しない。基準JPEG/1024試験のFULL昇格も行わない。

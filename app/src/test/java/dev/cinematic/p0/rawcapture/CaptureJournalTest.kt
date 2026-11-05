@@ -155,7 +155,7 @@ class CaptureJournalTest {
         CaptureJournal(id, file).create(pair)
         val good = file.contents!!.copyOf()
         val badChecksum = good.copyOf().also { it[10] = (it[10].toInt() xor 1).toByte() }
-        val badVersion = withDigest(good.dropLast(32).toByteArray().also { it[7] = 4 })
+        val badVersion = withDigest(good.dropLast(32).toByteArray().also { it[7] = 5 })
         val trailing = withDigest(good.dropLast(32).toByteArray() + byteArrayOf(0))
         for (bad in listOf(badChecksum, badVersion, trailing, byteArrayOf(0), ByteArray(4097))) {
             file.contents = bad
