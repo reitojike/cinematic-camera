@@ -48,9 +48,15 @@ jobs:
             "$readelf" --dyn-syms --wide "$RUNNER_TEMP/normal-$abi.so" > "$RUNNER_TEMP/normal-$abi.symbols"
             "$readelf" --dyn-syms --wide "$RUNNER_TEMP/probe-$abi.so" > "$RUNNER_TEMP/probe-$abi.symbols"
             grep -F 'Java_dev_cinematic_p0_raw_NativeDngDecoder_decode' "$RUNNER_TEMP/normal-$abi.symbols"
-            ! grep -F 'Java_dev_cinematic_rawprobe_' "$RUNNER_TEMP/normal-$abi.symbols"
+            if grep -F 'Java_dev_cinematic_rawprobe_' "$RUNNER_TEMP/normal-$abi.symbols"; then
+              echo 'Diagnostic JNI leaked into the camera app' >&2
+              exit 1
+            fi
             grep -F 'Java_dev_cinematic_rawprobe_NativeFullResolutionProbe_inspect' "$RUNNER_TEMP/probe-$abi.symbols"
-            ! grep -F 'Java_dev_cinematic_p0_raw_' "$RUNNER_TEMP/probe-$abi.symbols"
+            if grep -F 'Java_dev_cinematic_p0_raw_' "$RUNNER_TEMP/probe-$abi.symbols"; then
+              echo 'Camera JNI leaked into the diagnostic app' >&2
+              exit 1
+            fi
           done
           aapt="$ANDROID_HOME/build-tools/36.0.0/aapt"
           "$aapt" dump xmltree rawprobe/build/outputs/apk/normal/debug/rawprobe-normal-debug.apk AndroidManifest.xml > "$RUNNER_TEMP/rawprobe-normal.xml"
