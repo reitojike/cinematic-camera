@@ -3,6 +3,14 @@ package dev.cinematic.p0.photoroll
 internal fun canOpenPhotoRoll(busy: Boolean, recordingBusy: Boolean, ownsCapture: Boolean, unknown: Boolean) =
     !busy && !recordingBusy && !ownsCapture && !unknown
 
+/** A new recipe must not discard the owner of an in-flight or uncertain public Save. */
+internal fun canBeginStrengthEdit(mode: PhotoRollPreviewMode, foreground: Boolean, savePending: Boolean,
+    savePhase: PhotoRollSavePhase?): Boolean = foreground && when (mode) {
+    PhotoRollPreviewMode.PRIVATE_TRIAL -> true
+    PhotoRollPreviewMode.STAGE_CLEAR -> !savePending && savePhase in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED)
+    else -> false
+}
+
 internal enum class PhotoRollPhase { EMPTY, CHECKING, RENDERING, DISPLAYED, BLOCKED, PAUSED }
 internal enum class PhotoRollPreviewMode { STAGE_CLEAR, DNG_TRIAL, STAGE_CLEAR_TRIAL, PRIVATE_TRIAL }
 

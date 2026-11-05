@@ -24,7 +24,8 @@ internal data class PhotoRollRenderRequest(
 )
 
 internal sealed interface PhotoRollRenderResult {
-    /** Display preview only, not a full-resolution JPEG or publication receipt. */
+    /** Display preview only, not a full-resolution JPEG or publication receipt.
+     * Every result transfers fresh UI-owned Bitmap copies; no alias or reuse across render calls. */
     data class Preview(
         val bitmap: Bitmap,
         val mode: PhotoRollPreviewMode,
@@ -34,12 +35,25 @@ internal sealed interface PhotoRollRenderResult {
         val comparisonBitmap: Bitmap? = null,
         /** Frozen strength of a checked private artifact, never the UI's current draft. */
         val trialStrength: Double? = null,
+        /** Frozen strength of a publishable completed render, checked before editing or Save. */
+        val appliedStrength: Double? = null,
+        /** What the same-size Before pixels represent; required for completed-render comparison. */
+        val comparisonDescription: String? = null,
     ) : PhotoRollRenderResult {
         val comparisonLabel get() = comparisonBitmap?.let {
-            "RAWの基準表示（撮影時WB・暫定色、露出補正・ルックなし）"
+            comparisonDescription ?: if (mode == PhotoRollPreviewMode.PRIVATE_TRIAL)
+                "RAWの基準表示（撮影時WB・暫定色、露出補正・ルックなし）" else null
         }
     }
     data class Unavailable(val reason: String) : PhotoRollRenderResult
+}
+
+/** Rejected or superseded display copies never remain owned by a cancelled screen request. */
+internal fun PhotoRollRenderResult.Preview.recycleDisplayPixels() {
+    if (!bitmap.isRecycled) bitmap.recycle()
+    comparisonBitmap?.let { before ->
+        if (before !== bitmap && !before.isRecycled) before.recycle()
+    }
 }
 
 /**
