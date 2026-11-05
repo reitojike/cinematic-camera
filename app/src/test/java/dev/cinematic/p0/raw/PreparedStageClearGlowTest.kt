@@ -47,4 +47,27 @@ class PreparedStageClearGlowTest {
         foundation.renderTrial(faces, .5) { false }
         assertTrue(foundation.previewFieldBytes > 0)
     }
+
+    @Test fun portrait1024PreviewMatchesExistingLook() {
+        val width = 768; val height = 1024
+        val pixels = FloatArray(width * height * 3) { i ->
+            val x = (i / 3) % width; val y = (i / 3) / width
+            when {
+                x in 380..400 && y in 200..240 -> if (i % 3 == 0) 1.8f else .7f
+                x < 16 || y > height - 16 -> .015f
+                else -> ((x * 13 + y * 7 + i % 3 * 31) % 257) / 256f
+            }
+        }
+        val base = LinearSrgbImage(width, height, pixels)
+        val faces = FaceMask(width, height, FloatArray(width * height))
+        val foundation = TrialPreparedFoundation(base, width, height, true, 0.0)
+        for (strength in listOf(.35, .8)) {
+            val expected = StageClearLook.renderFromBase(base, faces, strength)
+            val actual = foundation.renderTrial(faces, strength) { false }
+            var maximum = 0.0
+            repeat(pixels.size) { maximum = maxOf(maximum, abs(expected.image[it] - actual.image[it]).toDouble()) }
+            assertTrue("portrait difference=$maximum strength=$strength", maximum < .00002)
+        }
+        assertTrue(foundation.previewFieldBytes in 1..500_000)
+    }
 }
