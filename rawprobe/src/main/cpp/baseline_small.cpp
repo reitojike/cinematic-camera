@@ -28,7 +28,7 @@ unsigned srgb(uint16_t sample) {
 }
 
 void BaselineSmall::parse(const std::vector<unsigned char>& bytes) {
-    if (bytes.size() > maxBytes || read(bytes, 0, 4) != 0x002a4949) reject();
+    if (bytes.size() > byteLimit() || read(bytes, 0, 4) != 0x002a4949) reject();
     const size_t ifd = read(bytes, 4, 4), count = read(bytes, ifd, 2);
     if (count > 64 || read(bytes, ifd + 2 + count * 12, 4) != 0) reject();
     std::map<unsigned, Entry> fields;
@@ -63,7 +63,7 @@ void BaselineSmall::parse(const std::vector<unsigned char>& bytes) {
     active = values(50829, 4);
     const auto o = values(50719, 2), s = values(50720, 2);
     origin = {o[0], o[1]}; size = {s[0], s[1]};
-    if (!width || !height || width > 128 || height > 128 || uint64_t(width) * height > maxPixels || orientation < 1 || orientation > 8) reject();
+    if (!width || !height || width > dimensionLimit() || height > dimensionLimit() || uint64_t(width) * height > pixelLimit() || orientation < 1 || orientation > 8) reject();
     if (active[0] >= active[2] || active[1] >= active[3] || active[2] > height || active[3] > width || !size[0] || !size[1] ||
         uint64_t(origin[0]) + size[0] > active[3] - active[1] || uint64_t(origin[1]) + size[1] > active[2] - active[0]) reject();
     if (fields.count(50718)) { const auto scale = values(50718, 2); if (scale[0] != 1 || scale[1] != 1) reject(); }
@@ -111,15 +111,16 @@ jobject BaselineSmall::frame(JNIEnv* env, jobject observer, const libraw_process
     }
     if (AndroidBitmap_unlockPixels(env, bitmap)) throw std::runtime_error("BASELINE_BITMAP");
     unlock.locked = false;
-    jbyteArray reference = env->NewByteArray(static_cast<jsize>(image.data_size));
+    jbyteArray reference = env->NewByteArray(large ? 0 : static_cast<jsize>(image.data_size));
     if (!reference) return nullptr;
-    env->SetByteArrayRegion(reference, 0, image.data_size, reinterpret_cast<const jbyte*>(image.data));
+    if (!large) env->SetByteArrayRegion(reference, 0, image.data_size, reinterpret_cast<const jbyte*>(image.data));
     if (env->ExceptionCheck()) return nullptr;
     std::ostringstream geometry;
     geometry << "{\"scope\":\"DIAGNOSTIC_BASELINE_NO_R7_NO_STAGE_CLEAR\",\"policy\":\"probe-integer-standard-crop-v1\",\"rawWidth\":" << width
              << ",\"rawHeight\":" << height << ",\"active\":[" << active[1] << ',' << active[0] << ',' << active[3] - active[1] << ',' << active[2] - active[0]
              << "],\"crop\":[" << active[1] + origin[0] << ',' << active[0] + origin[1] << ',' << size[0] << ',' << size[1]
-             << "],\"orientation\":" << orientation << ",\"width\":" << w << ",\"height\":" << h << ",\"halfSize\":0,\"resized\":false,\"packedPixels\":" << packed << '}';
+             << "],\"orientation\":" << orientation << ",\"width\":" << w << ",\"height\":" << h << ",\"halfSize\":0,\"resized\":false,\"packedPixels\":" << packed
+             << ",\"oracle\":\"" << (large ? "NONE_LARGE_DIAGNOSTIC" : "RGB16_SMALL") << "\"}";
     jstring details = env->NewStringUTF(geometry.str().c_str());
     if (!details) return nullptr;
     jclass result = env->FindClass("dev/cinematic/rawprobe/BaselineFrame");

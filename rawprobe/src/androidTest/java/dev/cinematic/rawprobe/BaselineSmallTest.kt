@@ -116,7 +116,7 @@ class BaselineSmallTest {
                 smallGeometryDng(65, 65),
             )
         for (bytes in bad) {
-            val allocation = BaselineAllocation { check(it != "process") }
+            val allocation = BaselineAllocation(stage = { check(it != "process") })
             val file = source(dir, bytes)
             try {
                 ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
