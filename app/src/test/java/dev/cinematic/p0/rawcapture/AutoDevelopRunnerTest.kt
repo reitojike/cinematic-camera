@@ -208,6 +208,87 @@ class AutoDevelopRunnerTest {
         }
     }
 
+    @Test fun producerHashMustMatchTheIndependentReadbackEvenAtTheSameDimensionsAndLength() {
+        val changed = DngContentVerifier.identify(3, { ByteArrayInputStream("abd".toByteArray()) })
+        for (readback in listOf(changed, changed.copy(bytes = 4))) {
+            val f = Fixture()
+            f.admission.updateConditions(allowed)
+            f.backend.inspectedFingerprint = readback
+            f.backend.closeFails = true
+            assertEquals(AutoRunStatus.RESOURCES_HELD, f.runner.advance().status)
+            assertEquals(0, f.backend.inspections)
+            assertNull(f.admission.tryStart())
+            f.backend.closeFails = false
+            repeat(3) { assertEquals(AutoRunStatus.HELD, f.runner.advance().status) }
+            val held = f.journal.read()!!
+            assertEquals(AutoJobReason.INVALID_OUTPUT, held.reason)
+            assertNull(held.outputFingerprint)
+            assertNotNull(held.attemptId)
+            assertEquals(1, f.backend.starts)
+            assertEquals(1, f.backend.inspections)
+            assertEquals(0, f.backend.publisherInstances)
+            assertFalse(f.runner.hasUnreleasedResources)
+        }
+    }
+
+    @Test fun matchedProducerResultSurvivesSuccessCommitFaultsWithoutReadingAReplacementOutput() {
+        for (fault in listOf("before", "after", "readback")) {
+            val f = Fixture()
+            f.admission.updateConditions(allowed)
+            f.storage.renderedFault = fault
+            assertThrows(IOException::class.java) { f.runner.advance() }
+            val attempt = f.journal.read()!!.attemptId
+            assertFalse(f.runner.hasUnreleasedResources)
+            val replacement = fingerprint.copy(sha256 = "f".repeat(64))
+            f.backend.producedFingerprint = replacement
+            f.backend.inspectedFingerprint = replacement
+            assertEquals(AutoRunStatus.PUBLISHED, f.runner.advance().status)
+            val record = f.journal.read()!!
+            assertEquals(attempt, record.attemptId)
+            assertEquals(fingerprint, record.outputFingerprint)
+            assertEquals(fingerprint, record.completed().original!!.outputFingerprint)
+            assertEquals(1, f.backend.starts)
+            assertEquals(1, f.backend.inspections)
+        }
+    }
+
+    @Test fun explicitRetryDiscardsTheStoppedAttemptsProducerResult() {
+        val f = Fixture()
+        f.admission.updateConditions(allowed)
+        var capture: AutoDevelopCoordinator.CaptureReservation? = null
+        f.backend.onRender = { capture = f.admission.reserveCapture() }
+        assertEquals(AutoRunStatus.RETRYABLE, f.runner.advance().status)
+        val oldAttempt = f.journal.read()!!.attemptId
+        f.admission.releaseCapture(capture!!)
+        f.journal.retry(f.journal.read()!!.revision)
+        val replacement = fingerprint.copy(sha256 = "f".repeat(64))
+        f.backend.producedFingerprint = replacement
+        f.backend.inspectedFingerprint = replacement
+        f.backend.onRender = {}
+        assertEquals(AutoRunStatus.PUBLISHED, f.runner.advance().status)
+        val record = f.journal.read()!!
+        assertNotEquals(oldAttempt, record.attemptId)
+        assertEquals(record.attemptId, record.observed!!.original!!.binding.attemptId)
+        assertEquals(replacement, record.outputFingerprint)
+        assertEquals(2, f.backend.starts)
+        assertEquals(1, f.backend.inspections)
+    }
+
+    @Test fun captureStopDuringIndependentInspectionRejectsALateMatchingProducerResult() {
+        val f = Fixture()
+        f.admission.updateConditions(allowed)
+        var capture: AutoDevelopCoordinator.CaptureReservation? = null
+        f.backend.onInspect = { capture = f.admission.reserveCapture() }
+        assertEquals(AutoRunStatus.RETRYABLE, f.runner.advance().status)
+        val record = f.journal.read()!!
+        assertEquals(AutoJobReason.INTERRUPTED, record.reason)
+        assertNull(record.outputFingerprint)
+        assertEquals(0, f.backend.publisherInstances)
+        assertTrue(f.backend.closed)
+        assertFalse(f.runner.hasUnreleasedResources)
+        f.admission.releaseCapture(capture!!)
+    }
+
     @Test fun unsupportedDetectedByTheActualRendererIsHeldAfterClosingItsInputs() {
         val f = Fixture()
         f.admission.updateConditions(allowed)
@@ -468,6 +549,7 @@ class AutoDevelopRunnerTest {
         var interruptedFault = "none"
         var missingObservationFault = "none"
         var invalidOutputFault = "none"
+        var renderedFault = "none"
         private var failNextRead = false
         override fun read(maxBytes: Int): ByteArray? {
             if (failNextRead) { failNextRead = false; throw IOException("readback fault") }
@@ -482,6 +564,7 @@ class AutoDevelopRunnerTest {
                     missingObservationFault.also { missingObservationFault = "none" }
                 record.phase == AutoJobPhase.HELD && record.reason == AutoJobReason.INVALID_OUTPUT ->
                     invalidOutputFault.also { invalidOutputFault = "none" }
+                record.phase == AutoJobPhase.RENDERED -> renderedFault.also { renderedFault = "none" }
                 else -> "none"
             }
             if (fault == "before") throw IOException("before interrupted commit")
@@ -496,6 +579,9 @@ class AutoDevelopRunnerTest {
         var publishes = 0
         var publisherInstances = 0
         var verifications = 0
+        var inspections = 0
+        var inspectedFingerprint = fingerprint
+        var producedFingerprint = fingerprint
         var closed = false
         var closeFails = false
         var renderFails = false
@@ -507,6 +593,7 @@ class AutoDevelopRunnerTest {
         var adapterQuality = AutoRenderQuality.FINAL_ORIGINAL_STRICT
         val attempts = mutableListOf<String>()
         var onRender: () -> Unit = {}
+        var onInspect: () -> Unit = {}
         var onCancel: () -> Unit = {}
         var beforePublish: () -> Unit = {}
         var receiptChange: (AutoRenderReceipt) -> AutoRenderReceipt = { it }
@@ -522,19 +609,23 @@ class AutoDevelopRunnerTest {
             attempts += attemptId
             closed = false
             return object : AutoRenderAttempt {
-                override fun render(shouldStop: () -> Boolean): AutoRenderReceipt {
+                override fun render(shouldStop: () -> Boolean): AutoRenderOutput {
                     starts++
                     onRender()
                     if (renderUnsupported) throw AutoRenderUnsupported()
                     if (renderFails) throw IOException("render fault")
-                    return receiptChange(request.syntheticReceipt(attemptId, 2000, 1500, 3))
+                    return AutoRenderOutput(receiptChange(request.syntheticReceipt(attemptId, 2000, 1500, 3)), producedFingerprint)
                 }
                 override fun close() { if (closeFails) throw IOException("close fault"); closed = true }
                 override fun requestStop() = onCancel()
             }
         }
-        override fun inspect(request: AutoDevelopRequest, attemptId: String, shouldStop: () -> Boolean) =
-            JpegInspection(JpegOutputDescription(2000, 1500, 1, "sRGB", 3), fingerprint)
+        override fun inspect(request: AutoDevelopRequest, attemptId: String, shouldStop: () -> Boolean): JpegInspection {
+            assertTrue(closed)
+            inspections++
+            onInspect()
+            return JpegInspection(JpegOutputDescription(2000, 1500, 1, "sRGB", 3), inspectedFingerprint)
+        }
         override fun publication(record: AutoDevelopRecord, isCurrent: () -> Boolean): AutoDevelopPublication {
             publisherInstances++
             return object : AutoDevelopPublication {

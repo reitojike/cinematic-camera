@@ -81,6 +81,10 @@ internal data class AutoDevelopRequest(
 internal data class AutoRenderReceipt(val request: AutoDevelopRequest, val output: JpegOutputDescription,
     val face: RenderedFaceState = request.face, val exposure: RenderedExposureState = request.exposure,
     val original: OriginalRenderObservation? = null)
+
+/** Transient producer result. The owner must independently inspect the same output after actual close.
+ * Only their matching fingerprint is committed in the existing journal; this is not completion proof. */
+internal data class AutoRenderOutput(val receipt: AutoRenderReceipt, val fingerprint: OriginalFingerprint)
 internal class AutoRenderUnsupported : IOException("Renderer cannot satisfy this fixed request")
 
 /**
@@ -90,7 +94,7 @@ internal class AutoRenderUnsupported : IOException("Renderer cannot satisfy this
  * close returning is resource acknowledgement, not cancellation. Never report PREVIEW as FINAL.
  */
 internal interface AutoRenderAttempt : Closeable {
-    fun render(shouldStop: () -> Boolean): AutoRenderReceipt
+    fun render(shouldStop: () -> Boolean): AutoRenderOutput
     /** Optional native CancellationSignal bridge. Thread-safe/idempotent; never close or publish here. */
     fun requestStop() {}
 }

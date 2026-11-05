@@ -49,10 +49,10 @@ class ManualDevelopQueueTest {
                 if (unavailable) throw SecurityException("grant expired")
             }
             override fun createAttempt(request: AutoDevelopRequest, attemptId: String) = object : AutoRenderAttempt {
-                override fun render(shouldStop: () -> Boolean): AutoRenderReceipt {
+                override fun render(shouldStop: () -> Boolean): AutoRenderOutput {
                     starts++; onRender()
-                    return AutoRenderReceipt(request, JpegOutputDescription(768, 1024, 1, "sRGB", 3),
-                        RenderedFaceState.VERIFIED_NONE, RenderedExposureState.SUPPORTED)
+                    return AutoRenderOutput(AutoRenderReceipt(request, JpegOutputDescription(768, 1024, 1, "sRGB", 3),
+                        RenderedFaceState.VERIFIED_NONE, RenderedExposureState.SUPPORTED), fp)
                 }
                 override fun close() { if (failClose) throw IOException("close unknown") }
             }

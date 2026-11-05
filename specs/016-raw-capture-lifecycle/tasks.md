@@ -164,3 +164,9 @@ T050はT046の先行部分のみ。requestの事前成功宣言とreceiptの既�
 - [x] T051 [US2] 新strict宣言/実観測を同attemptとclose後の出力FPに結び付け、既存両台帳と公開gateへ保存・照合する。旧版/欠落/取り違え/原寸偽装/4KiB容量/commit故障とmanual/private互換を検証する（T046の保存側、FR-006/007/009、SC-001/002/005）。
 
 T051は保存側の契約であり、#78/#79へのfield/geometry採用、実profile/検出器/EV policyの採用、T047〜049のproducer・資源確認・撮影投入・実機受入を完了にしない。
+
+## Phase 15: producer出力と保存ownerの照合
+
+- [x] T052 [US2] 実bounded/manual/private producerのJPEG FPを同attemptの一過性結果として渡し、実close後の独立検査との一致だけを既存台帳へ固定する。同寸法同長改変、close/停止、成功commit故障、明示retry、旧復旧互換を検証する（FR-004/005/006/007/009、SC-001/002/003/005）。
+
+T052は出力FPの受渡しのみ。原寸の実producer/policy採用・基準JPEGのFULL昇格・自動公開/撮影投入は含めない。
