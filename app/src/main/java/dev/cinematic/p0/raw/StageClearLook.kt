@@ -19,7 +19,7 @@ internal object StageClearLook {
         checkpoint()
         val originalSkin = StageClearGlow.skinWeight(base)
         checkpoint()
-        val glowed = StageClearGlow.render(base, strength)
+        val glowed = StageClearGlow.render(base, strength, originalSkin)
         checkpoint()
         return StageClearProtections.finish(glowed, faces) { input ->
             checkpoint()
