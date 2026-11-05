@@ -70,7 +70,7 @@ host結果はGit管理外の`.android/`へ置きます。診断appのAndroid設�
 
 main `c0ba175`を基点としたローカル候補、API37/x86_64/debug、RAM設定4096MiB・2 cores・software GPU。
 normalの実max heap192MiB、largeHeap576MiB。各successは1回でcold/warm/他作業負荷を統制した性能比較ではありません。
-その後main `367d2ee`へ取り込み、同じnative/fixture/attemptソースのビルドを再検証します。
+その後main `c5e1a4f`（強度UI・保存保護・依存更新を含む）へ取り込み、同じnative/fixture/attemptソースのビルドをCIで再検証します。
 下表は**取り込み前の実行結果**であり、現在headのAPKを新たに実行した結果ではありません。
 
 |出力|heap|時間秒|managed観測最大MiB|native観測最大MiB|PSS観測最大MiB|
