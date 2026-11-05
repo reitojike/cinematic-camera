@@ -27,6 +27,26 @@ internal object StageClearOrton {
     }
 
     private fun applyOrton(image: LinearSrgbImage, skinWeight: FloatPlane): LinearSrgbImage {
+        // The encoded/bright/soft arrays are no longer needed by chroma protection.
+        val candidate = mixOrton(image)
+        val output = FloatArray(image.pixelCount * 3)
+        val before = FloatArray(3)
+        val after = FloatArray(3)
+        repeat(image.pixelCount) { p ->
+            StageClearColor.toLab(image, p * 3, before)
+            StageClearColor.toLab(candidate, p * 3, after)
+            val c0 = hypot(before[1], before[2])
+            val c1 = hypot(after[1], after[2])
+            val keep = skinWeight[p]
+            val scale = (1f - keep) + keep * min(1f, c0 / max(c1, StageClearOrtonV1.CHROMA_FLOOR.toFloat()))
+            after[1] *= scale
+            after[2] *= scale
+            StageClearColor.toRgb(after, output, p * 3)
+        }
+        return LinearSrgbImage.takeOwnership(image.width, image.height, output)
+    }
+
+    private fun mixOrton(image: LinearSrgbImage): LinearSrgbImage {
         val encoded = FloatArray(image.pixelCount * 3) { StageClearColor.linearToUnit(image[it]) }
         val bright = FloatArray(encoded.size) { i ->
             val inverse = 1f - encoded[i]
@@ -47,22 +67,7 @@ internal object StageClearOrton {
                 mixed[j] = if (image[j] > 1f) max(image[j], value) else value
             }
         }
-        val candidate = LinearSrgbImage.takeOwnership(image.width, image.height, mixed)
-        val output = FloatArray(mixed.size)
-        val before = FloatArray(3)
-        val after = FloatArray(3)
-        repeat(image.pixelCount) { p ->
-            StageClearColor.toLab(image, p * 3, before)
-            StageClearColor.toLab(candidate, p * 3, after)
-            val c0 = hypot(before[1], before[2])
-            val c1 = hypot(after[1], after[2])
-            val keep = skinWeight[p]
-            val scale = (1f - keep) + keep * min(1f, c0 / max(c1, StageClearOrtonV1.CHROMA_FLOOR.toFloat()))
-            after[1] *= scale
-            after[2] *= scale
-            StageClearColor.toRgb(after, output, p * 3)
-        }
-        return LinearSrgbImage.takeOwnership(image.width, image.height, output)
+        return LinearSrgbImage.takeOwnership(image.width, image.height, mixed)
     }
 
     /** Unlike stage 2, this ramp compares encoded display luminance. */
