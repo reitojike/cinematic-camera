@@ -92,7 +92,9 @@ internal class JpegGenerationAttempt(
                 if (trialReuse != null) candidate = TrialPreparedFoundation(base, frame.sourceWidth, frame.sourceHeight,
                     frame.physicallyOriented, prepared.externalEv, adjustments = request.recipe.adjustments)
             }
-            val result = StageClearLook.renderFromBase(base, prepared.faces, request.recipe.strength, stop).image
+            val result = if (trialReuse != null) {
+                (cached ?: requireNotNull(candidate)).renderTrial(prepared.faces, request.recipe.strength, shouldStop).image
+            } else StageClearLook.renderFromBase(base, prepared.faces, request.recipe.strength, stop).image
             checkpoint()
             val written = resources.output(target.createOutput()).use { raw ->
                 val encoded = MeasuredOutput(raw, shouldStop)

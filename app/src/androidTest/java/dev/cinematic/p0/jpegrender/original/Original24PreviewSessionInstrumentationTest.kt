@@ -119,21 +119,28 @@ class Original24PreviewSessionInstrumentationTest {
         val bitmaps = mutableListOf<Bitmap>()
         try {
             val first = session.render(.2).also { bitmaps += it }
+            assertEquals(1, session.previewFieldBuilds)
+            assertTrue(session.previewFieldBytes > 0)
             assertFalse(scratch.exists())
             assertFalse(session.hasUnreleasedResources)
             assertEquals(Bitmap.Config.ARGB_8888, first.config)
             assertTrue(first.colorSpace?.isSrgb == true)
             val readsAfterDecode = sourceReads
             val second = session.render(.8).also { bitmaps += it }
+            assertEquals(1, session.previewFieldBuilds) // Strength alone retains the same fields.
             assertEquals(2, sourceReads - readsAfterDecode) // Two source fences; no snapshot/decode input read.
             assertNotSame(first, second)
             assertNotEquals(pixels(first).contentHashCode(), pixels(second).contentHashCode())
             val adjusted = session.render(.8, PhotoAdjustments(70.0, .7)).also { bitmaps += it }
+            assertEquals(2, session.previewFieldBuilds) // Warmth and EV replace the R7 base and fields.
             assertNotEquals(pixels(second).contentHashCode(), pixels(adjusted).contentHashCode())
+            session.render(.8, PhotoAdjustments(70.0, 1.0)).also { bitmaps += it }
+            assertEquals(3, session.previewFieldBuilds) // EV-only changes also invalidate the fields.
             assertFalse(scratch.exists())
             DngContentVerifier.verify(source.fingerprint, { input.inputStream() })
         } finally { session.close(); bitmaps.forEach { it.recycle() } }
         assertFalse(session.hasUnreleasedResources)
+        assertEquals(0, session.previewFieldBytes)
     }
 
     @Test fun sourceChangeFailsBeforeReuseAndNeverRestartsFailedSession() = fixture { input, root, source ->
@@ -146,6 +153,7 @@ class Original24PreviewSessionInstrumentationTest {
             val bytes = input.readBytes().also { it[it.lastIndex] = (it.last().toInt() xor 1).toByte() }
             input.writeBytes(bytes)
             assertThrows(IOException::class.java) { session.render(.6) }
+            assertEquals(0, session.previewFieldBytes)
             assertThrows(IllegalStateException::class.java) { session.render(.6) }
             assertFalse(session.hasUnreleasedResources)
         } finally { session.close() }
