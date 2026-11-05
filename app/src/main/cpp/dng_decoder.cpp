@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <vector>
 #include "w1_trial.h"
+#include "as_shot_xy.h"
 
 namespace {
 constexpr uint64_t kMaxFileBytes = 64ULL * 1024 * 1024;
@@ -56,17 +57,21 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
 
     // Construct after encoded: LibRaw releases all references before the snapshot is destroyed.
     cinematic::W1Metadata metadata(encoded.size());
+    cinematic::AsShotXyMetadata asShotMetadata(encoded.size());
     LibRaw raw(LIBRAW_OPTIONS_NO_DATAERR_CALLBACK);
     if (wbMode == 1) {
         raw.set_exifparser_handler(cinematic::W1Metadata::capture, &metadata);
         raw.imgdata.params.use_camera_matrix = 1;
+    } else {
+        raw.set_exifparser_handler(cinematic::AsShotXyMetadata::capture, &asShotMetadata);
     }
     raw.imgdata.rawparams.max_raw_memory_mb = 128;
     raw.set_progress_handler(progress, &cancel);
     const int opened = raw.open_buffer(encoded.data(), encoded.size());
     check(opened); // Preserve LibRaw cancellation/memory/source failures over partial metadata errors.
     std::array<float, 3> requestedWb{};
-    int observedTags = -1; // UNKNOWN in the unchanged as-shot route, where no callback is installed.
+    int observedTags = -1; // UNKNOWN unless a metadata-derived user WB is actually used.
+    bool whiteXyCompat = false;
     if (wbMode == 1) {
         requestedWb = metadata.requestedWb();
         observedTags = metadata.unappliedTags();
@@ -89,7 +94,11 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
         // Missing camera WB may trigger LibRaw's automatic fallback even with use_auto_wb=0.
         for (int c = 0; c < 3; ++c)
             if (!std::isfinite(raw.imgdata.color.cam_mul[c]) || raw.imgdata.color.cam_mul[c] <= .00001f)
-                fail("DNG_UNSUPPORTED");
+                whiteXyCompat = true;
+        if (whiteXyCompat) {
+            requestedWb = asShotMetadata.requestedWb(raw.imgdata.color);
+            observedTags = asShotMetadata.unappliedTags();
+        }
     }
 
     auto& params = raw.imgdata.params;
@@ -98,9 +107,9 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
     params.output_color = 1; // LibRaw linear sRGB/D65, not camera RGB or R7 base.
     params.output_bps = 16;
     params.gamm[0] = params.gamm[1] = 1.0;
-    params.use_camera_wb = wbMode == 0 ? 1 : 0;
+    params.use_camera_wb = wbMode == 0 && !whiteXyCompat ? 1 : 0;
     params.use_auto_wb = 0;
-    if (wbMode == 1) {
+    if (wbMode == 1 || whiteXyCompat) {
         params.user_mul[0] = requestedWb[0];
         params.user_mul[1] = 1.f;
         params.user_mul[2] = requestedWb[2];
@@ -119,6 +128,12 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
     check(raw.unpack());
     if (raw.error_count()) fail("DNG_UNSUPPORTED");
     if (wbMode == 1) cinematic::validateW1Processing(raw.imgdata.rawdata.color, requestedWb);
+    if (whiteXyCompat) {
+        // raw2image_start restores this exact colour state; attest the matrix that will be used.
+        asShotMetadata.requestedWb(raw.imgdata.rawdata.color);
+        try { cinematic::validateW1Processing(raw.imgdata.rawdata.color, requestedWb); }
+        catch (const std::runtime_error&) { fail("DNG_UNSUPPORTED"); }
+    }
     check(raw.dcraw_process());
     if (raw.error_count()) fail("DNG_UNSUPPORTED");
     int error = 0;
@@ -168,7 +183,7 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
     jmethodID constructor = env->GetMethodID(result, "<init>", "(IIII[FIFFFI)V");
     if (!constructor) return nullptr;
     return env->NewObject(result, constructor, width, height, sourceWidth, sourceHeight, output,
-                          wbMode, requestedWb[0], requestedWb[1], requestedWb[2], observedTags);
+                          whiteXyCompat ? 2 : wbMode, requestedWb[0], requestedWb[1], requestedWb[2], observedTags);
 }
 } // namespace
 

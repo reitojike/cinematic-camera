@@ -4,6 +4,10 @@ gradlew text eol=lf
 *.yml text eol=lf
 *.jar binary
 
+# Preserve the upstream license bytes and deterministic source notice in APK assets.
+app/src/main/assets/third_party/dng_temperature/LICENSE -text
+app/src/main/assets/third_party/dng_temperature/SOURCE.txt text eol=lf
+
 # Synthetic regression data is generated; keep review focused on code and generators.
 app/src/test/resources/stage_clear_*.csv linguist-generated=true
 app/src/test/resources/stage_clear_*.csv.gz binary linguist-generated=true

@@ -1,0 +1,52 @@
+Robertson (1968) isotemperature numerical table
+
+Copyright 2013 Colour Developers
+License: BSD-3-Clause; the full upstream license is retained in LICENSE.
+
+Scope
+Only the 31 rows of DATA_ISOTEMPERATURE_LINES_ROBERTSON1968 are transcribed
+into the application's own bounded correlated-colour-temperature implementation.
+The table's numerical values are unchanged, including u = 0.24792 at 325 mired.
+Python functions, imports, NumPy, the Colour runtime and Adobe DNG SDK source,
+functions or binaries are not included by this incorporation. This notice is
+separate from the existing LibRaw CDDL selection and its retained notices.
+
+Fixed upstream provenance
+Project: Colour, release v0.4.6
+Tag object: 8b59a791ea63d94b138833f6a6f2c50b9878122b
+Commit: 0c6f868c4b5c5ae861f868ba8015be3abf0f92f0
+Source:
+https://github.com/colour-science/colour/blob/0c6f868c4b5c5ae861f868ba8015be3abf0f92f0/colour/temperature/robertson1968.py
+Raw source:
+https://raw.githubusercontent.com/colour-science/colour/0c6f868c4b5c5ae861f868ba8015be3abf0f92f0/colour/temperature/robertson1968.py
+Source bytes: 11335
+Source SHA-256: 0259446376e0a93518a692e7de0322b4f851433feae32327c99d4cb646299a50
+Declaration through closing parenthesis: lines 67-99 inclusive.
+Numerical rows: lines 68-98 inclusive; 31 rows, four columns.
+Columns: reciprocal megakelvin (mired), CIE 1960 UCS u, CIE 1960 UCS v, slope.
+The exact LF-terminated declaration block (lines 67-99) is 1273 bytes.
+Block SHA-256: 7bc454094802d3f54b31ebc02e290c1c3451149c71a2d0c70fd6895b53f22eff
+
+License source:
+https://raw.githubusercontent.com/colour-science/colour/0c6f868c4b5c5ae861f868ba8015be3abf0f92f0/LICENSE
+License bytes: 1465
+License SHA-256: cd9efcd4b6ac5218189d90ffc25f9766f8411e62c5526c452145e1cc8b19baf7
+The license asset retains the original upstream UTF-8/LF bytes without edits.
+
+Upstream scientific references and attribution
+The table-specific documentation cites Wyszecki, Gunther, and Stiles, W. S.
+(2000), Color Science: Concepts and Methods, Quantitative Data and Formulae,
+Table 1(3.11), Isotemperature Lines, p. 228, Wiley, ISBN 978-0-471-39918-6.
+The upstream table and note credit Bruce Lindbloom for the 325 mired correction
+from 0.24702 to 0.24792. These references are retained as provenance, not as
+additional software dependencies or endorsements.
+The source module also cites Adobe DNG SDK 1.3.0.0 for its Python conversion
+functions. Those functions are outside this numerical-table incorporation;
+no claim is made that Colour's BSD license relicenses Adobe SDK code.
+
+Redistribution
+Keep the Colour copyright, BSD conditions and disclaimer with source copies.
+Include LICENSE and this source notice with binary distributions (here as APK
+assets). Do not use the copyright holder's or contributors' names to endorse
+or promote derived products without specific prior written permission.
+This provenance record is not legal certification.
