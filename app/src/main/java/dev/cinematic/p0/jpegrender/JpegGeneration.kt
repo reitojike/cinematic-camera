@@ -29,8 +29,24 @@ internal class JpegGenerationRecipe private constructor(
     companion object {
         const val SCHEMA = "stage-clear-bounded-jpeg-v1"
         const val TRIAL_SCHEMA = "stage-clear-private-no-face-trial-v1"
-        /** Fixed first-try policy, not a conversion of a completed recipe or mutable UI defaults. */
-        fun trial() = JpegGenerationRecipe(AndroidAsShotJpegFrames.CONTRACT, AsShotNoFaceTrialControls.POLICY, .5, 95, true)
+        /** Only strength varies. Input/controls/output remain the private trial policy, never completed output. */
+        fun trial(strength: Double = .5) = JpegGenerationRecipe(AndroidAsShotJpegFrames.CONTRACT,
+            AsShotNoFaceTrialControls.POLICY, strength, 95, true)
+
+        /**
+         * Pure restoration of the existing canonical private recipe format. Rebuilding the entire snapshot
+         * rejects unknown fields, altered policies, duplicate/noncanonical values and completed recipes.
+         */
+        fun fromTrialSnapshot(snapshot: RenderRecipeSnapshot): JpegGenerationRecipe? {
+            if (snapshot.schema != TRIAL_SCHEMA) return null
+            val marker = ";strength="
+            val start = snapshot.payload.indexOf(marker).takeIf { it >= 0 }?.plus(marker.length) ?: return null
+            val end = snapshot.payload.indexOf(';', start).takeIf { it >= 0 } ?: return null
+            val strength = try { java.lang.Double.parseDouble(snapshot.payload.substring(start, end)) }
+                catch (_: NumberFormatException) { return null }
+            if (!strength.isFinite() || strength !in 0.0..1.0) return null
+            return trial(strength).takeIf { it.snapshot == snapshot }
+        }
         const val RENDERER = "stage-clear-bounded-jpeg-v1"
         const val MAX_EDGE = 1024
         const val MAX_BYTES = 8L * 1024 * 1024

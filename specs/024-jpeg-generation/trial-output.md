@@ -4,7 +4,7 @@
 
 ## 要件
 
-- TR-001: recipeは固定as-shot暫定入力・強度0.5・quality95・長辺1024・既存中央p97診断EV・明示空foundation ROI・顔保護無効を記録する。schemaは完成用と異なる。R7PreviewInputsのAS_SHOT_BEFORE_W1だけを使い、W1後の画像でEVを推定しない。
+- TR-001: recipeは固定as-shot暫定入力・有限な強度0〜1（既定0.5）・quality95・長辺1024・既存中央p97診断EV・明示空foundation ROI・顔保護無効を記録する。schemaは完成用と異なる。既存の0.5 snapshotは同一に保ち、可変強度も全fieldを正規形へ再構築した完全一致で検証する。R7PreviewInputsのAS_SHOT_BEFORE_W1だけを使い、W1後の画像でEVを推定しない。
 - TR-002: 明示的なtrial entryのみがtrial recipeを受ける。完成entryはtrial recipeを、trial entryは完成recipeを、IO前に拒否する。単一attemptのsingle-use/single-flight、原本/世代/target検査、8MiB、write/close/codec/readback/hash、原本前後再照合、協調停止・失敗close保持は共通実装を使う。
 - TR-003: 顔状態はNOT_RUN、露出はDIAGNOSTICのまま返す。空maskは保護無効の計算入力で、VERIFIED_NONEへ変換しない。診断をSUPPORTEDへ変換しない。最小trial policyの空ROIも独立して検査する。
 - TR-004: 結果はTrialJpegで、固定request/実output descriptor/JPEG fingerprint/試験状態を含む。CompletedRenderや公開ownerを含めず、publication contractを登録しない。完成publisherの拒否条件を変更しない。

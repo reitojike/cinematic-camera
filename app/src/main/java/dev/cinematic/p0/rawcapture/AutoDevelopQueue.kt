@@ -87,7 +87,13 @@ internal class AutoDevelopQueue(
         require(request.boundedManual)
         ManualDevelopHandle(this, request, currentManual(request).control)
     }
-    fun preparePrivateTrial(captureId: String, allocate: () -> AutoDevelopRequest): CompletableFuture<PrivateTrialHandle> = onIo {
+    fun preparePrivateTrial(captureId: String, allocate: () -> AutoDevelopRequest): CompletableFuture<PrivateTrialHandle> =
+        preparePrivateTrial(captureId, { false }, allocate)
+
+    /** IO-owner metadata gate before fencing/allocation. Future cancellation is not a resource-close acknowledgement. */
+    fun preparePrivateTrial(captureId: String, shouldStop: () -> Boolean,
+        allocate: () -> AutoDevelopRequest): CompletableFuture<PrivateTrialHandle> = onIo {
+        if (shouldStop()) throw java.util.concurrent.CancellationException("Private trial preparation cancelled before metadata allocation")
         val request = prepareInteractive(captureId, allocate)
         require(request.boundedTrial)
         PrivateTrialHandle(this, request, currentManual(request).control)

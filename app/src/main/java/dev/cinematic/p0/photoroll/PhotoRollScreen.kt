@@ -31,6 +31,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import dev.cinematic.p0.rawcapture.DngContentChanged
 import dev.cinematic.p0.rawcapture.DngVerificationStopped
+import dev.cinematic.p0.photoedit.PhotoEditInputToken
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -46,6 +47,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
     var retry by remember { mutableIntStateOf(0) }
     var explicitRetry by remember { mutableStateOf(false) }
     var selection by remember { mutableStateOf(PhotoRollSelection()) }
+    var trialEditor by remember { mutableStateOf(TrialStrengthEditor.empty()) }
     var listing by remember { mutableStateOf(PhotoRollListing(emptyList())) }
     var loadingTicket by remember { mutableStateOf<Any?>(null) }
     val loading = loadingTicket != null
@@ -74,16 +76,44 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
     val cancellationOwner = remember { PhotoRollWorkOwner<CancellationSignal> { it.cancel() } }
     val navigation = remember { CameraRollNavigation() }
     val listingWork = remember { CameraRollListingWork() }
+    val strengthTicket = trialEditor.ticket
+
+    fun updateTrialEditor(next: TrialStrengthEditor) {
+        val changesRequest = next.ticket != trialEditor.ticket
+        trialEditor = next
+        if (changesRequest) {
+            cancellationOwner.cancel()
+            preview = null; comparison = null; comparisonLabel = null
+            jpegSave = null; saveSnapshot = null; explicitRetry = false
+            selection = selection.pause()
+        }
+    }
+    fun cancelTrialEdit(token: PhotoEditInputToken) = updateTrialEditor(trialEditor.cancel(token))
+    fun resetTrialEdit(token: PhotoEditInputToken) {
+        val reset = trialEditor.reset(token)
+        if (reset === trialEditor) return
+        val nextToken = reset.session?.inputToken ?: return
+        updateTrialEditor(reset.apply(nextToken))
+    }
+    fun chooseDng(uri: String, files: Boolean) {
+        cancellationOwner.cancel(); explicitRetry = false; fromFiles = files
+        trialEditor = TrialStrengthEditor.empty()
+        preview = null; comparison = null; comparisonLabel = null
+        selection = selection.clear(); pageCursor = null; selectedUri = uri; retry++
+    }
 
     fun closeRoll() { navigation.exit(); cancellationOwner.cancel(); close() }
-    fun backToList() { cancellationOwner.cancel(); explicitRetry = false; selectedUri = null; preview = null; comparison = null; comparisonLabel = null; pageCursor = null; selection = selection.clear(); retry++ }
-    BackHandler { if (selectedUri != null) backToList() else closeRoll() }
+    fun backToList() { cancellationOwner.cancel(); explicitRetry = false; trialEditor = TrialStrengthEditor.empty(); selectedUri = null; preview = null; comparison = null; comparisonLabel = null; pageCursor = null; selection = selection.clear(); retry++ }
+    BackHandler {
+        val edit = trialEditor.session
+        if (edit != null) cancelTrialEdit(edit.inputToken) else if (selectedUri != null) backToList() else closeRoll()
+    }
     val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         permissionPending = false; pageCursor = null; listing = PhotoRollListing(emptyList()); accessEpoch++; retry++
     }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         pickerPending = false
-        if (uri != null) { cancellationOwner.cancel(); explicitRetry = false; fromFiles = true; selectedUri = uri.toString(); retry++ }
+        if (uri != null) chooseDng(uri.toString(), true)
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -102,6 +132,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
             if (event == Lifecycle.Event.ON_RESUME) accessEpoch++
             if (event == Lifecycle.Event.ON_PAUSE) {
                 cancellationOwner.cancel(); preview = null; comparison = null; comparisonLabel = null
+                trialEditor = trialEditor.pause()
                 listing = PhotoRollListing(emptyList()); pageCursor = null; folderMenu = false
                 selection = selection.pause()
             }
@@ -109,7 +140,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { cancellationOwner.cancel(); lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    LaunchedEffect(selectedUri, retry, lifecycleOwner, currentQuery, accessEpoch) {
+    LaunchedEffect(selectedUri, retry, lifecycleOwner, currentQuery, accessEpoch, strengthTicket) {
       lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
         preview = null
         comparison = null
@@ -161,10 +192,17 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
             val result = withContext(Dispatchers.IO) {
                 run {
                     val original = renderer.checkOriginal(repository, Uri.parse(source), selectedFromFiles, cancellation)
-                    withContext(Dispatchers.Main) { selection = selection.rendering(ticket) }
-                    val request = PhotoRollRenderRequest(original, mode = renderer.mode, maxEdge = renderer.maxEdge,
+                    withContext(Dispatchers.Main) {
+                        if (!selection.accepts(ticket) || !trialEditor.accepts(strengthTicket)) throw CancellationException("Photo selection changed")
+                        if (renderer.mode == PhotoRollPreviewMode.PRIVATE_TRIAL) {
+                            trialEditor = trialEditor.bind(original.reference)
+                                ?: throw PhotoRollSourceFailure("原本の内容や参照が変わりました。Filesから選び直してください")
+                        }
+                        selection = selection.rendering(ticket)
+                    }
+                    val request = PhotoRollRenderRequest(original, strength = strengthTicket.strength, mode = renderer.mode, maxEdge = renderer.maxEdge,
                         explicitRetry = retryThisRequest, onStage = { stage -> requestScope.launch(Dispatchers.Main) {
-                            if (selection.accepts(ticket)) renderStage = stage
+                            if (selection.accepts(ticket) && trialEditor.accepts(strengthTicket)) renderStage = stage
                         } })
                     val rendered = renderer.render(request, cancellation)
                     if (rendered is PhotoRollRenderResult.Preview) {
@@ -178,12 +216,16 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                         if (rendered.jpegSave?.matches(original.reference, rendered.mode) == false) {
                             throw PhotoRollSourceFailure("保存結果が選択した原本と一致しないため停止しました")
                         }
+                        if (rendered.mode == PhotoRollPreviewMode.PRIVATE_TRIAL && rendered.trialStrength != request.strength)
+                            throw PhotoRollSourceFailure("試験画像の強度が要求と一致しないため停止しました")
                     }
                     rendered
                 }
             }
-            if (selection.accepts(ticket)) when (result) {
+            if (selection.accepts(ticket) && trialEditor.accepts(strengthTicket)) when (result) {
                 is PhotoRollRenderResult.Preview -> {
+                    if (result.mode == PhotoRollPreviewMode.PRIVATE_TRIAL)
+                        trialEditor = trialEditor.shown(strengthTicket, requireNotNull(result.trialStrength))
                     preview = result.bitmap
                     comparison = result.comparisonBitmap?.takeIf { before ->
                         result.mode == PhotoRollPreviewMode.PRIVATE_TRIAL && !before.isRecycled &&
@@ -196,7 +238,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                     selection = selection.finish(ticket, true, when (result.mode) {
                         PhotoRollPreviewMode.DNG_TRIAL -> "DNGの試験表示です。ルック・顔検出は未適用で、色や明るさは暫定です。JPEG保存はまだ利用できません"
                         PhotoRollPreviewMode.STAGE_CLEAR_TRIAL -> "Stage Clear v1・強度0.5の試験表示です。撮影時WBと診断用の明るさを使用。顔検出・顔保護、W1とPixel固有の色変換は未対応で、色や明るさは暫定です。JPEG保存はまだ利用できません"
-                        PhotoRollPreviewMode.PRIVATE_TRIAL -> "${result.bitmap.width}×${result.bitmap.height} の縮小試験JPEGです。顔保護なし・診断露出・撮影時WBと暫定色を使用。Pixel固有の色変換は未対応です。共有写真へは保存しません"
+                        PhotoRollPreviewMode.PRIVATE_TRIAL -> "${result.bitmap.width}×${result.bitmap.height}・強度${trialStrengthLabel(requireNotNull(result.trialStrength))}の縮小試験JPEGです。顔保護なし・診断露出・撮影時WB/暫定色。共有写真へは保存しません"
                         PhotoRollPreviewMode.STAGE_CLEAR -> "Stage Clear v1・強度0.5・表示用。JPEG書き出しは未接続です"
                     })
                 }
@@ -298,7 +340,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                         onClick = { pageCursor = listing.nextCursor }) { Text("さらに読み込む") }
                 }) { item ->
                     if (item.kind == CameraRollKind.DNG) {
-                        cancellationOwner.cancel(); explicitRetry = false; fromFiles = false; pageCursor = null; selectedUri = item.uri
+                        chooseDng(item.uri, false)
                     } else if (!viewerPending) {
                         val cancellation = CancellationSignal()
                         cancellationOwner.begin(cancellation)
@@ -317,6 +359,15 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                     }
                 }
 
+            } else if (renderer.mode == PhotoRollPreviewMode.PRIVATE_TRIAL && trialEditor.session != null) {
+                TrialStrengthEditorPane(trialEditor, { trialEditor }, foreground, selection.phase, renderStage, selection.message,
+                    preview, comparison, comparisonLabel,
+                    change = { token, value -> trialEditor = trialEditor.change(token, value) },
+                    reset = ::resetTrialEdit,
+                    apply = { token -> updateTrialEditor(trialEditor.apply(token)) },
+                    cancel = ::cancelTrialEdit,
+                    close = { token -> trialEditor = trialEditor.close(token) },
+                    retry = { explicitRetry = true; retry++ }, modifier = Modifier.weight(1f))
             } else {
                 val status = when (selection.phase) {
                     PhotoRollPhase.CHECKING -> "原本を確認中…"
@@ -348,6 +399,8 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                     Modifier.fillMaxWidth().weight(1f), contentScale = ContentScale.Fit)
                 else Spacer(Modifier.weight(1f))
                 if (selection.phase == PhotoRollPhase.DISPLAYED) {
+                    if (renderer.mode == PhotoRollPreviewMode.PRIVATE_TRIAL) TextButton(enabled = foreground,
+                        onClick = { trialEditor = trialEditor.begin(tapStep = .01) }) { Text("強度を試す") }
                     val owner = jpegSave
                     val saved = saveSnapshot
                     Text(if (owner == null) unavailableJpegSaveMessage(renderer.mode)
