@@ -9,7 +9,7 @@ import java.security.MessageDigest
 import java.util.UUID
 
 internal enum class AutoJobPhase { QUEUED, RENDERING, RETRYABLE, RENDERED, PUBLISHING, PUBLISHED, HELD }
-internal enum class AutoJobReason { NONE, INTERRUPTED, RENDER_FAILED, UNSUPPORTED, SOURCE_UNAVAILABLE, SOURCE_CHANGED, INVALID_OUTPUT, PUBLICATION_UNKNOWN, CONTENT_CHANGED }
+internal enum class AutoJobReason { NONE, INTERRUPTED, RENDER_FAILED, UNSUPPORTED, SOURCE_UNAVAILABLE, SOURCE_CHANGED, INVALID_OUTPUT, PUBLICATION_UNKNOWN, CONTENT_CHANGED, MISSING_OBSERVATION }
 
 internal data class AutoDevelopRecord(
     val request: AutoDevelopRequest,
@@ -36,10 +36,9 @@ internal data class AutoDevelopRecord(
     }
     fun completed(): CompletedRender {
         check(request.quality != AutoRenderQuality.PRIVATE_TRIAL_1024) { "Private trial has no completed publication result" }
-        val fingerprint = requireNotNull(outputFingerprint)
-        val receipt = observed
-        return if (receipt != null) request.completed(receipt.output, receipt.face, receipt.exposure)
-        else request.completed(JpegOutputDescription(request.width, request.height, 1, "sRGB", fingerprint.bytes))
+        requireNotNull(outputFingerprint)
+        val receipt = observed ?: throw IOException("Completed render requires an observed result")
+        return request.completed(receipt.output, receipt.face, receipt.exposure)
     }
 }
 
@@ -74,7 +73,8 @@ internal class AutoDevelopJournal(
         return persist(current.copy(revision = next(current), phase = AutoJobPhase.RENDERED, outputFingerprint = fingerprint, observed = observed))
     }
     @Synchronized fun publishing(revision: Long): AutoDevelopRecord {
-        if (current(revision).request.quality == AutoRenderQuality.PRIVATE_TRIAL_1024) throw CaptureJournalConflict()
+        val current = current(revision)
+        if (current.request.quality == AutoRenderQuality.PRIVATE_TRIAL_1024 || current.observed == null) throw CaptureJournalConflict()
         return advance(revision, AutoJobPhase.RENDERED, AutoJobPhase.PUBLISHING)
     }
     @Synchronized fun published(revision: Long) = advance(revision, AutoJobPhase.PUBLISHING, AutoJobPhase.PUBLISHED)
