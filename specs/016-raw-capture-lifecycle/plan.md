@@ -399,3 +399,17 @@ recipe.isTrialだけrenderTrialへ分岐し、NOT_RUN/DIAGNOSTICを保持する�
 fresh private readbackは同attemptの検査済みbyte列をdecodeし、原本再照合・取消epoch・実reader close後だけdeliveryを返す。
 ManualDevelopControlは未claim deliveryを1つだけ保持し、取消でclose、claimでUIへ所有を移す。未受領のまま次のreadで画像を積み上げず、
 表示中Bitmapを裏でrecycleしない。新たなexecutor/controller/公開処理や顔SDKは追加しない。
+
+## 起動時の現像要求復旧
+
+共通process queueが初めて必要になった際の最初のIO作業で、`raw-captures/<id>/renders/<generation>/auto-develop.bin`を全列挙する。
+現在は手動private入口からのlazy初期化であり、Activity起動そのものや撮影callbackからの新規自動要求投入は追加しない。
+AtomicFileのsidecarも存在と扱い、未知/破損した台帳、path/世代/要求IDの不一致、redirect、列挙失敗は
+inventory全体を保留する。読み取れた旧世代だけを先に登録しない。読み取りはUI/capture threadで行わず、
+同じserial IO ownerで復旧を先に並べ、後着のmanual/private prepareとの順序を固定する。
+初期復旧失敗後はprocess ownerを保持して追加要求も保留し、再生成で既存ownerを迂回しない。
+
+全対象を検証後、既存restoreで中断RENDERINGをRETRYABLEへ戻す。自動retryはせず、手動/private品質は
+復旧だけで実行/公開しない。完成要求の成功artifact/公開台帳は既存ownerで照合し、撮影予約・録画・
+foreground/資源の未知/停止条件を維持する。台帳のない既存DNGから新しい要求を推測生成しない。
+完成rendererは未登録のままなので、この復旧接続を完成JPEG保存や自動現像の有効化とは扱わない。

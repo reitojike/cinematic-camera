@@ -26,6 +26,8 @@ internal class AutoDevelopQueue(
     private val latest = mutableMapOf<String, Long>()
     private val manualFences = mutableSetOf<String>() // Uncertain allocation must not leave an older edit runnable.
     private val scheduled = AtomicBoolean(false)
+    private var restoreStarted = false // IO owner only.
+    private var initializationHeld = false // A failed inventory must not admit later partial submissions.
     @Volatile private var resourceOwner: Pair<Key, AutoDevelopRunner>? = null
 
     fun reserveCapture(): AutoDevelopCoordinator.CaptureReservation {
@@ -59,6 +61,7 @@ internal class AutoDevelopQueue(
         return onIo { accept(request) }
     }
     private fun accept(request: AutoDevelopRequest, enabled: Boolean = true): AutoDevelopRecord {
+        check(!initializationHeld) { "Auto-develop inventory is held" }
         val key = Key(request.captureId, request.generation)
         val current = latest[request.captureId]
         if (current != null && request.generation < current) throw CaptureJournalConflict()
@@ -90,6 +93,7 @@ internal class AutoDevelopQueue(
         PrivateTrialHandle(this, request, currentManual(request).control)
     }
     private fun prepareInteractive(captureId: String, allocate: () -> AutoDevelopRequest): AutoDevelopRequest {
+        check(!initializationHeld) { "Auto-develop inventory is held" }
         requireCaptureId(captureId)
         manualFences.add(captureId)
         jobs.filterKeys { it.captureId == captureId }.values.forEach { it.control.fencePreview(true) }
@@ -192,8 +196,13 @@ internal class AutoDevelopQueue(
         if (!job.control.accepts(ticket)) throw java.util.concurrent.CancellationException("Manual invocation cancelled")
     }
     /** Rebuild only on a new process owner; a live owner's handles must never be bypassed. */
-    fun restore(requests: List<AutoDevelopRequest>): CompletableFuture<Unit> = onIo {
-        if (jobs.isNotEmpty()) throw IllegalStateException("Auto-develop owner already initialized")
+    fun restore(requests: List<AutoDevelopRequest>): CompletableFuture<Unit> = restore { requests }
+    /** Enqueue before exposing the owner. Inventory IO and later prepares share this serial executor. */
+    fun restore(load: () -> List<AutoDevelopRequest>): CompletableFuture<Unit> = onIo {
+        check(!restoreStarted && jobs.isEmpty()) { "Auto-develop owner already initialized" }
+        restoreStarted = true
+        initializationHeld = true
+        val requests = load()
         val restoredJobs = linkedMapOf<Key, Job>()
         val restoredLatest = mutableMapOf<String, Long>()
         requests.sortedBy { it.generation }.forEach { request ->
@@ -213,6 +222,7 @@ internal class AutoDevelopQueue(
         // An unreadable newer definition must not leave an older partial inventory runnable.
         latest.putAll(restoredLatest)
         jobs.putAll(restoredJobs)
+        initializationHeld = false
         wake()
     }
     fun retry(captureId: String, generation: Long): CompletableFuture<AutoDevelopRecord> = onIo {
@@ -242,6 +252,7 @@ internal class AutoDevelopQueue(
         try {
             io.execute {
                 scheduled.set(false)
+                if (initializationHeld) return@execute
                 jobs.entries.forEach { (key, job) ->
                     // Old owners must still close; old generations must not start new work.
                     if ((job.enabled && job.control.isRequested() && key.captureId !in manualFences && latest[key.captureId] == key.generation) || job.runner.hasUnreleasedResources) {
