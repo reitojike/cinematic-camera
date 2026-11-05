@@ -53,6 +53,6 @@ dependencies {
     // These test-only constraints do not update :app's dependencies.
     constraints {
         androidTestImplementation("androidx.annotation:annotation-jvm:1.11.0")
-        androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
+        androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
     }
 }
