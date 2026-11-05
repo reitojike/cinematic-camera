@@ -18,7 +18,7 @@ internal object StageClearOrton {
         val output = FloatArray(mist.image.pixelCount * 3) { i ->
             mist.image[i] + amount.toFloat() * (orton[i] - mist.image[i])
         }
-        return LinearSrgbImage(mist.image.width, mist.image.height, output)
+        return LinearSrgbImage.takeOwnership(mist.image.width, mist.image.height, output)
     }
 
     internal fun orton(image: LinearSrgbImage, skinWeight: FloatPlane): LinearSrgbImage {
@@ -32,7 +32,7 @@ internal object StageClearOrton {
             val inverse = 1f - encoded[i]
             1f - inverse * inverse
         }
-        val soft = StageClearBlur.rgb(LinearSrgbImage(image.width, image.height, bright), StageClearOrtonV1.RADIUS)
+        val soft = StageClearBlur.rgb(LinearSrgbImage.takeOwnership(image.width, image.height, bright), StageClearOrtonV1.RADIUS)
         val mixed = FloatArray(encoded.size)
         repeat(image.pixelCount) { p ->
             val i = p * 3
@@ -47,7 +47,7 @@ internal object StageClearOrton {
                 mixed[j] = if (image[j] > 1f) max(image[j], value) else value
             }
         }
-        val candidate = LinearSrgbImage(image.width, image.height, mixed)
+        val candidate = LinearSrgbImage.takeOwnership(image.width, image.height, mixed)
         val output = FloatArray(mixed.size)
         val before = FloatArray(3)
         val after = FloatArray(3)
@@ -62,7 +62,7 @@ internal object StageClearOrton {
             after[2] *= scale
             StageClearColor.toRgb(after, output, p * 3)
         }
-        return LinearSrgbImage(image.width, image.height, output)
+        return LinearSrgbImage.takeOwnership(image.width, image.height, output)
     }
 
     /** Unlike stage 2, this ramp compares encoded display luminance. */

@@ -47,7 +47,7 @@ internal object StageClearColor {
             val hue = (Math.toDegrees(atan2(lab[2].toDouble(), lab[1].toDouble())) + 360) % 360
             weights[p] = skinWeight(lab[0].toDouble(), chroma, hue).toFloat()
         }
-        return FloatPlane(image.width, image.height, weights)
+        return FloatPlane.takeOwnership(image.width, image.height, weights)
     }
 
     fun skinWeight(lightness: Double, chroma: Double, hue: Double): Double {

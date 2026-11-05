@@ -1,7 +1,8 @@
 package dev.cinematic.p0.raw
 
 /** Row-major RGB float32, linear sRGB primaries / D65. No implicit clipping or transfer. */
-internal class LinearSrgbImage(val width: Int, val height: Int, pixels: FloatArray) {
+internal class LinearSrgbImage private constructor(val width: Int, val height: Int, pixels: FloatArray, owned: Boolean) {
+    constructor(width: Int, height: Int, pixels: FloatArray) : this(width, height, pixels, false)
     private val data: FloatArray
 
     init {
@@ -9,14 +10,21 @@ internal class LinearSrgbImage(val width: Int, val height: Int, pixels: FloatArr
             "RGB dimensions must match a nonempty packed image"
         }
         require(pixels.all { it.isFinite() }) { "RGB values must be finite" }
-        data = pixels.copyOf()
+        data = if (owned) pixels else pixels.copyOf()
     }
 
     internal val pixelCount: Int get() = data.size / 3
     internal operator fun get(channel: Int): Float = data[channel]
     fun copyPixels(): FloatArray = data.copyOf()
     internal fun scaled(factor: Double): LinearSrgbImage =
-        LinearSrgbImage(width, height, FloatArray(data.size) { (data[it] * factor).toFloat() })
+        takeOwnership(width, height, FloatArray(data.size) { (data[it] * factor).toFloat() })
+
+    companion object {
+        /** Only for a kernel's fresh, exclusively owned result. Never write to pixels after transfer.
+         * Use the copying constructor for external arrays or arrays that will be modified later. */
+        internal fun takeOwnership(width: Int, height: Int, pixels: FloatArray): LinearSrgbImage =
+            LinearSrgbImage(width, height, pixels, true)
+    }
 }
 
 /** Aligned soft face mask from a separate detector; this class does not find faces. */

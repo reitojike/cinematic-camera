@@ -70,7 +70,7 @@ internal object R7Base {
         val cell = .04 * max(input.width, input.height)
         val width = max(4, round(input.width / cell).toInt())
         val height = max(4, round(input.height / cell).toInt())
-        val log = FloatPlane(input.width, input.height, FloatArray(input.pixelCount) { p ->
+        val log = FloatPlane.takeOwnership(input.width, input.height, FloatArray(input.pixelCount) { p ->
             log2(max(luma(input, p).toDouble(), 1e-5)).toFloat()
         })
         val down = StageClearBlur.resize(log, width, height, StageClearBlur.Filter.BOX)
@@ -147,13 +147,13 @@ internal object R7Base {
         repeat(input.pixelCount) { p ->
             StageClearColor.toLab(input, p * 3, lab); transform(lab); StageClearColor.toRgb(lab, out, p * 3)
         }
-        return LinearSrgbImage(input.width, input.height, out)
+        return LinearSrgbImage.takeOwnership(input.width, input.height, out)
     }
 
     private inline fun pixels(input: LinearSrgbImage, transform: (Int, FloatArray) -> Unit): LinearSrgbImage {
         val out = FloatArray(input.pixelCount * 3)
         repeat(input.pixelCount) { transform(it, out) }
-        return LinearSrgbImage(input.width, input.height, out)
+        return LinearSrgbImage.takeOwnership(input.width, input.height, out)
     }
 
     private fun luma(input: LinearSrgbImage, p: Int): Float =
