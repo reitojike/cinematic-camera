@@ -1,16 +1,27 @@
 # 実装方針
 
-PhotoRollRepositoryの画像queryを自app所有の画像/動画2collectionに拡張し、それぞれ最大200件を取得した後に
-DATE_ADDEDと完全URIで安定sortし、統合200件へ制限する。pendingとtrashをSQLで除外する。
-候補情報はDNGの権威として流用せず、既存checkOriginalとcommon ownerを維持する。
+MediaStoreの画像/動画collectionをVOLUME_EXTERNALで読み、OSが許可した項目だけを対象にする。
+SQLにpending/trash除外・種類・volume/relative folder条件と共通keyset境界を入れる。
+2collectionを同じdate DESC/id DESC/volume ASC/画像→動画tie順でmergeする。
+各collectionをpageSize+1件へ制限し、共通nextCursorで続きを取得する。片方だけoffsetを進めて項目を欠落させない。
+初期60件、追加ページも60件。動的ライブラリの固定snapshotとは扱わず、更新・復帰時は最初から読み直す。
+フォルダは別のmetadata queryで全アクセス範囲から列挙し、表示済みページの項目だけから推定しない。
+API30以降は標準group columns、API29は取消可能な2列metadata cursorを使う。画像byteの全読込はしない。
 
-CameraRollGridは可視セルだけを構成する。標準ContentResolver.loadThumbnailの256px要求をIO上・最大2並列で行い、
-セル離脱/背景化でCancellationSignalを取り消す。戻ってきたBitmapはComposeが使うため明示recycleしない。
-例外・OOMは当該thumbnailの代替表示に限定し、DNG選択や撮影を不能にしない。
+CameraRollGridは可視セルだけを構成し、256pxの標準loadThumbnail要求をIO上・process全体最大2並列で行う。
+セル離脱/背景化でCancellationSignalを取り消す。画像/動画/RAWのIDは完全URIで区別する。
+制御部もgridのheaderとしてスクロールし、小画面・大きい文字で一覧の高さを奪わない。
 
-JPEG/動画は外部遷移前に同じURIのowner/pending/volume/trash/MIMEとread-only FDを再確認する。
-Main threadへ戻った時点のforegroundと取消状態を確認し、ACTION_VIEWにread grantと同じURIのClipDataだけを付ける。
-標準viewerを使うという合意済み設計を維持し、再生ライブラリや写真権限を増やさない。
+アクセス要求は明示ボタンからActivityResultContracts.RequestMultiplePermissionsで行う。
+OSの最新grantを復帰/結果callbackで再取得し、部分許可・画像/動画別・拒否を説明する。
+一覧/フォルダ/cursor/thumbnailは背景化で破棄し、許可変更後に古い項目を開かない。
+拒否や全面許可後の変更にはAndroidの当該アプリ設定を開く入口も用意する。
 
-原本の書込能力やMediaStore insert/deleteは製品コードへ追加しない。合成試験のcleanupは当該試験が作成したURIのみ。
-現像前後比較はspec025の別契約とし、一覧に私有試験JPEGを公開項目として混入させない。
+外部表示前に同じURIの公開状態/MIME/read-only FDを再確認する。Mainへ戻った最新foregroundと同期exit権威を確認し、
+ACTION_VIEWへread grantと同じURIのClipDataだけを渡す。DNGはprimary volumeの公開原本を全バイト照合する。
+ownerが自appと一致した場合だけAPP_OWNED、他app/Filesの手動選択はUSER_SELECTEDとし、URI自体を恒久grantとは扱わない。
+RAW分類は候補分類でありDNG以外の現像機能を追加しない。SDの直接現像・インポートは後続範囲とする。
+
+MediaStore insert/deleteや原本writeは製品コードへ追加しない。合成試験のcleanupは作成したURIだけに限定する。
+比較はspec025の同一coordinator枠と単一claimを利用し、私有JPEGを公開一覧へ混入させない。
+根拠: [共有メディアへのアクセス](https://developer.android.com/training/data-storage/shared/media)、[選択的な写真・動画アクセス](https://developer.android.com/about/versions/14/changes/partial-photo-video-access)。

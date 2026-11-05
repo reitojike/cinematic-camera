@@ -11,6 +11,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material3.MaterialTheme
@@ -34,9 +35,11 @@ private val thumbnailSlots = Semaphore(2)
 
 @Composable
 internal fun CameraRollGrid(items: List<PhotoRollItem>, foreground: Boolean, modifier: Modifier,
+    header: @Composable () -> Unit = {}, footer: @Composable () -> Unit = {},
     select: (PhotoRollItem) -> Unit) {
     LazyVerticalGrid(columns = GridCells.Adaptive(104.dp), modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        item(key = "controls", span = { GridItemSpan(maxLineSpan) }) { header() }
         items(items, key = { it.uri }) { item ->
             Column(Modifier.clickable(enabled = foreground, role = Role.Button,
                 onClickLabel = if (item.kind == CameraRollKind.DNG) "DNGを現像" else "${item.kind.label}を開く") { select(item) }) {
@@ -46,6 +49,7 @@ internal fun CameraRollGrid(items: List<PhotoRollItem>, foreground: Boolean, mod
                     style = MaterialTheme.typography.labelSmall)
             }
         }
+        item(key = "more", span = { GridItemSpan(maxLineSpan) }) { footer() }
     }
 }
 

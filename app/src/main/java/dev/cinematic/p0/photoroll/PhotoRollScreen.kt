@@ -3,11 +3,15 @@ package dev.cinematic.p0.photoroll
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Build
 import android.os.CancellationSignal
+import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -54,15 +58,28 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
     var saveSnapshot by remember { mutableStateOf<PhotoRollSaveSnapshot?>(null) }
     var savePending by remember { mutableStateOf(false) }
     var viewerPending by remember { mutableStateOf(false) }
+    var permissionPending by rememberSaveable { mutableStateOf(false) }
+    var accessEpoch by remember { mutableIntStateOf(0) }
+    var folderKey by rememberSaveable { mutableStateOf<String?>(null) }
+    var kindFilterName by rememberSaveable { mutableStateOf(PhotoRollKindFilter.ALL.name) }
+    val kindFilter = PhotoRollKindFilter.entries.firstOrNull { it.name == kindFilterName } ?: PhotoRollKindFilter.ALL
+    var pageCursor by remember { mutableStateOf<PhotoRollPageCursor?>(null) }
+    var folderMenu by remember { mutableStateOf(false) }
     val saveScope = rememberCoroutineScope()
     val context = LocalContext.current
     val currentForeground by rememberUpdatedState(foreground)
+    val access = remember(accessEpoch, foreground) { currentCameraRollAccess(context) }
+    val currentQuery by rememberUpdatedState(PhotoRollQuery(folderKey, kindFilter, after = pageCursor,
+        includeFolders = pageCursor == null))
     val cancellationOwner = remember { PhotoRollWorkOwner<CancellationSignal> { it.cancel() } }
     val navigation = remember { CameraRollNavigation() }
 
     fun closeRoll() { navigation.exit(); cancellationOwner.cancel(); close() }
-    fun backToList() { cancellationOwner.cancel(); explicitRetry = false; selectedUri = null; preview = null; comparison = null; comparisonLabel = null; selection = selection.clear(); retry++ }
+    fun backToList() { cancellationOwner.cancel(); explicitRetry = false; selectedUri = null; preview = null; comparison = null; comparisonLabel = null; pageCursor = null; selection = selection.clear(); retry++ }
     BackHandler { if (selectedUri != null) backToList() else closeRoll() }
+    val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        permissionPending = false; pageCursor = null; listing = PhotoRollListing(emptyList()); accessEpoch++; retry++
+    }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         pickerPending = false
         if (uri != null) { cancellationOwner.cancel(); explicitRetry = false; fromFiles = true; selectedUri = uri.toString(); retry++ }
@@ -81,12 +98,17 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
     }
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_PAUSE) { cancellationOwner.cancel(); preview = null; comparison = null; comparisonLabel = null; selection = selection.pause() }
+            if (event == Lifecycle.Event.ON_RESUME) accessEpoch++
+            if (event == Lifecycle.Event.ON_PAUSE) {
+                cancellationOwner.cancel(); preview = null; comparison = null; comparisonLabel = null
+                listing = PhotoRollListing(emptyList()); pageCursor = null; folderMenu = false
+                selection = selection.pause()
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { cancellationOwner.cancel(); lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    LaunchedEffect(selectedUri, retry, lifecycleOwner) {
+    LaunchedEffect(selectedUri, retry, lifecycleOwner, currentQuery, accessEpoch) {
       lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
         preview = null
         comparison = null
@@ -99,13 +121,20 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         val retryThisRequest = explicitRetry
         explicitRetry = false
         if (source == null) {
+            val query = currentQuery
+            val previous = listing
+            if (query.after == null) listing = PhotoRollListing(emptyList())
             val ticket = Any()
             val cancellation = CancellationSignal()
             cancellationOwner.begin(cancellation)
             loadingTicket = ticket
             try {
-                listing = withContext(Dispatchers.IO) {
-                    repository.list(cancellation)
+                val page = withContext(Dispatchers.IO) {
+                    repository.list(cancellation, query)
+                }
+                if (currentQuery == query && currentForeground && !cancellation.isCanceled) {
+                    listing = if (query.after == null) page else page.copy(
+                        items = (previous.items + page.items).distinctBy { it.uri }, folders = previous.folders)
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { listing = PhotoRollListing(emptyList(), "一覧を取得できません。撮影へ戻り、再度開いてください。端末内DNGはFilesからも選べます") }
@@ -195,22 +224,74 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                 }, style = MaterialTheme.typography.titleLarge)
             }
             if (selectedUri == null) {
-                Text("写真・動画は標準ビューアで開きます。DNGはタップして現像できます", style = MaterialTheme.typography.bodySmall)
-                if (renderer.mode == PhotoRollPreviewMode.PRIVATE_TRIAL) Text(
-                    "DNGは最大1024pxの試験現像です。顔保護なし・暫定色で、共有写真へは保存しません",
-                    style = MaterialTheme.typography.bodySmall)
-                TextButton(enabled = foreground && !pickerPending && !viewerPending, onClick = {
-                    if (!pickerPending) try { pickerPending = true; picker.launch(arrayOf("*/*")) }
-                    catch (_: Exception) { pickerPending = false; notice = "Filesを開けませんでした" }
-                }) { Text("Filesから端末内DNGを選ぶ") }
-                notice?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-                listing.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                if (viewerPending) LinearProgressIndicator(Modifier.fillMaxWidth())
-                if (!loading && listing.items.isEmpty()) Text("このアプリの撮影物はまだありません。他の端末内DNGはFilesの「内部ストレージ」から選べます", Modifier.padding(vertical = 24.dp))
-                CameraRollGrid(listing.items, foreground && !viewerPending, Modifier.weight(1f)) { item ->
+                CameraRollGrid(listing.items, foreground && !viewerPending && !permissionPending, Modifier.weight(1f), header = {
+                    Column {
+                        Text("写真・動画・DNG以外のRAWは標準ビューアで開きます。DNGはタップして試験現像できます", style = MaterialTheme.typography.bodySmall)
+                        if (renderer.mode == PhotoRollPreviewMode.PRIVATE_TRIAL) Text(
+                            "DNGは最大1024pxの試験現像です。顔保護なし・暫定色で、共有写真へは保存しません",
+                            style = MaterialTheme.typography.bodySmall)
+                        Text(access.description, style = MaterialTheme.typography.bodySmall)
+                        Row {
+                            TextButton(enabled = foreground && access.supported && !permissionPending && !pickerPending && !viewerPending,
+                                onClick = {
+                                    if (navigation.canOpenViewer(currentForeground, false)) try {
+                                        permissionPending = true
+                                        permissions.launch(cameraRollReadPermissions(Build.VERSION.SDK_INT))
+                                    } catch (_: Exception) { permissionPending = false; notice = "アクセス許可を開けませんでした。設定から確認してください" }
+                                }) { Text("アクセスを許可・選び直す") }
+                            TextButton(enabled = foreground && !permissionPending && !viewerPending, onClick = {
+                                if (navigation.canOpenViewer(currentForeground, false)) try {
+                                    context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")))
+                                } catch (_: Exception) { notice = "アプリのアクセス設定を開けませんでした" }
+                            }) { Text("設定") }
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.weight(1f)) {
+                                OutlinedButton(enabled = foreground && !viewerPending && !permissionPending, onClick = { folderMenu = true }) {
+                                    Text(listing.folders.firstOrNull { it.key == folderKey }?.label
+                                        ?: if (folderKey == null) "すべてのフォルダ" else "選択したフォルダ（アクセス確認中）", maxLines = 2)
+                                }
+                                DropdownMenu(expanded = folderMenu, onDismissRequest = { folderMenu = false }, modifier = Modifier.heightIn(max = 360.dp)) {
+                                    DropdownMenuItem(text = { Text("すべてのフォルダ") }, onClick = {
+                                        folderMenu = false; folderKey = null; pageCursor = null; listing = PhotoRollListing(emptyList()); retry++
+                                    })
+                                    listing.folders.forEach { folder -> DropdownMenuItem(text = { Text(folder.label) }, onClick = {
+                                        folderMenu = false; folderKey = folder.key; pageCursor = null; listing = PhotoRollListing(emptyList()); retry++
+                                    }) }
+                                }
+                            }
+                            TextButton(enabled = foreground && !loading && !viewerPending && !permissionPending, onClick = {
+                                pageCursor = null; retry++
+                            }) { Text("更新") }
+                        }
+                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            PhotoRollKindFilter.entries.forEach { filter -> FilterChip(
+                                selected = filter == kindFilter, enabled = foreground && !viewerPending && !permissionPending,
+                                onClick = { kindFilterName = filter.name; pageCursor = null; listing = PhotoRollListing(emptyList()); retry++ },
+                                label = { Text(when (filter) {
+                                    PhotoRollKindFilter.ALL -> "すべて"
+                                    PhotoRollKindFilter.IMAGES -> "画像"
+                                    PhotoRollKindFilter.RAW -> "RAW"
+                                    PhotoRollKindFilter.VIDEOS -> "動画"
+                                }) })
+                            }
+                        }
+                        TextButton(enabled = foreground && !pickerPending && !viewerPending && !permissionPending, onClick = {
+                            if (!pickerPending && navigation.canOpenViewer(currentForeground, false)) try { pickerPending = true; picker.launch(arrayOf("*/*")) }
+                            catch (_: Exception) { pickerPending = false; notice = "Filesを開けませんでした" }
+                        }) { Text("Filesから端末内DNGを選ぶ") }
+                        notice?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                        if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        listing.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                        if (viewerPending) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        if (!loading && listing.items.isEmpty()) Text("該当する項目がありません。アクセス許可や絞り込みを確認してください。DNGはFilesの「内部ストレージ」からも選べます", Modifier.padding(vertical = 12.dp))
+                    }
+                }, footer = {
+                    if (listing.hasMore) TextButton(enabled = foreground && !loading && !viewerPending && !permissionPending,
+                        onClick = { pageCursor = listing.nextCursor }) { Text("さらに読み込む") }
+                }) { item ->
                     if (item.kind == CameraRollKind.DNG) {
-                        cancellationOwner.cancel(); explicitRetry = false; fromFiles = false; selectedUri = item.uri
+                        cancellationOwner.cancel(); explicitRetry = false; fromFiles = false; pageCursor = null; selectedUri = item.uri
                     } else if (!viewerPending) {
                         val cancellation = CancellationSignal()
                         cancellationOwner.begin(cancellation)
@@ -223,11 +304,12 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                             } catch (cancelled: CancellationException) { throw cancelled }
                             catch (failure: Exception) {
                                 if (!cancellation.isCanceled) notice = (failure as? PhotoRollSourceFailure)?.userMessage
-                                    ?: "写真・動画を開けませんでした。対応する標準ビューアとアクセス権を確認してください"
+                                    ?: "項目を開けませんでした。対応する標準ビューアとアクセス権を確認してください"
                             } finally { viewerPending = false; cancellationOwner.finish(cancellation) }
                         }
                     }
                 }
+
             } else {
                 val status = when (selection.phase) {
                     PhotoRollPhase.CHECKING -> "原本を確認中…"
