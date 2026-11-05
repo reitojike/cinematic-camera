@@ -107,7 +107,15 @@ class DngHandoffInstrumentation : Instrumentation() {
             val owner = object : androidx.lifecycle.LifecycleOwner {
                 override val lifecycle = androidx.lifecycle.LifecycleRegistry(this)
             }
-            dev.cinematic.p0.CameraProbe(targetContext, owner).close()
+            val probe = dev.cinematic.p0.CameraProbe(targetContext, owner)
+            try {
+                probe.capture() // The default entry remains safe before controls become ready.
+                val policy = RenderPolicyVersion("synthetic-native", 1)
+                val strict = CaptureDevelopIntent(RenderRecipeSnapshot("synthetic-native", "fixed"),
+                    "synthetic-native", AutoRenderQuality.FINAL_ORIGINAL_STRICT,
+                    OriginalRenderDeclaration(policy, policy, policy, policy, -4.0, 4.0))
+                check(runCatching { probe.capture(strict) }.exceptionOrNull() is IllegalArgumentException)
+            } finally { probe.close() }
         }
         val queue = AndroidRawCaptureQueue.get(targetContext)
         val camera = queue.newCameraOwner()
@@ -115,6 +123,10 @@ class DngHandoffInstrumentation : Instrumentation() {
         val id = "queue_${UUID.randomUUID().toString().replace("-", "")}"
         val original = "synthetic queue original".toByteArray()
         val jpeg = "synthetic queue JPEG".toByteArray()
+        val policy = RenderPolicyVersion("synthetic-native", 1)
+        val intent = CaptureDevelopIntent(RenderRecipeSnapshot("synthetic-native", "fixed"),
+            "synthetic-native", AutoRenderQuality.FINAL_ORIGINAL_STRICT,
+            OriginalRenderDeclaration(policy, policy, policy, policy, -4.0, 4.0))
         val received = CountDownLatch(1)
         val finished = CountDownLatch(1)
         val failure = AtomicReference<String?>()
@@ -141,14 +153,18 @@ class DngHandoffInstrumentation : Instrumentation() {
         queueObserver = observer
         try {
             stage = "queue_receipts"
-            val ticket = queue.prepare(id, setOf(RawOutput.DNG, RawOutput.JPEG), observer)
+            val ticket = queue.prepare(id, setOf(RawOutput.DNG, RawOutput.JPEG), observer, intent)
             check(received.await(15, TimeUnit.SECONDS) && failure.get() == null)
             check(ticket.session!!.receipt()!!.originalFingerprint == null) // Camera reservation still holds.
+            check(queue.readDevelopRequest(id).get(15, TimeUnit.SECONDS) == null)
             stage = "queue_handoff"
             camera.update(false)
             check(finished.await(15, TimeUnit.SECONDS) && failure.get() == null)
             val done = requireNotNull(result.get())
             check(done.phase == DngPublicationPhase.SHARED_ONLY)
+            val request = requireNotNull(queue.readDevelopRequest(id).get(15, TimeUnit.SECONDS))
+            check(request.captureId == id && request.generation == 1L && request.source.fingerprint == done.fingerprint)
+            check(request.recipe == intent.recipe && request.originalDeclaration == intent.originalDeclaration)
             val directory = File(File(targetContext.noBackupFilesDir, "raw-captures"), id)
             check(!File(directory, RawOutput.DNG.fileName).exists())
             check(File(directory, RawOutput.JPEG.fileName).readBytes().contentEquals(jpeg))

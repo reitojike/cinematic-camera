@@ -176,3 +176,9 @@ T052は出力FPの受渡しのみ。原寸の実producer/policy採用・基準JP
 - [x] T053 [US2] 撮影時の固定strict宣言をCaptureReceipt版4へ保持し、正常全形式受領・同capture/FPのSHARED_ONLYから未観測の同一要求を再生成する。旧intent非昇格、更新/復旧・commit応答喪失、容量境界、不一致/中断/部分受領と重複生成を検証する（T048の保存・要求生成部分、FR-001/006/008/009、SC-001/002/003）。
 
 T053はsnapshot保存と純粋な要求生成のみ。T048のprocess owner投入・重複通知/再起動接続、実producer/資源確認、撮影caller、実機受入と自動公開は未完了のままとする。
+
+## Phase 17: Capture entry and read-only request handoff
+
+- [x] T054 [US2] Pass an optional frozen strict intent from the capture entry through immediate and deferred RAW preparation, while leaving the default shutter path opt-out. Expose a read-only request snapshot from an already owned, writer-released, shared-only capture on the existing handoff executor. Cover partial, interrupted, missing, legacy, corrupt, and observer-loss behavior; verify the native synthetic MediaStore path. This is only the capture/request boundary of T048 (FR-001/005/006/008/009).
+
+T048 remains open: there is no production policy/provider registration, automatic submission or retry owner, full-quality producer, or automatic JPEG publication. A historical shared-only record is not fresh execution-time URI/content/grant proof.

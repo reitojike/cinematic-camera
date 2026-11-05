@@ -481,3 +481,7 @@ bounded/manual/private adapterは`JpegGenerationAttempt`が書込み・readback�
 記録済URIと固定recipe/renderer/宣言から世代1の未観測strict要求を作る。同じsnapshotは同じ要求を返し、時刻/乱数/現在設定を使わない。
 これは共有原本の現時点の読取/権限/内容一致やprovider成立の証明ではなく、将来のIO ownerは台帳を読み直し、既存の原本照合を維持する。
 撮影callerはintentなしのままとし、queue投入・catalog登録・自動公開を接続しない。基準JPEG/1024試験のFULL昇格も行わない。
+
+### Capture entry and read-only request handoff
+
+The existing no-argument shutter call keeps its opt-out behavior. An internal overload accepts one immutable strict declaration only for RAW/RAW_JPEG and carries that argument through the deferred exposure acknowledgement to the existing queue preparation. The queue's process owner offers an asynchronous snapshot read on its handoff executor after the writer reservation is released. It reads the existing shared publication and receipt journals and reconstructs the frozen request; it creates no session, changes no journal, and performs no automatic submission. Missing, interrupted, partial and legacy captures are unavailable. Journal failures remain errors. Execution must independently verify the current shared source and grant before any attempt. No production renderer/policy is enrolled by this change.

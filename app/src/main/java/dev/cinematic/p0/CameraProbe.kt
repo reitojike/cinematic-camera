@@ -39,6 +39,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import dev.cinematic.p0.rawcapture.AndroidRawCaptureQueue
+import dev.cinematic.p0.rawcapture.AutoRenderQuality
+import dev.cinematic.p0.rawcapture.CaptureDevelopIntent
 import dev.cinematic.p0.rawcapture.RawCaptureNotice
 import dev.cinematic.p0.rawcapture.RawCaptureObserver
 import dev.cinematic.p0.rawcapture.RawCaptureTicket
@@ -1362,10 +1364,17 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     }
 
     private var photoRequestedAtMs = 0L
-    fun capture() {
+    fun capture() = capture(null)
+
+    /** Freeze an optional strict intent at the shutter entry; the default capture remains opt-out. */
+    internal fun capture(developIntent: CaptureDevelopIntent?) {
+        if (developIntent != null) {
+            require(developIntent.requestedQuality == AutoRenderQuality.FINAL_ORIGINAL_STRICT)
+            require(format == ImageCapture.OUTPUT_FORMAT_RAW || format == ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
+        }
         if (busy || recordingBusy || mode != CaptureMode.STILL || !controlReady || !sharedSaveSupported) return
         val state = stillExposure
-        if (state == null) { rawPresentation.invalidate(); captureFiles(); return }
+        if (state == null) { rawPresentation.invalidate(); captureFiles(developIntent = developIntent); return }
         if (!state.canCapture) { event("previewの新しい受付・実測を待ってください"); return }
         val c = camera ?: return
         val token = UUID.randomUUID().toString()
@@ -1386,11 +1395,11 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
                 if (stillExposure?.canIssueCapture != true || activeCaptureToken != token) return@requestSnapshot
                 log.write("CAPTURE_PREPARATION_ACK token=" + token + " elapsedMs=" + (SystemClock.elapsedRealtime() - photoRequestedAtMs) +
                     "; runtime ACK includes repeating result wait, not only app queue")
-                captureFiles(token)
+                captureFiles(token, developIntent)
             }, failed = { failure -> failCapturePreparation("撮影設定を反映できません・撮影未開始: " + failure.message) })
         } catch (failure: Exception) { failCapturePreparation("撮影設定を送信できません・撮影未開始: " + failure.message) }
     }
-    private fun captureFiles(preparedToken: String? = null) {
+    private fun captureFiles(preparedToken: String? = null, developIntent: CaptureDevelopIntent? = null) {
         if (preparedToken == null && (busy || recordingBusy || mode != CaptureMode.STILL)) return
         if (preparedToken != null && (activeCaptureToken != preparedToken || stillExposure?.canIssueCapture != true)) return
         if (!sharedSaveSupported) { event("UNSUPPORTED shared image saving requires Android 10+"); return }
@@ -1406,7 +1415,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         val captureRotation = outputOrientation.applied
         val token = preparedToken ?: UUID.randomUUID().toString()
         if (format == ImageCapture.OUTPUT_FORMAT_RAW || format == ImageCapture.OUTPUT_FORMAT_RAW_JPEG) {
-            captureRawFiles(capture, token, preparedToken != null)
+            captureRawFiles(capture, token, preparedToken != null, developIntent)
             return
         }
         val appCaptureStart = if (preparedToken == null) SystemClock.elapsedRealtime() else photoRequestedAtMs
@@ -1547,7 +1556,8 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     }
 
     /** RAW only: durable per-format receipt first, shared IO after capture/preview recovery. */
-    private fun captureRawFiles(capture: ImageCapture, token: String, prepared: Boolean) {
+    private fun captureRawFiles(capture: ImageCapture, token: String, prepared: Boolean,
+        developIntent: CaptureDevelopIntent?) {
         val queue = rawQueue ?: return
         val generation = epoch
         val pair = format == ImageCapture.OUTPUT_FORMAT_RAW_JPEG
@@ -1668,7 +1678,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
             }
         }.also { controlHandler.postDelayed(it, preparationBudget) }
         try {
-            val ticket = queue.prepare(token, photoRollExpected, observer)
+            val ticket = queue.prepare(token, photoRollExpected, observer, developIntent)
             activeRawTicket = ticket
             // Keep only ticket/atomic state, never the Activity or its observer, in this process lease.
             AndroidPhotoRollCameraObservations.holdCaptureUntil {

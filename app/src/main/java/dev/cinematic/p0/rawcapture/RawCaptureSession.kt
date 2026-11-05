@@ -38,6 +38,14 @@ internal class RawCaptureSession(
 
     fun receipt(): CaptureReceipt? = store.readReceipt()
 
+    /** Handoff worker only. Historical shared state is a request snapshot, not fresh source proof. */
+    fun readDevelopRequest(): AutoDevelopRequest? {
+        if (hasUnreleasedHandoffResources) return null
+        val shared = publication.read() ?: return null
+        if (shared.phase != DngPublicationPhase.SHARED_ONLY) return null
+        return store.readReceipt()?.originalDevelopRequest(shared)
+    }
+
     /** A format-specific CameraX success callback is required; bytes/close alone never imply success. */
     fun received(format: RawOutput): CaptureReceipt {
         val output = requireNotNull(outputs[format]) { "Unexpected camera output" }
