@@ -172,23 +172,26 @@ class AutoDevelopQueueTest {
         assertNull(f.journal(request()).read())
     }
 
-    @Test fun restoredPrivateTrialNeverAutomaticallyRendersOrPublishes() {
-        val f = Fixture()
-        val memory = MemoryStorage()
-        val trial = ManualDevelopRequests(request().source, memory).prepare(
-            dev.cinematic.p0.jpegrender.JpegGenerationRecipe.trial().snapshot)
-        val journal = f.journal(trial)
-        journal.prepare(trial)
-        val output = AutoRenderReceipt(trial, JpegOutputDescription(16, 12, 1, "sRGB", 3),
-            RenderedFaceState.NOT_RUN, RenderedExposureState.DIAGNOSTIC)
-        journal.start(0); journal.rendered(1, trial.source.fingerprint, output)
-        val before = journal.read()
-        f.queue.restore { listOf(trial) }
-        f.queue.updateConditions(allowed)
-        f.io.drain()
-        assertEquals(before, journal.read())
-        assertEquals(0, f.starts.get())
-        assertEquals(AutoJobPhase.RENDERED, journal.read()!!.phase)
+    @Test fun restoredManualAndPrivateTrialNeverAutomaticallyRenderOrPublish() {
+        listOf("stage-clear-bounded-jpeg-v1", "stage-clear-private-no-face-trial-v1").forEach { schema ->
+            listOf(false, true).forEach { rendered ->
+                val f = Fixture()
+                val request = ManualDevelopRequests(request().source, MemoryStorage()).prepare(RenderRecipeSnapshot(schema, "fixed"))
+                val journal = f.journal(request)
+                journal.prepare(request)
+                val output = AutoRenderReceipt(request, JpegOutputDescription(16, 12, 1, "sRGB", 3),
+                    if (request.boundedTrial) RenderedFaceState.NOT_RUN else RenderedFaceState.VERIFIED_NONE,
+                    if (request.boundedTrial) RenderedExposureState.DIAGNOSTIC else RenderedExposureState.SUPPORTED)
+                if (rendered) { journal.start(0); journal.rendered(1, request.source.fingerprint, output) }
+                val before = journal.read()
+                f.queue.restore { listOf(request) }
+                f.queue.updateConditions(allowed)
+                f.io.drain()
+                assertEquals(before, journal.read())
+                assertEquals(0, f.starts.get())
+                assertEquals(if (rendered) AutoJobPhase.RENDERED else AutoJobPhase.QUEUED, journal.read()!!.phase)
+            }
+        }
     }
 
     @Test fun restoredCompletedArtifactResumesPublicationWithoutRenderingAgain() {

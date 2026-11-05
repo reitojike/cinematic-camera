@@ -73,6 +73,8 @@ class AutoDevelopInventoryTest {
         // Future schema/corruption is held rather than reset or silently discarded.
         val bytes = AutoDevelopCodec.encode(AutoDevelopRecord(request(generation = 2)))
         bytes[4] = 99
+        val payload = bytes.copyOfRange(0, bytes.size - 32)
+        java.security.MessageDigest.getInstance("SHA-256").digest(payload).copyInto(bytes, payload.size)
         newer.writeBytes(bytes)
         assertThrows(IOException::class.java) { inventory(root).load() }
     }
