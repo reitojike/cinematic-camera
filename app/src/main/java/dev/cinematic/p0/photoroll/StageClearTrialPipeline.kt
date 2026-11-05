@@ -11,7 +11,7 @@ import java.util.concurrent.CancellationException
 internal object StageClearTrialPipeline {
     const val MAX_EDGE = 512
     const val LOOK_VERSION = "stage-clear-v1"
-    const val STRENGTH = 0.5f
+    const val STRENGTH = 0.5
 
     fun render(
         asShot: LinearSrgbImage,

@@ -35,11 +35,14 @@ internal object AndroidAutoDevelopQueue {
         }
     }
     fun preparePrivateTrial(context: Context, source: SharedOriginalReference,
-        recipe: JpegGenerationRecipe = JpegGenerationRecipe.trial()): CompletableFuture<PrivateTrialHandle> {
-        require(recipe.isTrial && recipe.snapshot == JpegGenerationRecipe.trial().snapshot)
+        recipe: JpegGenerationRecipe = JpegGenerationRecipe.trial(),
+        shouldStop: () -> Boolean = { false }): CompletableFuture<PrivateTrialHandle> {
+        require(recipe.isTrial && JpegGenerationRecipe.fromTrialSnapshot(recipe.snapshot) != null)
         val app = context.applicationContext
         val id = ManualDevelopRequests.identity(source)
-        return get(app).preparePrivateTrial(id) {
+        // This metadata admission runs on the same IO owner before any latest-generation fence is installed.
+        // A cancelled Future alone is not evidence that native/FD/stream resources have actually closed.
+        return get(app).preparePrivateTrial(id, shouldStop) {
             ManualDevelopRequests(source, AndroidAtomicJournalStorage(File(app.noBackupFilesDir, "raw-captures"),
                 id, CaptureJournalFile.MANUAL_REQUEST)).prepare(recipe.snapshot)
         }

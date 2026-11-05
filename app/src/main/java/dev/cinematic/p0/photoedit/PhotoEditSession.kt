@@ -5,7 +5,7 @@ import dev.cinematic.p0.rawcapture.SharedOriginalReference
 internal enum class PhotoEditParameter { STRENGTH, TEMPERATURE, BRIGHTNESS }
 
 /** Temperature/brightness are caller-defined UI coordinates, not a Kelvin/EV contract yet. */
-internal data class PhotoEditValues(val strength: Double, val temperature: Double, val brightness: Double) {
+internal data class PhotoEditValues(val strength: Double, val temperature: Double? = null, val brightness: Double? = null) {
     operator fun get(parameter: PhotoEditParameter) = when (parameter) {
         PhotoEditParameter.STRENGTH -> strength
         PhotoEditParameter.TEMPERATURE -> temperature
@@ -21,8 +21,8 @@ internal data class PhotoEditValues(val strength: Double, val temperature: Doubl
 
 internal class PhotoEditScales(
     strengthTapStep: Double,
-    val temperature: PhotoEditScale,
-    val brightness: PhotoEditScale,
+    val temperature: PhotoEditScale? = null,
+    val brightness: PhotoEditScale? = null,
 ) {
     val strength = PhotoEditScale(0.0, 1.0, strengthTapStep)
     operator fun get(parameter: PhotoEditParameter) = when (parameter) {
@@ -31,7 +31,11 @@ internal class PhotoEditScales(
         PhotoEditParameter.BRIGHTNESS -> brightness
     }
 
-    fun contains(values: PhotoEditValues) = PhotoEditParameter.entries.all { this[it].contains(values[it]) }
+    fun contains(values: PhotoEditValues) = PhotoEditParameter.entries.all {
+        val scale = this[it]
+        val value = values[it]
+        if (scale == null) value == null else value != null && scale.contains(value)
+    }
 }
 
 /** Process-local input authority. A reset/exit invalidates a finger already on the bar. */
@@ -60,13 +64,15 @@ internal class PhotoEditSession private constructor(
     val previewTicket get() = PhotoEditPreviewTicket(inputToken, revision, draft)
 
     fun change(token: PhotoEditInputToken, parameter: PhotoEditParameter, value: Double): PhotoEditSession {
-        if (!accepts(token) || !scales[parameter].contains(value) || draft[parameter] == value) return this
+        if (!accepts(token) || scales[parameter]?.contains(value) != true || draft[parameter] == value) return this
         return next(draft.with(parameter, value))
     }
 
     fun step(token: PhotoEditInputToken, parameter: PhotoEditParameter, direction: Int): PhotoEditSession {
         if (!accepts(token)) return this
-        val value = scales[parameter].step(draft[parameter], direction) ?: return this
+        val scale = scales[parameter] ?: return this
+        val current = draft[parameter] ?: return this
+        val value = scale.step(current, direction) ?: return this
         return change(token, parameter, value)
     }
 

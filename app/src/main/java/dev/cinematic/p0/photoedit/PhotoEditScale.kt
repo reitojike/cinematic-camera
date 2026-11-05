@@ -39,7 +39,7 @@ internal sealed interface PhotoEditBarInput {
     data class SetValue(val value: Double) : PhotoEditBarInput
 }
 
-internal data class PhotoEditBarUpdate(val input: PhotoEditBarInput? = null, val consume: Boolean = false)
+internal data class PhotoEditBarUpdate(val input: PhotoEditBarInput? = null, val consume: Boolean = false, val completed: Boolean = false)
 
 /**
  * One pointer, relative horizontal drag, or a single +/- tap beside the thumb. A tap never seeks.
@@ -94,9 +94,9 @@ internal class PhotoEditBarGesture(
             val fractionDelta = (x.toDouble() - previousX) / trackWidth
             previousX = x
             val input = fractionDelta.takeIf { it != 0.0 }?.let { PhotoEditBarInput.RelativeDrag(it) }
-            return PhotoEditBarUpdate(input, consume = true)
+            return PhotoEditBarUpdate(input, consume = true, completed = !pressed)
         }
         if (pressed) return PhotoEditBarUpdate()
-        return PhotoEditBarUpdate(tapDirection.takeIf { it != 0 }?.let { PhotoEditBarInput.Step(it) }, consume = true)
+        return PhotoEditBarUpdate(tapDirection.takeIf { it != 0 }?.let { PhotoEditBarInput.Step(it) }, consume = true, completed = true)
     }
 }
