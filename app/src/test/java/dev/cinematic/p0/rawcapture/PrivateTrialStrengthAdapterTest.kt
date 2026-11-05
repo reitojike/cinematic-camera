@@ -86,8 +86,10 @@ class PrivateTrialStrengthAdapterTest {
         assertEquals(0, zeroIo.sourceOpens + oneIo.sourceOpens)
         assertEquals(0, zeroIo.outputOpens + oneIo.outputOpens)
         try {
-            val oneReceipt = oneAttempt.render { false }
-            val zeroReceipt = zeroAttempt.render { false }
+            val oneResult = oneAttempt.render { false }
+            val zeroResult = zeroAttempt.render { false }
+            val oneReceipt = oneResult.receipt
+            val zeroReceipt = zeroResult.receipt
             assertEquals(one, oneReceipt.request)
             assertEquals(zero, zeroReceipt.request)
             assertEquals(RenderedFaceState.NOT_RUN, zeroReceipt.face)
@@ -96,17 +98,49 @@ class PrivateTrialStrengthAdapterTest {
             assertArrayEquals(fixture.expected(0.0), fixture.pixels[1], 0f)
             assertFalse(fixture.pixels[0].contentEquals(fixture.pixels[1]))
             assertFalse(zeroIo.bytes.toByteArray().contentEquals(oneIo.bytes.toByteArray()))
+            assertEquals(DngContentVerifier.identify(oneIo.bytes.size().toLong(), { oneIo.bytes.toByteArray().inputStream() }), oneResult.fingerprint)
+            assertEquals(DngContentVerifier.identify(zeroIo.bytes.size().toLong(), { zeroIo.bytes.toByteArray().inputStream() }), zeroResult.fingerprint)
+            assertNotEquals(oneResult.fingerprint, zeroResult.fingerprint)
             assertEquals(2, zeroIo.sourceOpens)
             assertEquals(2, oneIo.sourceOpens)
         } finally { oneAttempt.close(); zeroAttempt.close() }
         assertEquals(2, fixture.frameCloses)
     }
 
+    @Test fun boundedManualAlsoPassesTheProducedBytesWithoutClaimingOriginalEvidence() {
+        val recipe = JpegGenerationRecipe("synthetic-manual-input", RenderRecipeSnapshot("synthetic-controls", "fixed"))
+        val selected = request(.5).copy(recipe = recipe.snapshot, rendererContract = JpegGenerationRecipe.RENDERER,
+            quality = AutoRenderQuality.MANUAL_BOUNDED_1024_PRELIMINARY, exposure = RenderedExposureState.UNKNOWN)
+        val io = Io(original)
+        val adapter = BoundedJpegRendererAdapter(recipe, { _, _ -> object : OwnedJpegFrameSource {
+            override val contract = recipe.inputContract
+            override fun load(source: SharedOriginalReference, longEdge: Int, shouldStop: () -> Boolean) = JpegFrame(image(), 8, 8, true)
+            override fun close() {}
+        } }, object : JpegControlsProvider {
+            override val contract = recipe.controls.schema
+            override fun prepare(image: LinearSrgbImage, policy: RenderRecipeSnapshot, shouldStop: () -> Boolean) =
+                JpegControls(policy, 0.0, FloatPlane(image.width, image.height, FloatArray(image.pixelCount)),
+                    FaceMask(image.width, image.height, FloatArray(image.pixelCount)), RenderedFaceState.VERIFIED_NONE,
+                    RenderedExposureState.SUPPORTED)
+        }, LinearJpegEncoder { _, _, output, _ -> output.write(byteArrayOf(1, 2, 3)); true }, JpegInspector { open, stop ->
+            val fp = DngContentVerifier.identify(3, open, stop)
+            JpegInspection(JpegOutputDescription(4, 4, 1, "sRGB", 3), fp)
+        })
+        adapter.createAttempt(selected, "a".repeat(32), io).use { attempt ->
+            val result = attempt.render { false }
+            assertEquals(selected, result.receipt.request)
+            assertEquals(DngContentVerifier.identify(3, { io.bytes.toByteArray().inputStream() }), result.fingerprint)
+            assertTrue(selected.accepts(result.receipt))
+            assertNull(result.receipt.original)
+        }
+        assertFalse(adapter.supports(selected.forStrictOriginal()))
+    }
+
     @Test fun halfStrengthStillProducesTheExistingTrialPipelineResult() {
         val fixture = Fixture()
         val selected = request(.5)
         fixture.adapter.createAttempt(selected, "a".repeat(32), Io(original)).use { attempt ->
-            assertEquals(selected, attempt.render { false }.request)
+            assertEquals(selected, attempt.render { false }.receipt.request)
         }
         assertArrayEquals(fixture.expected(.5), fixture.pixels.single(), 0f)
     }

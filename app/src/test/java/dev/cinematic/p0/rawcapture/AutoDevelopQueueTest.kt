@@ -266,12 +266,12 @@ class AutoDevelopQueueTest {
             override fun supports(request: AutoDevelopRequest) = true
             override fun verifyOriginal(request: AutoDevelopRequest, shouldStop: () -> Boolean) {}
             override fun createAttempt(request: AutoDevelopRequest, attemptId: String) = object : AutoRenderAttempt {
-                override fun render(shouldStop: () -> Boolean): AutoRenderReceipt {
+                override fun render(shouldStop: () -> Boolean): AutoRenderOutput {
                     starts.incrementAndGet()
                     onRender(request)
                     if (shouldStop()) throw java.util.concurrent.CancellationException("superseded")
                     if (failRender) throw IOException("synthetic render failure")
-                    return request.syntheticReceipt(attemptId, 16, 12, 3)
+                    return AutoRenderOutput(request.syntheticReceipt(attemptId, 16, 12, 3), request.source.fingerprint)
                 }
                 override fun close() { if (failClose) throw IOException("synthetic close failure") }
             }

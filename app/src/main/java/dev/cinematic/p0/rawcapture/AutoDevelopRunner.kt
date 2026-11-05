@@ -59,7 +59,7 @@ internal class AutoDevelopRunner(
     private var closing = false
     private var cancelSent = false
     private var cancelCalls = 0
-    private var receipt: AutoRenderReceipt? = null
+    private var output: AutoRenderOutput? = null
     private var renderPending = false
     private var renderFailure: Throwable? = null
     private var renderAttemptId: String? = null
@@ -151,7 +151,7 @@ internal class AutoDevelopRunner(
             record = finishRender(record)
         } else if (record.phase == AutoJobPhase.QUEUED) {
             // An explicit retry starts a different attempt, including if the next intent commit fails.
-            receipt = null; renderFailure = null; renderPending = false; renderDecision = null; renderAttemptId = null
+            output = null; renderFailure = null; renderPending = false; renderDecision = null; renderAttemptId = null
             try { backend.verifyOriginal(record.request, ::stopped) }
             catch (changed: DngContentChanged) { return result(AutoRunStatus.HELD, journal.hold(record.revision, AutoJobReason.SOURCE_CHANGED)) }
             catch (failure: Exception) {
@@ -166,7 +166,7 @@ internal class AutoDevelopRunner(
             renderPending = true
             try {
                 if (stopped()) throw CancellationException("Auto-develop attempt superseded before render")
-                receipt = requireNotNull(attempt).render(::stopped)
+                output = requireNotNull(attempt).render(::stopped)
             }
             catch (failure: Throwable) { renderFailure = failure }
             if (!closeRender()) return result(AutoRunStatus.RESOURCES_HELD, record)
@@ -247,7 +247,8 @@ internal class AutoDevelopRunner(
         }
         if (failure is AutoRenderUnsupported) return RenderDecision(renderId, AutoJobPhase.HELD, AutoJobReason.UNSUPPORTED)
         if (failure != null) return failed()
-        val value = receipt ?: return failed()
+        val produced = output ?: return failed()
+        val value = produced.receipt
         val request = record.request
         if (!request.accepts(value)) return invalid()
         if (request.publishable && value.original?.binding?.attemptId != renderId) return invalid()
@@ -256,7 +257,8 @@ internal class AutoDevelopRunner(
             return if (stopped()) interrupted() else invalid()
         }
         if (stopped()) return interrupted()
-        if (backend.hasUnreleasedResources || inspection.output != value.output || inspection.fingerprint.bytes != value.output.bytes) return invalid()
+        if (backend.hasUnreleasedResources || inspection.output != value.output || inspection.fingerprint.bytes != value.output.bytes ||
+            inspection.fingerprint != produced.fingerprint) return invalid()
         try {
             // Bounded metadata validation after close/inspection, before the durable success commit.
             AutoDevelopCodec.encode(record.copy(phase = AutoJobPhase.RENDERED, outputFingerprint = inspection.fingerprint, observed = value))

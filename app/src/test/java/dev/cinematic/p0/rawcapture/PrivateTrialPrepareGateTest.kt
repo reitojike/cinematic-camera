@@ -47,12 +47,12 @@ class PrivateTrialPrepareGateTest {
                 assertFalse(shouldStop())
             }
             override fun createAttempt(request: AutoDevelopRequest, attemptId: String) = object : AutoRenderAttempt {
-                override fun render(shouldStop: () -> Boolean): AutoRenderReceipt {
+                override fun render(shouldStop: () -> Boolean): AutoRenderOutput {
                     assertEquals(fixed, request)
                     assertFalse(shouldStop())
                     rendered += request
-                    return AutoRenderReceipt(request, JpegOutputDescription(16, 12, 1, "sRGB", fingerprint.bytes),
-                        RenderedFaceState.NOT_RUN, RenderedExposureState.DIAGNOSTIC)
+                    return AutoRenderOutput(AutoRenderReceipt(request, JpegOutputDescription(16, 12, 1, "sRGB", fingerprint.bytes),
+                        RenderedFaceState.NOT_RUN, RenderedExposureState.DIAGNOSTIC), fingerprint)
                 }
                 override fun close() {}
             }

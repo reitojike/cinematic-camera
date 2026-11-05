@@ -52,6 +52,9 @@ class AutoDevelopInstrumentationTest {
     @Test fun producerFailureIsInvalidAfterAllHandlesActuallyClose() {
         assertInvalidOutput("producer-fault")
     }
+    @Test fun producerHashCannotBeReplacedByTheIndependentlyInspectedOutput() {
+        assertInvalidOutput("hash-mismatch")
+    }
     private fun assertInvalidOutput(mode: String) {
         Fixture(mode).use { f ->
             assertEquals(AutoRunStatus.HELD, f.runner.advance().status)
@@ -114,7 +117,7 @@ class AutoDevelopInstrumentationTest {
             override val quality = if (mode == "preview") AutoRenderQuality.PREVIEW else AutoRenderQuality.FINAL_ORIGINAL_STRICT
             override fun supports(request: AutoDevelopRequest) = request == this@Fixture.request
             override fun createAttempt(request: AutoDevelopRequest, attemptId: String, io: AutoRenderIo) = object : AutoRenderAttempt {
-                override fun render(shouldStop: () -> Boolean): AutoRenderReceipt {
+                override fun render(shouldStop: () -> Boolean): AutoRenderOutput {
                     starts++
                     check(!shouldStop())
                     assertArrayEquals(original, io.openOriginal().use { it.readBytes() })
@@ -128,8 +131,9 @@ class AutoDevelopInstrumentationTest {
                         OriginalAttemptBinding.recipeHash(request.recipe), request.rendererContract), policy.inputPolicy, policy.geometryPolicy,
                         RenderPolicyVersion("synthetic-profile", 1), AutoInputProfile.SUPPORTED, policy.faceDetector, policy.meteringPolicy, 0.0,
                         OriginalRasterGeometry(16, 12, 1, 16, 12, true))
-                    return AutoRenderReceipt(request, JpegOutputDescription(16, 12, 1, "sRGB", jpeg.size.toLong()),
-                        RenderedFaceState.VERIFIED_NONE, RenderedExposureState.SUPPORTED, proof)
+                    return AutoRenderOutput(AutoRenderReceipt(request, JpegOutputDescription(16, 12, 1, "sRGB", jpeg.size.toLong()),
+                        RenderedFaceState.VERIFIED_NONE, RenderedExposureState.SUPPORTED, proof),
+                        fingerprint(jpeg).let { if (mode == "hash-mismatch") it.copy(sha256 = "0".repeat(64)) else it })
                 }
                 override fun close() {}
             }

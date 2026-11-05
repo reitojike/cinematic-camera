@@ -49,19 +49,19 @@ internal class BoundedJpegRendererAdapter(
                 io.openOriginal()
             }, encoder, inspector)
         return object : AutoRenderAttempt {
-            override fun render(shouldStop: () -> Boolean): AutoRenderReceipt {
+            override fun render(shouldStop: () -> Boolean): AutoRenderOutput {
                 if (selectedRecipe.isTrial) {
                     val result = generation.renderTrial(shouldStop)
                     if (result.request.captureId != request.captureId || result.request.generation != request.generation ||
                         result.request.source != request.source || result.request.recipe != request.recipe) throw IOException("Foreign private trial JPEG")
-                    return AutoRenderReceipt(request, result.request.output, result.face, result.exposure)
+                    return AutoRenderOutput(AutoRenderReceipt(request, result.request.output, result.face, result.exposure), result.jpegFingerprint)
                 }
                 val result = generation.render(shouldStop)
                 val render = result.render
                 if (render.request.source != request.source || render.request.recipe != request.recipe ||
                     render.request.captureId != request.captureId || render.request.generation != request.generation ||
                     render.rendererContract != request.rendererContract) throw IOException("Foreign generated JPEG")
-                return AutoRenderReceipt(request, render.request.output, render.face, render.exposure)
+                return AutoRenderOutput(AutoRenderReceipt(request, render.request.output, render.face, render.exposure), result.jpegFingerprint)
             }
             override fun requestStop() = frameOwner.requestStop()
             override fun close() {

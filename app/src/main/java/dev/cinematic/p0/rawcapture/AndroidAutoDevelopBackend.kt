@@ -93,7 +93,7 @@ internal class AndroidAutoDevelopBackend(
         // The adapter constructor must not acquire resources: the returned owner is retained before render.
         val engine = adapter.createAttempt(request, attemptId, io)
         return object : AutoRenderAttempt {
-            override fun render(shouldStop: () -> Boolean): AutoRenderReceipt {
+            override fun render(shouldStop: () -> Boolean): AutoRenderOutput {
                 rendering = true
                 try { return engine.render(shouldStop) }
                 finally { rendering = false }
