@@ -115,31 +115,90 @@ internal class OriginalField(
 internal object OriginalFields {
     fun blur(input: OriginalRaster, radius: Double, channels: Int, stop: () -> Boolean,
         project: (FloatArray, FloatArray) -> Unit): OriginalField {
+        val (width, height) = blurSize(input, radius)
+        return reduce(input, width, height, channels, stop, OriginalFilter.LINEAR, project)
+    }
+
+    /** One immutable projection per input row, at most three strictly reduced horizontal-first grids.
+     * Unsupported geometry/budget falls back BEFORE IO; failures after admission never replay input. */
+    fun blurMany(input: OriginalRaster, radii: List<Double>, channels: Int, stop: () -> Boolean,
+        project: (FloatArray, FloatArray) -> Unit): List<OriginalField> {
+        require(radii.size in 1..3)
+        val sizes = radii.map { blurSize(input, it) }
+        sizes.forEach { (width, height) -> validateGrid(input, width, height, channels) }
+        val eligible = input.width > 1 && input.height > 1 && sizes.all { (width, height) ->
+            width < input.width && height < input.height && !isVerticalFirst(input, width, height)
+        }
+        val elements = sizes.map { (width, height) -> width.toLong() * height * channels }
+        if (!eligible || !batchAccumulatorsFit(elements)) return radii.map { blur(input, it, channels, stop, project) }
+        return collect(input, sizes.map { (width, height) -> PreparedGrid(input, width, height, channels, OriginalFilter.LINEAR) },
+            channels, stop, project)
+    }
+
+    /** Double payload only: coefficients/Contributor metadata remain bounded by at most three grids. */
+    internal fun batchAccumulatorsFit(elements: List<Long>): Boolean {
+        if (elements.size !in 1..3 || elements.any { it !in 1..16_000_000L }) return false
+        val total = elements.sum()
+        return total <= 16_000_000L && (total - elements.max()) * Double.SIZE_BYTES <= 512L * 1024
+    }
+
+    private fun blurSize(input: OriginalRaster, radius: Double): Pair<Int, Int> {
         require(radius.isFinite() && radius > 0)
+        require(input.width > 0 && input.height > 0)
         val cell = max(radius * max(input.width, input.height), 1.0)
-        return reduce(input, max(2, round(input.width / cell).toInt()), max(2, round(input.height / cell).toInt()),
-            channels, stop, OriginalFilter.LINEAR, project)
+        return max(2, round(input.width / cell).toInt()) to max(2, round(input.height / cell).toInt())
+    }
+
+    private fun isVerticalFirst(input: OriginalRaster, width: Int, height: Int) =
+        input.height - height > 0 && input.height.toLong() - height > 2L * (input.width - width)
+
+    private fun validateGrid(input: OriginalRaster, width: Int, height: Int, channels: Int) {
+        require(input.width > 0 && input.height > 0 && input.width.toLong() * 3 <= Int.MAX_VALUE)
+        require(width > 0 && height > 0 && channels in 1..3 && width.toLong() * height * channels <= 3L * 1024 * 1024)
+        val intermediateWidth = if (isVerticalFirst(input, width, height)) input.width else width
+        require(intermediateWidth.toLong() * height * channels <= 16_000_000) { "Analysis field exceeds memory budget" }
     }
 
     /** BOX reduction holds only a bounded global grid and a row; no full planar intermediate. */
     fun reduce(input: OriginalRaster, width: Int, height: Int, channels: Int, stop: () -> Boolean,
         interpolation: OriginalFilter = OriginalFilter.LINEAR,
         project: (FloatArray, FloatArray) -> Unit): OriginalField {
-        require(width > 0 && height > 0 && channels in 1..3 && width.toLong() * height * channels <= 3L * 1024 * 1024)
-        val columns = originalWeights(input.width, width, OriginalFilter.BOX)
-        val vertical = originalWeights(input.height, height, OriginalFilter.BOX)
-        val contributors = Array(input.height) { mutableListOf<Pair<Int, Double>>() }
-        vertical.forEachIndexed { y, weights -> weights.weights.forEachIndexed { dy, w ->
-            if (w != 0.0) contributors[weights.first + dy].add(y to w)
-        } }
-        val verticalFirst = input.height - height > 0 && input.height.toLong() - height > 2L * (input.width - width)
-        val intermediateWidth = if (verticalFirst) input.width else width
-        require(intermediateWidth.toLong() * height * channels <= 16_000_000) { "Analysis field exceeds memory budget" }
-        val accum = DoubleArray(intermediateWidth * height * channels)
+        validateGrid(input, width, height, channels)
+        return collect(input, listOf(PreparedGrid(input, width, height, channels, interpolation)), channels, stop, project).single()
+    }
+
+    private fun collect(input: OriginalRaster, grids: List<PreparedGrid>, channels: Int, stop: () -> Boolean,
+        project: (FloatArray, FloatArray) -> Unit): List<OriginalField> {
         val projected = FloatArray(input.width * channels)
-        val horizontal = FloatArray(width * channels)
+        var next = 0
+        originalCheckpoint(stop)
         input.rows(stop) { y, rgb ->
+            require(y == next && y < input.height && rgb.size == input.width * 3) { "Invalid original raster row" }
             project(rgb, projected)
+            require(projected.all { it.isFinite() }) { "Non-finite original field projection" }
+            grids.forEach { originalCheckpoint(stop); it.accept(y, projected) }
+            next++
+        }
+        require(next == input.height) { "Incomplete original raster" }
+        // rows() returning includes the reader's close acknowledgement. No fields escape earlier.
+        return grids.map { originalCheckpoint(stop); it.finish() }
+    }
+
+    private class PreparedGrid(private val input: OriginalRaster, private val width: Int, private val height: Int,
+        private val channels: Int, private val interpolation: OriginalFilter) {
+        private val columns = originalWeights(input.width, width, OriginalFilter.BOX)
+        private val vertical = originalWeights(input.height, height, OriginalFilter.BOX)
+        private val contributors = Array(input.height) { mutableListOf<Pair<Int, Double>>() }.also { contributors ->
+            vertical.forEachIndexed { y, weights -> weights.weights.forEachIndexed { dy, w ->
+                if (w != 0.0) contributors[weights.first + dy].add(y to w)
+            } }
+        }
+        private val verticalFirst = isVerticalFirst(input, width, height)
+        private val intermediateWidth = if (verticalFirst) input.width else width
+        private val accum = DoubleArray(intermediateWidth * height * channels)
+        private val horizontal = FloatArray(width * channels)
+
+        fun accept(y: Int, projected: FloatArray) {
             if (!verticalFirst) repeat(width) { x -> repeat(channels) { c ->
                 val weights = columns[x]
                 var value = 0.0
@@ -151,20 +210,23 @@ internal object OriginalFields {
                 row.indices.forEach { i -> accum[dy * row.size + i] += row[i] * weight }
             }
         }
-        val values = if (!verticalFirst) FloatArray(accum.size) { accum[it].toFloat() } else {
-            FloatArray(width * height * channels).also { out ->
-                repeat(height) { y -> repeat(width) { x -> repeat(channels) { c ->
-                    val weights = columns[x]
-                    var value = 0.0
-                    weights.weights.indices.forEach { dx ->
-                        value += accum[(y * intermediateWidth + weights.first + dx) * channels + c].toFloat() * weights.weights[dx]
-                    }
-                    out[(y * width + x) * channels + c] = value.toFloat()
-                } } }
+
+        fun finish(): OriginalField {
+            val values = if (!verticalFirst) FloatArray(accum.size) { accum[it].toFloat() } else {
+                FloatArray(width * height * channels).also { out ->
+                    repeat(height) { y -> repeat(width) { x -> repeat(channels) { c ->
+                        val weights = columns[x]
+                        var value = 0.0
+                        weights.weights.indices.forEach { dx ->
+                            value += accum[(y * intermediateWidth + weights.first + dx) * channels + c].toFloat() * weights.weights[dx]
+                        }
+                        out[(y * width + x) * channels + c] = value.toFloat()
+                    } } }
+                }
             }
+            return OriginalField(width, height, channels, values,
+                input.width, input.height, interpolation)
         }
-        return OriginalField(width, height, channels, values,
-            input.width, input.height, interpolation)
     }
 }
 

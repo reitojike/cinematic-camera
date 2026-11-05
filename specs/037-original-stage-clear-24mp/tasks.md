@@ -22,4 +22,12 @@
 - [x] 拡大行cacheのbitwise/端/HDR/1px/任意順/並行読込・payloadを検証し、旧式と同条件で測る。
 - [x] trace有無の全画素一致、primary failureとclose保持、固定段階の完了/失敗記録を検証する。
 - [x] 合成12MP/24MPの段階別時間とmicrobenchmarkを測り、改善効果・支配段階・実機未確認を区別する。
-- [ ] 最終headで公開検査・lint/unit/両ABI build・CI/canonical/独立レビューを行い、条件を満たして通常mergeする。
+- [x] 最終headで公開検査・lint/unit/両ABI build・CI/canonical/独立レビューを行い、条件を満たして通常mergeする。
+
+## bloom fieldの共有走査（Issue #167）
+
+- [ ] 最大3本/追加payload上限と事前fallbackを備える共有grid集計を実装し、単独reduceの式を共用する。
+- [ ] field/復元行のraw-bit一致、HDR/端/倍率と走査/project回数を検証する。
+- [ ] 追加payload・取消・短い/不正raster・project/close失敗と部分成功の禁止を検証する。
+- [ ] 固定条件のkernel交互測定とbaseline/candidate全段測定を行い、効果/画像/観測メモリを区別する。
+- [ ] 最終headの公開検査・lint/unit/両ABI/CI/canonical/独立レビューを確認し、採否と通常merge/main CIを記録する。
