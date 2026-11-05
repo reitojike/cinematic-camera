@@ -1,0 +1,9 @@
+# 設計
+
+rawprobe専用のnative helperとKotlin writer/testを追加する。既存decoderは診断flag内のhookだけを拡張し、製品のentry/16MP/1024/half-size/128MiBを維持する。既存inspectも変更しない。
+
+小型専用geometry parserはgenerated fixtureの明示subsetに限定する。LibRawがushortへ変換する前のtagを有界確認し、unpack後に公式adjust_to_raw_inset_cropで標準cropを適用・実geometryと照合する。user cropや小数crop等は今回非対応とする。
+
+make_mem_imageの結果をsoftware Bitmapへnativeで全画素packし、小型RGB16とgeometryを診断frameへ返す。製品品質の型を使わず、基準JPEG writerは一つの同期attemptでbitmap/streamを所有する。失敗したcloseはownerに残し、後続close確認だけ可能にする。
+
+合成fixtureと故障注入はrawprobe内へ置き、他の保存実装を変更しない。local lint/build・両ABI・専用AVDの小型検証・独立レビューまで実施する。公開CIは未実行として区別する。
