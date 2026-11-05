@@ -15,6 +15,8 @@ class CaptureDevelopIntentTest {
     private val pair = setOf(RawOutput.DNG, RawOutput.JPEG)
     private val intent = CaptureDevelopIntent(RenderRecipeSnapshot("synthetic-final-policy-v1", "strength=0.5;profile=unobserved"),
         "synthetic-final-renderer-v1")
+    private val strictIntent = intent.copy(requestedQuality = AutoRenderQuality.FINAL_ORIGINAL_STRICT,
+        originalDeclaration = syntheticOriginalDeclaration)
     private val fingerprint = OriginalFingerprint(3, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
 
     @Test fun defaultCaptureHasNoIntentAndCannotBeRetrofitted() {
@@ -90,38 +92,40 @@ class CaptureDevelopIntentTest {
     }
 
     @Test fun intentCommitReadbackPrecedesEveryOutputOpen() {
-        val storage = Memory()
-        val root = temporary.newFolder()
-        var opens = 0
-        val store = RawCaptureStore(root, "capture", storage, openNewOutput = { file ->
-            opens++
-            assertEquals(intent, CaptureJournal("capture", storage).read()!!.developIntent)
-            file.outputStream()
-        })
-        val session = RawCaptureSession(store, DngPublicationJournal("capture", Memory()), UnusedRows())
-        session.prepare(pair, intent)
-        assertEquals(2, opens)
-        assertEquals(intent, session.interruptAndCloseWriters()!!.developIntent)
-        assertFalse(session.hasUnreleasedWriters)
-        val restarted = RawCaptureSession(RawCaptureStore(root, "capture", storage),
-            DngPublicationJournal("capture", Memory()), UnusedRows())
-        assertEquals(intent, restarted.recoverAfterProcessDeath()!!.developIntent)
+        for (fixed in listOf(intent, strictIntent)) {
+            val storage = Memory()
+            val root = temporary.newFolder()
+            var opens = 0
+            val store = RawCaptureStore(root, "capture", storage, openNewOutput = { file ->
+                opens++
+                assertEquals(fixed, CaptureJournal("capture", storage).read()!!.developIntent)
+                file.outputStream()
+            })
+            val session = RawCaptureSession(store, DngPublicationJournal("capture", Memory()), UnusedRows())
+            session.prepare(pair, fixed)
+            assertEquals(2, opens)
+            assertEquals(fixed, session.interruptAndCloseWriters()!!.developIntent)
+            assertFalse(session.hasUnreleasedWriters)
+            val restarted = RawCaptureSession(RawCaptureStore(root, "capture", storage),
+                DngPublicationJournal("capture", Memory()), UnusedRows())
+            assertEquals(fixed, restarted.recoverAfterProcessDeath()!!.developIntent)
+        }
     }
 
     @Test fun createFailureBeforeOrAfterCommitOrAtReadbackNeverOpensStreamsOrDropsCommittedIntent() {
-        listOf("before", "after", "readback").forEach { fault ->
+        for (fault in listOf("before", "after", "readback")) for (fixed in listOf(intent, strictIntent)) {
             val storage = Memory().apply { failure = fault }
             var opens = 0
             val root = temporary.newFolder()
             val store = RawCaptureStore(root, "capture", storage, openNewOutput = { opens++; it.outputStream() })
             val session = RawCaptureSession(store, DngPublicationJournal("capture", Memory()), UnusedRows())
-            assertThrows(IOException::class.java) { session.prepare(pair, intent) }
+            assertThrows(IOException::class.java) { session.prepare(pair, fixed) }
             assertEquals(0, opens)
             assertFalse(File(root, "capture/original.dng").exists())
             storage.failure = null
             val persisted = CaptureJournal("capture", storage).read()
             if (fault == "before") assertNull(persisted)
-            else assertEquals(intent, persisted!!.developIntent)
+            else assertEquals(fixed, persisted!!.developIntent)
         }
     }
 
