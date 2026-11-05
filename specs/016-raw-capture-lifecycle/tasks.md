@@ -144,3 +144,13 @@ production controls登録・photoroll接続・実観測・Pixel実機は上記�
 - [x] T044 [US2] 既知short/long/零read/取消/read-close故障、未知長、source変更後のsnapshot不変、default長さ照合とnative JPEG/向き/破損/private回帰を確認する（SC-001/002/003/005）。
 
 encoded配列の重複削減を全解像度renderer/codec内部コピー/Pixel性能の合格へ置換しない。
+
+## Phase 14: 原寸要求と成功証跡
+
+- [x] T045 [US2] `original-render-evidence.md`で固定宣言/実観測、profile/geometry/coverage、既存実行枠・永続化/公開gate・旧記録の保全を設計し、#78/#79との確認事項を示して独立レビューする（FR-004/005/006/007/009/010）。
+- [ ] T046 [US2] 既存request/receipt/Completedと現像/公開codecを拡張し、新strict原寸契約は同attemptの実profile・顔EV・原寸coverage・出力証跡を必須にする。旧private/manual互換と欠落/破損の区別を検証する（FR-006/007/009、SC-001/002/005）。
+- [ ] T047 [US2] 既存Runner/backendのsource/資源確認と実attemptへ、実geometryに対する能力/メモリ確認と#78/#79のproducerを接続する。1024許可を原寸へ流用せず、別controllerや二重画像解析を増やさない（FR-004/005/009、SC-003/004）。
+- [ ] T048 [US2] 明示intent・正常全形式受領・SHARED_ONLY/同FPからprocess ownerの既存queueへ投入し、commit不明/重複通知/再起動でも同要求を照合する。旧撮影の後付け・弱UI通知依存・未対応要求の量産を避ける（FR-001/005/006/007/008）。
+- [ ] T049 [US2] 欠落/取り違え/旧版/取消/close/commit故障、縮小入力の原寸偽装拒否と24MP入力/原寸出力の別検証を実施し、実機の画質・ピークメモリ/熱・撮影復帰を確認してから実FULLを登録する（SC-001〜005）。
+
+T045の設計とT046〜049の実装/実測を区別する。原寸のprofile/顔/EVやメモリを仮の成功値で埋めない。
