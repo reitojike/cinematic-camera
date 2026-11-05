@@ -97,6 +97,8 @@ halationはchannels/projectが異なるため別走査のままとする。
 係数/Contributor/field/row cache等の保持は別であり、managed/native/PSSも測る。
 cancelをgrid accept/finish前に確認し、input.rowsがcloseを確認して戻った後だけ結果を返す。
 処理・project・read/closeの失敗から順次経路へretryせず、部分結果を公開しない。
+単独reduceは従来のreader/consumerの有限値検査を維持し、投影値の全画素追加走査を持ち込まない。
+新規batchは共有projectionの有限値もその場で検査する。無効なsingle projectionも消費側で拒否し、完成raster/proofへ進めない。
 
 まず旧順次blurとのraw-bit一致、callback/走査回数、容量fallback、取消/失敗をunitで検証する。
 同APKの交互microbenchmarkでfield生成時間/CPU・payload・観測メモリを比較し、
