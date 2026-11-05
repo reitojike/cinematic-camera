@@ -32,6 +32,8 @@ internal interface AutoDevelopBackend {
     fun inspect(request: AutoDevelopRequest, attemptId: String, shouldStop: () -> Boolean): JpegInspection
     fun publication(record: AutoDevelopRecord, isCurrent: () -> Boolean): AutoDevelopPublication
     fun privatePreview(record: AutoDevelopRecord, shouldStop: () -> Boolean): PrivateTrialPreview = throw IOException("Private trial readback unavailable")
+    /** Capture the current readback's cancellation target, never a lookup that can stop a later read. */
+    fun privatePreviewStopAction(): (() -> Unit)? = null
 }
 
 /**
@@ -80,15 +82,15 @@ internal class AutoDevelopRunner(
         admission.requestStop(requested.slot)
         val target = synchronized(ownership) {
             if (slot !== requested.slot) return
-            val owner = attempt
-            if (owner == null || closing || cancelSent) return
+            if (closing || cancelSent) return
+            val stop = attempt?.let { owner -> { owner.requestStop() } } ?: backend.privatePreviewStopAction() ?: return
             cancelSent = true
             cancelCalls++
-            owner
+            stop
         }
         try {
             cancellationIo.execute {
-                try { target.requestStop() } catch (_: Throwable) { /* Stop remains latched; close still owns resources. */ }
+                try { target() } catch (_: Throwable) { /* Stop remains latched; close still owns resources. */ }
                 finally { synchronized(ownership) { cancelCalls-- }; notifyClose() }
             }
         } catch (_: RuntimeException) { synchronized(ownership) { cancelCalls--; cancelSent = false }; notifyClose() }
@@ -272,6 +274,7 @@ internal class AutoDevelopRunner(
             val record = journal.read() ?: throw CaptureJournalConflict()
             if (!record.request.boundedTrial || record.phase != AutoJobPhase.RENDERED || !isCurrent() || !supports(record.request)) throw CaptureJournalConflict()
             if (slot == null) slot = admit() ?: throw IOException("Develop execution is occupied or blocked")
+            synchronized(ownership) { cancelSent = false }
             val stop = { shouldStop() || stopped() }
             if (stop()) throw DngVerificationStopped()
             val readback = backend.privatePreview(record, stop).also { image = it }

@@ -81,11 +81,8 @@ internal class PrivateTrialPhotoRollRenderer(context: Context, private val resou
                         observed.phase == PrivateTrialPhase.READY && observed.face == RenderedFaceState.NOT_RUN &&
                         observed.exposure == RenderedExposureState.DIAGNOSTIC && output.width in 1..maxEdge && output.height in 1..maxEdge &&
                         preview.bitmap.width == output.width && preview.bitmap.height == output.height && preview.bitmap.colorSpace?.isSrgb == true)
-                    cancellation.throwIfCanceled()
-                    // Never give a queue-owned/recycled bitmap to Compose. At most 4MiB of display pixels.
-                    val bitmap = requireNotNull(preview.bitmap.copy(Bitmap.Config.ARGB_8888, false))
-                    if (cancellation.isCanceled) { bitmap.recycle(); cancellation.throwIfCanceled() }
-                    return PhotoRollRenderResult.Preview(bitmap, mode)
+                    val copied = copyPrivateTrialDisplay(preview.bitmap, preview.comparisonBitmap, cancellation)
+                    return PhotoRollRenderResult.Preview(copied.after, mode, comparisonBitmap = copied.comparison)
                 } finally { preview.close() }
             } finally { delivery.close() }
         } catch (_: java.util.concurrent.CancellationException) {
@@ -111,5 +108,31 @@ internal class PrivateTrialPhotoRollRenderer(context: Context, private val resou
             catch (failure: ExecutionException) { throw (failure.cause ?: failure) }
             catch (_: InterruptedException) { Thread.currentThread().interrupt(); throw OperationCanceledException() }
         }
+    }
+}
+
+internal data class PrivateTrialDisplayCopy(val after: Bitmap, val comparison: Bitmap?)
+
+/** No queue-owned image reaches Compose. Optional comparison-copy failure preserves the checked After. */
+internal fun copyPrivateTrialDisplay(after: Bitmap, before: Bitmap?, cancellation: CancellationSignal,
+    copyComparison: (Bitmap) -> Bitmap? = { it.copy(Bitmap.Config.ARGB_8888, false) }): PrivateTrialDisplayCopy {
+    cancellation.throwIfCanceled()
+    val bitmap = requireNotNull(after.copy(Bitmap.Config.ARGB_8888, false))
+    var comparison: Bitmap? = null
+    try {
+        cancellation.throwIfCanceled()
+        if (before != null && !before.isRecycled && before.config != Bitmap.Config.HARDWARE && before.colorSpace?.isSrgb == true &&
+            before.width == after.width && before.height == after.height) {
+            comparison = try { copyComparison(before) }
+            catch (failure: OperationCanceledException) { throw failure }
+            catch (failure: java.util.concurrent.CancellationException) { throw failure }
+            catch (_: OutOfMemoryError) { null }
+            catch (_: RuntimeException) { null }
+        }
+        cancellation.throwIfCanceled()
+        return PrivateTrialDisplayCopy(bitmap, comparison)
+    } catch (failure: Throwable) {
+        bitmap.recycle(); comparison?.recycle()
+        throw failure
     }
 }

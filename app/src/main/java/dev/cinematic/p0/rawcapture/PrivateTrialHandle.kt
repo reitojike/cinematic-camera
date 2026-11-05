@@ -29,8 +29,13 @@ internal data class PrivateTrialStatus(val request: PrivateTrialRequest, val pha
 }
 
 /** Display result only. UI closes after removing it from display; no encoded bytes/file/public URI. */
-internal class PrivateTrialPreview(val bitmap: Bitmap, val status: PrivateTrialStatus) : Closeable {
-    @Synchronized override fun close() { if (!bitmap.isRecycled) bitmap.recycle() }
+internal class PrivateTrialPreview(val bitmap: Bitmap, val status: PrivateTrialStatus,
+    /** Same oriented, bounded RAW decode before diagnostic exposure/R7/look. No encoded source preview. */
+    val comparisonBitmap: Bitmap? = null) : Closeable {
+    @Synchronized override fun close() {
+        if (!bitmap.isRecycled) bitmap.recycle()
+        comparisonBitmap?.let { if (!it.isRecycled) it.recycle() }
+    }
 }
 
 /** Deliberately has no completed result, publish, shared URI, source-write or file-copy API. */
