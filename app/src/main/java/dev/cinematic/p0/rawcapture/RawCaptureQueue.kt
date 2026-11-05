@@ -8,6 +8,7 @@ import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -129,6 +130,29 @@ internal class RawCaptureQueue(
                 interruptOnIo(ticket)
             }
         }
+    }
+
+    /** Read an owned, fully handed-off capture without starting handoff or changing its state.
+     * Missing/unfinished captures are unavailable; corrupt durable records complete exceptionally. */
+    fun readDevelopRequest(captureId: String): CompletableFuture<AutoDevelopRequest?> {
+        requireCaptureId(captureId)
+        val result = CompletableFuture<AutoDevelopRequest?>()
+        handoffIo.execute {
+            if (result.isCancelled) return@execute
+            try {
+                val ticket = tickets[captureId]
+                // This atomic flag becomes true only after writer close. Do not query synchronized
+                // output state here: a slow close must never stall the handoff worker.
+                if (ticket == null || !ticket.writerReleased.get() || !ticket.terminal || ticket.interrupted) {
+                    result.complete(null)
+                    return@execute
+                }
+                val session = ticket.session
+                val request = session?.readDevelopRequest()
+                result.complete(if (ticket.interrupted || ticket.session !== session) null else request)
+            } catch (failure: Exception) { result.completeExceptionally(failure) }
+        }
+        return result
     }
 
     /** UI may report request failure immediately; writer reservations remain until actual close. */

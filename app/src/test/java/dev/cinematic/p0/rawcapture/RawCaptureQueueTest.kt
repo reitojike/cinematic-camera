@@ -10,10 +10,119 @@ import java.io.File
 import java.io.IOException
 import java.util.ArrayDeque
 import java.util.concurrent.Executor
+import java.util.concurrent.ExecutionException
 
 class RawCaptureQueueTest {
     @get:Rule val temporary = TemporaryFolder()
     private val original = "synthetic camera bytes".toByteArray()
+
+    private val strictIntent = CaptureDevelopIntent(RenderRecipeSnapshot("synthetic-policy-v1", "fixed"),
+        "synthetic-renderer-v1", AutoRenderQuality.FINAL_ORIGINAL_STRICT, syntheticOriginalDeclaration)
+
+    @Test fun strictRequestIsAvailableOnlyAfterSharedHandoffAndSurvivesObserverLoss() {
+        val f = Fixture()
+        val ticket = f.queue.prepare("strict", setOf(RawOutput.DNG, RawOutput.JPEG), f.observer, strictIntent)
+        f.prepareIo.runAll(); f.main.runAll()
+        val outputs = f.streams()
+        outputs.getValue(RawOutput.DNG).write(original)
+        outputs.getValue(RawOutput.JPEG).write("synthetic preview".toByteArray())
+        f.queue.received(ticket, RawOutput.JPEG)
+        f.completion.runAll(); f.main.runAll()
+        val partial = f.queue.readDevelopRequest("strict")
+        f.handoff.runAll()
+        assertNull(partial.get())
+        f.queue.received(ticket, RawOutput.DNG)
+        f.completion.runAll(); f.main.runAll()
+        val beforeHandoff = f.queue.readDevelopRequest("strict")
+        // The camera can hold admission while capture receipt completion remains independent.
+        val camera = f.queue.newCameraOwner()
+        f.handoff.runAll()
+        assertNull(beforeHandoff.get())
+        assertEquals(0, f.rows.inserts)
+        camera.update(false)
+        f.pump()
+        ticket.observer.clear()
+        val result = f.queue.readDevelopRequest("strict")
+        f.handoff.runAll()
+        val request = requireNotNull(result.get())
+        assertEquals("strict", request.captureId)
+        assertEquals(1L, request.generation)
+        assertEquals(strictIntent.recipe, request.recipe)
+        assertEquals(strictIntent.rendererContract, request.rendererContract)
+        assertEquals(strictIntent.originalDeclaration, request.originalDeclaration)
+        assertEquals(ticket.session!!.receipt()!!.originalFingerprint, request.source.fingerprint)
+        val repeat = f.queue.readDevelopRequest("strict")
+        f.handoff.runAll()
+        assertEquals(request, repeat.get())
+    }
+
+    @Test fun unknownUnfinishedAndLegacyCapturesDoNotConstructOrPromoteRequests() {
+        val f = Fixture()
+        val unknown = f.queue.readDevelopRequest("missing")
+        f.handoff.runAll()
+        assertNull(unknown.get())
+        assertEquals(0, f.factoryCalls)
+        val ticket = f.prepare("legacy")
+        val open = f.queue.readDevelopRequest("legacy")
+        f.handoff.runAll()
+        assertNull(open.get())
+        f.streams().getValue(RawOutput.DNG).write(original)
+        f.queue.received(ticket, RawOutput.DNG)
+        f.pump()
+        val legacy = f.queue.readDevelopRequest("legacy")
+        f.handoff.runAll()
+        assertNull(legacy.get())
+        assertEquals(1, f.factoryCalls)
+    }
+
+    @Test fun interruptedCaptureAndCorruptPublicationNeverReturnARequest() {
+        val f = Fixture()
+        val interrupted = f.queue.prepare("interrupted", setOf(RawOutput.DNG), f.observer, strictIntent)
+        f.prepareIo.runAll(); f.main.runAll()
+        f.streams().getValue(RawOutput.DNG).write(original)
+        f.queue.interrupt(interrupted)
+        f.pump()
+        val held = f.queue.readDevelopRequest("interrupted")
+        f.handoff.runAll()
+        assertNull(held.get())
+
+        val ticket = f.queue.prepare("corrupt", setOf(RawOutput.DNG), f.observer, strictIntent)
+        f.prepareIo.runAll(); f.main.runAll()
+        f.streams().getValue(RawOutput.DNG).write(original)
+        f.queue.received(ticket, RawOutput.DNG)
+        f.pump()
+        f.publications.getValue("corrupt").replace(byteArrayOf(1, 2, 3))
+        val corrupt = f.queue.readDevelopRequest("corrupt")
+        f.handoff.runAll()
+        assertThrows(ExecutionException::class.java) { corrupt.get() }
+        assertEquals(1, f.rows.inserts) // Existing handoff only; read never inserts.
+    }
+
+    @Test fun restoredProcessOwnerReadsTheSameStrictRequestWithoutCreatingAnotherRow() {
+        val f = Fixture()
+        val ticket = f.queue.prepare("restored", setOf(RawOutput.DNG), f.observer, strictIntent)
+        f.prepareIo.runAll(); f.main.runAll()
+        f.streams().getValue(RawOutput.DNG).write(original)
+        f.queue.received(ticket, RawOutput.DNG)
+        f.pump()
+        val first = f.queue.readDevelopRequest("restored")
+        f.handoff.runAll()
+        val request = requireNotNull(first.get())
+        val restoredHandoff = Manual()
+        val restarted = f.newQueue(restoredHandoff)
+        val unavailable = restarted.readDevelopRequest("restored")
+        restoredHandoff.runAll()
+        assertNull(unavailable.get()) // Lookup alone never constructs an owner.
+        assertEquals(1, f.factoryCalls)
+        restarted.newCameraOwner().apply { foreground(true); update(false) }
+        restarted.onForeground()
+        f.prepareIo.runAll()
+        restoredHandoff.runAll()
+        val recovered = restarted.readDevelopRequest("restored")
+        restoredHandoff.runAll()
+        assertEquals(request, recovered.get())
+        assertEquals(1, f.rows.inserts)
+    }
 
     @Test fun explicitIntentTravelsThroughPreparationReceiptsAndSharedOriginalHandoff() {
         val f = Fixture()
