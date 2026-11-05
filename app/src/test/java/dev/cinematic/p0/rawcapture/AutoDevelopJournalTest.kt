@@ -19,7 +19,7 @@ class AutoDevelopJournalTest {
             fun prepare() = journal.prepare(request())
             if (phase != AutoJobPhase.QUEUED) prepare()
             if (phase in setOf(AutoJobPhase.RETRYABLE, AutoJobPhase.RENDERED, AutoJobPhase.PUBLISHING, AutoJobPhase.PUBLISHED)) journal.start(0)
-            if (phase in setOf(AutoJobPhase.PUBLISHING, AutoJobPhase.PUBLISHED)) journal.rendered(1, fp)
+            if (phase in setOf(AutoJobPhase.PUBLISHING, AutoJobPhase.PUBLISHED)) journal.rendered(1, fp, observation())
             if (phase == AutoJobPhase.PUBLISHED) journal.publishing(2)
             val previous = journal.read()
             storage.phase = phase; storage.mode = mode
@@ -71,7 +71,7 @@ class AutoDevelopJournalTest {
         val storage = FaultStorage()
         val journal = AutoDevelopJournal("capture", 1, storage)
         journal.prepare(request())
-        journal.start(0); journal.rendered(1, fp); journal.publishing(2); journal.published(3)
+        journal.start(0); journal.rendered(1, fp, observation()); journal.publishing(2); journal.published(3)
         assertThrows(CaptureJournalConflict::class.java) { journal.retry(4) }
         assertThrows(CaptureJournalConflict::class.java) { journal.start(4) }
         assertThrows(CaptureJournalConflict::class.java) { journal.hold(4, AutoJobReason.RENDER_FAILED) }
@@ -87,6 +87,42 @@ class AutoDevelopJournalTest {
         assertEquals(record, AutoDevelopCodec.decode(legacy))
         assertNull(AutoDevelopCodec.decode(legacy).observed)
     }
+
+    @Test fun missingObservationIsReadableButCannotBecomeCompletedOrBeginPublication() {
+        val journal = AutoDevelopJournal("capture", 1, FaultStorage())
+        journal.prepare(request()); journal.start(0)
+        val rendered = journal.rendered(1, fp)
+        assertEquals(rendered, AutoDevelopCodec.decode(AutoDevelopCodec.encode(rendered)))
+        assertThrows(IOException::class.java) { rendered.completed() }
+        assertThrows(CaptureJournalConflict::class.java) { journal.publishing(rendered.revision) }
+        assertEquals(rendered, journal.read())
+    }
+
+    @Test fun observedOutputSurvivesRestartAndIsUsedInsteadOfRequestedDefaults() {
+        val storage = FaultStorage()
+        val journal = AutoDevelopJournal("capture", 1, storage)
+        journal.prepare(request()); journal.start(0); journal.rendered(1, fp, observation())
+        val record = AutoDevelopJournal("capture", 1, storage).read()!!
+        assertEquals(observation().output, record.completed().request.output)
+        assertEquals(observation().face, record.completed().face)
+        assertEquals(AutoJobPhase.PUBLISHING, journal.publishing(record.revision).phase)
+    }
+
+    @Test fun versionOneTerminalRecordKeepsItsArtifactWithoutInventingACompletion() {
+        val record = AutoDevelopRecord(request(), revision = 2, phase = AutoJobPhase.RENDERED,
+            attemptId = "a".repeat(32), attemptCount = 1, outputFingerprint = fp)
+        val encoded = AutoDevelopCodec.encode(record)
+        val payload = encoded.copyOfRange(0, encoded.size - 33) // Remove v2's absent-observation flag and checksum.
+        ByteBuffer.wrap(payload).putInt(4, 1)
+        val legacy = payload + MessageDigest.getInstance("SHA-256").digest(payload)
+        val restored = AutoDevelopCodec.decode(legacy)
+        assertEquals(record, restored)
+        assertEquals(fp, restored.outputFingerprint)
+        assertThrows(IOException::class.java) { restored.completed() }
+    }
+
+    private fun observation() = AutoRenderReceipt(request(), JpegOutputDescription(16, 12, 1, "sRGB", fp.bytes),
+        RenderedFaceState.VERIFIED_NONE, RenderedExposureState.SUPPORTED)
     private class FaultStorage : AtomicJournalStorage {
         var bytes: ByteArray? = null
         var phase: AutoJobPhase? = null
