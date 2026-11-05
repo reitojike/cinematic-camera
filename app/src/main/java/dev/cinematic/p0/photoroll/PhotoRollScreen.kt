@@ -96,14 +96,15 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         updateTrialEditor(reset.apply(nextToken))
     }
     fun chooseDng(uri: String, files: Boolean) {
+        renderer.discardTransientInputs()
         cancellationOwner.cancel(); explicitRetry = false; fromFiles = files
         trialEditor = TrialStrengthEditor.empty()
         preview = null; comparison = null; comparisonLabel = null
         selection = selection.clear(); pageCursor = null; selectedUri = uri; retry++
     }
 
-    fun closeRoll() { navigation.exit(); cancellationOwner.cancel(); close() }
-    fun backToList() { cancellationOwner.cancel(); explicitRetry = false; trialEditor = TrialStrengthEditor.empty(); selectedUri = null; preview = null; comparison = null; comparisonLabel = null; pageCursor = null; selection = selection.clear(); retry++ }
+    fun closeRoll() { navigation.exit(); cancellationOwner.cancel(); renderer.discardTransientInputs(); close() }
+    fun backToList() { cancellationOwner.cancel(); renderer.discardTransientInputs(); explicitRetry = false; trialEditor = TrialStrengthEditor.empty(); selectedUri = null; preview = null; comparison = null; comparisonLabel = null; pageCursor = null; selection = selection.clear(); retry++ }
     BackHandler {
         val edit = trialEditor.session
         if (edit != null) cancelTrialEdit(edit.inputToken) else if (selectedUri != null) backToList() else closeRoll()
@@ -127,10 +128,11 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
             }
         }
     }
-    DisposableEffect(lifecycleOwner) {
+    DisposableEffect(lifecycleOwner, renderer) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) accessEpoch++
             if (event == Lifecycle.Event.ON_PAUSE) {
+                renderer.discardTransientInputs()
                 cancellationOwner.cancel(); preview = null; comparison = null; comparisonLabel = null
                 trialEditor = trialEditor.pause()
                 listing = PhotoRollListing(emptyList()); pageCursor = null; folderMenu = false
@@ -138,7 +140,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { cancellationOwner.cancel(); lifecycleOwner.lifecycle.removeObserver(observer) }
+        onDispose { cancellationOwner.cancel(); renderer.discardTransientInputs(); lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     LaunchedEffect(selectedUri, retry, lifecycleOwner, currentQuery, accessEpoch, strengthTicket) {
       lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
@@ -246,6 +248,10 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
             }
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (failure: Exception) {
+            if (selection.accepts(ticket) && trialEditor.accepts(strengthTicket) &&
+                failure !is android.os.OperationCanceledException && failure !is DngVerificationStopped) {
+                renderer.discardTransientInputs()
+            }
             val message = when (failure) {
                 is PhotoRollSourceFailure -> failure.userMessage
                 is DngContentChanged -> "原本の内容が変わったため停止しました。Filesから選び直してください"

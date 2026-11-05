@@ -21,6 +21,8 @@ internal class AndroidAutoDevelopBackend(
     context: Context,
     private val request: AutoDevelopRequest,
     private val catalog: AutoRendererCatalog,
+    private val comparisonFrameFactory: (AutoRenderIo, SharedOriginalReference) -> OwnedJpegFrameSource =
+        { io, source -> AndroidOwnedJpegFrames(io, source) },
 ) : AutoDevelopBackend {
     private val app = context.applicationContext
     private val resolver = app.contentResolver
@@ -32,7 +34,11 @@ internal class AndroidAutoDevelopBackend(
     private var publisher: AutoDevelopPublication? = null
     private var publishedAttempt: String? = null
     private val previewOwnership = Any()
-    private var comparisonFrames: AndroidOwnedJpegFrames? = null
+    private var comparisonFrames: OwnedJpegFrameSource? = null
+    private data class PrivateReceipt(val request: AutoDevelopRequest, val attemptId: String,
+        val output: JpegOutputDescription, val fingerprint: OriginalFingerprint, val reuse: PrivateTrialReuseLease)
+    private var privateAttemptToken: Any? = null
+    private var privateReceipt: PrivateReceipt? = null // Immutable metadata only, never retained pixels.
 
     override fun privatePreviewStopAction(): (() -> Unit)? = synchronized(previewOwnership) {
         comparisonFrames?.let { exact -> { exact.requestStop() } }
@@ -53,8 +59,17 @@ internal class AndroidAutoDevelopBackend(
     override fun supports(request: AutoDevelopRequest) = request == this.request && catalog.find(request) != null
     override fun verifyOriginal(request: AutoDevelopRequest, shouldStop: () -> Boolean) {
         checkRequest(request)
-        releaseResources()
-        DngContentVerifier.verify(request.source.fingerprint, { resources.input(readOriginal()) }, shouldStop)
+        val reuse = if (request.boundedTrial) PrivateTrialReuseRegistry.forRequest(request) else null
+        val stop = privateValidationStop(reuse, shouldStop)
+        var releasing = true
+        try {
+            releaseResources()
+            releasing = false
+            DngContentVerifier.verify(request.source.fingerprint, { resources.input(readOriginal()) }, stop)
+        } catch (failure: Throwable) {
+            validationFailed(reuse, failure, releasing || hasUnreleasedResources)
+            throw failure
+        }
     }
     private fun readOriginal(): InputStream = resolver.openInputStream(Uri.parse(request.source.uri)) ?: throw IOException("Shared original unavailable")
 
@@ -76,6 +91,10 @@ internal class AndroidAutoDevelopBackend(
     }
     override fun createAttempt(request: AutoDevelopRequest, attemptId: String): AutoRenderAttempt {
         checkRequest(request)
+        val reuse = if (request.boundedTrial) PrivateTrialReuseRegistry.forRequest(request) else null
+        val token = Any()
+        privateAttemptToken = token
+        privateReceipt = null
         val adapter = catalog.find(request) ?: throw IOException("Final renderer unavailable")
         val output = files(attemptId)
         var rendering = false
@@ -95,7 +114,12 @@ internal class AndroidAutoDevelopBackend(
         return object : AutoRenderAttempt {
             override fun render(shouldStop: () -> Boolean): AutoRenderOutput {
                 rendering = true
-                try { return engine.render(shouldStop) }
+                try {
+                    return engine.render(shouldStop).also { produced ->
+                        if (reuse != null && privateAttemptToken === token)
+                            privateReceipt = PrivateReceipt(request, attemptId, produced.receipt.output, produced.fingerprint, reuse)
+                    }
+                }
                 finally { rendering = false }
             }
             override fun requestStop() = engine.requestStop()
@@ -107,10 +131,55 @@ internal class AndroidAutoDevelopBackend(
     }
     override fun inspect(request: AutoDevelopRequest, attemptId: String, shouldStop: () -> Boolean): JpegInspection {
         checkRequest(request)
-        releaseResources()
-        val output = files(attemptId)
-        output.sealCompleted() // Invalid/missing output is validation failure, not a resource close failure.
-        return AndroidJpegInspector().inspect({ resources.input(output.openRead()) }, shouldStop)
+        val recorded = privateReceipt
+        val expected = recorded?.takeIf { it.request == request && it.attemptId == attemptId }
+        // A producing attempt's capability must never be replaced with a newer binding's lease.
+        val reuse = if (recorded != null) expected?.reuse
+            else if (request.boundedTrial) PrivateTrialReuseRegistry.forRequest(request) else null
+        val stop = privateValidationStop(reuse, shouldStop)
+        var releasing = true
+        try {
+            if (recorded != null && expected == null) throw IOException("Private inspection belongs to another attempt")
+            releaseResources()
+            releasing = false
+            val output = files(attemptId)
+            output.sealCompleted() // Invalid/missing output is validation failure, not a resource close failure.
+            val inspection = AndroidJpegInspector().inspect({ resources.input(output.openRead()) }, stop)
+            if (expected != null && (inspection.output != expected.output || inspection.fingerprint.bytes != expected.output.bytes ||
+                    inspection.fingerprint != expected.fingerprint))
+                throw IOException("Private JPEG inspection differs from the renderer receipt")
+            return inspection
+        } catch (failure: Throwable) {
+            validationFailed(reuse, failure, releasing || hasUnreleasedResources)
+            throw failure
+        }
+    }
+
+    /** Legacy/public JPEG validators interpret Boolean stops as IOException. Preserve a typed private stop. */
+    private fun privateValidationStop(reuse: PrivateTrialReuseLease?, shouldStop: () -> Boolean): () -> Boolean =
+        if (reuse == null) shouldStop else {
+            {
+                if (shouldStop()) throw java.util.concurrent.CancellationException("Private trial validation cancelled")
+                false
+            }
+        }
+
+    /** Runner can convert validation errors into HELD without entering the display path. */
+    private fun validationFailed(reuse: PrivateTrialReuseLease?, failure: Throwable, closeFailed: Boolean) {
+        if (reuse == null) return // Completed/legacy owners retain their existing error/cleanup behavior.
+        fun normalCancellation(value: Throwable): Boolean =
+            (value is java.util.concurrent.CancellationException || value is android.os.OperationCanceledException ||
+                value is DngVerificationStopped) && value.suppressed.all(::normalCancellation)
+        if (closeFailed || !normalCancellation(failure)) {
+            reuse.invalidate()
+            return
+        }
+        // Ordinary supersession preserves the prior entry only after positively acknowledging close.
+        try { releaseResources() }
+        catch (cleanup: Throwable) {
+            reuse.invalidate()
+            if (cleanup !== failure) failure.addSuppressed(cleanup)
+        }
     }
     override fun publication(record: AutoDevelopRecord, isCurrent: () -> Boolean): AutoDevelopPublication {
         checkRequest(record.request)
@@ -143,19 +212,24 @@ internal class AndroidAutoDevelopBackend(
     override fun privatePreview(record: AutoDevelopRecord, shouldStop: () -> Boolean): PrivateTrialPreview {
         checkRequest(record.request)
         if (!request.boundedTrial || record.phase != AutoJobPhase.RENDERED) throw CaptureJournalConflict()
-        val expected = requireNotNull(record.outputFingerprint)
-        val description = requireNotNull(record.observed).output
-        releaseResources()
-        verifyOriginal(request, shouldStop)
-        val encoded = EncodedJpegSnapshot.read({ resources.input(files(requireNotNull(record.attemptId)).openRead()) },
-            expected.bytes, shouldStop)
-        if (encoded.fingerprint != expected) throw DngContentChanged()
-        val inspection = AndroidJpegInspector().inspectSnapshot(encoded, shouldStop)
-        if (inspection.fingerprint != expected || inspection.output != description) throw DngContentChanged()
+        // This invocation owns one binding. Do not attach reusable pixels to each durable job/backend.
+        val reuse = PrivateTrialReuseRegistry.forRequest(request)
+        val stop = privateValidationStop(reuse, shouldStop)
         var ownedImage: Bitmap? = null
         var ownedComparison: Bitmap? = null
+        var releasing = true
         try {
-            if (shouldStop()) throw DngVerificationStopped()
+            val expected = requireNotNull(record.outputFingerprint)
+            val description = requireNotNull(record.observed).output
+            releaseResources()
+            releasing = false
+            verifyOriginal(request, stop)
+            val encoded = EncodedJpegSnapshot.read({ resources.input(files(requireNotNull(record.attemptId)).openRead()) },
+                expected.bytes, stop)
+            if (encoded.fingerprint != expected) throw DngContentChanged()
+            val inspection = AndroidJpegInspector().inspectSnapshot(encoded, stop)
+            if (inspection.fingerprint != expected || inspection.output != description) throw DngContentChanged()
+            if (stop()) throw DngVerificationStopped()
             val bitmap = ImageDecoder.decodeBitmap(encoded.source()) { decoder, info, _ ->
                 if (info.size.width != description.width || info.size.height != description.height) throw IOException("Private JPEG dimensions changed")
                 decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
@@ -166,19 +240,62 @@ internal class AndroidAutoDevelopBackend(
                 bitmap.height != description.height || bitmap.width > 1024 || bitmap.height > 1024 || bitmap.colorSpace?.isSrgb != true) {
                 throw IOException("Private display image is unsupported")
             }
-            val comparison = try { comparisonImage(description, shouldStop).also { ownedComparison = it } }
+            var candidate: IntArray? = null
+            val comparison = try {
+                val cached = cachedComparison(reuse, description, stop)
+                val result = cached ?: comparisonImage(description, stop)
+                candidate = result.candidate
+                result.bitmap.also { ownedComparison = it }
+            }
             catch (failure: java.util.concurrent.CancellationException) { throw failure }
             catch (failure: android.os.OperationCanceledException) { throw failure }
             catch (failure: DngVerificationStopped) { throw failure }
             catch (failure: DngContentChanged) { throw failure }
-            catch (_: Exception) { comparisonUnavailable(shouldStop) }
-            catch (_: OutOfMemoryError) { comparisonUnavailable(shouldStop) }
-            verifyOriginal(request, shouldStop)
-            if (shouldStop()) throw DngVerificationStopped()
+            catch (_: Exception) { reuse?.invalidate(); comparisonUnavailable(stop) }
+            catch (_: OutOfMemoryError) { reuse?.invalidate(); comparisonUnavailable(stop) }
+            verifyOriginal(request, stop)
+            if (stop()) throw DngVerificationStopped()
+            releasing = true
+            releaseResources() // Commit only after the final original hash and every stream/FD close succeeds.
+            releasing = false
+            if (stop()) throw DngVerificationStopped()
+            candidate?.let { pixels ->
+                try { reuse?.commitComparison(description.width, description.height, pixels) }
+                catch (_: Exception) { reuse?.invalidate() }
+                catch (_: OutOfMemoryError) { reuse?.invalidate() }
+            }
             return PrivateTrialPreview(bitmap, PrivateTrialStatus.from(record), comparison).also {
                 ownedImage = null; ownedComparison = null
             }
+        } catch (failure: Throwable) {
+            if (reuse != null) validationFailed(reuse, failure, releasing || hasUnreleasedResources)
+            else if (failure is java.util.concurrent.CancellationException ||
+                failure is android.os.OperationCanceledException || failure is DngVerificationStopped) {
+                // Keep the legacy no-session cleanup behavior; its Boolean callbacks are unchanged.
+                try { releaseResources() }
+                catch (cleanup: Throwable) {
+                    if (cleanup !== failure) failure.addSuppressed(cleanup)
+                }
+            }
+            throw failure
         } finally { ownedImage?.recycle(); ownedComparison?.recycle() }
+    }
+
+    private data class ComparisonImage(val bitmap: Bitmap, val candidate: IntArray? = null)
+
+    /** Cache allocation failures fall back to the existing decode; cancellation never does. */
+    private fun cachedComparison(reuse: PrivateTrialReuseLease?, description: JpegOutputDescription,
+        shouldStop: () -> Boolean): ComparisonImage? {
+        try {
+            if (shouldStop()) throw DngVerificationStopped()
+            val pixels = reuse?.comparisonCopy(description.width, description.height) ?: return null
+            if (shouldStop()) throw DngVerificationStopped()
+            return ComparisonImage(Bitmap.createBitmap(pixels, description.width, description.height, Bitmap.Config.ARGB_8888))
+        } catch (failure: java.util.concurrent.CancellationException) { throw failure }
+        catch (failure: android.os.OperationCanceledException) { throw failure }
+        catch (failure: DngVerificationStopped) { throw failure }
+        catch (_: Exception) { reuse?.invalidate(); return null }
+        catch (_: OutOfMemoryError) { reuse?.invalidate(); return null }
     }
 
     private fun comparisonUnavailable(shouldStop: () -> Boolean): Bitmap? {
@@ -189,7 +306,7 @@ internal class AndroidAutoDevelopBackend(
 
     /** Called only by readPrivateTrial under the same coordinator slot as fresh JPEG/source checks.
      * No R7, diagnostic EV, W1/look, source thumbnail, file copy or second JPEG is substituted. */
-    private fun comparisonImage(description: JpegOutputDescription, shouldStop: () -> Boolean): Bitmap {
+    private fun comparisonImage(description: JpegOutputDescription, shouldStop: () -> Boolean): ComparisonImage {
         val io = object : AutoRenderIo {
             override fun openOriginal() = resources.input(readOriginal())
             override fun openOriginalDescriptor(): AutoReadOnlyDescriptor {
@@ -199,9 +316,10 @@ internal class AndroidAutoDevelopBackend(
             }
             override fun openOutput(): OutputStream = throw IOException("Comparison cannot write a file")
         }
-        val frames = AndroidOwnedJpegFrames(io, request.source)
+        val frames = comparisonFrameFactory(io, request.source)
         synchronized(previewOwnership) { check(comparisonFrames == null); comparisonFrames = frames }
         var owned: Bitmap? = null
+        var completed = false
         try {
             val frame = frames.load(request.source, 1024, shouldStop)
             if (!frame.physicallyOriented || frame.image.width != description.width || frame.image.height != description.height)
@@ -210,11 +328,13 @@ internal class AndroidAutoDevelopBackend(
             val bitmap = Bitmap.createBitmap(pixels, frame.image.width, frame.image.height, Bitmap.Config.ARGB_8888).also { owned = it }
             frames.close()
             if (shouldStop()) throw DngVerificationStopped()
-            return bitmap.also { owned = null }
+            return ComparisonImage(bitmap, pixels).also { completed = true }
         } finally {
-            try { frames.close() } finally {
+            try { frames.close() }
+            catch (failure: Throwable) { owned?.recycle(); throw failure }
+            finally {
                 synchronized(previewOwnership) { if (comparisonFrames === frames) comparisonFrames = null }
-                owned?.recycle()
+                if (!completed) owned?.recycle()
             }
         }
     }

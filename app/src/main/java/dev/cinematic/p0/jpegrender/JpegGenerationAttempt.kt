@@ -2,6 +2,8 @@ package dev.cinematic.p0.jpegrender
 
 import dev.cinematic.p0.raw.R7Base
 import dev.cinematic.p0.raw.StageClearLook
+import dev.cinematic.p0.raw.FaceMask
+import dev.cinematic.p0.raw.FloatPlane
 import dev.cinematic.p0.rawcapture.*
 import java.io.IOException
 import java.io.InputStream
@@ -19,13 +21,17 @@ internal class JpegGenerationAttempt(
     private val openOriginal: (SharedOriginalReference) -> InputStream,
     private val encoder: LinearJpegEncoder,
     private val inspector: JpegInspector,
+    private val reuse: TrialFoundationReuse? = null,
 ) {
     private val active = AtomicBoolean(false)
     private var started = false
     private val resources = DngIoResources()
     val hasUnreleasedResources get() = resources.hasOpenResources
 
-    fun releaseResources() = exclusively { resources.releaseAll()?.let { throw it }; Unit }
+    fun releaseResources() = exclusively {
+        resources.releaseAll()?.let { if (request.recipe.isTrial) reuse?.invalidate(); throw it }
+        Unit
+    }
 
     fun render(shouldStop: () -> Boolean): GeneratedJpeg = renderChecked(false, shouldStop) { observed, prepared ->
         GeneratedJpeg(CompletedRender(outputRequest(observed), JpegGenerationRecipe.RENDERER,
@@ -45,6 +51,7 @@ internal class JpegGenerationAttempt(
         require(request.recipe.isTrial == trial) { "JPEG recipe belongs to a different entry" }
         require(target.captureId == request.captureId && target.generation == request.generation)
         require(frames.contract == request.recipe.inputContract && controls.contract == request.recipe.controls.schema)
+        val trialReuse = if (trial) reuse else null // Completed publication paths never consult or mutate private reuse.
         var failure: Throwable? = null
         try {
             fun checkpoint() { if (shouldStop()) throw CancellationException("JPEG generation stopped") }
@@ -54,15 +61,34 @@ internal class JpegGenerationAttempt(
                 { resources.input(openOriginal(request.source)) }, stop)
             checkpoint()
             verifyOriginal()
-            val frame = frames.load(request.source, JpegGenerationRecipe.MAX_EDGE, stop)
-            checkpoint()
-            require(frame.physicallyOriented && frame.sourceWidth > 0 && frame.sourceHeight > 0)
-            require(frame.image.width <= JpegGenerationRecipe.MAX_EDGE && frame.image.height <= JpegGenerationRecipe.MAX_EDGE)
-            val prepared = controls.prepare(frame.image, request.recipe.controls, stop)
-            checkpoint()
-            if (trial) prepared.validateTrial(frame.image, request.recipe.controls)
-            else prepared.validate(frame.image, request.recipe.controls)
-            val base = R7Base.render(frame.image, prepared.foundationRoi, prepared.externalEv, stop)
+            if (trialReuse != null) checkpoint()
+            val cached = trialReuse?.load(request)?.takeIf { it.validFor(request) }
+            var candidate: TrialPreparedFoundation? = null
+            val prepared: JpegControls
+            val base: dev.cinematic.p0.raw.LinearSrgbImage
+            if (cached != null) {
+                checkpoint()
+                base = cached.base
+                // Recreate only short-lived empty masks. No ROI/mask or as-shot pixels live in the entry.
+                prepared = JpegControls(request.recipe.controls, cached.externalEv,
+                    FloatPlane(base.width, base.height, FloatArray(base.width * base.height)),
+                    FaceMask(base.width, base.height, FloatArray(base.width * base.height)),
+                    RenderedFaceState.NOT_RUN, RenderedExposureState.DIAGNOSTIC)
+                prepared.validateTrial(base, request.recipe.controls)
+                checkpoint()
+            } else {
+                val frame = frames.load(request.source, JpegGenerationRecipe.MAX_EDGE, stop)
+                checkpoint()
+                require(frame.physicallyOriented && frame.sourceWidth > 0 && frame.sourceHeight > 0)
+                require(frame.image.width <= JpegGenerationRecipe.MAX_EDGE && frame.image.height <= JpegGenerationRecipe.MAX_EDGE)
+                prepared = controls.prepare(frame.image, request.recipe.controls, stop)
+                checkpoint()
+                if (trial) prepared.validateTrial(frame.image, request.recipe.controls)
+                else prepared.validate(frame.image, request.recipe.controls)
+                base = R7Base.render(frame.image, prepared.foundationRoi, prepared.externalEv, stop)
+                if (trialReuse != null) candidate = TrialPreparedFoundation(base, frame.sourceWidth, frame.sourceHeight,
+                    frame.physicallyOriented, prepared.externalEv)
+            }
             val result = StageClearLook.renderFromBase(base, prepared.faces, request.recipe.strength, stop).image
             checkpoint()
             val written = resources.output(target.createOutput()).use { raw ->
@@ -80,18 +106,34 @@ internal class JpegGenerationAttempt(
                 observed.output.orientation != 1 || observed.output.color != "sRGB") throw IOException("JPEG readback differs from encoded output")
             verifyOriginal()
             checkpoint()
-            finish(observed, prepared)
+            val finished = finish(observed, prepared)
+            // A successful codec/readback is insufficient: close every attempt-owned stream first.
+            // FrameSource.load separately guarantees decoder/descriptor closure before returning a frame.
+            if (trialReuse != null) {
+                resources.releaseAll()?.let { throw it }
+                checkpoint()
+                candidate?.let { trialReuse.commit(request, it) } // Lease rechecks current epoch/binding atomically.
+            }
+            candidate = null
+            finished
         } catch (t: Throwable) {
             failure = t
+            // Ordinary strength supersession drops this attempt's candidate, not an earlier verified base.
+            // Suppressed close failures are still real failures, even when cancellation was primary.
+            if (!normalCancellation(t) || t.suppressed.any { !normalCancellation(it) }) trialReuse?.invalidate()
             throw t
         } finally {
             resources.releaseAll()?.let { cleanup ->
+                trialReuse?.invalidate()
                 val primary = failure
                 if (primary == null) throw cleanup
                 if (primary !== cleanup) primary.addSuppressed(cleanup)
             }
         }
     }
+
+    private fun normalCancellation(failure: Throwable) = failure is CancellationException ||
+        failure is DngVerificationStopped || failure is android.os.OperationCanceledException
 
     private inline fun <T> exclusively(action: () -> T): T {
         check(active.compareAndSet(false, true)) { "JPEG attempt is already active" }
