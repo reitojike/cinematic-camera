@@ -91,6 +91,12 @@ class Original24FailureInstrumentationTest {
     }
 
     @Test fun failedReportingCannotHideThePrivateWriteFailure() {
+        var unobserved: Throwable? = null
+        withFixture { f ->
+            f.failWrite = true
+            unobserved = f.requireFailedAttempt()
+            assertNotNull(f.writeFailure)
+        }
         val diagnosticFailure = IOException("Synthetic codec report failure")
         val trace = OriginalStageTrace { stage, _, complete ->
             if (stage == OriginalStage.JPEG_ENCODE && !complete) throw diagnosticFailure
@@ -98,7 +104,11 @@ class Original24FailureInstrumentationTest {
         withFixture(trace) { f ->
             f.failWrite = true
             val actual = f.requireFailedAttempt()
-            assertSame(f.writeFailure, actual)
+            // Bitmap.compress may convert the stream exception into false; preserve the producer's
+            // normal codec failure rather than assuming the platform propagates that stream object.
+            assertNotNull(f.writeFailure)
+            assertEquals(requireNotNull(unobserved).javaClass, actual.javaClass)
+            assertEquals(requireNotNull(unobserved).message, actual.message)
             assertTrue(actual.suppressed.contains(diagnosticFailure))
             assertTrue(f.outputCloseAcknowledged)
             assertFalse(f.attempt.hasUnreleasedResources)
