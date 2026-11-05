@@ -24,6 +24,7 @@ internal class CaptureReceipt(
     receivedBytes: Map<RawOutput, Long>,
     val phase: CaptureReceiptPhase,
     val originalFingerprint: OriginalFingerprint? = null,
+    val developIntent: CaptureDevelopIntent? = null,
 ) {
     val expectedFormats: Set<RawOutput> = Collections.unmodifiableSet(expectedFormats.toSet())
     val receivedBytes: Map<RawOutput, Long> = Collections.unmodifiableMap(receivedBytes.toMap())
@@ -78,9 +79,10 @@ internal class CaptureJournal(private val captureId: String, private val storage
     }
 
     @Synchronized
-    fun create(expected: Set<RawOutput>): CaptureReceipt {
+    fun create(expected: Set<RawOutput>, developIntent: CaptureDevelopIntent? = null): CaptureReceipt {
         if (read() != null) throw CaptureJournalConflict()
-        return persist(CaptureReceipt(captureId, 0, expected, emptyMap(), CaptureReceiptPhase.CAPTURING))
+        return persist(CaptureReceipt(captureId, 0, expected, emptyMap(), CaptureReceiptPhase.CAPTURING,
+            developIntent = developIntent))
     }
 
     /** Caller must have confirmed this format's successful callback and file close. */
@@ -96,7 +98,8 @@ internal class CaptureJournal(private val captureId: String, private val storage
         val phase = if (current.phase == CaptureReceiptPhase.CAPTURING && received.keys == current.expectedFormats) {
             CaptureReceiptPhase.FILES_RECEIVED
         } else current.phase // Late callbacks can preserve receipts without hiding interruption.
-        return persist(CaptureReceipt(captureId, next(current), current.expectedFormats, received, phase, current.originalFingerprint))
+        return persist(CaptureReceipt(captureId, next(current), current.expectedFormats, received, phase, current.originalFingerprint,
+            current.developIntent))
     }
 
     /** Caller has read and successfully closed the received DNG; never replaces an existing identity. */
@@ -110,6 +113,7 @@ internal class CaptureJournal(private val captureId: String, private val storage
         }
         return persist(CaptureReceipt(
             captureId, next(current), current.expectedFormats, current.receivedBytes, current.phase, fingerprint,
+            current.developIntent,
         ))
     }
 
@@ -134,6 +138,7 @@ internal class CaptureJournal(private val captureId: String, private val storage
         return persist(CaptureReceipt(
             captureId, next(current), current.expectedFormats, current.receivedBytes, CaptureReceiptPhase.INTERRUPTED,
             current.originalFingerprint,
+            current.developIntent,
         ))
     }
 
@@ -158,7 +163,7 @@ internal class CaptureJournal(private val captureId: String, private val storage
 internal object CaptureReceiptCodec {
     const val MAX_BYTES = 4096
     private const val MAGIC = 0x4343524a // CCRJ
-    private const val VERSION = 2
+    private const val VERSION = 3
     private const val DIGEST_BYTES = 32
 
     fun encode(receipt: CaptureReceipt): ByteArray {
@@ -175,9 +180,18 @@ internal object CaptureReceiptCodec {
             out.writeLong(receipt.receivedBytes[RawOutput.JPEG] ?: -1L)
             out.writeByte(if (receipt.originalFingerprint == null) 0 else 1)
             receipt.originalFingerprint?.sha256?.chunked(2)?.forEach { out.writeByte(it.toInt(16)) }
+            out.writeByte(if (receipt.developIntent == null) 0 else 1)
+            receipt.developIntent?.let { intent ->
+                out.writeByte(0) // Explicit, stable code for requested FINAL_ORIGINAL; not an observed quality.
+                out.writeUTF(intent.rendererContract)
+                out.writeUTF(intent.recipe.schema)
+                out.writeUTF(intent.recipe.payload)
+            }
         }
         val payload = buffer.toByteArray()
-        return payload + MessageDigest.getInstance("SHA-256").digest(payload)
+        return (payload + MessageDigest.getInstance("SHA-256").digest(payload)).also {
+            if (it.size > MAX_BYTES) throw IOException("Capture journal too large")
+        }
     }
 
     fun decode(encoded: ByteArray): CaptureReceipt {
@@ -220,8 +234,17 @@ internal object CaptureReceiptCodec {
                     }
                     else -> throw IOException("Invalid original fingerprint flag")
                 }
+                val intent = if (version < 3) null else when (input.readUnsignedByte()) {
+                    0 -> null
+                    1 -> {
+                        if (input.readUnsignedByte() != 0) throw IOException("Unknown requested capture quality")
+                        val renderer = input.readUTF()
+                        CaptureDevelopIntent(RenderRecipeSnapshot(input.readUTF(), input.readUTF()), renderer)
+                    }
+                    else -> throw IOException("Invalid capture develop intent flag")
+                }
                 if (input.available() != 0) throw IOException("Trailing capture receipt data")
-                CaptureReceipt(id, revision, expectedFormats, received, phase, fingerprint)
+                CaptureReceipt(id, revision, expectedFormats, received, phase, fingerprint, intent)
             }
         } catch (e: IllegalArgumentException) {
             throw IOException("Invalid capture receipt fields", e)
