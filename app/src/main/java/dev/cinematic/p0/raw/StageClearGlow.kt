@@ -15,9 +15,25 @@ internal object StageClearGlow {
     fun render(base: LinearSrgbImage, strength: Double = StageClearV1.DEFAULT_STRENGTH): LinearSrgbImage {
         require(strength.isFinite() && strength in 0.0..1.0) { "Strength must be within 0..1" }
         if (strength == 0.0) return base // stage_clear.render bypasses glow at zero.
+        return renderNonzero(base, strength, null)
+    }
+
+    /** Same original base's immutable skin plane, shared only within one Look invocation.
+     * Direct two-argument callers retain their existing calculation path and zero-strength bypass. */
+    internal fun render(base: LinearSrgbImage, strength: Double, originalSkin: FloatPlane): LinearSrgbImage {
+        require(strength.isFinite() && strength in 0.0..1.0) { "Strength must be within 0..1" }
+        require(originalSkin.width == base.width && originalSkin.height == base.height) {
+            "Original skin weight must align with base RGB"
+        }
+        repeat(base.pixelCount) { require(originalSkin[it] in 0f..1f) { "Skin weight must be within 0..1" } }
+        if (strength == 0.0) return base
+        return renderNonzero(base, strength, originalSkin)
+    }
+
+    private fun renderNonzero(base: LinearSrgbImage, strength: Double, originalSkin: FloatPlane?): LinearSrgbImage {
         // Source, excess, bloom, halation and skin temporaries belong to addLight's frame.
         // Keep only its pixels/protection while the full-size diffusion blur runs.
-        val layer = addLight(base, strength)
+        val layer = addLight(base, strength, originalSkin)
         val values = layer.pixels
         val protect = layer.protection
         // Snapshot is intentional: diffusion writes to values after reading this image.
@@ -35,7 +51,7 @@ internal object StageClearGlow {
 
     private data class LightLayer(val pixels: FloatArray, val protection: FloatArray)
 
-    private fun addLight(base: LinearSrgbImage, strength: Double): LightLayer {
+    private fun addLight(base: LinearSrgbImage, strength: Double, originalSkin: FloatPlane?): LightLayer {
         val count = base.pixelCount
         val threshold = StageClearGlowV1.THRESHOLD.toFloat()
         val thresholdSpan = (1 - StageClearGlowV1.THRESHOLD).toFloat()
@@ -56,7 +72,7 @@ internal object StageClearGlow {
         }
         val halation = StageClearBlur.plane(FloatPlane.takeOwnership(base.width, base.height, excess),
             StageClearGlowV1.HALATION_RADIUS)
-        val skin = skinWeight(base)
+        val skin = originalSkin ?: skinWeight(base)
         val protect = FloatArray(count) { 1f - StageClearGlowV1.SKIN_PROTECT.toFloat() * skin[it] }
         val bloomAmount = (StageClearGlowV1.BLOOM * strength).toFloat()
         val halationAmount = (StageClearGlowV1.HALATION * strength).toFloat()
