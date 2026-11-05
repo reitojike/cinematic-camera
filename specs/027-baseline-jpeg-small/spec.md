@@ -5,4 +5,4 @@
 - FR-003: 専用私有領域へCREATE_NEW/NOFOLLOWでJPEGを生成する。codec成功・write/flush/closeの成功・書込成功byteとfresh readbackの全byte hash一致・寸法/向き/sRGBと原本不変を確認後だけ診断成功にする。画素は正立済みで、EXIF readerの方向0（未定義）/1だけを認める。画素方向1とreader観測値を別々に記録し、EXIF 1 tagを書いたとは主張しない。
 - FR-004: writeの部分成功/無書込/例外、flush/close失敗、decode/pack/write境界の取消を成功にしない。実return/closeまで資源ownerを維持し、close再確認は再renderを意味しない。原本と途中出力を保全する。
 - FR-005: cropは独立にpre-cropして生成した別DNG、回転はKotlinの座標変換、RGBAは別の転送式で小型全画素比較する。JPEGはlossyなので圧縮前の画素照合と圧縮後のcodec検査を分離する。
-- FR-006: R7/Stage Clear/profile/face/EV成功や製品FULLへ変換しない。保存・UI・他PRへ接続せず、公開投稿/push/PR作成は保留する。Pixel実測と12/24MP JPEG成立は未検証のままにする。
+- FR-006: R7/Stage Clear/profile/face/EV成功や製品FULLへ変換しない。保存・UI・他PRへ接続しない。小型検証後の12/24MP基準JPEGはspec028で別に扱い、Pixel実測とは分ける。公開承認済みの診断コード・合成fixture生成器・手順だけをDraft PRへ出し、実写真/ローカル画像・APK・生ログ・秘密をGitへ入れない。mergeは別確認とする。

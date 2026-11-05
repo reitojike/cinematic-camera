@@ -2,13 +2,14 @@
 
 通常のカメラアプリとは別の `dev.cinematic.rawprobe`（通常）と `.largeheap`（largeHeap）を使う、debug限定の手動診断です。
 既存アプリの署名・データを置き換えません。Activity、撮影・通信・共有ストレージ権限はありません。
-12MP（4000×3000）と24MP（6000×4000）の合成Bayer DNGを診断アプリのcacheに生成し、テスト終了時に削除します。
-OS停止時などに残り得るのは合成cacheだけです。
+従来のnative decode診断は12MP（4000×3000）と24MP（6000×4000）の合成Bayer DNGをcacheに生成し、テスト終了時に削除します。
+追加の[基準JPEG診断](BASELINE_JPEG_PROBE.md)はAVD専用で、合成DNGと途中JPEGを検査用に保全します。どちらも実写真は扱いません。
 実写の原本やMediaStoreは読みません。診断APKをReleaseや固定署名版として配布しません。
 
 ## 実行
 
 Android CIの `cinematic-raw-probe-debug` artifactには、通常/largeHeapそれぞれの診断APK・テストAPK、この説明とPowerShell helpersを含めます。
+基準JPEG診断の説明とPython helperも同梱します。既存PowerShell helperはこの新試験を自動実行しません。
 展開したディレクトリでADBの対象を明示します。実機は本人が操作し、他の作業中の端末・AVDには実行しません。
 
 ```powershell

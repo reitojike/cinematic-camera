@@ -53,6 +53,8 @@ jobs:
               exit 1
             fi
             grep -F 'Java_dev_cinematic_rawprobe_NativeFullResolutionProbe_inspect' "$RUNNER_TEMP/probe-$abi.symbols"
+            grep -E 'Java_dev_cinematic_rawprobe_NativeBaselineProbe_decode$' "$RUNNER_TEMP/probe-$abi.symbols"
+            grep -E 'Java_dev_cinematic_rawprobe_NativeBaselineProbe_decodeLarge$' "$RUNNER_TEMP/probe-$abi.symbols"
             if grep -F 'Java_dev_cinematic_p0_raw_' "$RUNNER_TEMP/probe-$abi.symbols"; then
               echo 'Camera JNI leaked into the diagnostic app' >&2
               exit 1
@@ -70,7 +72,12 @@ jobs:
           cp rawprobe/build/outputs/apk/androidTest/normal/debug/rawprobe-normal-debug-androidTest.apk rawprobe/build/diagnostic/rawprobe-debug-androidTest.apk
           cp rawprobe/build/outputs/apk/largeHeap/debug/rawprobe-largeHeap-debug.apk rawprobe/build/diagnostic/rawprobe-largeheap.apk
           cp rawprobe/build/outputs/apk/androidTest/largeHeap/debug/rawprobe-largeHeap-debug-androidTest.apk rawprobe/build/diagnostic/rawprobe-largeheap-androidTest.apk
-          cp docs/RAW_PROBE.md tools/raw-probe/*.ps1 rawprobe/build/diagnostic/
+          cp docs/RAW_PROBE.md docs/BASELINE_JPEG_PROBE.md tools/raw-probe/*.ps1 tools/raw-probe/Measure-BaselineJpeg.py rawprobe/build/diagnostic/
+          python3 - <<'PY'
+          import ast
+          from pathlib import Path
+          ast.parse(Path('tools/raw-probe/Measure-BaselineJpeg.py').read_text(encoding='utf-8'))
+          PY
           (cd rawprobe/build/diagnostic && sha256sum *.apk > SHA256SUMS.txt)
       - name: Isolated RAW diagnostic APKs
         uses: actions/upload-artifact@v7

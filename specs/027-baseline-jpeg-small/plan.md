@@ -6,4 +6,4 @@ rawprobe専用のnative helperとKotlin writer/testを追加する。既存decod
 
 make_mem_imageの結果をsoftware Bitmapへnativeで全画素packし、小型RGB16とgeometryを診断frameへ返す。製品品質の型を使わず、基準JPEG writerは一つの同期attemptでbitmap/streamを所有する。失敗したcloseはownerに残し、後続close確認だけ可能にする。
 
-合成fixtureと故障注入はrawprobe内へ置き、他の保存実装を変更しない。local lint/build・両ABI・専用AVDの小型検証・独立レビューまで実施する。公開CIは未実行として区別する。
+合成fixtureと故障注入はrawprobe内へ置き、他の保存実装を変更しない。local lint/build・両ABI・専用AVDの小型検証・独立レビューを行い、承認後のDraft PRでCI/canonical/独立レビューを取得する。AVD実行とCIのビルド検査は別結果として記録し、mergeは別確認とする。
