@@ -2,35 +2,23 @@ package dev.cinematic.p0.rawcapture
 
 import android.graphics.ImageDecoder
 import android.media.ExifInterface
-import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
-import java.nio.ByteBuffer
-import java.security.MessageDigest
 
 /** API 28+. Encoded input <=32MiB, validation bitmap <=64x64; no full-resolution pixel allocation. */
 internal class AndroidJpegInspector : JpegInspector {
-    override fun inspect(openReadOnly: () -> InputStream, shouldStop: () -> Boolean): JpegInspection {
+    override fun inspect(openReadOnly: () -> InputStream, shouldStop: () -> Boolean): JpegInspection =
+        inspectSnapshot(EncodedJpegSnapshot.read(openReadOnly, shouldStop = shouldStop), shouldStop)
+
+    override fun inspect(openReadOnly: () -> InputStream, expectedBytes: Long, shouldStop: () -> Boolean): JpegInspection =
+        inspectSnapshot(EncodedJpegSnapshot.read(openReadOnly, expectedBytes, shouldStop), shouldStop)
+
+    fun inspectSnapshot(encoded: EncodedJpegSnapshot, shouldStop: () -> Boolean): JpegInspection {
         fun checkContinue() { if (shouldStop()) throw IOException("JPEG inspection stopped") }
         checkContinue()
-        val encoded = openReadOnly().use { input ->
-            val buffer = ByteArrayOutputStream()
-            val chunk = ByteArray(64 * 1024)
-            while (true) {
-                checkContinue()
-                val count = input.read(chunk)
-                if (count < 0) break
-                if (count == 0 || count > JpegOutputDescription.MAX_JPEG_BYTES - buffer.size()) throw IOException("Invalid JPEG length")
-                buffer.write(chunk, 0, count)
-            }
-            buffer.toByteArray()
-        }
-        checkContinue()
         // Reject missing EOI even when a tolerant codec can recover pixels. This is a completed-output boundary.
-        if (encoded.size < 4 || encoded[0] != 0xff.toByte() || encoded[1] != 0xd8.toByte() ||
-            encoded[encoded.size - 2] != 0xff.toByte() || encoded.last() != 0xd9.toByte()) throw IOException("Incomplete JPEG")
-        val exifOrientation = ByteArrayInputStream(encoded).use {
+        if (!encoded.hasCompleteMarkers()) throw IOException("Incomplete JPEG")
+        val exifOrientation = encoded.openRead().use {
             ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, -1)
         }
         // Framework ExifInterface inserts UNDEFINED (0) when the JPEG has no orientation tag.
@@ -41,7 +29,7 @@ internal class AndroidJpegInspector : JpegInspector {
         checkContinue()
         var width = 0
         var height = 0
-        val bitmap = ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(encoded))) { decoder, info, _ ->
+        val bitmap = ImageDecoder.decodeBitmap(encoded.source()) { decoder, info, _ ->
             checkContinue()
             if (info.mimeType != "image/jpeg" || info.colorSpace?.isSrgb != true) throw IOException("Unsupported JPEG color definition")
             width = info.size.width
@@ -53,8 +41,7 @@ internal class AndroidJpegInspector : JpegInspector {
             decoder.setTargetSize(maxOf(1, (width * scale).toInt()), maxOf(1, (height * scale).toInt()))
         }
         try { checkContinue() } finally { bitmap.recycle() }
-        val fingerprint = OriginalFingerprint(encoded.size.toLong(), MessageDigest.getInstance("SHA-256").digest(encoded)
-            .joinToString("") { "%02x".format(it) })
+        val fingerprint = encoded.fingerprint
         checkContinue()
         return JpegInspection(JpegOutputDescription(width, height, 1, "sRGB", fingerprint.bytes), fingerprint)
     }

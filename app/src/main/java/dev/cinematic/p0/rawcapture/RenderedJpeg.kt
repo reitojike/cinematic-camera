@@ -72,6 +72,13 @@ internal data class JpegInspection(val output: JpegOutputDescription, val finger
 /** Validates and hashes the same complete encoded bytes. Reject partial decode, unknown color or metadata. */
 internal fun interface JpegInspector {
     fun inspect(openReadOnly: () -> InputStream, shouldStop: () -> Boolean): JpegInspection
+    /** Known length is a bound, not a content/codec success claim. Legacy adapters must still check it. */
+    fun inspect(openReadOnly: () -> InputStream, expectedBytes: Long, shouldStop: () -> Boolean): JpegInspection {
+        if (expectedBytes !in 1..JpegOutputDescription.MAX_JPEG_BYTES) throw IOException("Invalid expected JPEG length")
+        return inspect(openReadOnly, shouldStop).also {
+            if (it.output.bytes != expectedBytes || it.fingerprint.bytes != expectedBytes) throw IOException("JPEG length mismatch")
+        }
+    }
 }
 
 /** Producer has completed and closed the private JPEG before handing it over. Paths are never caller input. */
