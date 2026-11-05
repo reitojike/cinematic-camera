@@ -154,3 +154,9 @@ encoded配列の重複削減を全解像度renderer/codec内部コピー/Pixel�
 - [ ] T049 [US2] 欠落/取り違え/旧版/取消/close/commit故障、縮小入力の原寸偽装拒否と24MP入力/原寸出力の別検証を実施し、実機の画質・ピークメモリ/熱・撮影復帰を確認してから実FULLを登録する（SC-001〜005）。
 
 T045の設計とT046〜049の実装/実測を区別する。原寸のprofile/顔/EVやメモリを仮の成功値で埋めない。
+
+### T046の先行保全
+
+- [x] T050 [US2] 観測欠落からのCompleted補完と公開開始を拒否し、旧FULLのRENDERED/PUBLISHINGだけを保留する。履歴/attempt/出力FP・他job/private/manualを保持し、保留commit故障も検証する（FR-006/007/009、SC-001/002/005）。
+
+T050はT046の先行部分のみ。requestの事前成功宣言とreceiptの既定値、profile/顔EV/原寸coverageの証跡・台帳拡張はT046の残件である。

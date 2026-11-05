@@ -198,7 +198,9 @@ class AutoDevelopQueueTest {
         val f = Fixture()
         val request = request()
         val journal = f.journal(request)
-        journal.prepare(request); journal.start(0); journal.rendered(1, request.source.fingerprint)
+        journal.prepare(request); journal.start(0); journal.rendered(1, request.source.fingerprint,
+            AutoRenderReceipt(request, JpegOutputDescription(16, 12, 1, "sRGB", 3),
+                RenderedFaceState.VERIFIED_NONE, RenderedExposureState.SUPPORTED))
         val before = journal.read()!!
         journal.publishing(before.revision)
         f.queue.restore { listOf(request) }
@@ -212,6 +214,25 @@ class AutoDevelopQueueTest {
         assertEquals(before.attemptId, journal.read()!!.attemptId)
         assertEquals(before.outputFingerprint, journal.read()!!.outputFingerprint)
         assertEquals(0, f.starts.get())
+    }
+
+    @Test fun readableMissingObservationDoesNotInvalidateOtherJobsInTheInventory() {
+        val f = Fixture()
+        val legacy = request("legacy")
+        val valid = request("valid")
+        f.journal(legacy).prepare(legacy); f.journal(legacy).start(0)
+        val artifact = f.journal(legacy).rendered(1, legacy.source.fingerprint)
+        f.journal(valid).prepare(valid)
+        val restored = f.queue.restore { listOf(legacy, valid) }
+        f.queue.updateConditions(allowed)
+        f.io.drain()
+        assertFalse(restored.isCompletedExceptionally)
+        assertEquals(AutoJobPhase.HELD, f.journal(legacy).read()!!.phase)
+        assertEquals(AutoJobReason.MISSING_OBSERVATION, f.journal(legacy).read()!!.reason)
+        assertEquals(artifact.attemptId, f.journal(legacy).read()!!.attemptId)
+        assertEquals(artifact.outputFingerprint, f.journal(legacy).read()!!.outputFingerprint)
+        assertEquals(AutoJobPhase.PUBLISHED, f.journal(valid).read()!!.phase)
+        assertEquals(1, f.starts.get())
     }
 
     private class ManualExecutor : Executor {

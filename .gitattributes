@@ -12,3 +12,4 @@ app/src/main/assets/third_party/dng_temperature/SOURCE.txt text eol=lf
 app/src/test/resources/stage_clear_*.csv linguist-generated=true
 app/src/test/resources/stage_clear_*.csv.gz binary linguist-generated=true
 app/src/test/resources/r7_preview_inputs_v1.csv.gz binary linguist-generated=true
+app/src/test/resources/detected_face_masks_v1.csv.gz binary linguist-generated=true
