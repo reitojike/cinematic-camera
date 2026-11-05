@@ -54,6 +54,8 @@ internal class Original24PreviewSession(
     private var asShot: LinearSrgbImage? = null
     private var base: LinearSrgbImage? = null
     private var baseAdjustments: PhotoAdjustments? = null
+    internal var previewExternalEv: Double? = null
+        private set
     private var previewGlow: PreparedStageClearGlow? = null
     internal val previewFieldBytes get() = previewGlow?.retainedFieldBytes ?: 0
     internal var previewFieldBuilds = 0
@@ -93,11 +95,11 @@ internal class Original24PreviewSession(
             resourceAdmission()
             val foundation = if (base != null && baseAdjustments == adjustments) requireNotNull(base) else {
                 // Drop the old base before allocating a replacement; warmth and EV both invalidate it.
-                base = null; baseAdjustments = null; previewGlow = null
+                base = null; baseAdjustments = null; previewExternalEv = null; previewGlow = null
                 original24PreviewFoundation(input, adjustments, stop).also {
                     originalCheckpoint(stop)
-                    base = it; baseAdjustments = adjustments
-                }
+                    base = it.image; baseAdjustments = adjustments; previewExternalEv = it.externalEv
+                }.image
             }
             val noProtection = FaceMask(foundation.width, foundation.height, FloatArray(foundation.pixelCount))
             val glow = previewGlow ?: PreparedStageClearGlow.prepare(foundation) {
@@ -112,7 +114,7 @@ internal class Original24PreviewSession(
             originalCheckpoint(stop)
             requireNotNull(result)
         } catch (error: Throwable) {
-            failed = true; asShot = null; base = null; baseAdjustments = null; previewGlow = null
+            failed = true; asShot = null; base = null; baseAdjustments = null; previewExternalEv = null; previewGlow = null
             failure = error
             result?.recycle()
             if (error is OutOfMemoryError) throw IOException("Original preview memory unavailable", error)
@@ -120,7 +122,7 @@ internal class Original24PreviewSession(
         } finally {
             try { releaseTransient() }
             catch (cleanup: Throwable) {
-                failed = true; asShot = null; base = null; baseAdjustments = null; previewGlow = null
+                failed = true; asShot = null; base = null; baseAdjustments = null; previewExternalEv = null; previewGlow = null
                 result?.recycle()
                 val primary = failure
                 if (primary == null) throw cleanup
@@ -153,7 +155,7 @@ internal class Original24PreviewSession(
             originalCheckpoint(stop)
             result
         } catch (error: Throwable) {
-            failed = true; asShot = null; base = null; baseAdjustments = null; previewGlow = null
+            failed = true; asShot = null; base = null; baseAdjustments = null; previewExternalEv = null; previewGlow = null
             failure = error
             result?.recycle()
             if (error is OutOfMemoryError) throw IOException("Original comparison memory unavailable", error)
@@ -161,7 +163,7 @@ internal class Original24PreviewSession(
         } finally {
             try { releaseTransient() }
             catch (cleanup: Throwable) {
-                failed = true; asShot = null; base = null; baseAdjustments = null; previewGlow = null
+                failed = true; asShot = null; base = null; baseAdjustments = null; previewExternalEv = null; previewGlow = null
                 result?.recycle()
                 val primary = failure
                 if (primary == null) throw cleanup
@@ -280,7 +282,7 @@ internal class Original24PreviewSession(
     override fun close() {
         requestStop()
         exclusive {
-            closed = true; asShot = null; base = null; baseAdjustments = null; previewGlow = null
+            closed = true; asShot = null; base = null; baseAdjustments = null; previewExternalEv = null; previewGlow = null
             releaseTransient()
         }
     }
@@ -292,11 +294,13 @@ internal class Original24PreviewSession(
 
 /** Meter the unaltered AS_SHOT input so relative warmth is never compensated by automatic metering.
  * User EV is added to that fixed diagnostic EV after warmth, matching original-size rendering. */
+internal data class Original24PreviewFoundation(val image: LinearSrgbImage, val externalEv: Double)
+
 internal fun original24PreviewFoundation(input: LinearSrgbImage, adjustments: PhotoAdjustments,
-    stop: () -> Boolean): LinearSrgbImage {
+    stop: () -> Boolean): Original24PreviewFoundation {
     val diagnostic = R7PreviewInputs.prepare(R7PreviewInputs.AsShotInput(input,
         R7PreviewInputs.Source.LIBRAW_PRELIMINARY_AS_SHOT), emptyList(), stop)
     val warmed = adjustments.applyWarmth(input, stop)
-    return R7Base.render(warmed, diagnostic.foundationSkinRoi,
-        diagnostic.exposure.externalBaseEv + adjustments.exposureEv, stop)
+    val externalEv = diagnostic.exposure.externalBaseEv + adjustments.exposureEv
+    return Original24PreviewFoundation(R7Base.render(warmed, diagnostic.foundationSkinRoi, externalEv, stop), externalEv)
 }

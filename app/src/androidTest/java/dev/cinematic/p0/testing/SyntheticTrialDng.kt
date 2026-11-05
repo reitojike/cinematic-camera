@@ -10,7 +10,8 @@ internal fun syntheticTrialDng(width: Int = 32, height: Int = 24, orientation: I
     ByteArrayOutputStream().also { writeSyntheticTrialDng(it, width, height, orientation) }.toByteArray()
 
 /** Streams the raw rows so a 12MP input fixture is not held as a second full Java byte array. */
-internal fun writeSyntheticTrialDng(output: OutputStream, width: Int, height: Int, orientation: Int): Long {
+internal fun writeSyntheticTrialDng(output: OutputStream, width: Int, height: Int, orientation: Int,
+    sample: (Int, Int) -> Int = { x, y -> 164 + (x * 65 + y * 25) % 3500 }): Long {
     fun shorts(vararg values: Int) = ByteBuffer.allocate(values.size * 2).order(ByteOrder.LITTLE_ENDIAN)
         .apply { values.forEach { putShort(it.toShort()) } }.array()
     fun longs(vararg values: Int) = ByteBuffer.allocate(values.size * 4).order(ByteOrder.LITTLE_ENDIAN)
@@ -49,7 +50,7 @@ internal fun writeSyntheticTrialDng(output: OutputStream, width: Int, height: In
     val row = ByteBuffer.allocate(width * 2).order(ByteOrder.LITTLE_ENDIAN)
     repeat(height) { y ->
         row.clear()
-        repeat(width) { x -> row.putShort((164 + (x * 65 + y * 25) % 3500).toShort()) }
+        repeat(width) { x -> row.putShort(sample(x, y).toShort()) }
         output.write(row.array())
     }
     return rawOffset.toLong() + width.toLong() * height * 2

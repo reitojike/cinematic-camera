@@ -22,7 +22,9 @@ class Original24PreviewFoundationTest {
         val warmed = adjustments.applyWarmth(input)
         val expected = R7Base.render(warmed, unchangedMeter.foundationSkinRoi,
             unchangedMeter.exposure.externalBaseEv + adjustments.exposureEv).copyPixels()
-        val actual = original24PreviewFoundation(input, adjustments) { false }.copyPixels()
+        val observed = original24PreviewFoundation(input, adjustments) { false }
+        assertEquals(unchangedMeter.exposure.externalBaseEv + adjustments.exposureEv, observed.externalEv, 0.0)
+        val actual = observed.image.copyPixels()
         assertArrayEquals(expected, actual, 0f)
 
         // This strongly coloured input distinguishes the old order: metering after warmth changes EV
