@@ -83,3 +83,32 @@ mask-only/旧RGB通読、横補間cache/旧行式のmicrobenchmarkは同じ入�
 全クラスのpackageは`dev.cinematic.p0.jpegrender.original`、runnerは`androidx.test.runner.AndroidJUnitRunner`。
 fixture作成/原本識別は全体timerより前であり、sampler負荷は全体時間に含む。段階合計と全体時間は同値を要求しない。
 メモリ値はsampling間隔とmanaged/native/PSSを併記し、瞬間的な真のpeakや他端末の上限を保証しない。
+
+## bloom fieldの共有走査（Issue #167）
+
+`OriginalFields.reduce`の係数/Contributor/accumとaccept/finishを小さなgrid stateへ移し、単独reduceでも共用する。
+`blurMany`はBLOOMの同channels/common projectの最大3本だけを同じ`input.rows`で集計する。
+各gridのdx積和→Float→yのDouble加算と最後のFloat化を維持し、field自体や全面planeを複製しない。
+halationはchannels/projectが異なるため別走査のままとする。
+
+通常の両軸strict縮小かつhorizontal-firstだけを共有し、1px/拡大/同寸法/vertical-firstは順次blurへ戻す。
+全accum要素は既存16M以下、sum-maxの追加Double payloadは512KiB以下とし、超過は走査開始前に判断する。
+6000×4000のBLOOM3本はDouble accum合計488,976 bytes、最大単体との差44,088 bytesを見込む。
+係数/Contributor/field/row cache等の保持は別であり、managed/native/PSSも測る。
+cancelをgrid accept/finish前に確認し、input.rowsがcloseを確認して戻った後だけ結果を返す。
+処理・project・read/closeの失敗から順次経路へretryせず、部分結果を公開しない。
+単独reduceは従来のreader/consumerの有限値検査を維持し、投影値の全画素追加走査を持ち込まない。
+新規batchは共有projectionの有限値もその場で検査する。無効なsingle projectionも消費側で拒否し、完成raster/proofへ進めない。
+
+まず旧順次blurとのraw-bit一致、callback/走査回数、容量fallback、取消/失敗をunitで検証する。
+同APKの交互microbenchmarkでfield生成時間/CPU・payload・観測メモリを比較し、
+全体は同じ合成DNG SHA/強度・AGP/JDK/ABI/debug flags/AVD設定をそろえたbaseline/candidateで測る。
+全体とkernelの差、host/JIT/sampling状態、測定source/APK hashを記録する。
+条件が異なる旧#166全体値をA/B結果として流用せず、画像差や資源・取消の問題、利益が乏しい場合は採用しない。
+
+kernelの再現入口は`dev.cinematic.p0.jpegrender.original.OriginalBloomFieldsBenchmarkTest`、
+`originalBloomFieldsBenchmark=true`、`bloomFieldsSize=SMALL|24MP`、新しい32桁hexの`runId`。
+`files/original-bloom-fields-<runId>.json`を同じID・success/completeと照合する。
+同candidate APK内の単独reduce3回/共有1回を各3組交互順で測り、全reduced fieldのraw-bit SHAを比較する。
+fixture生成でcacheが温まるためcold diskの比較ではない。旧mainとの速度比較は別APKの全段診断と区別する。
+全段`Original24PipelineTest`は`syntheticInputSha256/Bytes`も記録し、同じ固定fixtureであることを照合する。
