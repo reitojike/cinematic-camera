@@ -51,7 +51,7 @@ dependencies {
     androidTestImplementation("junit:junit:4.13.2")
     // Match the versions already selected by :app's instrumentation classpath.
     constraints {
-        androidTestImplementation("androidx.annotation:annotation-jvm:1.9.1")
+        androidTestImplementation("androidx.annotation:annotation-jvm:1.11.0")
         androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
     }
 }
