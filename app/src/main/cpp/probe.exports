@@ -1,0 +1,4 @@
+{
+    global: Java_dev_cinematic_rawprobe_NativeFullResolutionProbe_inspect;
+    local: *;
+};
