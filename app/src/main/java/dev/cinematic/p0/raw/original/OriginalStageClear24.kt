@@ -152,7 +152,9 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, p
                 repeat(3) { c -> out[p * 3 + c] = rgb[p * 3 + c] * (excess / max(yy, 1e-6f)) }
             }
         }
-        val bloom = StageClearGlowV1.BLOOM_KERNELS.map { (radius, weight) -> OriginalFields.blur(base, radius, 3, stop, ::project) to weight }
+        val kernels = StageClearGlowV1.BLOOM_KERNELS
+        val fields = OriginalFields.blurMany(base, kernels.map { it.first }, 3, stop, ::project)
+        val bloom = kernels.mapIndexed { index, (_, weight) -> fields[index] to weight }
         val halation = OriginalFields.blur(base, StageClearGlowV1.HALATION_RADIUS, 1, stop) { rgb, out ->
             out.indices.forEach { p ->
                 val yy = max(0f, y(rgb, p * 3))

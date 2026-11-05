@@ -60,6 +60,7 @@ class Original24PipelineTest {
                     val request = Original24Request("synthetic_original", index + 1L, source, strength)
                     val metrics = OriginalProbeMetrics(context)
                     val report = JSONObject().put("orientation", orientation).put("strength", strength).put("status", "STARTED")
+                        .put("syntheticInputSha256", fingerprint.sha256).put("syntheticInputBytes", fingerprint.bytes)
                     reports.put(report)
                     val timings = JSONArray()
                     val trace = if (args.getString("original24Stages") == "true") {
