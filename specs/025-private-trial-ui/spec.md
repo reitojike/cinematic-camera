@@ -1,5 +1,7 @@
 # 手動の私有試験JPEG表示
 
+同じRAWから生成する基準表示と現像結果の長押し比較は[比較仕様](comparison.md)を参照する。
+
 既存Issue #89/#129起点。顔SDKを初回試用で保留する方針に合わせ、完成JPEGの公開契約を弱めず、選んだDNGの縮小試験結果をアプリ内で確認する。
 
 - 固定したSharedOriginalReferenceとtrial recipeを共通制御へ渡す。UIはID/世代を採番せず、別queue・private出力コピー・完成publisherを作らない。

@@ -30,7 +30,13 @@ internal sealed interface PhotoRollRenderResult {
         val mode: PhotoRollPreviewMode,
         /** Optional retained completed-JPEG owner; trial renderers must leave this null. */
         val jpegSave: PhotoRollJpegSave? = null,
-    ) : PhotoRollRenderResult
+        /** Independent display-owned pixels. Same source, orientation and dimensions as [bitmap]. */
+        val comparisonBitmap: Bitmap? = null,
+    ) : PhotoRollRenderResult {
+        val comparisonLabel get() = comparisonBitmap?.let {
+            "RAWの基準表示（撮影時WB・暫定色、露出補正・ルックなし）"
+        }
+    }
     data class Unavailable(val reason: String) : PhotoRollRenderResult
 }
 

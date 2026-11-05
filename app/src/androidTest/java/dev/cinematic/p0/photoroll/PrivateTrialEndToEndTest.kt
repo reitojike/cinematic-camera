@@ -53,6 +53,21 @@ class PrivateTrialEndToEndTest {
             assertEquals(768, first.bitmap.width); assertEquals(1024, first.bitmap.height)
             assertEquals(PhotoRollPreviewMode.PRIVATE_TRIAL, first.mode)
             assertNull(first.jpegSave)
+            val comparison = requireNotNull(first.comparisonBitmap)
+            assertEquals(first.bitmap.width, comparison.width); assertEquals(first.bitmap.height, comparison.height)
+            assertNotSame(first.bitmap, comparison)
+            assertNotNull(first.comparisonLabel)
+            assertNotEquals(pixels(first.bitmap), pixels(comparison))
+            // Independent same-source decode verifies orientation/scale and pre-R7/pre-look display pixels.
+            val slot = requireNotNull(DevelopExecution.tryStartObserved(allowed))
+            try {
+                f.localReadOnlySource().use {
+                    val raw = dev.cinematic.p0.raw.NativeDngDecoder.decode(it.fd, 1024, CancellationSignal(), 0)
+                    val baseline = TrialDisplayPixels.encode(dev.cinematic.p0.raw.LinearSrgbImage(raw.width, raw.height, raw.pixels), 1024) { false }
+                    val expected = Bitmap.createBitmap(baseline, raw.width, raw.height, Bitmap.Config.ARGB_8888)
+                    try { assertEquals(pixels(expected), pixels(comparison)) } finally { expected.recycle() }
+                }
+            } finally { DevelopExecution.completeAfterResourcesClosed(slot) }
             val record = f.record()
             val file = f.output()
             val fingerprint = requireNotNull(status.fingerprint)
@@ -67,13 +82,16 @@ class PrivateTrialEndToEndTest {
                 assertNotSame(first.bitmap, second.bitmap)
                 assertFalse(first.bitmap.isRecycled)
                 assertEquals(pixels(first.bitmap), pixels(second.bitmap))
+                assertNotSame(comparison, second.comparisonBitmap)
+                assertFalse(comparison.isRecycled)
+                assertEquals(pixels(comparison), pixels(requireNotNull(second.comparisonBitmap)))
                 assertEquals(record.attemptId, f.record().attemptId)
                 assertEquals(status.request, handle.status().get(30, TimeUnit.SECONDS).request)
                 assertEquals(fingerprint, handle.status().get(30, TimeUnit.SECONDS).fingerprint)
                 DngContentVerifier.verify(fingerprint, { f.output().inputStream() })
-            } finally { second.bitmap.recycle() }
+            } finally { second.bitmap.recycle(); second.comparisonBitmap?.recycle() }
             f.assertUnpublishedAndOriginal()
-        } finally { first.bitmap.recycle() }
+        } finally { first.bitmap.recycle(); first.comparisonBitmap?.recycle() }
     }
 
     @Test fun cancellationCapturePriorityAndChangedPrivateBytesFailClosed() = Fixture(32, 24).use { f ->
@@ -83,7 +101,7 @@ class PrivateTrialEndToEndTest {
         // This is an explicit new display request for READY output, not proof of RETRYABLE->retry generation.
         val resumed = f.renderer.render(f.request().copy(explicitRetry = true), CancellationSignal())
         assertTrue("Explicit display request failed: $resumed", resumed is PhotoRollRenderResult.Preview)
-        (resumed as PhotoRollRenderResult.Preview).bitmap.recycle()
+        (resumed as PhotoRollRenderResult.Preview).let { it.bitmap.recycle(); it.comparisonBitmap?.recycle() }
         val handle = f.handle()
         val before = f.record()
         val entered = CountDownLatch(1); val release = CountDownLatch(1)
@@ -129,16 +147,23 @@ class PrivateTrialEndToEndTest {
         assertNotNull(probe)
         assertTrue(DevelopExecution.completeAfterResourcesClosed(probe!!))
         val again = f.render()
-        again.bitmap.recycle()
+        again.bitmap.recycle(); again.comparisonBitmap?.recycle()
         assertEquals(before.attemptId, f.record().attemptId)
         f.assertUnpublishedAndOriginal()
+        val delivery = handle.readPreview(allowed) { false }.get(30, TimeUnit.SECONDS)
+        val claimed = requireNotNull(delivery.claim())
+        val baseline = requireNotNull(claimed.comparisonBitmap)
+        handle.requestStop()
+        assertFalse(claimed.bitmap.isRecycled); assertFalse(baseline.isRecycled)
+        claimed.close(); delivery.close()
+        assertTrue(claimed.bitmap.isRecycled); assertTrue(baseline.isRecycled)
         // Fault injection touches this test's closed private JPEG only, never the source.
         f.output().writeBytes("synthetic corrupt JPEG".toByteArray())
         assertThrows(java.util.concurrent.ExecutionException::class.java) {
             handle.readPreview(allowed) { false }.get(30, TimeUnit.SECONDS)
         }
         val failedUi = runCatching { f.renderer.render(f.request(), CancellationSignal()) }
-        (failedUi.getOrNull() as? PhotoRollRenderResult.Preview)?.bitmap?.recycle()
+        (failedUi.getOrNull() as? PhotoRollRenderResult.Preview)?.let { it.bitmap.recycle(); it.comparisonBitmap?.recycle() }
         assertFalse(failedUi.getOrNull() is PhotoRollRenderResult.Preview)
         f.assertUnpublishedAndOriginal()
     }
@@ -188,6 +213,7 @@ class PrivateTrialEndToEndTest {
         }
         fun handle(): PrivateTrialHandle = retained ?: AndroidAutoDevelopQueue.preparePrivateTrial(context, original.reference)
             .get(30, TimeUnit.SECONDS).also { retained = it }
+        fun localReadOnlySource() = resolver.openFileDescriptor(uri, "r")!!
         private fun journal() = AutoDevelopJournal(handle().request.id, handle().request.generation,
             AndroidAtomicJournalStorage(File(directory, "renders"), handle().request.generation.toString(), CaptureJournalFile.AUTO_DEVELOP))
         fun record() = requireNotNull(journal().read())
