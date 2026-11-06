@@ -13,7 +13,7 @@ Branch: feat/design-diagnostics / Issue #173 / Spec: [spec.md](spec.md)
 ## Project Structure / 順序
 
 app/src/main/java/dev/cinematic/p0/CaptureDiagnosticsSheet.ktを追加し、CaptureScreen.ktの診断header/bodyを置換。CapturePanels.ktの診断本文をtab単位へ分割し、CaptureExposureSummaryの復旧操作を出力タブへ維持。
-A共有変更は依存として取り込み、BのPR差分は診断だけにする。Git作者未設定の間もB設計を専用worktreeで進める。
+A共有変更は依存として取り込み、BのPR差分は診断だけにする。
 
 ## 情報対応表
 
@@ -36,3 +36,5 @@ A共有変更は依存として取り込み、BのPR差分は診断だけにす�
 ## 検証
 
 既存unitとlint/assemble、diff check。表の全項目をコードで追跡し各タブを表示確認。実機の読みやすさ/操作感は未検証としてPRへ残す。merge/APPROVE/配布なし。
+
+短辺・拡大文字では見出し/要約/タブ/footerの折返しを考慮し、高さ520dp×文字倍率未満、または幅360dp×文字倍率未満なら全体scrollへ切り替える。通常412×924dp・等倍ではfooter固定を維持する。

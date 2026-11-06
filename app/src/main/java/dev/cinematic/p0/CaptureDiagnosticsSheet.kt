@@ -11,6 +11,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.semantics.selected
@@ -36,7 +37,9 @@ private enum class DiagnosticTab(val label: String) { CONTROL("制御"), OUTPUT(
     settings: () -> Unit) {
     var tab by remember { mutableStateOf(DiagnosticTab.CONTROL) }
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val compact = maxHeight < 320.dp
+        // Keep at least a readable body viewport after header, summary, tabs and footer.
+        // Narrow/large-text layouts wrap the fixed sections, so scroll the whole sheet.
+        val compact = diagnosticNeedsFullScroll(maxWidth.value, maxHeight.value, LocalDensity.current.fontScale)
         Column(if (compact) Modifier.fillMaxSize().verticalScroll(rememberScrollState()) else Modifier.fillMaxSize()) {
             Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {

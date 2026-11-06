@@ -246,6 +246,8 @@ STILLの明示opt-in固定pair、Builder単発設定とruntime preview補償、�
 
 ## 診断画面のデザイン反映（Issue #173）
 
-- lintDebug / testDebugUnitTest / assembleDebugが成功。116 suites / 842 tests、failure/error 0、skip 4。熱状態サマリーを短いOS状態名に限定する修正後も全検証成功。全文は出力タブに保持。
+- lintDebug / testDebugUnitTest / assembleDebugが成功。117 suites / 844 tests、failure/error 0、skip 4。短辺・拡大文字の全体スクロール切替と熱状態サマリーを短いOS状態名に限定する修正後も全検証成功。全文は出力タブに保持。
 - 専用Android 37 AVDで制御表、出力タブ切替、固定Preview/レポート操作の表示を確認。レポート保存の実行、全カメラ能力、実機の横持ち/コピー操作は未確認。
 - API要求・受付履歴・直近実測、ISO/SS source/観測期限、能力/ログをタブに移し、SelectionContainerと元データ・操作guardを保持。RAW/保存処理には変更なし。
+
+- 診断の短辺対策は344×412dp相当・fontScale 1.3の専用AVDで、全体scrollにより制御表と観測sourceへ到達できることを確認。高さ320dp/横長/幅320dp/文字2倍の選択条件をunitで確認。実機の分割画面は未確認。
