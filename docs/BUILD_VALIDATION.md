@@ -254,11 +254,8 @@ STILLの明示opt-in固定pair、Builder単発設定とruntime preview補償、�
 
 ## カメラロールのデザイン反映（Issue #174）
 
-- lintDebug / testDebugUnitTest / assembleDebug / diff check成功。118 suites / 846 tests、failure/error 0、skip 4。日付の現地深夜境界と日付不明の回帰を追加。
+- a9af53fでlintDebug / testDebugUnitTest / assembleDebug / diff check成功。118 suites / 846 tests、failure/error 0、skip 4。日付の現地深夜境界と日付不明の回帰を追加。
 - 専用Android 37 AVDで未許可の空一覧、合成画像4件の部分アクセス、破線注意帯、日付/件数、3列2dp/最新緑枠、Filesフッターを確認。短辺・拡大文字では全体scrollへ切替える。
 - 選択・Files・権限・外部viewer・ページングのcallback/guardとthumbnailの2並列/取消所有権を保持。DNG実現像、外部viewer起動、動画/RAWタグ、実機の全操作は未確認。合成素材とUI証拠はGitへ含めない。
 
-
-### C independent review correction: retain refresh tiles
-
-Same-collection refresh now keeps existing tiles only when the last successful query and access epoch match. Filter/folder/permission/lifecycle clears and listing commit guards remain unchanged. Added unit coverage for first-page and paged refresh retention, changed filter/folder, grant epoch, and missing prior listing. Static diff check passed; execution is pending remote CI and the RAW-prioritized AVD slot. This is the first C correction round.
+- 更新中タイル保持: 同一collection/権限世代、ページ追加後、filter/folder変更、権限世代変更、初回のunit回帰を追加。修正後のunit実行結果はCIで確認する。AVDでの更新中タイル保持・権限変更回帰は未実行。
