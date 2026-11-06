@@ -30,6 +30,12 @@ class OriginalParallelRowsTest {
     private fun describe(worker: Thread) =
         "id=${worker.id} name=${worker.name} state=${worker.state} stack=${worker.stackTrace.take(8).joinToString()}"
 
+    private fun awaitIgnoringInterrupt(release: CountDownLatch) {
+        while (release.count != 0L) {
+            try { release.await() } catch (_: InterruptedException) { /* Deliberately non-cooperative worker. */ }
+        }
+    }
+
     private class ReusedRows(override val width: Int, override val height: Int) : OriginalRaster {
         override fun rows(stop: () -> Boolean, consume: (Int, FloatArray) -> Unit) {
             val borrowed = FloatArray(width * 3)
@@ -224,6 +230,82 @@ class OriginalParallelRowsTest {
             worker.get()?.join(5000)
         }
         assertFalse(worker.get().isAlive)
+    }
+
+    @Test fun timedOutWorkerRemainsOwnedUntilRetryConfirmsTermination() {
+        val root = Files.createTempDirectory("original-worker-timeout").toFile()
+        val work = OriginalRasterWorkspace(root.resolve("attempt"))
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val input = object : OriginalRaster {
+            override val width = 1
+            override val height = 1
+            override fun rows(stop: () -> Boolean, consume: (Int, FloatArray) -> Unit) {
+                consume(0, floatArrayOf(.2f, .3f, .4f))
+                assertTrue(started.await(5, TimeUnit.SECONDS))
+                throw IllegalStateException("synthetic source failure")
+            }
+        }
+        try {
+            val error = assertThrows(IllegalStateException::class.java) {
+                work.mapParallelRows(input, { false }) { _, row ->
+                    started.countDown()
+                    awaitIgnoringInterrupt(release)
+                    row
+                }
+            }
+            assertEquals("synthetic source failure", error.message)
+            assertTrue(error.suppressed.any { it is IOException && it.message == "Original row workers did not stop" })
+            assertTrue("unfinished executor must retain admission ownership", work.hasPendingOwners)
+            assertThrows(IllegalStateException::class.java) { work.disposeConfirmed() }
+        } finally {
+            release.countDown()
+            work.closePending()
+            assertFalse(work.hasPendingOwners)
+            work.disposeConfirmed()
+            assertTrue(root.delete())
+        }
+    }
+
+    @Test fun interruptedCallerRetainsWorkerOwnerAndInterruptStatusUntilRetry() {
+        val root = Files.createTempDirectory("original-worker-interrupt").toFile()
+        val work = OriginalRasterWorkspace(root.resolve("attempt"))
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val error = AtomicReference<Throwable>()
+        val interrupted = AtomicReference<Boolean>()
+        val caller = Thread {
+            try {
+                work.mapParallelRows(ReusedRows(1, 8), { false }) { y, row ->
+                    if (y == 0) {
+                        started.countDown()
+                        awaitIgnoringInterrupt(release)
+                    }
+                    row
+                }
+            } catch (failure: Throwable) {
+                error.set(failure)
+                interrupted.set(Thread.currentThread().isInterrupted)
+            }
+        }
+        try {
+            caller.start()
+            assertTrue(started.await(5, TimeUnit.SECONDS))
+            caller.interrupt()
+            caller.join(5_000)
+            assertFalse("caller must return while its worker remains blocked", caller.isAlive)
+            assertTrue(error.get() is InterruptedException)
+            assertEquals(true, interrupted.get())
+            assertTrue("unfinished executor must retain admission ownership", work.hasPendingOwners)
+            assertThrows(IllegalStateException::class.java) { work.disposeConfirmed() }
+        } finally {
+            release.countDown()
+            caller.join(5_000)
+            work.closePending()
+            assertFalse(work.hasPendingOwners)
+            work.disposeConfirmed()
+            assertTrue(root.delete())
+        }
     }
 
     @Test fun originalSizeAndWorkspaceBudgetAreStillEnforcedBeforeWorkersStart() {

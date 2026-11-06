@@ -11,6 +11,7 @@ import java.nio.file.StandardOpenOption
 import java.util.concurrent.CancellationException
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
 
@@ -91,15 +92,17 @@ internal class OriginalRasterFile internal constructor(
 internal class OriginalRasterWorkspace(val directory: File, private val byteBudget: Long = 2L * 1024 * 1024 * 1024) {
     private val owned = linkedMapOf<OriginalRasterFile, Long>()
     private val writers = OriginalCloseOwners()
+    private val workers = OriginalCloseOwners()
     private var next = 0
     init { require(byteBudget > 0); check(!directory.exists() && directory.mkdir()) }
     val reservedBytes get() = owned.values.sum()
-    val hasPendingOwners get() = writers.hasPending || owned.keys.any { it.hasPendingOwners }
+    val hasPendingOwners get() = writers.hasPending || workers.hasPending || owned.keys.any { it.hasPendingOwners }
     fun closePending() {
         var failure: Throwable? = null
         fun release(action: () -> Unit) { try { action() } catch (error: Throwable) { if (failure == null) failure = error else if (failure !== error) failure!!.addSuppressed(error) } }
         release { writers.releaseAll() }
         owned.keys.forEach { raster -> release { raster.closePending() } }
+        release { workers.releaseAll() }
         failure?.let { throw it }
     }
 
@@ -142,7 +145,7 @@ internal class OriginalRasterWorkspace(val directory: File, private val byteBudg
     fun mapParallelRows(input: OriginalRaster, stop: () -> Boolean, workers: Int,
         transform: (Int, FloatArray) -> FloatArray): OriginalRasterFile {
         require(workers in 2..4)
-        return map(OriginalParallelRows(input, transform, workers), stop) { _, row -> row }
+        return map(OriginalParallelRows(input, transform, workers, this.workers), stop) { _, row -> row }
     }
 
     /** Call only after the last reader's rows() has returned and acknowledged close. */
@@ -166,6 +169,7 @@ private class OriginalParallelRows(
     private val input: OriginalRaster,
     private val transform: (Int, FloatArray) -> FloatArray,
     private val workers: Int,
+    private val owners: OriginalCloseOwners,
 ) : OriginalRaster {
     override val width get() = input.width
     override val height get() = input.height
@@ -176,38 +180,49 @@ private class OriginalParallelRows(
         }
         val pendingLimit = workers * 2
         val pending = ArrayDeque<Pair<Int, Future<FloatArray>>>(pendingLimit)
-        var failure: Throwable? = null
-        try {
-            fun drainOne() {
-                val (y, future) = pending.removeFirst()
-                val output = try { future.get() }
-                catch (error: ExecutionException) { throw error.cause ?: error }
-                originalCheckpoint(stop)
-                consume(y, output)
-            }
-            input.rows(stop) { y, row ->
-                originalCheckpoint(stop)
-                val owned = row.copyOf()
-                pending.addLast(y to executor.submit<FloatArray> { transform(y, owned) })
-                if (pending.size == pendingLimit) drainOne()
-            }
-            while (pending.isNotEmpty()) drainOne()
-        } catch (error: Throwable) {
-            failure = error
-            throw error
-        } finally {
-            if (failure == null) executor.shutdown() else {
-                pending.forEach { (_, future) -> future.cancel(true) }
-                executor.shutdownNow()
-            }
+        owners.using(OriginalWorkerOwner(executor)) {
+            var failure: Throwable? = null
             try {
-                if (!executor.awaitTermination(10, TimeUnit.SECONDS))
-                    throw IOException("Original row workers did not stop")
-            } catch (cleanup: Throwable) {
-                if (cleanup is InterruptedException) Thread.currentThread().interrupt()
-                if (failure == null) throw cleanup
-                if (failure !== cleanup) failure.addSuppressed(cleanup)
+                fun drainOne() {
+                    val (y, future) = pending.removeFirst()
+                    val output = try { future.get() }
+                    catch (error: ExecutionException) { throw error.cause ?: error }
+                    originalCheckpoint(stop)
+                    consume(y, output)
+                }
+                input.rows(stop) { y, row ->
+                    originalCheckpoint(stop)
+                    val owned = row.copyOf()
+                    pending.addLast(y to executor.submit<FloatArray> { transform(y, owned) })
+                    if (pending.size == pendingLimit) drainOne()
+                }
+                while (pending.isNotEmpty()) drainOne()
+            } catch (error: Throwable) {
+                failure = error
+                if (error is InterruptedException) Thread.currentThread().interrupt()
+                throw error
+            } finally {
+                if (failure == null) executor.shutdown() else {
+                    pending.forEach { (_, future) -> future.cancel(true) }
+                    executor.shutdownNow()
+                }
             }
+        }
+    }
+}
+
+/** A failed wait remains owned by the workspace and can be retried by its save owner. */
+private class OriginalWorkerOwner(private val executor: ExecutorService) : Closeable {
+    override fun close() {
+        try {
+            if (!executor.awaitTermination(10, TimeUnit.SECONDS)) {
+                executor.shutdownNow()
+                throw IOException("Original row workers did not stop")
+            }
+        } catch (interrupted: InterruptedException) {
+            executor.shutdownNow()
+            Thread.currentThread().interrupt()
+            throw interrupted
         }
     }
 }
