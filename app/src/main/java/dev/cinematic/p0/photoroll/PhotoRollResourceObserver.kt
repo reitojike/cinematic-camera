@@ -25,6 +25,7 @@ import kotlinx.coroutines.launch
 internal class PhotoRollResourceObserver(context: Context,
     private val publishConditions: (AutoDevelopConditions) -> Unit = {},
     private val authority: PhotoRollObservationAuthority = PhotoRollObservationOwners.authority,
+    private val serviceOwned: Boolean = false,
 ) {
     private val cameraManager = context.getSystemService(CameraManager::class.java)
     private val activityManager = context.getSystemService(ActivityManager::class.java)
@@ -65,7 +66,8 @@ internal class PhotoRollResourceObserver(context: Context,
                                     Log.i("CinematicRaw", "PHOTO_ROLL_BLOCKERS=${blockers.map { it.name }.sorted().joinToString(",")}")
                                     lastPublishedBlockers = blockers
                                 }
-                                authority.observed(this@PhotoRollResourceObserver, conditions, publishConditions)
+                                if (serviceOwned) publishConditions(conditions)
+                                else authority.observed(this@PhotoRollResourceObserver, conditions, publishConditions)
                             }
                         }
                         delay(500)
@@ -82,7 +84,8 @@ internal class PhotoRollResourceObserver(context: Context,
             generation++
             observationEpoch++
             lastPublishedBlockers = null
-            authority.foreground(this, false, publishConditions)
+            if (serviceOwned) publishConditions(AutoDevelopConditions())
+            else authority.foreground(this, false, publishConditions)
         }
         polling?.cancel(); polling = null
         try { callback?.let { cameraManager?.unregisterAvailabilityCallback(it) } } catch (_: Exception) { /* Unconfirmed remains blocked. */ }

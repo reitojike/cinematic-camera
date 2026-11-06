@@ -22,6 +22,12 @@ internal fun interface PhotoRollJpegPublisher {
  * retain one operation for retries, serialize advance, recheck the original, and hold UNKNOWN.
  */
 internal interface PhotoRollJpegSaveOwner {
+    val supportsForegroundSave: Boolean get() = false
+    /** True means this save was handled by the service path (including a reported start failure).
+     * Completed-image opening continues using advance() for foreground revalidation. */
+    fun startForegroundSave(context: android.content.Context): Boolean = false
+    val canCancelForegroundSave: Boolean get() = false
+    fun cancelForegroundSave() = Unit
     val snapshots: Flow<PhotoRollSaveSnapshot>
     val snapshot: PhotoRollSaveSnapshot
     /** 0/0 until a deferred manual render has produced and inspected its full-size JPEG. */

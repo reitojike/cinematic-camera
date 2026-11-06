@@ -33,10 +33,36 @@ internal class ManualTrialJpegSaveOwner(
     private val handle: AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle,
     private val resources: () -> PhotoRollResources,
 ) : PhotoRollJpegSaveOwner {
+    override val supportsForegroundSave = true
     private val running = AtomicBoolean(false)
     private val localFailure = MutableStateFlow<PhotoRollSaveSnapshot?>(null)
-    override val snapshots = combine(handle.state, localFailure, ::manualSaveVisibleSnapshot)
-    override val snapshot get() = manualSaveVisibleSnapshot(handle.state.value, localFailure.value)
+    private val exportWork = object : ForegroundExportWork {
+        override val identity get() = handle
+        private var request: dev.cinematic.p0.rawcapture.AutoDevelopCoordinator.ForegroundExportRequest? = null
+        override fun reserveForeground(conditions: dev.cinematic.p0.rawcapture.AutoDevelopConditions): Boolean {
+            request = handle.reserveForegroundExport(conditions)
+            return request != null
+        }
+        override val resourcesClosed get() = !handle.hasUnreleasedResources
+        override fun advance(conditions: () -> dev.cinematic.p0.rawcapture.AutoDevelopConditions, stop: () -> Boolean) =
+            handle.advanceForegroundExport(requireNotNull(request), conditions, stop).thenApply { Unit }
+        override fun observe(conditions: dev.cinematic.p0.rawcapture.AutoDevelopConditions) = handle.updateExportConditions(conditions)
+        override fun requestStop() { request?.let(handle::stopForegroundExport) }
+        override fun finished(failure: Throwable?) {
+            request?.let(handle::abandonForegroundExport)
+            request = null
+            localFailure.value = if (failure == null) null else if (handle.hasUnreleasedResources)
+                PhotoRollSaveSnapshot(PhotoRollSavePhase.HOLD) else PhotoRollSaveSnapshot(PhotoRollSavePhase.UNCONFIRMED)
+        }
+    }
+    override val snapshots = combine(handle.state, localFailure, ForegroundExports.changes) { core, local, _ -> visible(core, local) }
+    override val snapshot get() = visible(handle.state.value, localFailure.value)
+    private fun visible(core: ManualOriginalTrialSaveState, local: PhotoRollSaveSnapshot?): PhotoRollSaveSnapshot {
+        if (core.phase == ManualOriginalTrialSavePhase.HOLD) return manualSaveSnapshot(core)
+        val active = ForegroundExports.gate.active()?.takeIf { it.value.identity === handle }
+        return if (active != null) PhotoRollSaveSnapshot(if (active.held) PhotoRollSavePhase.HOLD else PhotoRollSavePhase.SAVING)
+            else manualSaveVisibleSnapshot(core, local)
+    }
     override val width get() = handle.geometry.outputWidth
     override val height get() = handle.geometry.outputHeight
     override val appliedStrength: Double get() = handle.appliedStrength
@@ -44,6 +70,17 @@ internal class ManualTrialJpegSaveOwner(
 
     override fun matches(source: SharedOriginalReference, mode: PhotoRollPreviewMode) =
         mode == PhotoRollPreviewMode.MANUAL_TRIAL && handle.matches(source)
+
+    override fun startForegroundSave(context: android.content.Context): Boolean {
+        if (snapshot.phase == PhotoRollSavePhase.PUBLISHED) return false
+        if (snapshot.phase !in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.UNCONFIRMED)) return true
+        localFailure.value = null
+        if (!ForegroundExports.start(context, exportWork, resources().developConditions(rendererAvailable = true)))
+            localFailure.value = PhotoRollSaveSnapshot(PhotoRollSavePhase.UNCONFIRMED)
+        return true
+    }
+    override val canCancelForegroundSave get() = ForegroundExports.owns(exportWork)
+    override fun cancelForegroundSave() { ForegroundExports.cancel(exportWork) }
 
     override fun advance(shouldStop: () -> Boolean): PhotoRollSaveSnapshot {
         if (!running.compareAndSet(false, true)) return PhotoRollSaveSnapshot(PhotoRollSavePhase.SAVING)
