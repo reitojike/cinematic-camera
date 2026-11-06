@@ -161,7 +161,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
             if (event == Lifecycle.Event.ON_PAUSE) {
                 renderer.discardTransientInputs()
                 cancellationOwner.cancel(); preview = null; comparison = null; comparisonLabel = null
-                trialEditor = trialEditor.pause().also {
+                trialEditor = trialEditor.suspendForLifecycle().also {
                     savedStrength = it.requestedStrength
                     savedWarmth = it.requestedValues.temperature ?: 0.0
                     savedExposureEv = it.requestedValues.brightness ?: 0.0

@@ -9,6 +9,37 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TrialStrengthEditorTest {
+    @Test fun lifecycleRetainsSubmittedWarmthAndEvWithoutAdoptingLaterDraft() {
+        val values = PhotoEditValues(.6, 12.0, .4)
+        var state = TrialStrengthEditor.empty(values)
+        state = requireNotNull(state.bind(source)).shown(state.ticket, values).begin(.01, adjustments = true)
+        val token = state.session!!.inputToken
+        state = state.change(token, PhotoEditParameter.TEMPERATURE, 23.0)
+            .change(token, PhotoEditParameter.BRIGHTNESS, -.7).apply(token)
+        val submitted = state.requestedValues
+        state = state.change(token, PhotoEditParameter.TEMPERATURE, 99.0)
+        val suspended = state.suspendForLifecycle()
+        assertEquals(PhotoEditValues(.6, 23.0, -.7), submitted)
+        assertEquals(submitted, suspended.requestedValues)
+        assertNull(suspended.session)
+        assertSame(suspended, suspended.change(token, PhotoEditParameter.BRIGHTNESS, 2.0))
+    }
+
+    @Test fun lifecycleSuspensionKeepsSubmittedRecipeButDropsUnfinishedGestureAndOldResult() {
+        var state = displayed().begin(.01)
+        val token = state.session!!.inputToken
+        state = state.change(token, .7).apply(token)
+        val rendering = state.ticket
+        state = state.shown(rendering, .7).change(token, .9)
+        val resumed = state.suspendForLifecycle()
+        assertEquals(.7, resumed.requestedStrength, 0.0)
+        assertNull(resumed.session)
+        assertNull(resumed.displayedValues)
+        assertFalse(resumed.accepts(rendering))
+        assertSame(resumed, resumed.change(token, 1.0))
+        assertEquals(.7, resumed.shown(resumed.ticket, .7).displayedStrength!!, 0.0)
+    }
+
     private val source = SharedOriginalReference("content://example.test/images/1", OriginalFingerprint(12, "a".repeat(64)), OriginalGrant.USER_SELECTED)
     private fun displayed() = TrialStrengthEditor.empty().let { initial ->
         requireNotNull(initial.bind(source)).shown(initial.ticket, .5)

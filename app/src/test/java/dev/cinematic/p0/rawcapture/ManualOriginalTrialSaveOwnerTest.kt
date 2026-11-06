@@ -6,6 +6,37 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ManualOriginalTrialSaveOwnerTest {
+    @Test fun stopBeforeAdmissionIsRetryableWithoutWritingAnIntentOrDuplicatingTheRender() {
+        val backend = Backend()
+        val storage = Storage()
+        val owner = ManualOriginalTrialSaveOwner(request, backend, storage) { true }
+        assertEquals(ManualOriginalTrialSavePhase.READY, owner.advance { true }.phase)
+        assertEquals(0, backend.renders)
+        assertEquals(0, storage.writes)
+        assertEquals(ManualOriginalTrialSavePhase.PUBLISHED, owner.advance().phase)
+        assertEquals(1, backend.renders)
+        assertEquals(1, storage.writes)
+    }
+
+    @Test fun processDeathAfterPrivateProofButBeforeJournalCannotAuthorizeAnotherRender() {
+        val backend = Backend()
+        val storage = Storage()
+        var stopped = false
+        backend.beforeRender = { stopped = true }
+        val owner = ManualOriginalTrialSaveOwner(request, backend, storage) { true }
+        assertEquals(ManualOriginalTrialSavePhase.UNCONFIRMED, owner.advance { stopped }.phase)
+        assertEquals(0, backend.publisherCreations)
+        // In-process retry still has the verified private proof.
+        assertEquals(ManualOriginalTrialSavePhase.PUBLISHED, owner.advance().phase)
+        assertEquals(1, backend.renders)
+        // A simulated restart without a durable publication record has only the intent.
+        val restartedBackend = Backend()
+        val restarted = ManualOriginalTrialSaveOwner(request, restartedBackend, storage) { true }
+        assertEquals(ManualOriginalTrialSavePhase.HOLD, restarted.advance().phase)
+        assertEquals(0, restartedBackend.renders)
+        assertEquals(0, restartedBackend.publisherCreations)
+    }
+
     private val source = SharedOriginalReference("content://test/original/1", OriginalFingerprint(3, "a".repeat(64)), OriginalGrant.USER_SELECTED)
     private val request = Original24Request(ManualOriginalTrialRequests.identity(source), 1, source, .7)
     private val output = JpegOutputDescription(16, 12, 1, "sRGB", 4)
