@@ -51,14 +51,14 @@ private fun Modifier.blockPanelBackground(): Modifier = pointerInput(Unit) {
     return graphicsLayer { rotationZ = angle }
 }
 
-private val Ink = Color(0xFF0A0B0C)
-private val Sheet = Color(0xFF111315)
-private val Foreground = Color(0xFFE4E6E8)
-private val Muted = Color(0xFFA3AAB1)
-private val Amber = Color(0xFFE6A35C)
-private val Accepted = Color(0xFF7CC4A5)
-private val Failed = Color(0xFFEF8A74)
-private val Rec = Color(0xFFE5483B)
+private val Ink = CaptureDesign.Ink
+private val Sheet = CaptureDesign.Panel
+private val Foreground = CaptureDesign.Text
+private val Muted = CaptureDesign.Muted
+private val Amber = CaptureDesign.Amber
+private val Accepted = CaptureDesign.Accepted
+private val Failed = CaptureDesign.Failed
+private val Rec = CaptureDesign.Recording
 
 @Composable fun CaptureTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = darkColorScheme(primary = Foreground, background = Ink, surface = Sheet,
@@ -169,10 +169,10 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
         if (panel == CapturePanel.NONE) confirmReset = false
     }
 
-    if (confirmReset) AlertDialog(onDismissRequest = { confirmReset = false }, title = { Text("撮影制御をリセット") },
-        text = { Text("露出・WB・MF・照明対策・ロック・EVを標準に戻します。露出だけAUTOとは別の操作です。") },
-        confirmButton = { TextButton(onClick = { confirmReset = false; if (unlocked) { editor = editor.close(); probe.resetAllControls() } }) { Text("全リセット") } },
-        dismissButton = { TextButton(onClick = { confirmReset = false }) { Text("取消") } })
+    if (confirmReset) CaptureResetDialog(dismiss = { confirmReset = false }, reset = {
+        confirmReset = false
+        if (unlocked) { editor = editor.close(); probe.resetAllControls() }
+    })
 
     val landscapeDialHeight = rememberLandscapeDialHeight(probe, liveIntent)
     CompositionLocalProvider(LocalCaptureAngle provides animatedAngle, LocalCaptureHorizontal provides orientation.horizontal,
@@ -314,12 +314,9 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                     .fillMaxWidth().height(dimensions.settingsHeight.dp).background(Sheet)) {
                     // Sibling shield consumes blank space without cancelling child scroll gestures.
                     Box(Modifier.matchParentSize().blockPanelBackground())
-                    Column(Modifier.fillMaxSize()) {
-                        PanelHeader("撮影設定 · ${probe.mode}") { panel = CapturePanel.NONE; confirmReset = false }
-                        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
-                            Settings(probe, unlocked, diagnostics = { panel = CapturePanel.DIAGNOSTICS }, reset = { confirmReset = true })
-                        }
-                    }
+                    CaptureSettingsSheet(probe, unlocked,
+                        close = { panel = CapturePanel.NONE; confirmReset = false },
+                        diagnostics = { panel = CapturePanel.DIAGNOSTICS }, reset = { confirmReset = true })
                 }
             }
             CaptureBar(probe, captureReady, interactable = panel != CapturePanel.DIAGNOSTICS && !ownsCapture,
@@ -542,9 +539,6 @@ private fun exposureKeyValue(key: CaptureKey, probe: CameraProbe, refreshGenerat
         }
     }
 }
-
-@Composable private fun Settings(probe: CameraProbe, enabled: Boolean, diagnostics: () -> Unit, reset: () -> Unit) =
-    CaptureSettingsPanel(probe, enabled, diagnostics, reset)
 
 @Composable private fun Diagnostics(probe: CameraProbe, enabled: Boolean, export: () -> Unit, nowMs: Long) =
     CaptureDiagnosticsPanel(probe, enabled, export, nowMs)
