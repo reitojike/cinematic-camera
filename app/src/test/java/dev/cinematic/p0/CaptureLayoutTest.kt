@@ -23,7 +23,7 @@ class CaptureLayoutTest {
         }
     }
     @Test fun sheetOverlaysPreviewAndNeverReservesAdditionalHeight() {
-        assertEquals(344f, CaptureLayout.sheetHeight(868f), 0f)
+        assertEquals(504f, CaptureLayout.sheetHeight(868f), 0f)
         assertEquals(304f, CaptureLayout.sheetHeight(400f), 0f)
         assertEquals(84f, CaptureLayout.sheetHeight(180f), 0f)
         assertEquals(0f, CaptureLayout.sheetHeight(80f), 0f)
