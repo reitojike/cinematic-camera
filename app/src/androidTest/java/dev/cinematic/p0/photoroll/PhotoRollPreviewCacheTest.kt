@@ -44,6 +44,8 @@ class PhotoRollPreviewCacheTest {
                     }
                     activity.onTrimMemory(ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW)
                     assertNull(restored.copy(restored.begin(key, false)))
+                    restored.remember(restored.begin(key, false), input, null, null)
+                    requireNotNull(restored.copy(restored.begin(key, false))).close()
                 }
             }
             assertNull(retained.copy(retained.begin(key, false)))
