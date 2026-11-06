@@ -189,7 +189,7 @@ class OriginalParallelRowsTest {
             assertTrue("the separate attempt legitimately still owns a worker", peerWorker.get().isAlive)
             release.countDown()
             peerResult.get(5, TimeUnit.SECONDS)
-            assertFalse(peerWorker.get().isAlive)
+            assertOwnWorkersStopped(setOf(peerWorker.get()))
         } finally {
             release.countDown()
             caller.shutdownNow()
