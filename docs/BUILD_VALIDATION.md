@@ -269,3 +269,7 @@ STILLの明示opt-in固定pair、Builder単発設定とruntime preview補償、�
 ### D review correction: JPEG open notice
 
 Canonical review on af591eb found that the non-null preview description hid JPEG-opening errors. The presentation now gives notice precedence over selection.message; no callback or save lifecycle changes. Static diff check passed. Post-correction lint/unit/build and AVD regression remain pending while the RAW task owns the local measurement slot.
+
+### C independent review correction: retain refresh tiles
+
+Same-collection refresh now keeps existing tiles only when the last successful query and access epoch match. Filter/folder/permission/lifecycle clears and listing commit guards remain unchanged. Added unit coverage for first-page and paged refresh retention, changed filter/folder, grant epoch, and missing prior listing. Static diff check passed; execution is pending remote CI and the RAW-prioritized AVD slot. This is the first C correction round.
