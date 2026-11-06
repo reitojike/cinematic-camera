@@ -1,0 +1,42 @@
+# Orton row workers (candidate based on `57bc2cf`, 2026-11-07)
+
+Scope: independent worktree, synthetic inputs only, original24Probe APK on a dedicated API 37 x86_64 AVD with four configured/online vCPUs, 2 GiB AVD RAM and SwiftShader. No Pixel, private photos, publication, or real-photo quality judgment. The candidate ports the previous ordered 2/4-worker Orton row composition to current main, removes the abandoned row-array reuse option, and adds cooperative stop/interruption checks at 64-pixel intervals within parallel Orton rows. Source reading and output writing stay ordered, input row copies and per-worker field rows are private, and at most 2×worker-count rows are in flight. The production `Original24Attempt` now selects four workers; `OriginalStageClear24` itself keeps a one-worker default for reference tests.
+
+PR #180 was opened from source base `57bc2cfa5a8d916e580e0c7a863dc01c9cd0ae2d`; its initial GitHub merge test used then-current `main` `4f16c97e12bbbce01b929cec136792c207d371a4`. The source files changed by #171/#176–179 did not overlap this candidate. Any later head or base must be checked separately; an earlier CI result is not proof for an amended head.
+
+The prior 24MP 1→2→4→4→2→1 AVD runs on main `36c5655` showed identical final JPEG SHA but inconsistent whole-save times; see the earlier `orton-bench/ORTON_WORKERS_REPEATED_AND_SAFETY.md`. Those runs predate the cancellation checks and are not timings for this candidate.
+
+## Current-build evidence
+
+- `:app:assembleOriginal24Probe :app:assembleOriginal24ProbeAndroidTest` passed on current main; `:app:assembleOriginal24ProbeAndroidTest` passed after adding the concurrent and 24MP cancellation tests.
+- Small synthetic safety suite: `OK (8 tests)` on the dedicated AVD, with the opt-in full-24MP case skipped in this invocation. It covers cancellation at row start and mid-row, worker exception propagation and sibling termination, face-cut rerender exact raw-raster SHA, retries, private-workspace cleanup, original protection, a 24MP-*dimension* streaming partial-write cancellation, an actual 64×48 DNG attempt cancellation, and two simultaneous private-source sessions. An initial test attempted two concurrent readers of the *same* `OriginalRasterFile` and was rejected by its pre-existing single-reader ownership guard. Real attempts decode private rasters, so the corrected test uses two independent source files and workspaces; this ownership boundary must be preserved.
+- One opt-in synthetic **24MP DNG** attempt was cancelled at Orton row 128: `OK (1 test)`, elapsed 253.090 s to cancellation. Its 9,216,000-byte partial Float32 raster stayed inside private scratch; all resource owners and row threads were closed by attempt return/close; input fingerprint was unchanged and JPEG output absent. The private failed scratch remains for the existing owner to resolve. This test does not exercise the publication coordinator or process death. Log: `orton-current-24mp-cancel.log`.
+- Hardened same-APK 12MP A/B, order 4→1, one run each, identical synthetic input and final JPEG SHA-256 `80dcf181ccd8067c006145bca814093886bf50415843c695ffcc48b77188aecc`:
+
+| Workers | Orton field wall | Orton row compose wall | Summed worker pixel CPU | Whole attempt | Sampled managed max | Sampled native max | Sampled PSS max |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4 | 6.287 s | 10.326 s | 28.141 s | 195.194 s | 40.4 MiB | 212.2 MiB | 263.2 MiB |
+| 1 | 6.447 s | 28.256 s | 23.950 s | 220.244 s | 39.8 MiB | 212.2 MiB | 256.7 MiB |
+
+`ORTON_COMPOSE` includes field interpolation, source/output row file I/O, worker setup, synchronization and per-pixel math. `ORTON_PIXEL_THREAD_CPU` is summed CPU time *inside* the pixel math loop, not wall time; four workers spend more total CPU while reducing elapsed row time. `ORTON_FIELD` is a separate completed blur-field creation span. The 17.93 s row-composition reduction is the direct target effect in this pair. Whole attempt was 25.05 s shorter, but one ordered pair cannot establish a stable whole-export benefit because JIT/host drift affects unchanged stages. The sampled process memory maxima are not Orton-only peaks and cannot be extrapolated to Pixel. Raw reports: `orton-current-12mp-{4,1}.json` and `.log`.
+
+## Remaining limits
+
+No fixed number of rows or deadline to stop is guaranteed: ordered futures can delay detection of a later worker failure, and the executor has a 10-second termination wait. A 24MP full successful save after the new checks, Pixel time/memory, simultaneous 24MP saves, process death, disk-full/close failures, and publication-owner cleanup on failure are not yet tested. No approximate colour/blur change was made. Glow has a required diffusion-field boundary and shared row arrays; Character uses a shared face-row/provider and an earlier two-worker trial improved whole save only ~2.8%. Neither has been expanded here.
+
+## Worker-liveness test diagnosis
+
+Design PR #179's unchanged `OriginalParallelRowsTest.kt:131` failed in run `42241762544`, attempts 1 and 2, each with one failure among 848 tests. The job logs identify the global `Thread.getAllStackTraces()` name-based assertion but do not include a thread ID, owning attempt, stack, or lifetime. Consequently the exact thread in those two CI failures cannot be identified. Two independent reasons make that assertion invalid:
+
+1. A different active row-render attempt may legitimately have an `original-r7-row` thread. A deterministic unit test now holds a separate attempt's worker alive while the first attempt completes; the first attempt's own workers have stopped.
+2. On OpenJDK 25, `ThreadPoolExecutor` can signal `TERMINATED` before its Java worker `Thread.run()` returns ([JDK source](https://github.com/openjdk/jdk/blob/jdk-25-ga/src/java.base/share/classes/java/util/concurrent/ThreadPoolExecutor.java)). A deterministic executor test with a controlled thread epilogue confirms `awaitTermination(true)` while the Java thread is still alive. This is an observation race, not proof that pixel work or file I/O is continuing. The first attempt's `active==0` and `hasPendingOwners==false` assertions had already passed in the failing CI test.
+
+The test now records only threads actually created by its transform and checks their *thread exit* with a total five-second bounded `join`, reporting ID/name/state/stack on failure. Android Orton safety assertions use the same owned-thread check; serial reference execution is not counted as a pool worker. The focused JVM class and updated small AVD suite passed. The worker-lifetime observations do not change production processing, its file-owner contract, or the previous timing measurements.
+
+## Worker-owner correction after independent review
+
+Review of head `e4b560e` found that a timed-out or interrupted executor could outlive `OriginalParallelRows.rows` without appearing in `OriginalRasterWorkspace.hasPendingOwners`. That status flows through `Original24Attempt.hasUnreleasedResources` to the process save-admission slot. The workers only transform copied rows in memory and file I/O stays on the caller, so this is not evidence of late file writes; it could nevertheless admit another heavy save while CPU and row memory remain active. The reviewer therefore held the PR.
+
+The follow-up retains each executor as a workspace close owner until `awaitTermination` positively confirms quiescence. A timeout or interrupted wait leaves the owner pending; `closePending` can retry it later, and `disposeConfirmed` rejects cleanup while it is pending. The existing attempt and save-owner getters then keep the process admission slot held. A source/worker primary failure keeps its original exception and receives a cleanup failure as suppressed; an interrupted caller restores its interrupt flag. This does not add a fixed deadline for a non-cooperative worker to stop.
+
+Small deterministic JVM tests use a worker held behind a latch despite interrupts. They cover a real ten-second timeout and caller interruption, pending ownership and cleanup rejection, then release, retry and successful disposal. The existing `ManualOriginalTrialSaveOwnerTest.existingResourcesMustBeReleasedBeforeAnyNewWork` covers the downstream admission rule for a held backend. These tests do not replace a device fault-injection test of the full Android attempt and coordinator. No new timing or image-quality claim is made for this owner-only correction.

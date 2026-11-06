@@ -34,7 +34,9 @@ internal data class Original24TrialJpeg(val request: Original24Request, val outp
 
 /** Existing IO/coordinator's synchronous attempt. Does not create a queue, publish, or enroll a renderer. */
 internal class Original24Attempt(context: Context, private val request: Original24Request, private val io: AutoRenderIo,
-    private val scratchDirectory: File, private val trace: OriginalStageTrace? = null) : AutoCloseable {
+    private val scratchDirectory: File, private val trace: OriginalStageTrace? = null,
+    private val parallelOrtonWorkers: Int = 4,
+    private val ortonRowProbe: ((Int) -> Unit)? = null) : AutoCloseable {
     private val context = context.applicationContext
     private val active = AtomicBoolean(false)
     private var started = false
@@ -121,7 +123,8 @@ internal class Original24Attempt(context: Context, private val request: Original
                     consume(y, row)
                 }
             }
-            val rendered = OriginalStageClear24(work, trace).render(adjusted, ev, request.strength, stop = stop)
+            val rendered = OriginalStageClear24(work, trace, parallelOrtonWorkers, ortonRowProbe)
+                .render(adjusted, ev, request.strength, stop = stop)
             checkpoint(); Original24Resources.requireAvailable(context)
             val digest = MessageDigest.getInstance("SHA-256")
             var encodedBytes = 0L
