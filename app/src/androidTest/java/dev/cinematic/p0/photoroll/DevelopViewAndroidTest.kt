@@ -11,6 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.CaptureTheme
+import dev.cinematic.p0.photoedit.PhotoEditParameter
 import dev.cinematic.p0.photoedit.PhotoAdjustmentPolicy
 import dev.cinematic.p0.rawcapture.OriginalFingerprint
 import dev.cinematic.p0.rawcapture.OriginalGrant
@@ -39,7 +40,7 @@ class DevelopViewAndroidTest {
         fun find(description: String): AccessibilityNodeInfo? {
             fun walk(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
                 if (node == null) return null
-                if (node.contentDescription?.toString() == description) return node
+                if (node.contentDescription?.toString() == description || node.text?.toString()?.contains(description) == true) return node
                 for (i in 0 until node.childCount) walk(node.getChild(i))?.let { return it }
                 return null
             }
@@ -76,7 +77,12 @@ class DevelopViewAndroidTest {
             disabledSave.performAction(AccessibilityNodeInfo.ACTION_CLICK)
             instrumentation.waitForIdleSync()
             assertEquals(0, saves)
+            scenario.onActivity { state.value = state.value.change(requireNotNull(state.value.session).inputToken, PhotoEditParameter.STRENGTH, .8) }
+            awaitNode("表示中 50")
+            awaitNode("指定 · 未反映")
             capture("editing")
+            scenario.onActivity { state.value = initial }
+
             scenario.onActivity { state.value = state.value.close(requireNotNull(state.value.session).inputToken) }
             instrumentation.waitForIdleSync()
             val readySave = awaitNode("JPEGを保存", true)

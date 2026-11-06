@@ -273,3 +273,7 @@ Canonical review on af591eb found that the non-null preview description hid JPEG
 ### C independent review correction: retain refresh tiles
 
 Same-collection refresh now keeps existing tiles only when the last successful query and access epoch match. Filter/folder/permission/lifecycle clears and listing commit guards remain unchanged. Added unit coverage for first-page and paged refresh retention, changed filter/folder, grant epoch, and missing prior listing. Static diff check passed; execution is pending remote CI and the RAW-prioritized AVD slot. This is the first C correction round.
+
+### D independent review correction: displayed values
+
+Round 1 was the JPEG notice precedence correction (e8feaf3: remote CI and canonical review passed). Round 2 restores displayedValues-derived numbers beside the draft/requested number when they differ, including the no-displayed-value state. Input tokens, gesture handling, renderer and save callbacks are unchanged. The synthetic UI regression now changes draft strength to 80 while the image remains at 50 and checks both the displayed number and unapplied label. Static diff check passed; Android execution remains pending the RAW slot release. Any further material correction requires the OPERATIONS read-only boundary reassessment before editing.

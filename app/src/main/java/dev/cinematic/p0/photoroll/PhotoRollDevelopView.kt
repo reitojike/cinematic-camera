@@ -107,8 +107,11 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(when (key) { PhotoEditParameter.STRENGTH -> "STRENGTH"; PhotoEditParameter.TEMPERATURE -> "色温度"; PhotoEditParameter.BRIGHTNESS -> "明るさ" }, style = CaptureDesign.Label)
                             Text(if (supported && value != null) editValueLabel(key, value) else "—", style = CaptureDesign.Value, color = if (dirty) CaptureDesign.Amber else CaptureDesign.Text)
-                            Text(when { !supported -> "未対応"; dirty -> "未反映"; key == PhotoEditParameter.TEMPERATURE -> "相対"; key == PhotoEditParameter.BRIGHTNESS -> "EV"; else -> "表示中" },
+                            Text(when { !supported -> "未対応"; dirty -> "指定 · 未反映"; key == PhotoEditParameter.TEMPERATURE -> "相対"; key == PhotoEditParameter.BRIGHTNESS -> "EV"; else -> "表示中" },
                                 style = CaptureDesign.Label, color = if (dirty) CaptureDesign.Amber else CaptureDesign.Muted)
+                            if (supported && dirty) Text(
+                                displayed?.let { "表示中 ${editValueLabel(key, it)}" } ?: "表示中の値なし",
+                                style = CaptureDesign.Label, color = CaptureDesign.Muted)
                         }
                     }
                 }
