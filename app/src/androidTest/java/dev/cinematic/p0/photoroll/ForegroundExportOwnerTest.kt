@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -22,7 +23,7 @@ import org.junit.runner.RunWith
 
 /** Empty emulator only: generated DNG, real native render, retained handle, journal and publisher.
  * Initial UI observations are controlled; the Service and render use real resource observations.
- * This does not exercise the Compose Save button or assess photographic quality/performance. */
+ * Two cases exercise Compose Save/cancel; photographic quality/performance is not assessed. */
 @RunWith(AndroidJUnit4::class)
 class ForegroundExportOwnerTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -36,6 +37,96 @@ class ForegroundExportOwnerTest {
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
         check(Build.HARDWARE in setOf("goldfish", "ranchu") && Build.VERSION.SDK_INT >= 29)
     }
+
+    @Test fun screenSavePublishesInBackgroundAndReturnShowsConfirmedOwner() = screenSave(false)
+    @Test fun screenCancelAfterReturnWorksBeforePreviewReloadCompletes() = screenSave(true)
+
+    private fun screenSave(cancelAfterReturn: Boolean) {
+        cameraRollReadPermissions(Build.VERSION.SDK_INT).forEach {
+            instrumentation.uiAutomation.grantRuntimePermission(context.packageName, it)
+        }
+        foreground { scenario -> Fixture().use { f ->
+            f.initialize(.5, PhotoAdjustments.NONE)
+            f.screen = scenario
+            scenario.recreate() // The real list now observes this fixture's newly inserted source.
+            click(f.name)
+            action("JPEGを保存")
+            val release = CountDownLatch(1)
+            val entered = CountDownLatch(1)
+            val barrier = AndroidAutoDevelopQueue.get(context).manualOriginalIo {
+                entered.countDown(); check(release.await(120, TimeUnit.SECONDS))
+            }
+            try {
+                assertTrue(entered.await(10, TimeUnit.SECONDS))
+                click("JPEGを保存") // Real PhotoRollScreen callback, not an injected save action.
+                await { ForegroundExports.gate.active()?.started == true }
+                val ticket = ForegroundExports.gate.active()
+                assertSame(f.handle, requireNotNull(ticket).value.identity)
+                scenario.moveToState(Lifecycle.State.CREATED)
+                assertFalse(ticket.stopRequested)
+                if (cancelAfterReturn) {
+                    scenario.moveToState(Lifecycle.State.RESUMED)
+                    // Preview is queued behind the barrier; the process banner must still allow cancel.
+                    click("保存を取り消す")
+                    await { ticket.stopRequested }
+                    assertSame(ticket, ForegroundExports.gate.active())
+                }
+            } finally { release.countDown(); barrier.get(30, TimeUnit.SECONDS) }
+            await { ForegroundExports.gate.active() == null }
+            if (cancelAfterReturn) {
+                assertEquals(ManualOriginalTrialSavePhase.READY, f.handle.state.value.phase)
+                assertNull(f.journal().read())
+                assertNull(f.storage(CaptureJournalFile.MANUAL_REQUEST).read(ManualOriginalTrialRequestCodec.MAX_BYTES))
+                action("JPEGを保存") // Ready UI is not a publication receipt or an automatic retry.
+                assertEquals(f.beforeJpegs, jpegCount())
+            } else {
+                assertEquals(ManualOriginalTrialSavePhase.PUBLISHED, f.handle.state.value.phase)
+                scenario.moveToState(Lifecycle.State.RESUMED)
+                action("保存したJPEGを照合して開く")
+                assertEquals(f.beforeJpegs + 1, jpegCount())
+            }
+            f.verifyOriginal()
+            f.screenVerified = true
+        } }
+    }
+
+    private fun action(label: String): AccessibilityNodeInfo {
+        fun find(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+            if (node == null) return null
+            if (!node.refresh()) return null // Resume can leave UiAutomation's old Save node cached.
+            if (node.text?.toString() == label || node.contentDescription?.toString() == label) return node
+            for (i in 0 until node.childCount) find(node.getChild(i))?.let { return it }
+            return null
+        }
+        var result: AccessibilityNodeInfo? = null
+        var attempts = 0
+        fun scroll(node: AccessibilityNodeInfo?): Boolean {
+            if (node == null) return false
+            if (node.className == "android.widget.ScrollView" && node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) return true
+            for (i in 0 until node.childCount) if (scroll(node.getChild(i))) return true
+            return false
+        }
+        try { await {
+            instrumentation.waitForIdleSync()
+            var node = find(instrumentation.uiAutomation.rootInActiveWindow)
+            while (node != null && !node.isClickable) node = node.parent
+            result = node?.takeIf { it.isEnabled && it.isVisibleToUser }
+            // Compose can omit off-screen semantics entirely until its container scrolls.
+            if ((node == null || !node.isVisibleToUser) && ++attempts % 10 == 0) scroll(instrumentation.uiAutomation.rootInActiveWindow)
+            result != null
+        } } catch (failure: IllegalStateException) {
+            val labels = mutableListOf<String>()
+            fun describe(node: AccessibilityNodeInfo?) {
+                if (node == null || labels.size >= 80) return
+                (node.contentDescription ?: node.text)?.toString()?.let { labels += "$it [enabled=${node.isEnabled}, visible=${node.isVisibleToUser}]" }
+                for (i in 0 until node.childCount) describe(node.getChild(i))
+            }
+            describe(instrumentation.uiAutomation.rootInActiveWindow)
+            throw AssertionError("Missing enabled visible action: $label; synthetic screen: ${labels.joinToString(" | ")}", failure)
+        }
+        return requireNotNull(result)
+    }
+    private fun click(label: String) { assertTrue(action(label).performAction(AccessibilityNodeInfo.ACTION_CLICK)) }
 
     @Test fun acceptedSavePublishesSameRecipeAfterActivityStopsAndRetryDoesNotDuplicate() = foreground { scenario ->
         Fixture().use { f ->
@@ -123,11 +214,15 @@ class ForegroundExportOwnerTest {
         lateinit var ui: ManualTrialJpegSaveOwner
         private var preparation: java.util.concurrent.CompletableFuture<AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle>? = null
         private var rechecking: java.util.concurrent.CompletableFuture<ManualOriginalTrialSaveState>? = null
+        var screen: ActivityScenario<PhotoRollActivity>? = null
+        var screenVerified = false
+        private var previewCleanup: java.util.concurrent.CompletableFuture<Unit>? = null
+        val name = "synthetic_export_${UUID.randomUUID()}.dng"
         val beforeJpegs = jpegCount()
         // Invoked inside use: partial initialization also has a cleanup owner.
-        fun initialize() {
+        fun initialize(strength: Double = .6, adjustments: PhotoAdjustments = PhotoAdjustments(.2, .3)) {
             uri = requireNotNull(resolver.insert(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, "synthetic_export_${UUID.randomUUID()}.dng")
+            put(MediaStore.Images.Media.DISPLAY_NAME, name)
             put(MediaStore.Images.Media.MIME_TYPE, "image/x-adobe-dng")
             put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Cinematic Camera Synthetic Tests/")
             put(MediaStore.Images.Media.IS_PENDING, 1)
@@ -137,7 +232,7 @@ class ForegroundExportOwnerTest {
             check(resolver.update(uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null) == 1)
             source = SharedOriginalReference(uri.toString(), DngContentVerifier.identify(bytes.size.toLong(), { resolver.openInputStream(uri)!! }), OriginalGrant.APP_OWNED)
             DevelopExecution.updateConditions(allowed)
-            preparation = AndroidManualOriginalTrialSaves.prepare(context, source, .6, allowed, PhotoAdjustments(.2, .3))
+            preparation = AndroidManualOriginalTrialSaves.prepare(context, source, strength, allowed, adjustments)
             handle = requireNotNull(preparation).get(60, TimeUnit.SECONDS)
             ui = ManualTrialJpegSaveOwner(handle) { ready }
         }
@@ -148,10 +243,18 @@ class ForegroundExportOwnerTest {
         fun recheck() = handle.advance(allowed) { false }.also { rechecking = it }
         override fun close() {
             try {
+                // Screen checks/readback have their own lifetime, separate from the export handle.
+                screen?.moveToState(Lifecycle.State.CREATED)
                 if (::ui.isInitialized) ui.cancelForegroundSave()
                 // Do not cancel the future or delete input while its queued preflight could still read it.
                 preparation?.let { handle = it.get(60, TimeUnit.SECONDS) }
                 rechecking?.get(60, TimeUnit.SECONDS)
+                if (screen != null) {
+                    previewCleanup = AndroidManualOriginalTrialSaves.discardPreview(context)
+                    requireNotNull(previewCleanup).get(60, TimeUnit.SECONDS)
+                    // A failed UI wait cannot prove a separate checkOriginal reader has returned.
+                    check(screenVerified) { "Retain source after an unconfirmed Screen read" }
+                }
                 await { ForegroundExports.gate.active() == null }
                 if (::handle.isInitialized) {
                     check(!handle.hasUnreleasedResources) { "Retain synthetic artifacts until resources close" }
