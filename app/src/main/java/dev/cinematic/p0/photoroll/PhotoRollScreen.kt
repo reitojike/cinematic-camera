@@ -59,6 +59,8 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
     var trialEditor by remember { mutableStateOf(TrialStrengthEditor.empty(
         if (manualTrial) PhotoEditValues(savedStrength, savedWarmth, savedExposureEv) else PhotoEditValues(savedStrength))) }
     var listing by remember { mutableStateOf(PhotoRollListing(emptyList())) }
+    var listedQuery by remember { mutableStateOf<PhotoRollQuery?>(null) }
+    var listedAccessEpoch by remember { mutableIntStateOf(-1) }
     var loadingTicket by remember { mutableStateOf<Any?>(null) }
     val loading = loadingTicket != null
     var notice by remember { mutableStateOf<String?>(null) }
@@ -188,7 +190,8 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         if (source == null) {
             val query = currentQuery
             val previous = listing
-            if (query.after == null) listing = PhotoRollListing(emptyList())
+            if (query.after == null && !canKeepCameraRollTiles(listedQuery, listedAccessEpoch, query, accessEpoch))
+                listing = PhotoRollListing(emptyList())
             val ticket = listingWork.begin(query, accessEpoch)
             val cancellation = CancellationSignal()
             cancellationOwner.begin(cancellation)
@@ -201,6 +204,8 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                     selectedUri == null && navigation.canOpenViewer(currentForeground, cancellation.isCanceled), cancellation.isCanceled) {
                     listing = if (query.after == null) page else page.copy(
                         items = (previous.items + page.items).distinctBy { it.uri }, folders = previous.folders)
+                    listedQuery = query
+                    listedAccessEpoch = accessEpoch
                 }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) {

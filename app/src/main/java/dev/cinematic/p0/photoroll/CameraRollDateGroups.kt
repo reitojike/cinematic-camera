@@ -15,3 +15,4 @@ internal fun cameraRollDateGroups(items: List<PhotoRollItem>, zone: ZoneId = Zon
         else runCatching { format.format(Instant.ofEpochSecond(item.addedSeconds).atZone(zone)).uppercase(Locale.US) }.getOrDefault("日付不明")
     }.map { (label, values) -> CameraRollDateGroup(label, values) }
 }
+
