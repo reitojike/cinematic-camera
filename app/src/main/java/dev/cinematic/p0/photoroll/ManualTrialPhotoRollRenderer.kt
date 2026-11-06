@@ -18,7 +18,8 @@ import kotlin.math.min
 /** Original-capable preview and its immutable manual save generation share one queue authority. */
 @TargetApi(29)
 internal class ManualTrialPhotoRollRenderer(context: Context,
-    private val resources: () -> PhotoRollResources) : PhotoRollRenderer {
+    private val resources: () -> PhotoRollResources,
+    private val previewCache: PhotoRollPreviewCache? = null) : PhotoRollRenderer {
     private val app = context.applicationContext
     override val mode = PhotoRollPreviewMode.MANUAL_TRIAL
     override val maxEdge = 1024
@@ -41,6 +42,32 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
         cancellation.throwIfCanceled()
         if (AutoDevelopPolicy.blockers(resources().developConditions(rendererAvailable = true)).isNotEmpty())
             return PhotoRollRenderResult.Unavailable("撮影状態、空き容量、メモリまたは温度を確認し、撮影を終えてから再試行してください")
+        val key = PhotoRollPreviewKey(request.original.reference, request.strength, request.adjustments,
+            request.lookVersion, request.maxEdge, request.mode)
+        val cacheTicket = previewCache?.begin(key, request.explicitRetry)
+        val retained = cacheTicket?.let { previewCache?.copy(it) }
+        if (retained != null) {
+            var adopted = false
+            try {
+                // This reopens generation authority, not a previous UI save receipt. The screen has
+                // checked the original before render(), and verifies it again before displaying.
+                val handle = awaitTrialPreview(AndroidManualOriginalTrialSaves.prepare(app, request.original.reference,
+                    request.strength, resources().developConditions(rendererAvailable = true), request.adjustments) {
+                    cancellation.isCanceled
+                }, cancellation)
+                cancellation.throwIfCanceled()
+                require(handle.matches(request.original.reference) && handle.appliedStrength == request.strength &&
+                    handle.appliedAdjustments == request.adjustments)
+                val scale = min(1.0, maxEdge.toDouble() / max(handle.geometry.outputWidth, handle.geometry.outputHeight))
+                require(retained.after.width == floor(handle.geometry.outputWidth * scale).toInt() &&
+                    retained.after.height == floor(handle.geometry.outputHeight * scale).toInt())
+                val result = PhotoRollRenderResult.Preview(retained.after, mode, ManualTrialJpegSaveOwner(handle, resources),
+                    comparisonBitmap = retained.before, appliedStrength = request.strength,
+                    appliedAdjustments = request.adjustments, comparisonDescription = retained.label)
+                adopted = true
+                return result
+            } finally { if (!adopted) retained.close() }
+        }
         request.onStage(PhotoRollRenderStage.TRIAL_RENDER)
         val future = AndroidManualOriginalTrialSaves.renderPreview(app, request.original.reference,
             request.strength, resources().developConditions(rendererAvailable = true), request.adjustments) {
@@ -74,6 +101,8 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
                     if (bitmap.width != floor(width * scale).toInt() ||
                         bitmap.height != floor(height * scale).toInt())
                         throw PhotoRollSourceFailure("保存する原寸画像とプレビューの向き・寸法が一致しません。再選択してください")
+                    cancellation.throwIfCanceled()
+                    cacheTicket?.let { previewCache?.remember(it, bitmap, before, delivery.comparisonDescription) }
                     return PhotoRollRenderResult.Preview(bitmap, mode, owner, comparisonBitmap = before,
                         appliedStrength = handle.appliedStrength, appliedAdjustments = handle.appliedAdjustments,
                         comparisonDescription = delivery.comparisonDescription.takeIf { before != null })

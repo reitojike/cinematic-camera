@@ -78,6 +78,10 @@ internal class TrialStrengthEditor private constructor(
     fun pause(): TrialStrengthEditor = copy(requestedValues = session?.confirmed ?: requestedValues,
         displayedValues = null, session = null, revision = nextRevision())
 
+    /** App switch preserves the last submitted full recipe, but drops an unfinished gesture.
+     * A later explicit Cancel is separate from Android lifecycle suspension. */
+    fun suspendForLifecycle(): TrialStrengthEditor = copy(displayedValues = null, session = null, revision = nextRevision())
+
     fun shown(ticket: TrialStrengthTicket, strength: Double): TrialStrengthEditor =
         shown(ticket, requestedValues.copy(strength = strength))
 
