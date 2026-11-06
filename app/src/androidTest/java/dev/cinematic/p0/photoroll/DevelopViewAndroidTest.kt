@@ -5,7 +5,10 @@ import android.graphics.Color
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.Text
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.test.core.app.ActivityScenario
@@ -46,11 +49,37 @@ class DevelopViewAndroidTest {
             }
             return walk(instrumentation.uiAutomation.rootInActiveWindow)
         }
+        fun actionNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo {
+            var current = node
+            while (!current.isClickable) current = current.parent ?: return node
+            return current
+        }
+        fun scroll(horizontal: Boolean, forward: Boolean = true) {
+            fun visit(node: AccessibilityNodeInfo?): Boolean {
+                if (node == null) return false
+                val target = if (horizontal) "android.widget.HorizontalScrollView" else "android.widget.ScrollView"
+                if (node.className == target && node.performAction(if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) return true
+                for (i in 0 until node.childCount) if (visit(node.getChild(i))) return true
+                return false
+            }
+            visit(instrumentation.uiAutomation.rootInActiveWindow)
+            SystemClock.sleep(180) // Let the accessibility scroll animation reach its viewport.
+            instrumentation.waitForIdleSync()
+        }
         fun awaitNode(description: String, enabled: Boolean? = null): AccessibilityNodeInfo {
             val deadline = SystemClock.uptimeMillis() + 5_000
-            do { instrumentation.waitForIdleSync(); find(description)?.let { if (enabled == null || it.isEnabled == enabled) return it }; SystemClock.sleep(50) }
-            while (SystemClock.uptimeMillis() < deadline)
-            error("Missing $description")
+            var attempts = 0
+            do {
+                instrumentation.waitForIdleSync()
+                find(description)?.let {
+                    // Android can expose the label as a child of the actionable Compose node.
+                    val node = if (enabled == null) it else actionNode(it)
+                    if (node.isVisibleToUser && (enabled == null || node.isEnabled == enabled)) return node
+                }
+                if (++attempts % 5 == 0) scroll(false, (attempts / 15) % 2 == 0)
+                SystemClock.sleep(50)
+            } while (SystemClock.uptimeMillis() < deadline)
+            error("Missing $description (expected enabled=$enabled, observed=${find(description)?.let(::actionNode)?.isEnabled})")
         }
         fun capture(name: String) {
             instrumentation.waitForIdleSync()
@@ -60,7 +89,7 @@ class DevelopViewAndroidTest {
             }
         }
         ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
-            scenario.onActivity { activity -> activity.setContent { CaptureTheme {
+            scenario.onActivity { activity -> activity.setContent { CaptureTheme { Surface {
                 PhotoRollDevelopView("SYNTHETIC.dng", mode.value, state.value, { state.value }, phase.value,
                     PhotoRollRenderStage.LOOK, if (phase.value == PhotoRollPhase.BLOCKED) "合成テストの停止理由" else null,
                     after, before, "RAW基準表示（合成）", true, savePhase.value, false,
@@ -70,8 +99,8 @@ class DevelopViewAndroidTest {
                     { token -> state.value = state.value.reset(token) },
                     { token -> state.value = state.value.apply(token) },
                     { token -> state.value = state.value.cancel(token) },
-                    { token -> state.value = state.value.close(token) }, Modifier.fillMaxSize()) { }
-            } } }
+                    { token -> state.value = state.value.close(token) }, Modifier.fillMaxSize().safeDrawingPadding()) { repeat(8) { Text("合成の原本情報 $it") } }
+            } } } }
             val disabledSave = awaitNode("JPEGを保存", false)
             assertFalse("editing must not enable save", disabledSave.isEnabled)
             disabledSave.performAction(AccessibilityNodeInfo.ACTION_CLICK)
@@ -101,6 +130,19 @@ class DevelopViewAndroidTest {
             scenario.onActivity { phase.value = PhotoRollPhase.BLOCKED }
             instrumentation.waitForIdleSync()
             capture("blocked")
+            scenario.onActivity { phase.value = PhotoRollPhase.DISPLAYED; mode.value = PhotoRollPreviewMode.MANUAL_TRIAL; state.value = initial }
+            repeat(4) { scroll(false, false) }
+            repeat(3) { scroll(true) }
+            val info = awaitNode("原本情報と試験品質の注意", true)
+            assertTrue(info.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            instrumentation.waitForIdleSync()
+            awaitNode("合成の原本情報 0")
+            repeat(4) { scroll(false) }
+            assertFalse(awaitNode("同じ保存を再照合", false).isEnabled)
+            capture("info-footer")
+            repeat(4) { scroll(false, false) }
+            awaitNode("合成の原本情報 0")
+            capture("info-top")
         }
         after.recycle(); before.recycle()
     }

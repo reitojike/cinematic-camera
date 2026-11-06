@@ -59,7 +59,8 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
         else -> CaptureDesign.Disabled
     }
     BoxWithConstraints(modifier.fillMaxSize()) {
-        val compact = maxHeight < (560 * LocalDensity.current.fontScale).dp || maxWidth < (360 * LocalDensity.current.fontScale).dp
+        // Expanded source details must not squeeze the editor or footer out of reach.
+        val compact = information || maxHeight < (560 * LocalDensity.current.fontScale).dp || maxWidth < (360 * LocalDensity.current.fontScale).dp
         Column(Modifier.fillMaxSize().background(CaptureDesign.Ink).then(if (compact) Modifier.verticalScroll(rememberScrollState()) else Modifier)) {
             Row(Modifier.fillMaxWidth().heightIn(min = 44.dp).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = back, shape = RectangleShape, modifier = Modifier.semantics { contentDescription = "一覧へ戻る" }) { Text("‹") }

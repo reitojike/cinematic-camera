@@ -262,8 +262,8 @@ STILLの明示opt-in固定pair、Builder単発設定とruntime preview補償、�
 
 ## DNG現像画面のデザイン反映（Issue #175）
 
-- af591ebでlintDebug / testDebugUnitTest / assembleDebug / assembleDebugAndroidTest成功。119 suites / 848 tests、failure/error 0、skip 4。保存表示の状態区別2件を含む。e8feaf3のJPEG起動エラー表示修正後もAndroid CI（run 42238321966）が成功。
-- 既存の長押し比較Android試験は合成画像で成功（離指/cancel/背景化/画像交換、FITの位置・寸法維持）。編集/保存UI試験の初回は保存不可時のアクセシビリティ状態で失敗。disabled semantics修正後のAVD試験は未実行であり、合格とは扱わない。
-- 合成UI回帰には指定強度80・表示画像の強度50を区別する検査を含む。この追加検査のAndroid実行は未実行。
+- 情報パネル展開時の全体scrollを含む候補でlintDebug / testDebugUnitTest / assembleDebug / assembleDebugAndroidTest / diff check成功。854 tests、failure/error 0、既存skip 4（mainのworker安全性試験を含む）。
+- 専用Android 37 AVDでDevelopViewAndroidTestが通常412×924dp、360×560dp・fontScale 1.0/1.3で成功。製品同等のSurface/safeDrawing条件で、操作ノードのenabledと可視性、保存不可時クリック0回・編集を閉じた後の保存1回、指定強度80と表示中50、UNCONFIRMED/PRIVATE/BLOCKED、情報パネル＋編集欄展開時の本文/下端到達を検査した。説明ノードと操作ノードは区別する。
+- PhotoRollComparisonGestureAndroidTestが通常AVDで成功。合成画像で離指/cancel/背景化/画像交換、FITの位置・寸法維持を確認。UI試験はRAW処理や共有保存を実行しない。
 - 保存callback本体はラベル名・空白以外同一。D固有変更ではPhotoRollScreenの状態・lifecycle・source処理を変更せず、PhotoEditBarのsemantics/keyboard/pointer処理を保持。C由来の一覧表示保持はカメラロールの検証対象。
-- Pixel実機、実DNG/原寸保存、保存公開後の外部viewer、短辺・拡大文字でのD画面の全表示は未確認。試験用UIは合成Bitmapと偽の原本参照のみで、RAW処理や共有保存を実行しない。
+- Pixel実機、実DNG/原寸保存、保存公開後の外部viewer、全mode/phaseの実入力による組合せは未確認。AVDの合成状態検査を実機操作・24MP保存・RAW性能の合格に読み替えない。
