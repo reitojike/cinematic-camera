@@ -264,3 +264,8 @@ STILLの明示opt-in固定pair、Builder単発設定とruntime preview補償、�
 - 既存の長押し比較Android試験は合成画像で成功（離指/cancel/背景化/画像交換、FITの位置・寸法維持）。新しい編集/保存UI試験は、初回に保存不可時のアクセシビリティ状態で失敗。disabled semanticsを明示し、修正後のビルド/単体テストは成功。修正後のAVD再試験はRAW作業優先の実行枠調整で未実行。
 - 保存callback本体はラベル名・空白以外同一。PhotoRollScreenの状態・lifecycle・source処理はSurfaceより上を変更していない。PhotoEditBarのsemantics/keyboard/pointer処理を保持し描画だけを変更。パラメーター切替ではComposableのkeyを分ける。
 - Pixel実機、実DNG/原寸保存、保存公開後の外部viewer、短辺でのD画面の全表示は未確認。試験用UIは合成Bitmapと偽の原本参照のみで、RAW処理や共有保存を実行しない。
+
+
+### D review correction: JPEG open notice
+
+Canonical review on af591eb found that the non-null preview description hid JPEG-opening errors. The presentation now gives notice precedence over selection.message; no callback or save lifecycle changes. Static diff check passed. Post-correction lint/unit/build and AVD regression remain pending while the RAW task owns the local measurement slot.
