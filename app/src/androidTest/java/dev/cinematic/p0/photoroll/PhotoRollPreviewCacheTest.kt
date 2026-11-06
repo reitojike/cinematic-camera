@@ -2,6 +2,9 @@ package dev.cinematic.p0.photoroll
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.content.ComponentCallbacks2
+import androidx.lifecycle.ViewModelProvider
+import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.cinematic.p0.raw.PhotoAdjustments
 import dev.cinematic.p0.rawcapture.OriginalFingerprint
@@ -17,6 +20,35 @@ class PhotoRollPreviewCacheTest {
     private val key = PhotoRollPreviewKey(SharedOriginalReference("content://example.test/photo/1",
         OriginalFingerprint(3, "a".repeat(64)), OriginalGrant.USER_SELECTED), .5, PhotoAdjustments.NONE,
         "stage-clear-v1", 1024, PhotoRollPreviewMode.MANUAL_TRIAL)
+
+    @Suppress("DEPRECATION")
+    @Test fun activityRecreationRetainsPixelsWhileMemoryPressureEvictsThem() {
+        val input = Bitmap.createBitmap(8, 6, Bitmap.Config.ARGB_8888).also { it.eraseColor(Color.BLUE) }
+        lateinit var retained: PhotoRollPreviewCache
+        try {
+            ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
+                scenario.onActivity { activity ->
+                    retained = ViewModelProvider(activity)[PhotoRollPreviewCache::class.java]
+                    retained.remember(retained.begin(key, false), input, null, null)
+                    activity.onTrimMemory(ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN)
+                    requireNotNull(retained.copy(retained.begin(key, false))).use {
+                        assertEquals(Color.BLUE, it.after.getPixel(0, 0))
+                    }
+                }
+                scenario.recreate()
+                scenario.onActivity { activity ->
+                    val restored = ViewModelProvider(activity)[PhotoRollPreviewCache::class.java]
+                    assertSame(retained, restored)
+                    requireNotNull(restored.copy(restored.begin(key, false))).use {
+                        assertEquals(Color.BLUE, it.after.getPixel(0, 0))
+                    }
+                    activity.onTrimMemory(ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW)
+                    assertNull(restored.copy(restored.begin(key, false)))
+                }
+            }
+            assertNull(retained.copy(retained.begin(key, false)))
+        } finally { input.recycle() }
+    }
 
     @Test fun copiesOutliveUiRecyclingAndCannotMutateRetainedPixels() {
         val cache = PhotoRollPreviewCache()
