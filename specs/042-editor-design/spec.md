@@ -1,6 +1,6 @@
 # Feature Specification: DNG現像画面のデザイン反映
 
-Branch: feat/design-dng-editor / Issue #175 / Status: Draft（調整UIの選択待ち）
+Branch: feat/design-dng-editor / Issue #175 / Status: Draft（案1選択済み・実装中）
 
 ## User Scenarios & Testing
 
@@ -31,4 +31,4 @@ Branch: feat/design-dng-editor / Issue #175 / Status: Draft（調整UIの選択�
 
 ## Assumptions / 明示判断
 
-要確認3は「planで比較して報告し、判断を待つ」。推奨はPhotoEditBarの入力処理を保った描画変更。包括的な続行指示だけで選択決定とは扱わない。要確認4は既定の同位置/リング形状、↓と色で撮影から区別。
+要確認3は「planで比較して報告し、判断を待つ」。推奨はPhotoEditBarの入力処理を保った描画変更。POが案1（PhotoEditBarの見た目変更）を明示選択済み。入力契約が異なる撮影部品へ統合しない。要確認4は既定の同位置/リング形状、↓と色で撮影から区別。

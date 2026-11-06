@@ -257,3 +257,10 @@ STILLの明示opt-in固定pair、Builder単発設定とruntime preview補償、�
 - lintDebug / testDebugUnitTest / assembleDebug / diff check成功。118 suites / 846 tests、failure/error 0、skip 4。日付の現地深夜境界と日付不明の回帰を追加。
 - 専用Android 37 AVDで未許可の空一覧、合成画像4件の部分アクセス、破線注意帯、日付/件数、3列2dp/最新緑枠、Filesフッターを確認。短辺・拡大文字では全体scrollへ切替える。
 - 選択・Files・権限・外部viewer・ページングのcallback/guardとthumbnailの2並列/取消所有権を保持。DNG実現像、外部viewer起動、動画/RAWタグ、実機の全操作は未確認。合成素材とUI証拠はGitへ含めない。
+
+## DNG現像画面のデザイン反映（Issue #175）
+
+- lintDebug / testDebugUnitTest / assembleDebug / assembleDebugAndroidTestが成功。119 suites / 848 tests、failure/error 0、skip 4。保存表示の状態区別2件を追加。diff check成功。
+- 既存の長押し比較Android試験は合成画像で成功（離指/cancel/背景化/画像交換、FITの位置・寸法維持）。新しい編集/保存UI試験は、初回に保存不可時のアクセシビリティ状態で失敗。disabled semanticsを明示し、修正後のビルド/単体テストは成功。修正後のAVD再試験はRAW作業優先の実行枠調整で未実行。
+- 保存callback本体はラベル名・空白以外同一。PhotoRollScreenの状態・lifecycle・source処理はSurfaceより上を変更していない。PhotoEditBarのsemantics/keyboard/pointer処理を保持し描画だけを変更。パラメーター切替ではComposableのkeyを分ける。
+- Pixel実機、実DNG/原寸保存、保存公開後の外部viewer、短辺でのD画面の全表示は未確認。試験用UIは合成Bitmapと偽の原本参照のみで、RAW処理や共有保存を実行しない。

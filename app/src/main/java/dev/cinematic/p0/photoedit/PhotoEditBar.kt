@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import dev.cinematic.p0.CaptureDesign
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -76,8 +78,10 @@ internal fun PhotoEditBar(
 
     Column(modifier) {
         Row(Modifier.fillMaxWidth()) {
-            Text(label, Modifier.weight(1f))
-            Text(formatValue(value))
+            repeat(5) { index ->
+                Text(formatValue(scale.atFraction(index / 4.0)), Modifier.weight(1f),
+                    style = CaptureDesign.Label, color = CaptureDesign.Muted, textAlign = TextAlign.Center)
+            }
         }
         Canvas(Modifier.fillMaxWidth().height(48.dp)
             .semantics {
@@ -141,9 +145,20 @@ internal fun PhotoEditBar(
             val width = (size.width - 2 * inset).coerceAtLeast(0f)
             val centerY = size.height / 2
             val thumbX = inset + (scale.fraction(value) * width).toFloat()
-            drawLine(trackColor, Offset(inset, centerY), Offset(inset + width, centerY), 4.dp.toPx())
-            drawLine(color, Offset(inset, centerY), Offset(thumbX, centerY), 4.dp.toPx())
-            drawCircle(color, 8.dp.toPx(), Offset(thumbX, centerY))
+            val spacing = 9.dp.toPx()
+            var tick = inset
+            var index = 0
+            while (tick <= inset + width) {
+                val length = if (index % 5 == 0) 20.dp.toPx() else 10.dp.toPx()
+                drawLine(trackColor, Offset(tick, centerY - length / 2), Offset(tick, centerY + length / 2), 1.dp.toPx())
+                tick += spacing; index++
+            }
+            drawLine(color, Offset(thumbX, centerY - 16.dp.toPx()), Offset(thumbX, centerY + 16.dp.toPx()), 2.dp.toPx())
+            // Arrows are visual hints; the existing one-step tap geometry remains authoritative.
+            drawLine(color, Offset(inset + 4.dp.toPx(), centerY - 5.dp.toPx()), Offset(inset, centerY), 1.dp.toPx())
+            drawLine(color, Offset(inset, centerY), Offset(inset + 4.dp.toPx(), centerY + 5.dp.toPx()), 1.dp.toPx())
+            drawLine(color, Offset(inset + width - 4.dp.toPx(), centerY - 5.dp.toPx()), Offset(inset + width, centerY), 1.dp.toPx())
+            drawLine(color, Offset(inset + width, centerY), Offset(inset + width - 4.dp.toPx(), centerY + 5.dp.toPx()), 1.dp.toPx())
         }
     }
 }
