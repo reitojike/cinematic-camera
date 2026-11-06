@@ -258,7 +258,7 @@ STILLの明示opt-in固定pair、Builder単発設定とruntime preview補償、�
 - app lintDebug / testDebugUnitTest / assembleDebug / assembleDebugAndroidTest成功。123 suites / 866 tests、failure/error 0、既存skip 4。最終head CI・独立/canonicalレビューはPR #181を参照。
 - API37専用AVDの合成Service5件成功。通知拒否時の開始、Activity停止後の継続、取消後の解放待ち、失敗、Service破棄後の遅延完了、Future完了後もproducer未解放ならHOLDを保ち次保存を拒否する境界を確認。worker管理は#180を再利用し追加していない。
 - 同じ製品コードで実owner4件成功（116.218秒）。生成32×24 DNGの実handle/native/queue/journal/MediaStore公開で同一source/recipe/強度/WB/EV、JPEG hash、1件公開、再照合時の重複なし、原本hash維持を確認。撮影予約による受付前停止ではintent/JPEG未生成。2件は実PhotoRollScreenの保存ボタンを操作し、背景公開→復帰時の「照合して開く」有効化と、復帰後プレビュー読込待ち中の取消を確認した。外部viewerを実際に開く操作は対象外。
-- UI試験の初回復帰確認はUiAutomationの旧ノードcacheで失敗し、refresh/idle待ちを加えた上記4件が成功。追加360×560dp/fontScale 1.3の試験は画面外ノード未列挙時にhelperがscrollしないため失敗した。nullノード時もscrollする補正後の再実行は資源枠調整待ちであり、小画面のFGS統合を合格とは扱わない。
+- UI試験の初回復帰確認はUiAutomationの旧ノードcacheで失敗し、refresh/idle待ちを加えた上記4件が成功。追加360×560dp/fontScale 1.3の試験は画面外ノード未列挙時にhelperがscrollしないため失敗した。nullノード時もscrollする補正後、360×560dp/fontScale 1.3の実画面2件が110.186秒で成功した。再開時にAVD boot完了前のtest APK更新が拒否され旧helperが実行された試行は採用せず、boot完了・補正版install成功後の結果を用いる。
 - fixtureはActivity停止後、prepare/recheck/preview破棄Futureの実完了、gateとhandleの解放確認を経て自身の合成行のみ削除する。読取終了を確認できない失敗では素材を保持し同一suite後続を停止する。
 - API29–36実行、OS時間制限、process deathからの端末統合復旧、Pixel・12MP/24MP・実写品質は未確認。Service停止試験をOS timeoutやnative即時停止保証へ読み替えない。停止要求後もworkerを含む実解放未確認なら単一slotを保持する。実機操作・配布は行っていない。
 ## カメラロールのデザイン反映（Issue #174）

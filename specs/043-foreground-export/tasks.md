@@ -7,6 +7,6 @@
 - [x] FR2/4: API別typeの単体試験、API37で通知拒否・Service停止の合成Android試験。
 - [ ] FR4/5: API33/34のruntime、OS timeout、process death後journal復旧の端末統合確認。
 - [x] lint/unit/build、通常サイズAPI37の実画面・実owner保存/取消。
-- [ ] 小画面・文字拡大のUI統合再試験。
-- [ ] 最終headの独立レビュー・CI/canonicalレビュー（PR #181参照）。
+- [x] 小画面・文字拡大のUI統合再試験（API37、360×560dp/fontScale 1.3、2件成功）。
+- 最終headの独立レビュー・CI/canonicalレビューはPR #181をmerge gateとして記録する。
 - [ ] 実機検証（別途許可・素材確認が必要）。
