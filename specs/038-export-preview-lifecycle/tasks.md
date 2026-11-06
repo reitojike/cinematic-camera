@@ -8,7 +8,8 @@
 - [ ] 合成Android上のBitmap複製・trim・Activity再生成の実行試験。
 - [ ] Pixelの復帰速度・process death・低メモリ・24MP（今回操作しない）。
 - [ ] 背景保存service/明示export leaseの別変更。
-- [ ] 公開・PR・CI・マージ（許可未確認、今回実施しない）。
+- [ ] #81に関連付けたDraft PR・CI・最終headのレビュー（公開許可確認済み）。
+- [ ] マージ（別途許可待ち）。
 
 ## ローカル検証結果
 
