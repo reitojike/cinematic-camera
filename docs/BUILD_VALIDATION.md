@@ -260,20 +260,8 @@ STILLの明示opt-in固定pair、Builder単発設定とruntime preview補償、�
 
 ## DNG現像画面のデザイン反映（Issue #175）
 
-- lintDebug / testDebugUnitTest / assembleDebug / assembleDebugAndroidTestが成功。119 suites / 848 tests、failure/error 0、skip 4。保存表示の状態区別2件を追加。diff check成功。
-- 既存の長押し比較Android試験は合成画像で成功（離指/cancel/背景化/画像交換、FITの位置・寸法維持）。新しい編集/保存UI試験は、初回に保存不可時のアクセシビリティ状態で失敗。disabled semanticsを明示し、修正後のビルド/単体テストは成功。修正後のAVD再試験はRAW作業優先の実行枠調整で未実行。
-- 保存callback本体はラベル名・空白以外同一。PhotoRollScreenの状態・lifecycle・source処理はSurfaceより上を変更していない。PhotoEditBarのsemantics/keyboard/pointer処理を保持し描画だけを変更。パラメーター切替ではComposableのkeyを分ける。
-- Pixel実機、実DNG/原寸保存、保存公開後の外部viewer、短辺でのD画面の全表示は未確認。試験用UIは合成Bitmapと偽の原本参照のみで、RAW処理や共有保存を実行しない。
-
-
-### D review correction: JPEG open notice
-
-Canonical review on af591eb found that the non-null preview description hid JPEG-opening errors. The presentation now gives notice precedence over selection.message; no callback or save lifecycle changes. Static diff check passed. Post-correction lint/unit/build and AVD regression remain pending while the RAW task owns the local measurement slot.
-
-### C independent review correction: retain refresh tiles
-
-Same-collection refresh now keeps existing tiles only when the last successful query and access epoch match. Filter/folder/permission/lifecycle clears and listing commit guards remain unchanged. Added unit coverage for first-page and paged refresh retention, changed filter/folder, grant epoch, and missing prior listing. Static diff check passed; execution is pending remote CI and the RAW-prioritized AVD slot. This is the first C correction round.
-
-### D independent review correction: displayed values
-
-Round 1 was the JPEG notice precedence correction (e8feaf3: remote CI and canonical review passed). Round 2 restores displayedValues-derived numbers beside the draft/requested number when they differ, including the no-displayed-value state. Input tokens, gesture handling, renderer and save callbacks are unchanged. The synthetic UI regression now changes draft strength to 80 while the image remains at 50 and checks both the displayed number and unapplied label. Static diff check passed; Android execution remains pending the RAW slot release. Any further material correction requires the OPERATIONS read-only boundary reassessment before editing.
+- af591ebでlintDebug / testDebugUnitTest / assembleDebug / assembleDebugAndroidTest成功。119 suites / 848 tests、failure/error 0、skip 4。保存表示の状態区別2件を含む。e8feaf3のJPEG起動エラー表示修正後もAndroid CI（run 42238321966）が成功。
+- 既存の長押し比較Android試験は合成画像で成功（離指/cancel/背景化/画像交換、FITの位置・寸法維持）。編集/保存UI試験の初回は保存不可時のアクセシビリティ状態で失敗。disabled semantics修正後のAVD試験は未実行であり、合格とは扱わない。
+- 合成UI回帰には指定強度80・表示画像の強度50を区別する検査を含む。この追加検査のAndroid実行は未実行。
+- 保存callback本体はラベル名・空白以外同一。D固有変更ではPhotoRollScreenの状態・lifecycle・source処理を変更せず、PhotoEditBarのsemantics/keyboard/pointer処理を保持。C由来の一覧表示保持はカメラロールの検証対象。
+- Pixel実機、実DNG/原寸保存、保存公開後の外部viewer、短辺・拡大文字でのD画面の全表示は未確認。試験用UIは合成Bitmapと偽の原本参照のみで、RAW処理や共有保存を実行しない。
