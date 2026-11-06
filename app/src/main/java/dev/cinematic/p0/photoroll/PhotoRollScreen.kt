@@ -338,6 +338,8 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
 
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+            // Process save status survives selection/lifecycle reloads; cancel must not wait for preview IO.
+            ForegroundSaveNotice(jpegSave, foreground)
             if (selectedUri == null) {
                 CameraRollBrowser(listing, access, kindFilter, folderKey, loading, viewerPending, notice, renderer.mode,
                     foreground && !viewerPending && !permissionPending,
@@ -417,11 +419,13 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                     reset = ::resetTrialEdit, apply = { token -> updateTrialEditor(trialEditor.apply(token)) },
                     cancel = ::cancelTrialEdit, close = { token -> trialEditor = trialEditor.close(token) },
                     modifier = Modifier.weight(1f), save = saveAction@{
-                            if (savePending || saveSnapshot?.phase !in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED,
+                            if (!currentForeground || trialEditor.session != null || selection.phase != PhotoRollPhase.DISPLAYED ||
+                                savePending || saveSnapshot?.phase !in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED,
                                     PhotoRollSavePhase.UNCONFIRMED)) return@saveAction
                             val operation = jpegSave ?: return@saveAction
                             val ticket = selection.ticket ?: return@saveAction
                             val openAfterCheck = saveSnapshot?.phase == PhotoRollSavePhase.PUBLISHED
+                            if (!openAfterCheck && operation.startForegroundSave(context)) return@saveAction
                             val cancellation = CancellationSignal()
                             cancellationOwner.begin(cancellation)
                             savePending = true
