@@ -1,6 +1,8 @@
-# Orton row workers on main `57bc2cf` (local candidate, 2026-11-07)
+# Orton row workers (candidate based on `57bc2cf`, 2026-11-07)
 
 Scope: independent worktree, synthetic inputs only, original24Probe APK on a dedicated API 37 x86_64 AVD with four configured/online vCPUs, 2 GiB AVD RAM and SwiftShader. No Pixel, private photos, publication, or real-photo quality judgment. The candidate ports the previous ordered 2/4-worker Orton row composition to current main, removes the abandoned row-array reuse option, and adds cooperative stop/interruption checks at 64-pixel intervals within parallel Orton rows. Source reading and output writing stay ordered, input row copies and per-worker field rows are private, and at most 2×worker-count rows are in flight. The production `Original24Attempt` now selects four workers; `OriginalStageClear24` itself keeps a one-worker default for reference tests.
+
+PR #180 was opened from source base `57bc2cfa5a8d916e580e0c7a863dc01c9cd0ae2d`; its initial GitHub merge test used then-current `main` `4f16c97e12bbbce01b929cec136792c207d371a4`. The source files changed by #171/#176–179 did not overlap this candidate. Any later head or base must be checked separately; an earlier CI result is not proof for an amended head.
 
 The prior 24MP 1→2→4→4→2→1 AVD runs on main `36c5655` showed identical final JPEG SHA but inconsistent whole-save times; see the earlier `orton-bench/ORTON_WORKERS_REPEATED_AND_SAFETY.md`. Those runs predate the cancellation checks and are not timings for this candidate.
 
@@ -21,3 +23,14 @@ The prior 24MP 1→2→4→4→2→1 AVD runs on main `36c5655` showed identical
 ## Remaining limits
 
 No fixed number of rows or deadline to stop is guaranteed: ordered futures can delay detection of a later worker failure, and the executor has a 10-second termination wait. A 24MP full successful save after the new checks, Pixel time/memory, simultaneous 24MP saves, process death, disk-full/close failures, and publication-owner cleanup on failure are not yet tested. No approximate colour/blur change was made. Glow has a required diffusion-field boundary and shared row arrays; Character uses a shared face-row/provider and an earlier two-worker trial improved whole save only ~2.8%. Neither has been expanded here.
+
+## Worker-liveness test diagnosis
+
+Design PR #179's unchanged `OriginalParallelRowsTest.kt:131` failed in run `42241762544`, attempts 1 and 2, each with one failure among 848 tests. The job logs identify the global `Thread.getAllStackTraces()` name-based assertion but do not include a thread ID, owning attempt, stack, or lifetime. Consequently the exact thread in those two CI failures cannot be identified. Two independent reasons make that assertion invalid:
+
+1. A different active row-render attempt may legitimately have an `original-r7-row` thread. A deterministic unit test now holds a separate attempt's worker alive while the first attempt completes; the first attempt's own workers have stopped.
+2. On OpenJDK 25, `ThreadPoolExecutor` can signal `TERMINATED` before its Java worker `Thread.run()` returns ([JDK source](https://github.com/openjdk/jdk/blob/jdk-25-ga/src/java.base/share/classes/java/util/concurrent/ThreadPoolExecutor.java)). A deterministic executor test with a controlled thread epilogue confirms `awaitTermination(true)` while the Java thread is still alive. This is an observation race, not proof that pixel work or file I/O is continuing. The first attempt's `active==0` and `hasPendingOwners==false` assertions had already passed in the failing CI test.
+
+The test now records only threads actually created by its transform and checks their *thread exit* with a total five-second bounded `join`, reporting ID/name/state/stack on failure. Android Orton safety assertions use the same owned-thread check; serial reference execution is not counted as a pool worker. The focused JVM class and updated small AVD suite passed. The worker-lifetime observations do not change production processing, its file-owner contract, or the previous timing measurements.
+
+Separate limitation: if `OriginalParallelRows.rows` reaches its existing ten-second `awaitTermination` timeout or the caller is interrupted, an unfinished executor is not represented by `OriginalRasterWorkspace.hasPendingOwners`. Current Orton workers hold owned rows and immutable in-memory fields, while file reads/writes stay on the caller, but this does not prove global worker reclamation under an uncooperative transform or arbitrary stall. No success claim is made for those fault modes; resolving their ownership model would be a separate implementation change.

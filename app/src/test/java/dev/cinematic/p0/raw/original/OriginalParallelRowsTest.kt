@@ -6,11 +6,30 @@ import java.nio.file.Files
 import java.io.IOException
 import java.util.concurrent.CancellationException
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.*
 import org.junit.Test
 
 class OriginalParallelRowsTest {
+    private fun assertOwnWorkersStopped(workers: Set<Thread>) {
+        // awaitTermination acknowledges executor state before Java Thread.run has necessarily
+        // returned. Join only this invocation's workers with a total five-second test bound.
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        workers.forEach { worker ->
+            val remaining = deadline - System.nanoTime()
+            if (remaining <= 0) fail("Timed out waiting for owned row worker ${describe(worker)}")
+            worker.join(TimeUnit.NANOSECONDS.toMillis(remaining) + 1)
+            if (worker.isAlive) fail("Owned row worker remains alive: ${describe(worker)}")
+        }
+    }
+
+    private fun describe(worker: Thread) =
+        "id=${worker.id} name=${worker.name} state=${worker.state} stack=${worker.stackTrace.take(8).joinToString()}"
+
     private class ReusedRows(override val width: Int, override val height: Int) : OriginalRaster {
         override fun rows(stop: () -> Boolean, consume: (Int, FloatArray) -> Unit) {
             val borrowed = FloatArray(width * 3)
@@ -134,12 +153,77 @@ class OriginalParallelRowsTest {
                 }
                 assertFalse(work.hasPendingOwners)
                 assertEquals(0, active.get())
-                assertTrue("This attempt must not retain a worker", workers.none { it.isAlive })
+                assertOwnWorkersStopped(workers)
             } finally {
                 work.disposeConfirmed()
                 assertTrue(root.delete())
             }
         }
+    }
+
+    @Test fun oneAttemptCanCloseWhileAnotherOwnsAnAliveRowWorker() {
+        val root = Files.createTempDirectory("original-parallel-peer").toFile()
+        val own = OriginalRasterWorkspace(root.resolve("own"))
+        val peer = OriginalRasterWorkspace(root.resolve("peer"))
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val peerWorker = AtomicReference<Thread>()
+        val ownWorkers = ConcurrentHashMap.newKeySet<Thread>()
+        val caller = Executors.newSingleThreadExecutor()
+        try {
+            val peerResult = caller.submit {
+                peer.mapParallelRows(ReusedRows(27, 15), { false }) { y, row ->
+                    if (y == 0) {
+                        peerWorker.set(Thread.currentThread()); started.countDown()
+                        check(release.await(10, TimeUnit.SECONDS))
+                    }
+                    row.copyOf()
+                }
+            }
+            assertTrue(started.await(5, TimeUnit.SECONDS))
+            own.mapParallelRows(ReusedRows(27, 15), { false }) { _, row ->
+                ownWorkers.add(Thread.currentThread()); row.copyOf()
+            }
+            assertTrue(ownWorkers.isNotEmpty())
+            assertOwnWorkersStopped(ownWorkers)
+            assertTrue("the separate attempt legitimately still owns a worker", peerWorker.get().isAlive)
+            release.countDown()
+            peerResult.get(5, TimeUnit.SECONDS)
+            assertFalse(peerWorker.get().isAlive)
+        } finally {
+            release.countDown()
+            caller.shutdownNow()
+            assertTrue(caller.awaitTermination(10, TimeUnit.SECONDS))
+            own.disposeConfirmed(); peer.disposeConfirmed()
+            assertTrue(root.delete())
+        }
+    }
+
+    @Test fun executorTerminationCanPrecedeJavaThreadExit() {
+        val afterExecutor = CountDownLatch(1)
+        val releaseThread = CountDownLatch(1)
+        val worker = AtomicReference<Thread>()
+        val executor = Executors.newSingleThreadExecutor { task ->
+            object : Thread(task, "executor-termination-witness") {
+                override fun run() {
+                    super.run()
+                    afterExecutor.countDown()
+                    releaseThread.await(5, TimeUnit.SECONDS)
+                }
+            }.also(worker::set)
+        }
+        try {
+            executor.submit {}.get(5, TimeUnit.SECONDS)
+            executor.shutdown()
+            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS))
+            assertTrue(afterExecutor.await(5, TimeUnit.SECONDS))
+            assertTrue("TERMINATED does not join the Java worker", worker.get().isAlive)
+        } finally {
+            releaseThread.countDown()
+            executor.shutdownNow()
+            worker.get()?.join(5000)
+        }
+        assertFalse(worker.get().isAlive)
     }
 
     @Test fun originalSizeAndWorkspaceBudgetAreStillEnforcedBeforeWorkersStart() {

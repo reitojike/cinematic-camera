@@ -16,6 +16,7 @@ import java.nio.file.StandardOpenOption
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.CancellationException
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -53,7 +54,6 @@ class OriginalOrtonParallelSafetyTest {
         assertTrue(cancelled.get())
         assertTrue(started.contains(2))
         assertTrue(started.size < f.height)
-        assertEquals(0, workerThreads())
         f.verifySource()
         val retry = f.render("retry-after-cancel", 4)
         assertEquals(f.render("retry-baseline", 1).sha256, retry.sha256)
@@ -73,7 +73,6 @@ class OriginalOrtonParallelSafetyTest {
         assertSame(failure, actual)
         assertTrue(started.contains(2))
         assertTrue(started.size < f.height)
-        assertEquals(0, workerThreads())
         f.verifySource()
         val retry = f.render("retry-after-failure", 4)
         assertEquals(f.render("failure-baseline", 1).sha256, retry.sha256)
@@ -96,7 +95,6 @@ class OriginalOrtonParallelSafetyTest {
         }
         assertTrue(cancelled.get())
         assertTrue("the target worker must pass multiple in-row checkpoints", polls.get() >= 5)
-        assertEquals(0, workerThreads())
         f.verifySource()
         status("mid-row-cancel", JSONObject().put("targetWorkerPolls", polls.get())
             .put("workerThreadsAfter", 0).put("sourceUnchanged", true))
@@ -109,7 +107,6 @@ class OriginalOrtonParallelSafetyTest {
         assertTrue("synthetic bright face must exercise the second layer", reference.faceCutFactor < 1.0)
         assertEquals(reference.faceCutFactor, parallel.faceCutFactor, 0.0)
         assertEquals(reference.sha256, parallel.sha256)
-        assertEquals(0, workerThreads())
         f.verifySource()
         status("face-cut", JSONObject().put("factor", reference.faceCutFactor)
             .put("rawFloatSha256", reference.sha256).put("sourceUnchanged", true))
@@ -123,6 +120,7 @@ class OriginalOrtonParallelSafetyTest {
         val work = OriginalRasterWorkspace(scratch)
         val cancelled = AtomicBoolean(false)
         val started = ConcurrentLinkedQueue<Int>()
+        val workers = ConcurrentHashMap.newKeySet<Thread>()
         val input = object : OriginalRaster {
             override val width = 6000
             override val height = 4000
@@ -137,6 +135,7 @@ class OriginalOrtonParallelSafetyTest {
         try {
             assertThrows(CancellationException::class.java) {
                 work.mapParallelRows(input, { cancelled.get() }, 4) { y, row ->
+                    workers.add(Thread.currentThread())
                     started.add(y)
                     if (y == 128) cancelled.set(true)
                     originalCheckpoint { cancelled.get() || Thread.currentThread().isInterrupted }
@@ -146,7 +145,7 @@ class OriginalOrtonParallelSafetyTest {
             val partial = scratch.listFiles().orEmpty().single()
             assertTrue("some ordered rows should already be written", partial.length() > 0)
             assertTrue(partial.length() < 6000L * 4000 * 12)
-            assertEquals(0, workerThreads())
+            assertOwnedWorkersStopped(workers)
             status("24mp-cancel", JSONObject().put("startedRows", started.size)
                 .put("partialBytes", partial.length()).put("workerThreadsAfter", 0))
         } finally {
@@ -174,14 +173,18 @@ class OriginalOrtonParallelSafetyTest {
                 override fun openOutput() = Files.newOutputStream(output.toPath(), StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
                 override fun openOutputRead() = output.inputStream()
             }
+            val workers = ConcurrentHashMap.newKeySet<Thread>()
             val attempt = Original24Attempt(context, Original24Request("synthetic_original", 1, source), io,
                 File(root, "scratch"), parallelOrtonWorkers = 4,
-                ortonRowProbe = { y -> if (y == 2) throw CancellationException("injected Orton cancellation") })
+                ortonRowProbe = { y ->
+                    workers.add(Thread.currentThread())
+                    if (y == 2) throw CancellationException("injected Orton cancellation")
+                })
             try {
                 assertThrows(CancellationException::class.java) { attempt.render { false } }
             } finally { attempt.close() }
             assertFalse(attempt.hasUnreleasedResources)
-            assertEquals(0, workerThreads())
+            assertOwnedWorkersStopped(workers)
             DngContentVerifier.verify(fingerprint, { input.inputStream() })
             assertFalse(output.exists())
             // The attempt deliberately retains failed private scratch for its owner, not publication.
@@ -205,7 +208,6 @@ class OriginalOrtonParallelSafetyTest {
                 executor.shutdownNow()
                 assertTrue(executor.awaitTermination(10, TimeUnit.SECONDS))
             }
-            assertEquals(0, workerThreads())
             firstFixture.verifySource(); secondFixture.verifySource()
             status("concurrent", JSONObject().put("privateSessions", 2).put("rawFloatSha256", expected)
                 .put("workerThreadsAfter", 0).put("sourcesUnchanged", true))
@@ -231,16 +233,20 @@ class OriginalOrtonParallelSafetyTest {
                 override fun openOutput() = Files.newOutputStream(output.toPath(), StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
                 override fun openOutputRead() = output.inputStream()
             }
+            val workers = ConcurrentHashMap.newKeySet<Thread>()
             val attempt = Original24Attempt(context, Original24Request("synthetic_original", 1, source), io,
                 File(root, "scratch"), parallelOrtonWorkers = 4,
-                ortonRowProbe = { y -> if (y == 128) throw CancellationException("injected 24MP Orton cancellation") })
+                ortonRowProbe = { y ->
+                    workers.add(Thread.currentThread())
+                    if (y == 128) throw CancellationException("injected 24MP Orton cancellation")
+                })
             val start = android.os.SystemClock.elapsedRealtime()
             try {
                 assertThrows(CancellationException::class.java) { attempt.render { false } }
             } finally { attempt.close() }
             val elapsed = android.os.SystemClock.elapsedRealtime() - start
             assertFalse(attempt.hasUnreleasedResources)
-            assertEquals(0, workerThreads())
+            assertOwnedWorkersStopped(workers)
             DngContentVerifier.verify(fingerprint, { input.inputStream() })
             assertFalse(output.exists())
             val fullBytes = 6000L * 4000 * 12
@@ -254,7 +260,18 @@ class OriginalOrtonParallelSafetyTest {
         } finally { assertTrue(root.deleteRecursively()) }
     }
 
-    private fun workerThreads() = Thread.getAllStackTraces().keys.count { it.isAlive && it.name == "original-r7-row" }
+    private fun assertOwnedWorkersStopped(workers: Set<Thread>) {
+        // Executor TERMINATED can be signalled before a Java worker thread has exited.
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        workers.forEach { worker ->
+            val remaining = deadline - System.nanoTime()
+            if (remaining <= 0) fail("Timed out waiting for owned Orton worker ${describe(worker)}")
+            worker.join(TimeUnit.NANOSECONDS.toMillis(remaining) + 1)
+            if (worker.isAlive) fail("Owned Orton worker remains alive: ${describe(worker)}")
+        }
+    }
+    private fun describe(worker: Thread) =
+        "id=${worker.id} name=${worker.name} state=${worker.state} stack=${worker.stackTrace.take(8).joinToString()}"
     private fun sha(file: File) = MessageDigest.getInstance("SHA-256").digest(file.readBytes())
         .joinToString("") { "%02x".format(it) }
 
@@ -286,15 +303,22 @@ class OriginalOrtonParallelSafetyTest {
             stop: () -> Boolean = { false }, rowProbe: ((Int) -> Unit)? = null): Output {
             val scratch = File(root, name)
             val work = OriginalRasterWorkspace(scratch)
+            val ownedWorkers = ConcurrentHashMap.newKeySet<Thread>()
             try {
-                val result = OriginalStageClear24(work, parallelOrtonWorkers = workers, ortonRowProbe = rowProbe)
+                val result = OriginalStageClear24(work, parallelOrtonWorkers = workers, ortonRowProbe = { y ->
+                    if (workers > 1) ownedWorkers.add(Thread.currentThread())
+                    rowProbe?.invoke(y)
+                })
                     .render(source, 0.0, .5, faces = faces, stop = stop)
                 return Output(sha(result.raster.file), result.faceCutFactor)
             } finally {
-                work.closePending()
-                work.disposeConfirmed()
-                assertFalse(scratch.exists())
-                verifySource()
+                try { assertOwnedWorkersStopped(ownedWorkers) }
+                finally {
+                    work.closePending()
+                    work.disposeConfirmed()
+                    assertFalse(scratch.exists())
+                    verifySource()
+                }
             }
         }
         fun verifySource() = assertEquals(sourceHash, sha(sourceFile))
