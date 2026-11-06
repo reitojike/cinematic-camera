@@ -332,7 +332,8 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
     }
 
     Surface(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 16.dp)) {
+        Column(Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = if (selectedUri == null) 0.dp else 16.dp)) {
+            if (selectedUri != null) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { if (selectedUri != null) backToList() else closeRoll() }) { Text(if (selectedUri == null) "撮影へ" else "一覧へ") }
                 Text(if (selectedUri == null) "カメラロール" else when (renderer.mode) {
@@ -343,76 +344,33 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                     PhotoRollPreviewMode.STAGE_CLEAR -> "DNG現像"
                 }, style = MaterialTheme.typography.titleLarge)
             }
+            }
             if (selectedUri == null) {
-                CameraRollGrid(listing.items, foreground && !viewerPending && !permissionPending, Modifier.weight(1f), header = {
-                    Column {
-                        Text("写真・動画・DNG以外のRAWは標準ビューアで開きます。DNGはタップして試験現像できます", style = MaterialTheme.typography.bodySmall)
-                        if (renderer.mode == PhotoRollPreviewMode.MANUAL_TRIAL) Text(
-                            "DNGは最大24MPの試験品質で現像します。顔保護なし・診断露出・暫定色です。JPEG保存は手動のみで、原本は変更しません。",
-                            style = MaterialTheme.typography.bodySmall)
-                        if (renderer.mode == PhotoRollPreviewMode.PRIVATE_TRIAL) Text(
-                            "DNGは最大1024pxの試験現像です。顔保護なし・暫定色で、共有写真へは保存しません",
-                            style = MaterialTheme.typography.bodySmall)
-                        Text(access.description, style = MaterialTheme.typography.bodySmall)
-                        Row {
-                            TextButton(enabled = foreground && access.supported && !permissionPending && !pickerPending && !viewerPending,
-                                onClick = {
-                                    if (navigation.canOpenViewer(currentForeground, false)) try {
-                                        permissionPending = true
-                                        permissions.launch(cameraRollReadPermissions(Build.VERSION.SDK_INT))
-                                    } catch (_: Exception) { permissionPending = false; notice = "アクセス許可を開けませんでした。設定から確認してください" }
-                                }) { Text("アクセスを許可・選び直す") }
-                            TextButton(enabled = foreground && !permissionPending && !viewerPending, onClick = {
-                                if (navigation.canOpenViewer(currentForeground, false)) try {
-                                    context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")))
-                                } catch (_: Exception) { notice = "アプリのアクセス設定を開けませんでした" }
-                            }) { Text("設定") }
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.weight(1f)) {
-                                OutlinedButton(enabled = foreground && !viewerPending && !permissionPending, onClick = { folderMenu = true }) {
-                                    Text(listing.folders.firstOrNull { it.key == folderKey }?.label
-                                        ?: if (folderKey == null) "すべてのフォルダ" else "選択したフォルダ（アクセス確認中）", maxLines = 2)
-                                }
-                                DropdownMenu(expanded = folderMenu, onDismissRequest = { folderMenu = false }, modifier = Modifier.heightIn(max = 360.dp)) {
-                                    DropdownMenuItem(text = { Text("すべてのフォルダ") }, onClick = {
-                                        folderMenu = false; folderKey = null; pageCursor = null; listing = PhotoRollListing(emptyList()); retry++
-                                    })
-                                    listing.folders.forEach { folder -> DropdownMenuItem(text = { Text(folder.label) }, onClick = {
-                                        folderMenu = false; folderKey = folder.key; pageCursor = null; listing = PhotoRollListing(emptyList()); retry++
-                                    }) }
-                                }
-                            }
-                            TextButton(enabled = foreground && !loading && !viewerPending && !permissionPending, onClick = {
-                                pageCursor = null; retry++
-                            }) { Text("更新") }
-                        }
-                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            PhotoRollKindFilter.entries.forEach { filter -> FilterChip(
-                                selected = filter == kindFilter, enabled = foreground && !viewerPending && !permissionPending,
-                                onClick = { kindFilterName = filter.name; pageCursor = null; listing = PhotoRollListing(emptyList()); retry++ },
-                                label = { Text(when (filter) {
-                                    PhotoRollKindFilter.ALL -> "すべて"
-                                    PhotoRollKindFilter.IMAGES -> "画像"
-                                    PhotoRollKindFilter.RAW -> "RAW"
-                                    PhotoRollKindFilter.VIDEOS -> "動画"
-                                }) })
-                            }
-                        }
-                        TextButton(enabled = foreground && !pickerPending && !viewerPending && !permissionPending, onClick = {
-                            if (!pickerPending && navigation.canOpenViewer(currentForeground, false)) try { pickerPending = true; picker.launch(arrayOf("*/*")) }
-                            catch (_: Exception) { pickerPending = false; notice = "Filesを開けませんでした" }
-                        }) { Text("Filesから端末内DNGを選ぶ") }
-                        notice?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                        if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-                        listing.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                        if (viewerPending) LinearProgressIndicator(Modifier.fillMaxWidth())
-                        if (!loading && listing.items.isEmpty()) Text("該当する項目がありません。アクセス許可や絞り込みを確認してください。DNGはFilesの「内部ストレージ」からも選べます", Modifier.padding(vertical = 12.dp))
-                    }
-                }, footer = {
-                    if (listing.hasMore) TextButton(enabled = foreground && !loading && !viewerPending && !permissionPending,
-                        onClick = { pageCursor = listing.nextCursor }) { Text("さらに読み込む") }
-                }) { item ->
+                CameraRollBrowser(listing, access, kindFilter, folderKey, loading, viewerPending, notice, renderer.mode,
+                    foreground && !viewerPending && !permissionPending,
+                    foreground && !loading && !viewerPending && !permissionPending,
+                    foreground && access.supported && !permissionPending && !pickerPending && !viewerPending,
+                    foreground && !pickerPending && !viewerPending && !permissionPending,
+                    folderMenu = folderMenu, setFolderMenu = { folderMenu = it }, close = ::closeRoll,
+                    refresh = { pageCursor = null; retry++ },
+                    chooseFolder = { key -> folderKey = key; pageCursor = null; listing = PhotoRollListing(emptyList()); retry++ },
+                    chooseFilter = { filter -> kindFilterName = filter.name; pageCursor = null; listing = PhotoRollListing(emptyList()); retry++ },
+                    permission = {
+                        if (navigation.canOpenViewer(currentForeground, false)) try {
+                            permissionPending = true
+                            permissions.launch(cameraRollReadPermissions(Build.VERSION.SDK_INT))
+                        } catch (_: Exception) { permissionPending = false; notice = "アクセス許可を開けませんでした。設定から確認してください" }
+                    },
+                    settings = {
+                        if (navigation.canOpenViewer(currentForeground, false)) try {
+                            context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")))
+                        } catch (_: Exception) { notice = "アプリのアクセス設定を開けませんでした" }
+                    },
+                    files = {
+                        if (!pickerPending && navigation.canOpenViewer(currentForeground, false)) try { pickerPending = true; picker.launch(arrayOf("*/*")) }
+                        catch (_: Exception) { pickerPending = false; notice = "Filesを開けませんでした" }
+                    },
+                    more = { pageCursor = listing.nextCursor }, modifier = Modifier.weight(1f)) { item ->
                     if (item.kind == CameraRollKind.DNG) {
                         chooseDng(item.uri, false)
                     } else if (!viewerPending) {

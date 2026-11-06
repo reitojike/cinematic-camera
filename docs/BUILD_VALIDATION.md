@@ -251,3 +251,9 @@ STILLの明示opt-in固定pair、Builder単発設定とruntime preview補償、�
 - API要求・受付履歴・直近実測、ISO/SS source/観測期限、能力/ログをタブに移し、SelectionContainerと元データ・操作guardを保持。RAW/保存処理には変更なし。
 
 - 診断の短辺対策は344×412dp相当・fontScale 1.3の専用AVDで、全体scrollにより制御表と観測sourceへ到達できることを確認。高さ320dp/横長/幅320dp/文字2倍の選択条件をunitで確認。実機の分割画面は未確認。
+
+## カメラロールのデザイン反映（Issue #174）
+
+- lintDebug / testDebugUnitTest / assembleDebug / diff check成功。118 suites / 846 tests、failure/error 0、skip 4。日付の現地深夜境界と日付不明の回帰を追加。
+- 専用Android 37 AVDで未許可の空一覧、合成画像4件の部分アクセス、破線注意帯、日付/件数、3列2dp/最新緑枠、Filesフッターを確認。短辺・拡大文字では全体scrollへ切替える。
+- 選択・Files・権限・外部viewer・ページングのcallback/guardとthumbnailの2並列/取消所有権を保持。DNG実現像、外部viewer起動、動画/RAWタグ、実機の全操作は未確認。合成素材とUI証拠はGitへ含めない。

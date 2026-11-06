@@ -7,6 +7,8 @@ import android.os.Build
 import android.os.CancellationSignal
 import android.util.Size
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
+import dev.cinematic.p0.CaptureDesign
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -22,6 +24,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
@@ -37,16 +41,24 @@ private val thumbnailSlots = Semaphore(2)
 internal fun CameraRollGrid(items: List<PhotoRollItem>, foreground: Boolean, modifier: Modifier,
     header: @Composable () -> Unit = {}, footer: @Composable () -> Unit = {},
     select: (PhotoRollItem) -> Unit) {
-    LazyVerticalGrid(columns = GridCells.Adaptive(104.dp), modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    val groups = remember(items) { cameraRollDateGroups(items) }
+    val latest = items.maxByOrNull { it.addedSeconds }?.takeIf { it.addedSeconds > 0 }?.uri
+    LazyVerticalGrid(columns = GridCells.Fixed(3), modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(2.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         item(key = "controls", span = { GridItemSpan(maxLineSpan) }) { header() }
-        items(items, key = { it.uri }) { item ->
-            Column(Modifier.clickable(enabled = foreground, role = Role.Button,
-                onClickLabel = if (item.kind == CameraRollKind.DNG) "DNGを現像" else "${item.kind.label}を開く") { select(item) }) {
-                CameraRollThumbnail(item, foreground)
-                Text(item.name, maxLines = 2, style = MaterialTheme.typography.labelSmall)
-                Text(if (item.kind == CameraRollKind.DNG) "DNG · タップで現像" else item.kind.label,
-                    style = MaterialTheme.typography.labelSmall)
+        groups.forEach { group ->
+            item(key = "date:${group.label}", span = { GridItemSpan(maxLineSpan) }) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)) {
+                    Text(group.label, Modifier.weight(1f), style = CaptureDesign.Label, color = CaptureDesign.Muted)
+                    Text("${group.items.size}", style = CaptureDesign.Label, color = CaptureDesign.Muted)
+                }
+            }
+            items(group.items, key = { it.uri }) { item ->
+                Box(Modifier.semantics { contentDescription = item.name }.clickable(enabled = foreground, role = Role.Button,
+                    onClickLabel = if (item.kind == CameraRollKind.DNG) "DNGを現像" else "${item.kind.label}を開く") { select(item) }) {
+                    CameraRollThumbnail(item, foreground)
+                    if (item.uri == latest) Box(Modifier.matchParentSize().padding(2.dp).border(1.dp, CaptureDesign.Accepted))
+                }
             }
         }
         item(key = "more", span = { GridItemSpan(maxLineSpan) }) { footer() }
@@ -71,10 +83,15 @@ private fun CameraRollThumbnail(item: PhotoRollItem, foreground: Boolean) {
         if (image != null) Image(image.asImageBitmap(), item.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         else Text(if (finished) "${item.kind.label}\nプレビューなし" else item.kind.label,
             style = MaterialTheme.typography.labelMedium)
-        if (item.kind == CameraRollKind.VIDEO) Text(
-            "▶ " + (item.durationMillis?.let(::cameraRollDuration) ?: "動画"),
-            Modifier.align(Alignment.BottomStart).background(MaterialTheme.colorScheme.surface).padding(4.dp),
-            style = MaterialTheme.typography.labelSmall)
+        val tag = when (item.kind) {
+            CameraRollKind.DNG -> "DNG"
+            CameraRollKind.RAW -> "RAW ↗"
+            CameraRollKind.VIDEO -> "▶ " + (item.durationMillis?.let(::cameraRollDuration) ?: "動画")
+            CameraRollKind.PHOTO -> null
+        }
+        tag?.let { Text(it, Modifier.align(Alignment.BottomStart).padding(6.dp).background(CaptureDesign.Ink)
+            .then(if (item.kind == CameraRollKind.DNG) Modifier.border(1.dp, CaptureDesign.Text) else Modifier).padding(4.dp),
+            style = CaptureDesign.Label, color = if (item.kind == CameraRollKind.DNG) CaptureDesign.Text else CaptureDesign.Muted) }
     }
 }
 
