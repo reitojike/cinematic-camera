@@ -28,14 +28,17 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, p
         fun emit(name: String, raster: OriginalRasterFile): OriginalRasterFile {
             originalCheckpoint(stop); stage(name, raster); originalCheckpoint(stop); return raster
         }
-        fun rowStep(previous: OriginalRasterFile, name: String, timing: OriginalStage,
+        fun rowStep(previous: OriginalRasterFile, name: String, timing: OriginalStage, parallelRows: Boolean = false,
             transform: (Int, FloatArray) -> FloatArray): OriginalRasterFile {
-            val next = emit(name, originalStage(trace, timing) { work.map(previous, stop, transform) })
+            val next = emit(name, originalStage(trace, timing) {
+                if (parallelRows) work.mapParallelRows(previous, stop, transform)
+                else work.map(previous, stop, transform)
+            })
             work.release(previous)
             return next
         }
         var base = emit("r7_profile", originalStage(trace, OriginalStage.R7_PROFILE) {
-            work.map(input, stop) { _, row -> values(R7Base.profile(image(width, row))) }
+            work.mapParallelRows(input, stop) { _, row -> values(R7Base.profile(image(width, row))) }
         })
         val cell = .04 * max(width, height)
         val toneRow = FloatArray(width)
@@ -63,9 +66,9 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, p
             foundation.row(yy, roiRow); checkMask(roiRow)
             values(R7Base.foundation(image(width, row), FloatPlane(width, 1, roiRow), externalEv))
         }
-        base = rowStep(base, "r7_vibrance", OriginalStage.R7_VIBRANCE) { _, row -> values(R7Base.vibrance(image(width, row))) }
-        base = rowStep(base, "r7_crisp", OriginalStage.R7_CRISP) { _, row -> values(R7Base.crisp(image(width, row))) }
-        base = rowStep(base, "r7_skin", OriginalStage.R7_SKIN) { _, row -> values(R7Base.skin(image(width, row))) }
+        base = rowStep(base, "r7_vibrance", OriginalStage.R7_VIBRANCE, parallelRows = true) { _, row -> values(R7Base.vibrance(image(width, row))) }
+        base = rowStep(base, "r7_crisp", OriginalStage.R7_CRISP, parallelRows = true) { _, row -> values(R7Base.crisp(image(width, row))) }
+        base = rowStep(base, "r7_skin", OriginalStage.R7_SKIN, parallelRows = true) { _, row -> values(R7Base.skin(image(width, row))) }
 
         val skin = originalStage(trace, OriginalStage.SKIN_FIELD) { OriginalFields.blur(base, StageClearGlowV1.SKIN_RADIUS, 1, stop) { rgb, out ->
             val frame = image(width, rgb); val lab = FloatArray(3)

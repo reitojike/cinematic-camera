@@ -9,6 +9,10 @@ import java.nio.channels.FileChannel
 import java.nio.file.LinkOption
 import java.nio.file.StandardOpenOption
 import java.util.concurrent.CancellationException
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
+import java.util.concurrent.TimeUnit
 
 /** Borrowed row buffers must not escape a callback. No full-frame Java RGB allocation. */
 internal interface OriginalRaster {
@@ -129,6 +133,11 @@ internal class OriginalRasterWorkspace(val directory: File, private val byteBudg
         return result
     }
 
+    /** Opt-in for independent row transforms. Two workers and four in-flight rows bound CPU and RAM. */
+    fun mapParallelRows(input: OriginalRaster, stop: () -> Boolean,
+        transform: (Int, FloatArray) -> FloatArray): OriginalRasterFile =
+        map(OriginalParallelRows(input, transform), stop) { _, row -> row }
+
     /** Call only after the last reader's rows() has returned and acknowledged close. */
     fun release(raster: OriginalRasterFile) {
         check(owned.containsKey(raster))
@@ -142,5 +151,54 @@ internal class OriginalRasterWorkspace(val directory: File, private val byteBudg
         check(!hasPendingOwners)
         owned.keys.toList().forEach(::release)
         check(directory.delete())
+    }
+}
+
+/** Reads and writes stay ordered on the caller; only owned row copies reach the workers. */
+private class OriginalParallelRows(
+    private val input: OriginalRaster,
+    private val transform: (Int, FloatArray) -> FloatArray,
+) : OriginalRaster {
+    override val width get() = input.width
+    override val height get() = input.height
+
+    override fun rows(stop: () -> Boolean, consume: (Int, FloatArray) -> Unit) {
+        val executor = Executors.newFixedThreadPool(2) { task ->
+            Thread(task, "original-r7-row").apply { isDaemon = true }
+        }
+        val pending = ArrayDeque<Pair<Int, Future<FloatArray>>>(4)
+        var failure: Throwable? = null
+        try {
+            fun drainOne() {
+                val (y, future) = pending.removeFirst()
+                val output = try { future.get() }
+                catch (error: ExecutionException) { throw error.cause ?: error }
+                originalCheckpoint(stop)
+                consume(y, output)
+            }
+            input.rows(stop) { y, row ->
+                originalCheckpoint(stop)
+                val owned = row.copyOf()
+                pending.addLast(y to executor.submit<FloatArray> { transform(y, owned) })
+                if (pending.size == 4) drainOne()
+            }
+            while (pending.isNotEmpty()) drainOne()
+        } catch (error: Throwable) {
+            failure = error
+            throw error
+        } finally {
+            if (failure == null) executor.shutdown() else {
+                pending.forEach { (_, future) -> future.cancel(true) }
+                executor.shutdownNow()
+            }
+            try {
+                if (!executor.awaitTermination(10, TimeUnit.SECONDS))
+                    throw IOException("Original row workers did not stop")
+            } catch (cleanup: Throwable) {
+                if (cleanup is InterruptedException) Thread.currentThread().interrupt()
+                if (failure == null) throw cleanup
+                if (failure !== cleanup) failure.addSuppressed(cleanup)
+            }
+        }
     }
 }
