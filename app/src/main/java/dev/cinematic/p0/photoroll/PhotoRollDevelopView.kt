@@ -49,7 +49,8 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
     val adjustments = mode == PhotoRollPreviewMode.MANUAL_TRIAL
     val compareEnabled = foreground && preview != null && comparison != null && comparisonLabel != null && phase == PhotoRollPhase.DISPLAYED
     val requested = session?.draft ?: state.requestedValues
-    val unapplied = state.displayedValues != requested
+    val unapplied = mode in setOf(PhotoRollPreviewMode.MANUAL_TRIAL, PhotoRollPreviewMode.STAGE_CLEAR,
+        PhotoRollPreviewMode.PRIVATE_TRIAL) && state.displayedValues != requested
     val saveLabel = developSaveLabel(mode, savePhase, savePending, session != null)
     val saveColor = when {
         savePending || savePhase == PhotoRollSavePhase.SAVING -> CaptureDesign.Amber

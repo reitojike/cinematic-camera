@@ -43,7 +43,7 @@ class DevelopViewAndroidTest {
         fun find(description: String): AccessibilityNodeInfo? {
             fun walk(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
                 if (node == null) return null
-                if (node.contentDescription?.toString() == description || node.text?.toString()?.contains(description) == true) return node
+                if (node.contentDescription?.toString() == description || node.text?.toString() == description) return node
                 for (i in 0 until node.childCount) walk(node.getChild(i))?.let { return it }
                 return null
             }
@@ -91,7 +91,11 @@ class DevelopViewAndroidTest {
         ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
             scenario.onActivity { activity -> activity.setContent { CaptureTheme { Surface {
                 PhotoRollDevelopView("SYNTHETIC.dng", mode.value, state.value, { state.value }, phase.value,
-                    PhotoRollRenderStage.LOOK, if (phase.value == PhotoRollPhase.BLOCKED) "合成テストの停止理由" else null,
+                    PhotoRollRenderStage.LOOK, if (phase.value == PhotoRollPhase.BLOCKED) "合成テストの停止理由" else when (mode.value) {
+                        PhotoRollPreviewMode.MANUAL_TRIAL -> "強度50の縮小プレビューです。原寸の試験品質JPEGは手動保存時に生成します。顔保護なし・診断露出・暫定色です"
+                        PhotoRollPreviewMode.PRIVATE_TRIAL -> "120×80・強度50の縮小試験JPEGです。顔保護なし・診断露出・撮影時WB/暫定色。共有写真へは保存しません"
+                        else -> null
+                    },
                     after, before, "RAW基準表示（合成）", true, savePhase.value, false,
                     state.value.session == null && phase.value == PhotoRollPhase.DISPLAYED && mode.value != PhotoRollPreviewMode.PRIVATE_TRIAL,
                     true, { saves++ }, { state.value = state.value.begin(.01, true) }, {}, { retries++ },
@@ -112,7 +116,9 @@ class DevelopViewAndroidTest {
             capture("editing")
             scenario.onActivity { state.value = initial }
 
-            scenario.onActivity { state.value = state.value.close(requireNotNull(state.value.session).inputToken) }
+            assertTrue(awaitNode("色温度", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            awaitNode("色温度 · 相対（K値ではありません）")
+            assertTrue(awaitNode("×", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
             instrumentation.waitForIdleSync()
             val readySave = awaitNode("JPEGを保存", true)
             assertTrue(readySave.isEnabled)
@@ -130,6 +136,11 @@ class DevelopViewAndroidTest {
             scenario.onActivity { phase.value = PhotoRollPhase.BLOCKED }
             instrumentation.waitForIdleSync()
             capture("blocked")
+            for (trialMode in listOf(PhotoRollPreviewMode.DNG_TRIAL, PhotoRollPreviewMode.STAGE_CLEAR_TRIAL)) {
+                scenario.onActivity { phase.value = PhotoRollPhase.DISPLAYED; mode.value = trialMode; state.value = TrialStrengthEditor.empty() }
+                awaitNode("現像結果 · 長押しで基準表示")
+                assertNull(find("表示中 · 未反映の調整あり"))
+            }
             scenario.onActivity { phase.value = PhotoRollPhase.DISPLAYED; mode.value = PhotoRollPreviewMode.MANUAL_TRIAL; state.value = initial }
             repeat(4) { scroll(false, false) }
             repeat(3) { scroll(true) }
@@ -143,6 +154,12 @@ class DevelopViewAndroidTest {
             repeat(4) { scroll(false, false) }
             awaitNode("合成の原本情報 0")
             capture("info-top")
+            assertTrue(awaitNode("原本情報と試験品質の注意", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            assertTrue(awaitNode("比較", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            awaitNode("RAW基準表示（合成）")
+            assertTrue(awaitNode("取消", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            instrumentation.waitForIdleSync()
+            scenario.onActivity { assertNull(state.value.session) }
         }
         after.recycle(); before.recycle()
     }
