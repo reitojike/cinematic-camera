@@ -6,6 +6,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.rawcapture.*
 import dev.cinematic.p0.raw.original.OriginalStageTrace
+import dev.cinematic.p0.raw.original.OriginalStage
 import dev.cinematic.p0.testing.writeSyntheticTrialDng
 import java.io.File
 import java.nio.file.Files
@@ -30,12 +31,17 @@ class Original24PipelineTest {
         check(Build.HARDWARE in setOf("ranchu", "goldfish") || args.getString("allowPhysical") == "true")
         val runId = requireNotNull(args.getString("runId")).also { require(it.matches(Regex("[a-f0-9]{32}"))) }
         val size = args.getString("size") ?: "SMALL"
+        val parallelOrtonWorkers = args.getString("parallelOrtonWorkers")?.toInt()
+            ?: if (args.getString("parallelOrtonRows") == "true") 2 else 4
+        require(parallelOrtonWorkers in setOf(1, 2, 4))
         val dimensions = when (size) { "SMALL" -> 64 to 48; "12MP" -> 4000 to 3000; "24MP" -> 6000 to 4000; else -> error("Unknown fixed case") }
         val reportFile = File(context.filesDir, "original24-$runId.json")
         check(reportFile.createNewFile())
         val reports = JSONArray()
         val all = JSONObject().put("runId", runId).put("scope", "synthetic-original-r7-stage-clear-jpeg-private-no-publication")
-            .put("applicationId", context.packageName).put("size", size).put("complete", false).put("status", "STARTED")
+            .put("applicationId", context.packageName).put("size", size)
+            .put("parallelOrtonWorkers", parallelOrtonWorkers)
+            .put("complete", false).put("status", "STARTED")
             .put("heapLimitBytes", Runtime.getRuntime().maxMemory()).put("abi", Build.SUPPORTED_ABIS[0]).put("cases", reports)
         reportFile.writeText(all.toString(2))
         val root = File(context.noBackupFilesDir, "original24-$runId")
@@ -65,15 +71,19 @@ class Original24PipelineTest {
                     val timings = JSONArray()
                     val trace = if (args.getString("original24Stages") == "true") {
                         report.put("stageTimings", timings).put("stageTimingScope",
-                            "flat inclusive CPU-and-IO spans; repeated stages are separate calls; observer IO and unlabelled overhead excluded")
+                            "flat inclusive CPU-and-IO spans except ORTON_PIXEL_THREAD_CPU, which sums per-worker CPU nanoseconds; repeated stages are separate calls; observer IO and unlabelled overhead excluded")
                         OriginalStageTrace { stage, elapsed, completed ->
-                            timings.put(JSONObject().put("stage", stage.name).put("elapsedNanos", elapsed)
-                                .put("completed", completed).put("sequence", timings.length()))
+                            val span = JSONObject().put("stage", stage.name).put("elapsedNanos", elapsed)
+                                .put("completed", completed).put("sequence", timings.length())
+                            if (stage == OriginalStage.ORTON_FIELD || stage == OriginalStage.ORTON_COMPOSE)
+                                span.put("memoryAfter", memorySnapshot(context))
+                            timings.put(span)
                             // Private synthetic diagnostic witness only. Never logs a source URI or image content.
                             reportFile.writeText(all.toString(2))
                         }
                     } else null
-                    val attempt = Original24Attempt(context, request, io, File(root, "scratch-$orientation-$index"), trace)
+                    val attempt = Original24Attempt(context, request, io, File(root, "scratch-$orientation-$index"), trace,
+                        parallelOrtonWorkers = parallelOrtonWorkers)
                     var failure: Throwable? = null
                     try {
                         metrics.stage("before")
