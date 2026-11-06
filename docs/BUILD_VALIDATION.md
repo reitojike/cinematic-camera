@@ -264,3 +264,19 @@ STILLの明示opt-in固定pair、Builder単発設定とruntime preview補償、�
 - 試験fixtureはprepare/recheck Futureを保持し、実完了とService gate・handleの解放後だけ自身の合成行を削除する。未確認なら素材を保持し同一suiteの後続試験を停止。Composeボタン経由、実写真、API29–36、OS timeout/process death統合はこの追加試験の対象外。
 - main 9f70ab5（#180 worker所有追跡修正）を取り込み、app build/AndroidTest buildと全unit 120 suites / 860 testsが成功（failure/error 0、skip 4）。独立レビューでworkspace worker所有状態がFGSまで伝わることを確認した。
 - 同baseのAPI37合成回帰はService5件＋実owner2件の計7件成功（109.636秒）。追加試験はFuture完了後もproducer未解放ならHOLDを保持し後続保存を拒否する境界を確認する。実workerのtimeout/割込処理は#180の実装・試験を再利用し、Service側にworker管理を追加していない。
+## カメラロールのデザイン反映（Issue #174）
+
+- a9af53fでlintDebug / testDebugUnitTest / assembleDebug / diff check成功。118 suites / 846 tests、failure/error 0、skip 4。日付の現地深夜境界と日付不明の回帰を追加。
+- 専用Android 37 AVDで未許可の空一覧、合成画像4件の部分アクセス、破線注意帯、日付/件数、3列2dp/最新緑枠、Filesフッターを確認。短辺・拡大文字では全体scrollへ切替える。
+- 選択・Files・権限・外部viewer・ページングのcallback/guardとthumbnailの2並列/取消所有権を保持。DNG実現像、外部viewer起動、動画/RAWタグ、実機の全操作は未確認。合成素材とUI証拠はGitへ含めない。
+
+- 更新中タイル保持: 同一collection/権限世代、ページ追加後、filter/folder変更、権限世代変更、初回のunit回帰を追加。修正後のunit実行結果はCIで確認する。AVDでの更新中タイル保持・権限変更回帰は未実行。
+
+## DNG現像画面のデザイン反映（Issue #175）
+
+- 情報パネル展開時の全体scrollを含む候補でlintDebug / testDebugUnitTest / assembleDebug / assembleDebugAndroidTest / diff check成功。854 tests、failure/error 0、既存skip 4（mainのworker安全性試験を含む）。
+- 専用Android 37 AVDでDevelopViewAndroidTestが通常412×924dp、360×560dp・fontScale 1.0/1.3で成功。製品同等のSurface/safeDrawing条件で、操作ノードのenabledと可視性、保存不可時クリック0回・編集を閉じた後の保存1回、指定強度80と表示中50、UNCONFIRMED/PRIVATE/BLOCKED、情報パネル＋編集欄展開時の本文/下端到達を検査した。説明ノードと操作ノードは区別する。
+- 実MANUAL/PRIVATE説明文と色温度見出しを用いた追加合成回帰が通常412×924dp、360×560dp、閾値上側360×600dp（文字1.0/1.3）で成功。情報開閉後の比較・取消、×による編集終了を確認。DNG_TRIAL/STAGE_CLEAR_TRIALは表示値未管理でも未反映警告を出さないことを検査。
+- PhotoRollComparisonGestureAndroidTestが通常AVDで成功。合成画像で離指/cancel/背景化/画像交換、FITの位置・寸法維持を確認。UI試験はRAW処理や共有保存を実行しない。
+- 保存callback本体はラベル名・空白以外同一。D固有変更ではPhotoRollScreenの状態・lifecycle・source処理を変更せず、PhotoEditBarのsemantics/keyboard/pointer処理を保持。C由来の一覧表示保持はカメラロールの検証対象。
+- Pixel実機、実DNG/原寸保存、保存公開後の外部viewer、全mode/phaseの実入力による組合せは未確認。AVDの合成状態検査を実機操作・24MP保存・RAW性能の合格に読み替えない。
