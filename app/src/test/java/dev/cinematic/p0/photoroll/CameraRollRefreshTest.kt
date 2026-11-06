@@ -16,6 +16,6 @@ class CameraRollRefreshTest {
         assertFalse(canKeepCameraRollTiles(null, 3, first, 3))
         assertFalse(canKeepCameraRollTiles(first, 3, first, 4))
         assertFalse(canKeepCameraRollTiles(first, 3, first.copy(folderKey = "new"), 3))
-        assertFalse(canKeepCameraRollTiles(first, 3, first.copy(kindFilter = PhotoRollKindFilter.VIDEO), 3))
+        assertFalse(canKeepCameraRollTiles(first, 3, first.copy(kindFilter = PhotoRollKindFilter.VIDEOS), 3))
     }
 }
