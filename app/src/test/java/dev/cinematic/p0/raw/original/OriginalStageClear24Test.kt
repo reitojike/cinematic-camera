@@ -2,6 +2,10 @@ package dev.cinematic.p0.raw.original
 
 import dev.cinematic.p0.raw.*
 import java.nio.file.Files
+import java.io.IOException
+import java.util.concurrent.CancellationException
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Assert.*
 import org.junit.Test
 import kotlin.math.*
@@ -20,6 +24,66 @@ class OriginalStageClear24Test {
         assertEquals(expected.size, actual.size)
         val error = expected.indices.maxOf { abs(expected[it] - actual[it]).toDouble() }
         assertTrue("$label maximum error $error", error <= 0.00003)
+    }
+
+    @Test fun emptyFaceCharacterWorkersMatchSerialFloatBitsAndCustomMaskStaysOnCaller() {
+        for ((width, height) in listOf(48 to 32, 174 to 116)) for (strength in listOf(0.0, .5, 1.0)) {
+            val rgb = FloatArray(width * height * 3) { i -> (((i * 37L) % 4096) / 2048f) - .05f }
+            fun render(workers: Int, faces: OriginalMask): Pair<FloatArray, Double> {
+                val root = Files.createTempDirectory("original-character-rows").toFile()
+                val work = OriginalRasterWorkspace(root.resolve("attempt"))
+                try {
+                    val result = OriginalStageClear24(work, parallelCharacterWorkers = workers)
+                        .render(MemoryRaster(width, height, rgb), .23, strength, faces = faces)
+                    return pixels(result.raster) to result.faceCutFactor
+                } finally { work.disposeConfirmed(); check(root.delete()) }
+            }
+            val serial = render(1, OriginalMask.NONE)
+            val parallel = render(2, OriginalMask.NONE)
+            assertEquals(serial.second, parallel.second, 0.0)
+            serial.first.indices.forEach { i ->
+                assertEquals("$width/$height/$strength sample $i", serial.first[i].toRawBits(), parallel.first[i].toRawBits())
+            }
+            if (width == 48 && strength == .5) {
+                val caller = Thread.currentThread()
+                val custom = render(2, OriginalMask { _, row ->
+                    assertSame("custom face callback must stay on the caller", caller, Thread.currentThread())
+                    row.fill(0f)
+                })
+                assertEquals(serial.second, custom.second, 0.0)
+                serial.first.indices.forEach { i -> assertEquals(serial.first[i].toRawBits(), custom.first[i].toRawBits()) }
+            }
+        }
+    }
+
+    @Test fun emptyFaceCharacterWorkerCancellationAndFailureCloseOwners() {
+        for (mode in listOf("cancel", "failure")) {
+            val width = 48; val height = 32
+            val rgb = FloatArray(width * height * 3) { i -> (((i * 37L) % 4096) / 2048f) - .05f }
+            val root = Files.createTempDirectory("original-character-stop").toFile()
+            val work = OriginalRasterWorkspace(root.resolve("attempt"))
+            val armed = AtomicBoolean(false)
+            val calls = AtomicInteger()
+            val cancelled = AtomicBoolean(false)
+            val fault = IOException("synthetic Character worker failure")
+            val stop = {
+                if (armed.get() && Thread.currentThread().name == "original-r7-row" && calls.incrementAndGet() == 5) {
+                    if (mode == "failure") throw fault else cancelled.set(true)
+                }
+                cancelled.get()
+            }
+            try {
+                if (mode == "cancel") assertThrows(CancellationException::class.java) {
+                    OriginalStageClear24(work, parallelCharacterWorkers = 2).render(MemoryRaster(width, height, rgb), .23, .5, stop = stop,
+                        stage = { name, _ -> if (name == "orton") armed.set(true) })
+                } else assertSame(fault, assertThrows(IOException::class.java) {
+                    OriginalStageClear24(work, parallelCharacterWorkers = 2).render(MemoryRaster(width, height, rgb), .23, .5, stop = stop,
+                        stage = { name, _ -> if (name == "orton") armed.set(true) })
+                })
+                assertTrue("Character worker did not reach its checkpoints", calls.get() >= 5)
+                assertFalse(work.hasPendingOwners)
+            } finally { work.closePending(); work.disposeConfirmed(); check(root.delete()) }
+        }
     }
 
     @Test fun diskRowsMatchR7AndAllLookStagesWithoutPerTileStatistics() {

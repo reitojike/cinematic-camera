@@ -14,7 +14,8 @@ internal fun interface OriginalMask { fun row(y: Int, weights: FloatArray)
  * Returns pixels only: neither verified input/face/AE metadata nor CompletedRender/publication authority. */
 internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, private val trace: OriginalStageTrace? = null,
     private val parallelOrtonWorkers: Int = 1,
-    private val ortonRowProbe: ((Int) -> Unit)? = null) {
+    private val ortonRowProbe: ((Int) -> Unit)? = null,
+    private val parallelCharacterWorkers: Int = 1) {
     private val luma = StageClearV1.LUMA
     private fun y(row: FloatArray, i: Int) = row[i] * luma[0] + row[i + 1] * luma[1] + row[i + 2] * luma[2]
     private fun image(width: Int, row: FloatArray) = LinearSrgbImage.takeOwnership(width, 1, row)
@@ -104,17 +105,34 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, p
             val aspect = width.toDouble() / height
             val xx = FloatArray(width) { ((it.toFloat() + .5f) / width * 2f - 1f) * min(aspect, 1.0).toFloat() }
             val faceRow = FloatArray(width)
-            val result = originalStage(trace, OriginalStage.CHARACTER_CAP) { work.map(current, stop) { yy, row ->
+            // Only the built-in empty mask is stateless and safe to invoke from row workers.
+            // Caller-supplied masks stay serial because their callbacks may own mutable state.
+            require(parallelCharacterWorkers in 1..2)
+            val parallelCharacter = parallelCharacterWorkers > 1 && faces === OriginalMask.NONE
+            val workerFaceRows = if (parallelCharacter) ThreadLocal.withInitial { FloatArray(width) } else null
+            val workerStop = { stop() || Thread.currentThread().isInterrupted }
+            val characterRow: (Int, FloatArray) -> FloatArray = { yy, row ->
+                if (parallelCharacter) originalCheckpoint(workerStop)
                 val py = ((yy.toFloat() + .5f) / height * 2f - 1f) / max(aspect, 1.0).toFloat()
                 val vignette = FloatArray(row.size) { i ->
+                    if (parallelCharacter && i % 192 == 0) originalCheckpoint(workerStop)
                     val radius = sqrt(xx[i / 3] * xx[i / 3] + py * py)
                     val t = ((radius - .45f) / .9f).coerceIn(0f, 1f)
                     row[i] * (1f - (StageClearCharacterV1.VIGNETTE * strength).toFloat() * t * t * (3f - 2f * t))
                 }
+                if (parallelCharacter) originalCheckpoint(workerStop)
                 val vibrant = StageClearCharacter.vibrance(image(width, vignette), StageClearCharacterV1.VIBRANCE * strength)
-                faces.row(yy, faceRow); checkMask(faceRow)
-                values(StageClearProtections.skinChromaCap(vibrant, FaceMask(width, 1, faceRow)))
-            } }
+                if (parallelCharacter) originalCheckpoint(workerStop)
+                val maskRow = workerFaceRows?.get() ?: faceRow
+                faces.row(yy, maskRow); checkMask(maskRow)
+                val output = values(StageClearProtections.skinChromaCap(vibrant, FaceMask(width, 1, maskRow)))
+                if (parallelCharacter) originalCheckpoint(workerStop)
+                output
+            }
+            val result = originalStage(trace, OriginalStage.CHARACTER_CAP) {
+                if (parallelCharacter) work.mapParallelRows(current, stop, parallelCharacterWorkers, characterRow)
+                else work.map(current, stop, characterRow)
+            }
             if (current !== source) work.release(current)
             return emit("character_cap", result)
         }
