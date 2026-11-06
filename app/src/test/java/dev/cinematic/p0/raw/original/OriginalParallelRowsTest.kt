@@ -5,11 +5,37 @@ import dev.cinematic.p0.raw.R7Base
 import java.nio.file.Files
 import java.io.IOException
 import java.util.concurrent.CancellationException
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.*
 import org.junit.Test
 
 class OriginalParallelRowsTest {
+    private fun assertOwnWorkersStopped(workers: Set<Thread>) {
+        // awaitTermination acknowledges executor state before Java Thread.run has necessarily
+        // returned. Join only this invocation's workers with a total five-second test bound.
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        workers.forEach { worker ->
+            val remaining = deadline - System.nanoTime()
+            if (remaining <= 0) fail("Timed out waiting for owned row worker ${describe(worker)}")
+            worker.join(TimeUnit.NANOSECONDS.toMillis(remaining) + 1)
+            if (worker.isAlive) fail("Owned row worker remains alive: ${describe(worker)}")
+        }
+    }
+
+    private fun describe(worker: Thread) =
+        "id=${worker.id} name=${worker.name} state=${worker.state} stack=${worker.stackTrace.take(8).joinToString()}"
+
+    private fun awaitIgnoringInterrupt(release: CountDownLatch) {
+        while (release.count != 0L) {
+            try { release.await() } catch (_: InterruptedException) { /* Deliberately non-cooperative worker. */ }
+        }
+    }
+
     private class ReusedRows(override val width: Int, override val height: Int) : OriginalRaster {
         override fun rows(stop: () -> Boolean, consume: (Int, FloatArray) -> Unit) {
             val borrowed = FloatArray(width * 3)
@@ -107,15 +133,20 @@ class OriginalParallelRowsTest {
                 val input = ReusedRows(27, 15)
                 val checks = AtomicInteger()
                 val active = AtomicInteger()
+                val workers = ConcurrentHashMap.newKeySet<Thread>()
                 val stop = { mode == "cancel" && checks.incrementAndGet() > 6 }
                 if (mode == "cancel") {
                     assertThrows(CancellationException::class.java) {
-                        work.mapParallelRows(input, stop) { _, row -> row.copyOf() }
+                        work.mapParallelRows(input, stop) { _, row ->
+                            workers.add(Thread.currentThread())
+                            row.copyOf()
+                        }
                     }
                 } else {
                     val expected = if (mode == "transform") IllegalStateException::class.java else IllegalArgumentException::class.java
                     val error = assertThrows(expected) {
                         work.mapParallelRows(input, stop) { y, row ->
+                            workers.add(Thread.currentThread())
                             active.incrementAndGet()
                             try {
                                 if (mode == "transform" && y == 2) throw IllegalStateException("synthetic row fault")
@@ -128,11 +159,152 @@ class OriginalParallelRowsTest {
                 }
                 assertFalse(work.hasPendingOwners)
                 assertEquals(0, active.get())
-                assertFalse(Thread.getAllStackTraces().keys.any { it.isAlive && it.name == "original-r7-row" })
+                assertOwnWorkersStopped(workers)
             } finally {
                 work.disposeConfirmed()
                 assertTrue(root.delete())
             }
+        }
+    }
+
+    @Test fun oneAttemptCanCloseWhileAnotherOwnsAnAliveRowWorker() {
+        val root = Files.createTempDirectory("original-parallel-peer").toFile()
+        val own = OriginalRasterWorkspace(root.resolve("own"))
+        val peer = OriginalRasterWorkspace(root.resolve("peer"))
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val peerWorker = AtomicReference<Thread>()
+        val ownWorkers = ConcurrentHashMap.newKeySet<Thread>()
+        val caller = Executors.newSingleThreadExecutor()
+        try {
+            val peerResult = caller.submit {
+                peer.mapParallelRows(ReusedRows(27, 15), { false }) { y, row ->
+                    if (y == 0) {
+                        peerWorker.set(Thread.currentThread()); started.countDown()
+                        check(release.await(10, TimeUnit.SECONDS))
+                    }
+                    row.copyOf()
+                }
+            }
+            assertTrue(started.await(5, TimeUnit.SECONDS))
+            own.mapParallelRows(ReusedRows(27, 15), { false }) { _, row ->
+                ownWorkers.add(Thread.currentThread()); row.copyOf()
+            }
+            assertTrue(ownWorkers.isNotEmpty())
+            assertOwnWorkersStopped(ownWorkers)
+            assertTrue("the separate attempt legitimately still owns a worker", peerWorker.get().isAlive)
+            release.countDown()
+            peerResult.get(5, TimeUnit.SECONDS)
+            assertOwnWorkersStopped(setOf(peerWorker.get()))
+        } finally {
+            release.countDown()
+            caller.shutdownNow()
+            assertTrue(caller.awaitTermination(10, TimeUnit.SECONDS))
+            own.disposeConfirmed(); peer.disposeConfirmed()
+            assertTrue(root.delete())
+        }
+    }
+
+    @Test fun executorTerminationCanPrecedeJavaThreadExit() {
+        val afterExecutor = CountDownLatch(1)
+        val releaseThread = CountDownLatch(1)
+        val worker = AtomicReference<Thread>()
+        val executor = Executors.newSingleThreadExecutor { task ->
+            object : Thread(task, "executor-termination-witness") {
+                override fun run() {
+                    super.run()
+                    afterExecutor.countDown()
+                    releaseThread.await(5, TimeUnit.SECONDS)
+                }
+            }.also(worker::set)
+        }
+        try {
+            executor.submit {}.get(5, TimeUnit.SECONDS)
+            executor.shutdown()
+            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS))
+            assertTrue(afterExecutor.await(5, TimeUnit.SECONDS))
+            assertTrue("TERMINATED does not join the Java worker", worker.get().isAlive)
+        } finally {
+            releaseThread.countDown()
+            executor.shutdownNow()
+            worker.get()?.join(5000)
+        }
+        assertFalse(worker.get().isAlive)
+    }
+
+    @Test fun timedOutWorkerRemainsOwnedUntilRetryConfirmsTermination() {
+        val root = Files.createTempDirectory("original-worker-timeout").toFile()
+        val work = OriginalRasterWorkspace(root.resolve("attempt"))
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val input = object : OriginalRaster {
+            override val width = 1
+            override val height = 1
+            override fun rows(stop: () -> Boolean, consume: (Int, FloatArray) -> Unit) {
+                consume(0, floatArrayOf(.2f, .3f, .4f))
+                assertTrue(started.await(5, TimeUnit.SECONDS))
+                throw IllegalStateException("synthetic source failure")
+            }
+        }
+        try {
+            val error = assertThrows(IllegalStateException::class.java) {
+                work.mapParallelRows(input, { false }) { _, row ->
+                    started.countDown()
+                    awaitIgnoringInterrupt(release)
+                    row
+                }
+            }
+            assertEquals("synthetic source failure", error.message)
+            assertTrue(error.suppressed.any { it is IOException && it.message == "Original row workers did not stop" })
+            assertTrue("unfinished executor must retain admission ownership", work.hasPendingOwners)
+            assertThrows(IllegalStateException::class.java) { work.disposeConfirmed() }
+        } finally {
+            release.countDown()
+            work.closePending()
+            assertFalse(work.hasPendingOwners)
+            work.disposeConfirmed()
+            assertTrue(root.delete())
+        }
+    }
+
+    @Test fun interruptedCallerRetainsWorkerOwnerAndInterruptStatusUntilRetry() {
+        val root = Files.createTempDirectory("original-worker-interrupt").toFile()
+        val work = OriginalRasterWorkspace(root.resolve("attempt"))
+        val started = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val error = AtomicReference<Throwable>()
+        val interrupted = AtomicReference<Boolean>()
+        val caller = Thread {
+            try {
+                work.mapParallelRows(ReusedRows(1, 8), { false }) { y, row ->
+                    if (y == 0) {
+                        started.countDown()
+                        awaitIgnoringInterrupt(release)
+                    }
+                    row
+                }
+            } catch (failure: Throwable) {
+                error.set(failure)
+                interrupted.set(Thread.currentThread().isInterrupted)
+            }
+        }
+        try {
+            caller.start()
+            assertTrue(started.await(5, TimeUnit.SECONDS))
+            caller.interrupt()
+            caller.join(5_000)
+            assertFalse("caller must return while its worker remains blocked", caller.isAlive)
+            assertTrue(error.get() is InterruptedException)
+            assertEquals(true, interrupted.get())
+            assertTrue("unfinished executor must retain admission ownership", work.hasPendingOwners)
+            assertThrows(IllegalStateException::class.java) { work.disposeConfirmed() }
+        } finally {
+            release.countDown()
+            caller.join(5_000)
+            work.closePending()
+            assertFalse(work.hasPendingOwners)
+            work.disposeConfirmed()
+            assertTrue(root.delete())
         }
     }
 
