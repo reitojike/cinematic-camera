@@ -109,6 +109,31 @@ class ForegroundExportServiceTest {
         } finally { stopAndClose(work) }
     }
 
+    @Test fun completedFutureWithUnclosedProducerRetainsHoldAndRejectsNextSave() = withForeground {
+        val work = Work()
+        try {
+            begin(work)
+            assertTrue(work.started.await(10, TimeUnit.SECONDS))
+            // A returned future is not evidence that the producer's retained workers terminated.
+            work.result.completeExceptionally(IOException("synthetic worker termination unconfirmed"))
+            assertTrue(work.ended.await(10, TimeUnit.SECONDS))
+            val held = requireNotNull(ForegroundExports.gate.active())
+            assertTrue(held.held)
+            assertSame(work, held.value)
+            assertFalse(ForegroundExports.start(context, Work(), safe()))
+            work.resourcesClosed = true
+            assertSame(held, ForegroundExports.gate.active()) // No automatic restart/release on a later flag change.
+        } finally {
+            stopAndClose(work)
+            // Fixture teardown only: the fake producer has positively closed. Do not clear other work.
+            ForegroundExports.gate.active()?.takeIf { it.value === work }?.let {
+                check(work.resourcesClosed)
+                check(ForegroundExports.gate.finish(it, true))
+                ForegroundExports.changed()
+            }
+        }
+    }
+
     @Test fun stoppedServiceKeepsOwnershipUntilLateWorkerCompletion() = withForeground {
         val work = Work()
         try {

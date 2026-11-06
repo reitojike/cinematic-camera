@@ -262,3 +262,5 @@ STILLの明示opt-in固定pair、Builder単発設定とruntime preview補償、�
 - UI案内を対応ownerだけに限定した後の最終ローカル検証でも、app lintDebug / testDebugUnitTest / assembleDebugが成功。120 suites / 856 tests、failure/error 0、skip 4。合成Android4件はこの表示判定だけを追加する前の同じService実装で実施した。
 - 追加の実保存統合はAPI37専用AVD（2core/2GiB）、生成した32×24 DNGで2件成功（cleanup補正後8.693秒）。実handle・既存queue・native現像・journal・MediaStore公開を通し、Activity停止後の同一source/recipe/強度/WB/EV、公開JPEG hash、1件公開、再照合時の重複なし、原本hash維持を確認。撮影予約でqueue受付前に停止した場合はintent/JPEGとも未生成。初期UI資源値は制御値、Serviceとnativeの資源検査は実観測を使用した。
 - 試験fixtureはprepare/recheck Futureを保持し、実完了とService gate・handleの解放後だけ自身の合成行を削除する。未確認なら素材を保持し同一suiteの後続試験を停止。Composeボタン経由、実写真、API29–36、OS timeout/process death統合はこの追加試験の対象外。
+- main 9f70ab5（#180 worker所有追跡修正）を取り込み、app build/AndroidTest buildと全unit 120 suites / 860 testsが成功（failure/error 0、skip 4）。独立レビューでworkspace worker所有状態がFGSまで伝わることを確認した。
+- 同baseのAPI37合成回帰はService5件＋実owner2件の計7件成功（109.636秒）。追加試験はFuture完了後もproducer未解放ならHOLDを保持し後続保存を拒否する境界を確認する。実workerのtimeout/割込処理は#180の実装・試験を再利用し、Service側にworker管理を追加していない。

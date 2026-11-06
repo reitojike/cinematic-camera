@@ -11,6 +11,8 @@ capture予約は従来どおり停止をラッチする。owner cleanup finally�
 撮影優先は既存の非同期停止要求による。native/workerの即時停止は保証せず、回収中の短い資源重複まで不存在とは主張しない。
 撮影を保存完了待ちでブロックする変更や、意図的に撮影と保存を同時進行させる機能は追加しない。
 Service timeoutは即時stopSelfし、残るprocess workerは同じgate/handleで保持する。onDestroyやfuture取消でgateを解放しない。
+資源解放はOriginal24Attemptのworkspace/file/worker所有状態まで含む。#180のretained executor ownerを再利用し、
+worker終了待ちtimeout・割込をfile closeだけで解放扱いにしない。Serviceに別のworker管理を追加しない。
 
 PhotoRollResourceObserverのserviceOwnedモードはActivityの観測authorityを奪わず、専用callbackへ実測値を渡す。
 未知の観測は許可に変換しない。初期観測は短い有界待機後に失敗し、intentを書き込む前に停止できる。

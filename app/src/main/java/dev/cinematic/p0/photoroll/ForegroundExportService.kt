@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.update
 internal interface ForegroundExportWork {
     val identity: Any
     fun reserveForeground(conditions: AutoDevelopConditions): Boolean
+    /** All producer owners, including retained row executors; closed files alone are insufficient. */
     val resourcesClosed: Boolean
     fun advance(conditions: () -> AutoDevelopConditions, stop: () -> Boolean): CompletableFuture<Unit>
     fun observe(conditions: AutoDevelopConditions)
