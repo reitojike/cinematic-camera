@@ -251,3 +251,12 @@ STILLの明示opt-in固定pair、Builder単発設定とruntime preview補償、�
 - API要求・受付履歴・直近実測、ISO/SS source/観測期限、能力/ログをタブに移し、SelectionContainerと元データ・操作guardを保持。RAW/保存処理には変更なし。
 
 - 診断の短辺対策は344×412dp相当・fontScale 1.3の専用AVDで、全体scrollにより制御表と観測sourceへ到達できることを確認。高さ320dp/横長/幅320dp/文字2倍の選択条件をunitで確認。実機の分割画面は未確認。
+
+## 前景開始した単一保存のServiceホスト（spec043、UI接続前）
+
+- 対象は同一process内のsave handle/単回受付/資源観測/Serviceライフサイクル。画像処理とjournalは既存ownerを使用する。保存ボタンとの接続は未完了で、製品機能全体の合格ではない。
+- 関連JVM試験41件成功（type 1、表示owner 2、coordinator 10、export受付 7、gate 4、既存save owner/journal 17）。lintDebug、assembleDebug、assembleDebugAndroidTest成功。全unitと最終統合head CIは別途必要。
+- API37専用AVDの合成Service試験4件が68.57秒で成功。通知拒否時の開始、Activity停止後の継続、取消配達後の実解放待ち/次保存、失敗時の解放、Service破棄後の遅延完了を確認。写真・公開MediaStore行は使用しないfake workであり、画像処理の速度や画質を評価しない。
+- 初回はAVDの旧CI版とローカル版のversionCode不整合でアプリ更新が拒否され、試験初期化が失敗した。専用AVDのデバッグAPKを揃えた後の上記4件を有効な結果とする。
+- API33/34の実行、OS時間制限、process deathからの端末統合復旧、Pixel・12MP/24MP・実際の通知描画と操作は未確認。Service停止試験をOS timeoutや実native処理の即時停止保証へ読み替えない。停止要求後も実解放未確認なら単一slotを保持する。
+- UI案内を対応ownerだけに限定した後の最終ローカル検証でも、app lintDebug / testDebugUnitTest / assembleDebugが成功。120 suites / 856 tests、failure/error 0、skip 4。合成Android4件はこの表示判定だけを追加する前の同じService実装で実施した。

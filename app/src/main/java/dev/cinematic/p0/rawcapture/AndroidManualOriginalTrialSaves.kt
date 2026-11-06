@@ -278,7 +278,24 @@ internal object AndroidManualOriginalTrialSaves {
         fun matches(source: SharedOriginalReference) = owner.matches(source)
         val hasUnreleasedResources get() = owner.hasUnreleasedResources
         @Volatile private var slot: AutoDevelopCoordinator.Attempt? = null // Written by IO; stop reads identity only.
-        fun advance(conditions: AutoDevelopConditions, stop: () -> Boolean): CompletableFuture<ManualOriginalTrialSaveState> = queue.manualOriginalIo {
+        fun advance(conditions: AutoDevelopConditions, stop: () -> Boolean): CompletableFuture<ManualOriginalTrialSaveState> =
+            advanceOwned({ conditions }, null, stop)
+
+        /** Same owner, journal, queue and slot; only a foreground-started service uses this entry. */
+        fun reserveForegroundExport(conditions: AutoDevelopConditions) = DevelopExecution.reserveForegroundExport(this, conditions)
+        fun advanceForegroundExport(request: AutoDevelopCoordinator.ForegroundExportRequest,
+            conditions: () -> AutoDevelopConditions, stop: () -> Boolean) = advanceOwned(conditions, request, stop)
+        fun stopForegroundExport(request: AutoDevelopCoordinator.ForegroundExportRequest) {
+            DevelopExecution.stopForegroundExport(request); requestStop()
+        }
+        fun abandonForegroundExport(request: AutoDevelopCoordinator.ForegroundExportRequest) = DevelopExecution.abandonForegroundExport(request)
+
+        fun updateExportConditions(conditions: AutoDevelopConditions) {
+            slot?.let { DevelopExecution.updateExportConditions(it, conditions) }
+        }
+
+        private fun advanceOwned(conditions: () -> AutoDevelopConditions, foregroundExport: AutoDevelopCoordinator.ForegroundExportRequest?,
+            stop: () -> Boolean): CompletableFuture<ManualOriginalTrialSaveState> = queue.manualOriginalIo {
             if (slot != null) {
                 owner.releaseResources()
                 if (hasUnreleasedResources) throw IOException("Trial resources remain held")
@@ -287,7 +304,9 @@ internal object AndroidManualOriginalTrialSaves {
             if (stop()) throw java.util.concurrent.CancellationException("Trial save stopped before admission")
             if (!revalidate()) throw CaptureJournalConflict()
             previewAuthority?.discardPreview(); previewAuthority = null
-            val admitted = DevelopExecution.tryStartObserved(conditions)
+            val observed = conditions()
+            val admitted = (if (foregroundExport != null) DevelopExecution.tryStartForegroundExport(foregroundExport, this, observed)
+                else DevelopExecution.tryStartObserved(observed))
                 ?: throw IOException("Trial save admission blocked")
             slot = admitted
             DevelopExecution.registerStop(admitted, backend::requestStop)
