@@ -1,0 +1,3 @@
+# UI contract
+
+表示層だけを変更する。編集の入力tokenとsessionを保持し、未反映の値を表示済みと扱わない。保存はowner/ticketの既存guardを唯一の可否根拠とし、見た目のSAVING/PUBLISHEDから操作許可を推測しない。写真/診断ログのモック値を固定しない。

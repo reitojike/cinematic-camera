@@ -337,19 +337,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
     }
 
     Surface(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = if (selectedUri == null) 0.dp else 16.dp)) {
-            if (selectedUri != null) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { if (selectedUri != null) backToList() else closeRoll() }) { Text(if (selectedUri == null) "撮影へ" else "一覧へ") }
-                Text(if (selectedUri == null) "カメラロール" else when (renderer.mode) {
-                    PhotoRollPreviewMode.MANUAL_TRIAL -> "DNG試験現像"
-                    PhotoRollPreviewMode.DNG_TRIAL -> "DNG試験表示"
-                    PhotoRollPreviewMode.STAGE_CLEAR_TRIAL -> "Stage Clear試験"
-                    PhotoRollPreviewMode.PRIVATE_TRIAL -> "縮小試験JPEG"
-                    PhotoRollPreviewMode.STAGE_CLEAR -> "DNG現像"
-                }, style = MaterialTheme.typography.titleLarge)
-            }
-            }
+        Column(Modifier.fillMaxSize().safeDrawingPadding()) {
             if (selectedUri == null) {
                 CameraRollBrowser(listing, access, kindFilter, folderKey, loading, viewerPending, notice, renderer.mode,
                     foreground && !viewerPending && !permissionPending,
@@ -396,69 +384,10 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                     }
                 }
 
-            } else if (strengthEditable && trialEditor.session != null) {
-                TrialStrengthEditorPane(trialEditor, { trialEditor }, foreground, selection.phase, renderStage, selection.message,
-                    preview, comparison, comparisonLabel,
-                    change = { token, parameter, value -> trialEditor = trialEditor.change(token, parameter, value) },
-                    reset = ::resetTrialEdit,
-                    apply = { token -> updateTrialEditor(trialEditor.apply(token)) },
-                    cancel = ::cancelTrialEdit,
-                    close = { token -> trialEditor = trialEditor.close(token) },
-                    retry = { explicitRetry = true; retry++ },
-                    saveable = saveableMode,
-                    trialQuality = renderer.mode == PhotoRollPreviewMode.MANUAL_TRIAL,
-                    adjustments = manualTrial,
-                    modifier = Modifier.weight(1f))
             } else {
-                // The details can exceed the viewport in landscape or at larger font sizes.
-                // Give the preview a useful bounded height and keep the save actions scrollable.
-                BoxWithConstraints(Modifier.weight(1f)) {
-                    val imageHeight = (maxHeight * .46f).coerceIn(220.dp, 440.dp)
-                    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-                val status = when (selection.phase) {
-                    PhotoRollPhase.CHECKING -> "原本を確認中…"
-                    PhotoRollPhase.RENDERING -> renderStage?.label ?: "DNGを処理中…"
-                    PhotoRollPhase.DISPLAYED -> when (renderer.mode) {
-                        PhotoRollPreviewMode.MANUAL_TRIAL -> "試験品質JPEG・手動保存"
-                        PhotoRollPreviewMode.DNG_TRIAL -> "試験表示 · ルック未適用"
-                        PhotoRollPreviewMode.STAGE_CLEAR_TRIAL -> "Stage Clear試験 · 顔保護なし"
-                        PhotoRollPreviewMode.PRIVATE_TRIAL -> "縮小試験JPEG · 顔保護なし"
-                        PhotoRollPreviewMode.STAGE_CLEAR -> "表示用の現像結果"
-                    }
-                    PhotoRollPhase.BLOCKED -> "現像を開始・完了できません"
-                    PhotoRollPhase.PAUSED -> "処理を中断しました"
-                    PhotoRollPhase.EMPTY -> "原本の確認待ち"
-                }
-                Text(status, Modifier.semantics { liveRegion = LiveRegionMode.Polite }, style = MaterialTheme.typography.titleMedium)
-                if (manualTrial && selection.phase == PhotoRollPhase.DISPLAYED) Text(String.format(Locale.ROOT,
-                    "強度 %s・相対色温度 %+.0f・明るさ %+.1f EV",
-                    trialStrengthLabel(trialEditor.requestedStrength), trialEditor.requestedValues.temperature ?: 0.0,
-                    trialEditor.requestedValues.brightness ?: 0.0), style = MaterialTheme.typography.bodySmall)
-                if (selection.phase in setOf(PhotoRollPhase.CHECKING, PhotoRollPhase.RENDERING)) LinearProgressIndicator(Modifier.fillMaxWidth())
-                selection.message?.let { Text(it, Modifier.padding(vertical = 12.dp)) }
-                val image = preview
-                if (image != null && selection.phase == PhotoRollPhase.DISPLAYED && strengthEditable)
-                    PhotoRollComparisonImage(image, comparison, foreground,
-                        if (renderer.mode == PhotoRollPreviewMode.MANUAL_TRIAL) "保存前の縮小プレビュー（顔保護なし・暫定色）"
-                        else if (renderer.mode == PhotoRollPreviewMode.STAGE_CLEAR) "現像結果（表示用）"
-                        else "縮小試験JPEG（顔保護なし、診断露出・暫定色）", comparisonLabel,
-                        Modifier.fillMaxWidth().height(imageHeight))
-                else if (image != null && selection.phase == PhotoRollPhase.DISPLAYED) Image(image.asImageBitmap(), when (renderer.mode) {
-                    PhotoRollPreviewMode.MANUAL_TRIAL -> "保存前の縮小プレビュー（顔保護なし・暫定色）"
-                    PhotoRollPreviewMode.DNG_TRIAL -> "DNGの試験表示（ルック未適用）"
-                    PhotoRollPreviewMode.STAGE_CLEAR_TRIAL -> "Stage Clearの試験表示（顔保護なし、色と明るさは暫定）"
-                    PhotoRollPreviewMode.PRIVATE_TRIAL -> "縮小試験JPEG（顔保護なし、診断露出・暫定色）"
-                    PhotoRollPreviewMode.STAGE_CLEAR -> "現像結果（表示用）"
-                },
-                    Modifier.fillMaxWidth().height(imageHeight), contentScale = ContentScale.Fit)
-                else Spacer(Modifier.height(imageHeight))
-                if (selection.phase == PhotoRollPhase.DISPLAYED) {
-                    if (strengthEditable) TextButton(enabled = canBeginStrengthEdit(renderer.mode, foreground, savePending, saveSnapshot?.phase),
-                        onClick = { trialEditor = trialEditor.begin(tapStep = .01, adjustments = manualTrial) }) {
-                            Text(if (manualTrial) "強度・色・明るさを試す" else if (renderer.mode == PhotoRollPreviewMode.STAGE_CLEAR) "強度を調整" else "強度を試す") }
-                    val owner = jpegSave
-                    val saved = saveSnapshot
-                    Text(if (owner == null) unavailableJpegSaveMessage(renderer.mode)
+                val owner = jpegSave
+                val saved = saveSnapshot
+                val saveDescription = if (owner == null) unavailableJpegSaveMessage(renderer.mode)
                         else if (renderer.mode == PhotoRollPreviewMode.MANUAL_TRIAL) when {
                             savePending || saved?.phase == PhotoRollSavePhase.SAVING -> "試験品質JPEGの手動保存を確認中…"
                             saved?.phase == PhotoRollSavePhase.READY -> "試験品質の原寸JPEGを生成して手動保存します。顔保護なし・診断露出・暫定色です。24MP以下の対応DNGのみ利用できます"
@@ -473,14 +402,25 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                         PhotoRollSavePhase.UNCONFIRMED -> "保存結果を確認できません。同じ保存操作を再照合します。別のJPEGは作り直しません"
                         PhotoRollSavePhase.HOLD -> "保存先の状態を判断できないため停止しました。保存済みとは扱いません"
                         null -> "JPEG保存の準備を確認できません"
-                    }, style = MaterialTheme.typography.bodySmall)
-                    TextButton(enabled = foreground && !savePending && owner != null && saved?.phase in setOf(
-                        PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED, PhotoRollSavePhase.UNCONFIRMED),
-                        onClick = {
+                    }
+                PhotoRollDevelopView(
+                    name = listing.items.firstOrNull { it.uri == selectedUri }?.name ?: "DNG（名前未取得）",
+                    mode = renderer.mode, state = trialEditor, readState = { trialEditor }, phase = selection.phase,
+                    stage = renderStage, message = notice ?: selection.message, preview = preview, comparison = comparison,
+                    comparisonLabel = comparisonLabel, foreground = foreground, savePhase = saved?.phase, savePending = savePending,
+                    saveEnabled = foreground && trialEditor.session == null && selection.phase == PhotoRollPhase.DISPLAYED && !savePending && owner != null &&
+                        saved?.phase in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED, PhotoRollSavePhase.UNCONFIRMED),
+                    beginEnabled = strengthEditable && selection.phase == PhotoRollPhase.DISPLAYED && canBeginStrengthEdit(renderer.mode, foreground, savePending, saved?.phase),
+                    begin = { trialEditor = trialEditor.begin(tapStep = .01, adjustments = manualTrial) },
+                    back = ::backToList, retry = { explicitRetry = true; retry++ },
+                    change = { token, parameter, value -> trialEditor = trialEditor.change(token, parameter, value) },
+                    reset = ::resetTrialEdit, apply = { token -> updateTrialEditor(trialEditor.apply(token)) },
+                    cancel = ::cancelTrialEdit, close = { token -> trialEditor = trialEditor.close(token) },
+                    modifier = Modifier.weight(1f), save = saveAction@{
                             if (savePending || saveSnapshot?.phase !in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED,
-                                    PhotoRollSavePhase.UNCONFIRMED)) return@TextButton
-                            val operation = jpegSave ?: return@TextButton
-                            val ticket = selection.ticket ?: return@TextButton
+                                    PhotoRollSavePhase.UNCONFIRMED)) return@saveAction
+                            val operation = jpegSave ?: return@saveAction
+                            val ticket = selection.ticket ?: return@saveAction
                             val openAfterCheck = saveSnapshot?.phase == PhotoRollSavePhase.PUBLISHED
                             val cancellation = CancellationSignal()
                             cancellationOwner.begin(cancellation)
@@ -505,21 +445,16 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                                     cancellationOwner.finish(cancellation)
                                 }
                             }
-                        }) { Text(if (savePending) "保存確認中…" else when (saved?.phase) {
-                            PhotoRollSavePhase.PUBLISHED -> if (renderer.mode == PhotoRollPreviewMode.MANUAL_TRIAL)
-                                "試験品質JPEGを開く" else "保存したJPEGを開く"
-                            PhotoRollSavePhase.UNCONFIRMED -> "同じ保存を確認"
-                            PhotoRollSavePhase.SAVING -> "保存確認中…"
-                            else -> if (renderer.mode == PhotoRollPreviewMode.MANUAL_TRIAL) "原寸の試験品質JPEGを生成・保存"
-                                else if (renderer.mode == PhotoRollPreviewMode.PRIVATE_TRIAL) "試験JPEG・共有保存なし"
-                                else if (owner == null) "JPEG保存は準備中" else "完成JPEGを保存"
-                        }) }
-                    notice?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                }
-                Text("原本は読み取り専用で参照します。コピー・上書き・公開は行いません", style = MaterialTheme.typography.bodySmall)
-                TextButton(enabled = foreground && selection.phase !in setOf(PhotoRollPhase.CHECKING, PhotoRollPhase.RENDERING),
-                    onClick = { explicitRetry = true; retry++ }) { Text("原本を確認して再試行") }
-                    }
+                    }) {
+                    Text(saveDescription, style = MaterialTheme.typography.bodySmall)
+                    Text(if (manualTrial) "試験品質です。顔保護なし・診断露出・暫定色です。24MP以下の対応DNGのみ、表示した調整値の原寸JPEGを手動保存します。"
+                        else if (renderer.mode == PhotoRollPreviewMode.PRIVATE_TRIAL) "最大1024px・顔保護なし・診断露出・暫定色の試験表示です。共有保存はできません。"
+                        else "表示と保存の確認は別です。調整はこの画面内で一時的です。", style = MaterialTheme.typography.bodySmall)
+                    trialEditor.original?.let { Text("原本確認済み: ${it.fingerprint.bytes} bytes（保存時は再確認）", style = MaterialTheme.typography.bodySmall) }
+                    Text("左右タップは1段、ドラッグは連続値、離して画像を更新します。強度0とRAW基準表示は別です。調整を閉じてから保存します。", style = MaterialTheme.typography.bodySmall)
+                    notice?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    TextButton(enabled = foreground && selection.phase !in setOf(PhotoRollPhase.CHECKING, PhotoRollPhase.RENDERING),
+                        onClick = { explicitRetry = true; retry++ }) { Text("原本を確認して再試行") }
                 }
             }
         }
