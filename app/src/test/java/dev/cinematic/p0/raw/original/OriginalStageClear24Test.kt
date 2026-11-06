@@ -74,10 +74,10 @@ class OriginalStageClear24Test {
             }
             try {
                 if (mode == "cancel") assertThrows(CancellationException::class.java) {
-                    OriginalStageClear24(work).render(MemoryRaster(width, height, rgb), .23, .5, stop = stop,
+                    OriginalStageClear24(work, parallelCharacterWorkers = 2).render(MemoryRaster(width, height, rgb), .23, .5, stop = stop,
                         stage = { name, _ -> if (name == "orton") armed.set(true) })
                 } else assertSame(fault, assertThrows(IOException::class.java) {
-                    OriginalStageClear24(work).render(MemoryRaster(width, height, rgb), .23, .5, stop = stop,
+                    OriginalStageClear24(work, parallelCharacterWorkers = 2).render(MemoryRaster(width, height, rgb), .23, .5, stop = stop,
                         stage = { name, _ -> if (name == "orton") armed.set(true) })
                 })
                 assertTrue("Character worker did not reach its checkpoints", calls.get() >= 5)

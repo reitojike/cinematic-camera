@@ -15,7 +15,7 @@ internal fun interface OriginalMask { fun row(y: Int, weights: FloatArray)
 internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, private val trace: OriginalStageTrace? = null,
     private val parallelOrtonWorkers: Int = 1,
     private val ortonRowProbe: ((Int) -> Unit)? = null,
-    private val parallelCharacterWorkers: Int = 2) {
+    private val parallelCharacterWorkers: Int = 1) {
     private val luma = StageClearV1.LUMA
     private fun y(row: FloatArray, i: Int) = row[i] * luma[0] + row[i + 1] * luma[1] + row[i + 2] * luma[2]
     private fun image(width: Int, row: FloatArray) = LinearSrgbImage.takeOwnership(width, 1, row)

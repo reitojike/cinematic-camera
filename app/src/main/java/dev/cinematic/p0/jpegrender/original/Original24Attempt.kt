@@ -123,7 +123,7 @@ internal class Original24Attempt(context: Context, private val request: Original
                     consume(y, row)
                 }
             }
-            val rendered = OriginalStageClear24(work, trace, parallelOrtonWorkers, ortonRowProbe)
+            val rendered = OriginalStageClear24(work, trace, parallelOrtonWorkers, ortonRowProbe, parallelCharacterWorkers = 2)
                 .render(adjusted, ev, request.strength, stop = stop)
             checkpoint(); Original24Resources.requireAvailable(context)
             val digest = MessageDigest.getInstance("SHA-256")
