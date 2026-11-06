@@ -1,0 +1,3 @@
+# Research / decisions
+
+PhotoEditBarは連続dragとrelease commit、相対値、session token、accessibility actionを扱う。撮影用目盛りは離散候補と即時操作が中心。共有の見た目だけでは同じ入力契約と見なせないため、要確認3はPhotoEditBar描画変更を推奨して判断を待つ。決定後も既存入力テストを維持する。

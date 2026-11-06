@@ -1,0 +1,3 @@
+# Data model
+
+新しい永続状態なし。PhotoRollSelection/Phase、PhotoRollRenderStage、TrialStrengthEditor/session/inputToken、requested/displayed values、既存SaveSnapshot/phaseを読み取る。UIだけの選択キー・情報表示開閉・比較表示は既存の画像所有権や保存権限と分離し、source URIやBitmapを複製保有しない。
