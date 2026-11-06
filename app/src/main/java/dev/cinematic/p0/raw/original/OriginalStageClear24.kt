@@ -1,6 +1,8 @@
 package dev.cinematic.p0.raw.original
 
+import android.os.Debug
 import dev.cinematic.p0.raw.*
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.*
 
 /** Spatial masks are caller-supplied observations, not detector/AE claims. Empty explicitly disables them. */
@@ -10,7 +12,9 @@ internal fun interface OriginalMask { fun row(y: Int, weights: FloatArray)
 
 /** Full-size CPU reference using private row rasters and globally shared analysis/blur fields.
  * Returns pixels only: neither verified input/face/AE metadata nor CompletedRender/publication authority. */
-internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, private val trace: OriginalStageTrace? = null) {
+internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, private val trace: OriginalStageTrace? = null,
+    private val parallelOrtonWorkers: Int = 1,
+    private val ortonRowProbe: ((Int) -> Unit)? = null) {
     private val luma = StageClearV1.LUMA
     private fun y(row: FloatArray, i: Int) = row[i] * luma[0] + row[i + 1] * luma[1] + row[i + 2] * luma[2]
     private fun image(width: Int, row: FloatArray) = LinearSrgbImage.takeOwnership(width, 1, row)
@@ -216,21 +220,40 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, p
     }
 
     private fun orton(source: OriginalRasterFile, skin: OriginalField, amount: Double, stop: () -> Boolean): OriginalRasterFile {
+        require(parallelOrtonWorkers in setOf(1, 2, 4))
         val width = source.width
-        val soft = OriginalFields.blur(source, StageClearOrtonV1.RADIUS, 3, stop) { rgb, out ->
+        val soft = originalStage(trace, OriginalStage.ORTON_FIELD) { OriginalFields.blur(source, StageClearOrtonV1.RADIUS, 3, stop) { rgb, out ->
             out.indices.forEach { i -> val inverse = 1f - StageClearColor.linearToUnit(rgb[i]); out[i] = 1f - inverse * inverse }
-        }
+        } }
         val softRow = FloatArray(width * 3); val skinRow = FloatArray(width)
-        return work.map(source, stop) { yy, rgb ->
-            soft.row(yy, softRow); skin.row(yy, skinRow)
-            val encoded = FloatArray(rgb.size) { StageClearColor.linearToUnit(rgb[it]) }
+        val workerSoftRows = if (parallelOrtonWorkers > 1) ThreadLocal.withInitial { FloatArray(width * 3) } else null
+        val workerSkinRows = if (parallelOrtonWorkers > 1) ThreadLocal.withInitial { FloatArray(width) } else null
+        // Local JVM tests have an Android Debug stub; only device diagnostics emit CPU time.
+        val pixelCpuNanos = if (trace != null && System.getProperty("java.vm.name") == "Dalvik") AtomicLong() else null
+        // A running parallel row owns only private arrays and immutable fields. Check between
+        // small pixel batches so cancellation/shutdownNow can stop siblings before cleanup.
+        val workerStop = { stop() || Thread.currentThread().isInterrupted }
+        val transform: (Int, FloatArray) -> FloatArray = { yy, rgb ->
+            ortonRowProbe?.invoke(yy)
+            if (parallelOrtonWorkers > 1) originalCheckpoint(workerStop)
+            val activeSoftRow = workerSoftRows?.get() ?: softRow
+            val activeSkinRow = workerSkinRows?.get() ?: skinRow
+            soft.row(yy, activeSoftRow); skin.row(yy, activeSkinRow)
+            if (parallelOrtonWorkers > 1) originalCheckpoint(workerStop)
+            val pixelStart = if (pixelCpuNanos != null) Debug.threadCpuTimeNanos() else 0L
+            val encoded = FloatArray(rgb.size)
+            for (i in encoded.indices) {
+                if (parallelOrtonWorkers > 1 && i % 192 == 0) originalCheckpoint(workerStop)
+                encoded[i] = StageClearColor.linearToUnit(rgb[i])
+            }
             val candidate = FloatArray(rgb.size)
             repeat(width) { p ->
+                if (parallelOrtonWorkers > 1 && p % 64 == 0) originalCheckpoint(workerStop)
                 val fade = StageClearOrton.highlightFade(y(encoded, p * 3))
                 repeat(3) { c ->
                     val i = p * 3 + c; val inverse = 1f - encoded[i]; val bright = 1f - inverse * inverse
                     val display = encoded[i] + StageClearOrtonV1.AMOUNT.toFloat() * fade *
-                        (bright * softRow[i].coerceIn(0f, 1f) - encoded[i])
+                        (bright * activeSoftRow[i].coerceIn(0f, 1f) - encoded[i])
                     val value = StageClearColor.unitToLinear(display)
                     candidate[i] = if (rgb[i] > 1f) max(rgb[i], value) else value
                 }
@@ -238,13 +261,28 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, p
             val before = image(width, rgb); val after = image(width, candidate)
             val a = FloatArray(3); val b = FloatArray(3); val orton = FloatArray(rgb.size)
             repeat(width) { p ->
+                if (parallelOrtonWorkers > 1 && p % 64 == 0) originalCheckpoint(workerStop)
                 StageClearColor.toLab(before, p * 3, a); StageClearColor.toLab(after, p * 3, b)
-                val keep = skinRow[p].coerceIn(0f, 1f)
+                val keep = activeSkinRow[p].coerceIn(0f, 1f)
                 val scale = (1f - keep) + keep * min(1f, hypot(a[1], a[2]) / max(hypot(b[1], b[2]), StageClearOrtonV1.CHROMA_FLOOR.toFloat()))
                 b[1] *= scale; b[2] *= scale
                 StageClearColor.toRgb(b, orton, p * 3)
             }
-            FloatArray(rgb.size) { i -> rgb[i] + amount.toFloat() * (orton[i] - rgb[i]) }
+            val output = FloatArray(rgb.size)
+            for (i in output.indices) {
+                if (parallelOrtonWorkers > 1 && i % 192 == 0) originalCheckpoint(workerStop)
+                output[i] = rgb[i] + amount.toFloat() * (orton[i] - rgb[i])
+            }
+            if (parallelOrtonWorkers > 1) originalCheckpoint(workerStop)
+            if (pixelCpuNanos != null) pixelCpuNanos.addAndGet(Debug.threadCpuTimeNanos() - pixelStart)
+            output
         }
+        val result = originalStage(trace, OriginalStage.ORTON_COMPOSE) {
+            if (parallelOrtonWorkers > 1) work.mapParallelRows(source, stop, parallelOrtonWorkers, transform)
+            else work.map(source, stop, transform)
+        }
+        // Diagnostic counter: sum of per-worker CPU time, not elapsed wall time or an inclusive span.
+        if (pixelCpuNanos != null) trace?.finished(OriginalStage.ORTON_PIXEL_THREAD_CPU, pixelCpuNanos.get(), true)
+        return result
     }
 }

@@ -136,7 +136,14 @@ internal class OriginalRasterWorkspace(val directory: File, private val byteBudg
     /** Opt-in for independent row transforms. Two workers and four in-flight rows bound CPU and RAM. */
     fun mapParallelRows(input: OriginalRaster, stop: () -> Boolean,
         transform: (Int, FloatArray) -> FloatArray): OriginalRasterFile =
-        map(OriginalParallelRows(input, transform), stop) { _, row -> row }
+        mapParallelRows(input, stop, 2, transform)
+
+    /** Bounded worker count for independent row transforms; reads and writes stay ordered. */
+    fun mapParallelRows(input: OriginalRaster, stop: () -> Boolean, workers: Int,
+        transform: (Int, FloatArray) -> FloatArray): OriginalRasterFile {
+        require(workers in 2..4)
+        return map(OriginalParallelRows(input, transform, workers), stop) { _, row -> row }
+    }
 
     /** Call only after the last reader's rows() has returned and acknowledged close. */
     fun release(raster: OriginalRasterFile) {
@@ -158,15 +165,17 @@ internal class OriginalRasterWorkspace(val directory: File, private val byteBudg
 private class OriginalParallelRows(
     private val input: OriginalRaster,
     private val transform: (Int, FloatArray) -> FloatArray,
+    private val workers: Int,
 ) : OriginalRaster {
     override val width get() = input.width
     override val height get() = input.height
 
     override fun rows(stop: () -> Boolean, consume: (Int, FloatArray) -> Unit) {
-        val executor = Executors.newFixedThreadPool(2) { task ->
+        val executor = Executors.newFixedThreadPool(workers) { task ->
             Thread(task, "original-r7-row").apply { isDaemon = true }
         }
-        val pending = ArrayDeque<Pair<Int, Future<FloatArray>>>(4)
+        val pendingLimit = workers * 2
+        val pending = ArrayDeque<Pair<Int, Future<FloatArray>>>(pendingLimit)
         var failure: Throwable? = null
         try {
             fun drainOne() {
@@ -180,7 +189,7 @@ private class OriginalParallelRows(
                 originalCheckpoint(stop)
                 val owned = row.copyOf()
                 pending.addLast(y to executor.submit<FloatArray> { transform(y, owned) })
-                if (pending.size == 4) drainOne()
+                if (pending.size == pendingLimit) drainOne()
             }
             while (pending.isNotEmpty()) drainOne()
         } catch (error: Throwable) {

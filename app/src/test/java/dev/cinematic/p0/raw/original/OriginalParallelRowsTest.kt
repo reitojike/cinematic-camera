@@ -5,6 +5,7 @@ import dev.cinematic.p0.raw.R7Base
 import java.nio.file.Files
 import java.io.IOException
 import java.util.concurrent.CancellationException
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Assert.*
 import org.junit.Test
@@ -107,15 +108,20 @@ class OriginalParallelRowsTest {
                 val input = ReusedRows(27, 15)
                 val checks = AtomicInteger()
                 val active = AtomicInteger()
+                val workers = ConcurrentHashMap.newKeySet<Thread>()
                 val stop = { mode == "cancel" && checks.incrementAndGet() > 6 }
                 if (mode == "cancel") {
                     assertThrows(CancellationException::class.java) {
-                        work.mapParallelRows(input, stop) { _, row -> row.copyOf() }
+                        work.mapParallelRows(input, stop) { _, row ->
+                            workers.add(Thread.currentThread())
+                            row.copyOf()
+                        }
                     }
                 } else {
                     val expected = if (mode == "transform") IllegalStateException::class.java else IllegalArgumentException::class.java
                     val error = assertThrows(expected) {
                         work.mapParallelRows(input, stop) { y, row ->
+                            workers.add(Thread.currentThread())
                             active.incrementAndGet()
                             try {
                                 if (mode == "transform" && y == 2) throw IllegalStateException("synthetic row fault")
@@ -128,7 +134,7 @@ class OriginalParallelRowsTest {
                 }
                 assertFalse(work.hasPendingOwners)
                 assertEquals(0, active.get())
-                assertFalse(Thread.getAllStackTraces().keys.any { it.isAlive && it.name == "original-r7-row" })
+                assertTrue("This attempt must not retain a worker", workers.none { it.isAlive })
             } finally {
                 work.disposeConfirmed()
                 assertTrue(root.delete())
