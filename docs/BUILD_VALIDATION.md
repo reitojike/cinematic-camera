@@ -243,3 +243,9 @@ STILLの明示opt-in固定pair、Builder単発設定とruntime preview補償、�
 - 専用worktreeでlintDebug / testDebugUnitTest / assembleDebugとdiff checkが成功。116 suites / 842 tests、failure/error 0、skip 4。lintは0 errors / 62 warnings / 2 hints。既存の警告を抑制していない。
 - 専用Android 37 AVD、412×924dp相当で設定本文・固定フッター、6項目3列のリセット確認、fontScale 1.3の表示とスクロールを確認。リセット実行、実機の全能力・録画中・再接続・横持ち操作は未確認。
 - preview配置と背後入力shield、各設定callback/guardは保持。RAW現像、原本、保存ライフサイクルには変更なし。AVD表示確認を実機の画質・24MP保存・性能検証へ読み替えない。
+
+## 診断画面のデザイン反映（Issue #173）
+
+- lintDebug / testDebugUnitTest / assembleDebugが成功。116 suites / 842 tests、failure/error 0、skip 4。熱状態サマリーを短いOS状態名に限定する修正後も全検証成功。全文は出力タブに保持。
+- 専用Android 37 AVDで制御表、出力タブ切替、固定Preview/レポート操作の表示を確認。レポート保存の実行、全カメラ能力、実機の横持ち/コピー操作は未確認。
+- API要求・受付履歴・直近実測、ISO/SS source/観測期限、能力/ログをタブに移し、SelectionContainerと元データ・操作guardを保持。RAW/保存処理には変更なし。

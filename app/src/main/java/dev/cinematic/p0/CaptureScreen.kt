@@ -335,12 +335,8 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
         }
         if (panel == CapturePanel.DIAGNOSTICS) Box(Modifier.fillMaxSize().background(Ink)) {
             Box(Modifier.matchParentSize().blockPanelBackground())
-            Column(Modifier.fillMaxSize()) {
-                PanelHeader("診断 · CameraX 1.6.2") { panel = CapturePanel.SETTINGS }
-                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Diagnostics(probe, unlocked && !reportPending, export, measurementNow)
-                }
-            }
+            CaptureDiagnosticsSheet(probe, unlocked && !reportPending, export, measurementNow,
+                settings = { panel = CapturePanel.SETTINGS })
         }
     }
     }
@@ -539,9 +535,6 @@ private fun exposureKeyValue(key: CaptureKey, probe: CameraProbe, refreshGenerat
         }
     }
 }
-
-@Composable private fun Diagnostics(probe: CameraProbe, enabled: Boolean, export: () -> Unit, nowMs: Long) =
-    CaptureDiagnosticsPanel(probe, enabled, export, nowMs)
 
 internal fun chromeInput(probe: CameraProbe, ready: Boolean = false, interactable: Boolean = true) = CaptureChromeInput(
     mode = probe.mode, bound = probe.bound, cameraId = probe.selectedId, photoFormat = CameraProbe.formatName(probe.format),

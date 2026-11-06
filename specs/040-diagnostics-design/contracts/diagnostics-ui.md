@@ -1,0 +1,3 @@
+# UI Contract
+
+4タブは表示切替のみ。全表示をSelectionContainer内へ。固定footerの既存enabled条件と復旧停止を保持。録画開始時のdiagnostics退避は既存recordingPanelのまま。自由文情報を削除・別の成功状態へ要約しない。
