@@ -16,7 +16,7 @@ object CaptureLayout {
         val scale = min(width / imageWidth, height / imageHeight)
         return imageWidth * scale to imageHeight * scale
     }
-    fun sheetHeight(available: Float): Float = min(344f, previewHeight(available))
+    fun sheetHeight(available: Float): Float = min(CaptureDesign.SettingsHeight, previewHeight(available))
 }
 
 /** Diagnostics must never cover the stop rail once recording preparation begins. */
