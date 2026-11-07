@@ -1,5 +1,5 @@
 # Orton 保護重み0の診断候補
-Status: Draft
+Status: Implemented (既定オフ、実機採否未確認)
 関連: #209。#204の運用と#78の既存probeを引き継ぐ。
 
 ## User Scenarios & Testing
@@ -12,4 +12,4 @@ Status: Draft
 - 不一致またはgolden更新の必要が出たら停止し条件と差をIssueへ記録する。
 
 ## Success Criteria
-合成の全工程raw-bit一致、取消/失敗/回収の確認、CIとレビューまで。採否は実機確認後、mergeは個別承認待ち。
+合成の全工程raw-bit一致、取消/失敗/回収の確認、CIとレビューまで。製品での採否は実機確認後。mergeはユーザーが承認した範囲と最終headのCI・レビューに従う。
