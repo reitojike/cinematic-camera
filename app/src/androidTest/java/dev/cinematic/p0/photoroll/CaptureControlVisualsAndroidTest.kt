@@ -65,6 +65,7 @@ class CaptureControlVisualsAndroidTest {
                 }
         } }
         ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
+            scenario.recreate() // Verify fixture installation and capture after host recreation.
             for (landscape in listOf(false, true)) {
                 scenario.onActivity { horizontal.value = landscape; selected.value = true }
                 val observed = await("ISO 100  AUTO")
@@ -73,7 +74,7 @@ class CaptureControlVisualsAndroidTest {
                 val key = await("ISO 100  AUTO", expectedSelected = true)
                 assertTrue("selected button must expose checked or selected", key.isSelected || (key.isCheckable && key.isChecked))
                 instrumentation.waitForIdleSync()
-                requireNotNull(diagnostic.automation.takeScreenshot()).let { bitmap ->
+                diagnostic.captureSoftware().let { bitmap ->
                     try { File(instrumentation.targetContext.getExternalFilesDir(null),
                         "design-shooting-control-${if (landscape) "horizontal" else "vertical"}.png").outputStream().use {
                         bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)

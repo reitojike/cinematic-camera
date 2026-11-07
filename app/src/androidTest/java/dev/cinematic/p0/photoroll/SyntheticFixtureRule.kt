@@ -2,6 +2,8 @@ package dev.cinematic.p0.photoroll
 
 import android.app.Activity
 import android.app.Application
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.os.Bundle
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
@@ -30,6 +32,20 @@ class SyntheticFixtureRule : TestWatcher(), Application.ActivityLifecycleCallbac
             host = activity
             content?.let { fixture -> activity.setContent { fixture() } }
         }
+    }
+    /** Software View-tree evidence only; does not capture display composition or GPU rendering. */
+    fun captureSoftware(): Bitmap {
+        instrumentation.waitForIdleSync()
+        var bitmap: Bitmap? = null
+        instrumentation.runOnMainSync {
+            // Resolve the current host here, rather than retaining a Window across recreation.
+            val decor = requireNotNull(host) { "No synthetic fixture host" }.window.decorView
+            check(decor.width > 0 && decor.height > 0) { "Synthetic fixture has not been laid out" }
+            val drawn = Bitmap.createBitmap(decor.width, decor.height, Bitmap.Config.ARGB_8888)
+            try { decor.draw(Canvas(drawn)) } catch (t: Throwable) { drawn.recycle(); throw t }
+            bitmap = drawn
+        }
+        return requireNotNull(bitmap)
     }
     fun fixtureRoot(): AccessibilityNodeInfo? {
         val root = automation.rootInActiveWindow

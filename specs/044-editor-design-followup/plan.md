@@ -24,8 +24,11 @@ PhotoEditBarは表示色だけ追加引数で受け取り、gesture/key/semantic
 既存DevelopViewAndroidTestに長い名前の固定情報、選択状態・編集終了、目盛り順を追加。合成bitmapのみ。
 既存unit、lintDebug、assembleDebug、assembleDebugAndroidTest、git diff --check。
 自動instrumentationは[共通GMD手順](../../docs/MANAGED_DEVICES.md)に従い、ホスト実行枠と共通環境を確認してから
-`pixel9aapi37DebugAndroidTest` を `isolated=true`、対象classを
+`pixel9aapi37atdDebugAndroidTest` を `--rerun`、`isolated=true`、対象classを
 `dev.cinematic.p0.photoroll.DevelopViewAndroidTest,dev.cinematic.p0.photoroll.CaptureControlVisualsAndroidTest` に限定して実行する。
+API 37 ATDでActivity再生成後もfixtureが維持されることを確認する。画面保存は現在のWindowのViewツリーを
+ARGB_8888のソフトウェアCanvasに描く。入力画像も合成ARGB_8888に限定し、HARDWARE bitmapを持ち込まない。
+これは表示合成・GPU経路の証拠ではなく、hardware rendering有効端末や実機での成功を意味しない。
 タスク専用の手動AVDは起動・新規作成しない。
 実写真、実機、24MP性能は試さない。確認手順は既存BUILD_VALIDATIONとtestを参照。
 

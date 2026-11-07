@@ -86,7 +86,7 @@ class DevelopViewAndroidTest {
         }
         fun capture(name: String) {
             instrumentation.waitForIdleSync()
-            requireNotNull(diagnostic.automation.takeScreenshot()).let { bitmap ->
+            diagnostic.captureSoftware().let { bitmap ->
                 try { File(context.getExternalFilesDir(null), "design-$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) } }
                 finally { bitmap.recycle() }
             }
@@ -108,6 +108,7 @@ class DevelopViewAndroidTest {
                     { token -> state.value = state.value.close(token) }, Modifier.fillMaxSize().safeDrawingPadding()) { repeat(8) { Text("合成の原本情報 $it") } }
         } } }
         ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
+            scenario.recreate() // Verify fixture installation and capture after host recreation.
             // The source action is fixed, even when the central strip overflows.
             instrumentation.waitForIdleSync()
             val initialInfo = awaitNode("原本情報と試験品質の注意", true)
