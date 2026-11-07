@@ -33,24 +33,31 @@ ATDで画素を判定する試験は、表示のキャプチャではなく、�
 AGPがデバイスの作成・起動・テスト・終了を管理する。再利用するのは同じ構成とAGPの共有キャッシュであり、
 毎回同じ起動済み端末やテストで変更した状態が残ることには依存しない。
 
-- 同じホストのworktreeでは同じSDK、`GRADLE_USER_HOME`、`ANDROID_AVD_HOME` を使う。タスク名入りのAVDやキャッシュを作らない。
+- 同じホストのworktreeでは同じSDK、`GRADLE_USER_HOME` を使う。`ANDROID_AVD_HOME` は後述の固定枠（枠A・枠B）のどちらかを使う。タスク名入りのAVDやキャッシュを作らない。
 - GradleキャッシュとAVD実体は別の保存先。AGP 9.5.1ではAVD実体は `ANDROID_AVD_HOME/gradle-managed`（AVD home未指定時は `ANDROID_USER_HOME/avd/gradle-managed`）へ置かれる。`GRADLE_USER_HOME` の指定だけではAVDを移せない。
-- [Android公式環境変数](https://developer.android.com/tools/variables)を用い、プロセス内で共通開発ドライブの `ANDROID_AVD_HOME` を明示する。指定前に共通AVDディレクトリを作成し、存在を確認する。未作成パスはSDK側で無視され既定先へfallbackし得るため、初回setupで生成先も確認する。既存 `ANDROID_USER_HOME` / adb認証状態は変更しない。ユーザー固有の絶対パスはGitへ保存せず、グローバル設定も変更しない。
+- [Android公式環境変数](https://developer.android.com/tools/variables)を用い、プロセス内で開発ドライブ上の枠の `ANDROID_AVD_HOME` を明示する。指定前に枠のAVDディレクトリを作成し、存在を確認する。未作成パスはSDK側で無視され既定先へfallbackし得るため、初回setupで生成先も確認する。既存 `ANDROID_USER_HOME` / adb認証状態は変更しない。ユーザー固有の絶対パスはGitへ保存せず、グローバル設定も変更しない。
 - 作業checkout/build/logは開発用ドライブ配下へ置く。SDK/JDKの移設や既存AVDの削除は別作業とする。
-- 複数workerのGMDはホスト単位で逐次実行する。`--max-workers=1` だけでは別Gradleプロセス同士を排他しない。
+- 別Issueの作業を並行させるため、同じホストで同時に動かすGMDは**最大2枠**（枠A・枠B）とする。
+  - 枠ごとに別のcheckout（worktree）と、共通開発ドライブ上の枠専用の `ANDROID_AVD_HOME` を使う。1つの `ANDROID_AVD_HOME` を複数のGradleプロセスで同時に使わない。
+  - 枠の使用中を自動で判定する仕組みはない。開始前に、使う枠を作業のIssue/PRへ記録し、`adb devices` で起動中のエミュレーター数を確認する。2台起動中なら開始しない。
+  - 同時実行を確認したのは、ATD端末（`pixel9aapi37atd`）で合成UI回帰（数class・1回約80秒）を流す規模のみ。高負荷benchmarkや長時間の試験を2枠同時に流すことは確認していない。
+  - Google APIs端末（`pixel9aapi37`）は単独でもOS側ANRが出るため、同時実行は未確認・対象外とする。使う間は他方の枠を止める。
+  - エミュレーターのポートは各プロセスで自動的に別番号（例: 5554 / 5556）が割り当てられる。各枠の初回は端末作成とsnapshot生成で数分かかる。
+  - `--max-workers=1` は別Gradleプロセス同士を排他しない。枠の上限と割当は運用で守る。
+  - `android.experimental.androidTest.numManagedDeviceShards` は、AGP 9.5.1・class指定の実行では各端末に同じ試験一覧を渡し、分割しない（重複実行になる）。Issue並列や時間短縮の手段として使わない。
 - 初回のsystem image取得、SDK license、仮想化環境が必要ならその条件を確認してから進める。独自回避はしない。
 - `cleanManagedDevices` は共有資源の再生成につながるため、通常実行には含めない。
 
 ## 実行
 
 JDK/SDK/共有Gradleキャッシュを既存開発環境で設定したうえで、リポジトリrootで実行する。
-`ANDROID_AVD_HOME` は全worktree共通の開発ドライブ上の既存ディレクトリへ指定する。
-PowerShellでは、正しい共通パスを設定済みであることを確認してから実行する:
+`ANDROID_AVD_HOME` は、使う枠（枠A・枠B）の開発ドライブ上の既存ディレクトリへ指定する。
+PowerShellでは、使う枠の正しいパスを設定済みであることを確認してから実行する:
 
 ```powershell
-if (-not $env:ANDROID_AVD_HOME) { throw "Set the shared development-drive AVD directory first" }
+if (-not $env:ANDROID_AVD_HOME) { throw "Set the lane (A/B) AVD directory on the development drive first" }
 New-Item -ItemType Directory -Path $env:ANDROID_AVD_HOME -Force | Out-Null
-if (-not (Test-Path -LiteralPath $env:ANDROID_AVD_HOME -PathType Container)) { throw "Shared AVD directory is missing" }
+if (-not (Test-Path -LiteralPath $env:ANDROID_AVD_HOME -PathType Container)) { throw "Lane AVD directory is missing" }
 ```
 
 初回setupでは `ANDROID_AVD_HOME/gradle-managed` の生成configとhardware-qemu.iniの実data pathを確認する。
