@@ -5,11 +5,11 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.unit.dp
 import dev.cinematic.p0.CaptureDesign
+import dev.cinematic.p0.CaptureRulerHeading
 import dev.cinematic.p0.photoedit.*
 import java.util.Locale
 
@@ -31,19 +31,27 @@ internal fun editValueLabel(parameter: PhotoEditParameter, value: Double): Strin
         PhotoEditParameter.TEMPERATURE -> session.draft.temperature; PhotoEditParameter.BRIGHTNESS -> session.draft.brightness } ?: return
     val scale = when (parameter) { PhotoEditParameter.STRENGTH -> session.scales.strength
         PhotoEditParameter.TEMPERATURE -> session.scales.temperature; PhotoEditParameter.BRIGHTNESS -> session.scales.brightness } ?: return
+    val displayed = state.displayedValues?.let { when (parameter) {
+        PhotoEditParameter.STRENGTH -> it.strength
+        PhotoEditParameter.TEMPERATURE -> it.temperature
+        PhotoEditParameter.BRIGHTNESS -> it.brightness
+    } }
     val title = when (parameter) { PhotoEditParameter.STRENGTH -> "STRENGTH"
         PhotoEditParameter.TEMPERATURE -> "色温度 · 相対（K値ではありません）"; PhotoEditParameter.BRIGHTNESS -> "明るさ · EV" }
     Column(modifier.fillMaxWidth().heightIn(min = 104.dp).background(CaptureDesign.Ruler).border(1.dp, CaptureDesign.Line)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        CaptureRulerHeading(title, onClose = { close(token) },
+            closeEnabled = foreground && !state.hasUnappliedChanges && phase == PhotoRollPhase.DISPLAYED &&
+                state.displayedValues == state.requestedValues,
+            displayLabel = if (parameter == PhotoEditParameter.TEMPERATURE) "色温度 · 相対" else title) {
             TextButton(onClick = { reset(token) }, enabled = foreground, shape = RectangleShape) { Text("RESET", style = CaptureDesign.Label) }
-            Text(title, Modifier.weight(1f), style = CaptureDesign.Label, color = CaptureDesign.Muted)
-            TextButton(onClick = { close(token) }, enabled = foreground && !state.hasUnappliedChanges && phase == PhotoRollPhase.DISPLAYED &&
-                state.displayedValues == state.requestedValues, shape = RectangleShape) { Text("×") }
         }
+        if (parameter == PhotoEditParameter.TEMPERATURE) Text("相対調整です（K値ではありません）",
+            Modifier.padding(horizontal = 12.dp), style = CaptureDesign.Explanation, color = CaptureDesign.Muted)
         PhotoEditBar(title, value,
             valueNow = { readState().session?.draft?.let { when (parameter) { PhotoEditParameter.STRENGTH -> it.strength
                 PhotoEditParameter.TEMPERATURE -> it.temperature; PhotoEditParameter.BRIGHTNESS -> it.brightness } } ?: Double.NaN },
             scale = scale, interactionKey = token, enabled = foreground, formatValue = { editValueLabel(parameter, it) },
-            onValueChange = { change(token, parameter, it) }, onValueChangeFinished = { apply(token) })
+            onValueChange = { change(token, parameter, it) }, onValueChangeFinished = { apply(token) },
+            valueColor = if (value != displayed) CaptureDesign.Amber else CaptureDesign.Text)
     }
 }

@@ -1,6 +1,6 @@
 # Feature Specification: DNG現像画面のデザイン反映
 
-Branch: feat/design-dng-editor / Issue #175 / Status: Draft（案1選択済み・実装中）
+Branch: feat/design-dng-editor / Issue #175 / Status: 実装統合済み・実機未検証
 
 ## User Scenarios & Testing
 

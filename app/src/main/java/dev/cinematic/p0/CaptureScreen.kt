@@ -500,16 +500,9 @@ private fun exposureKeyValue(key: CaptureKey, probe: CameraProbe, refreshGenerat
 }
 
 @Composable private fun CaptureModeSwitch(mode: CaptureMode, enabled: Boolean, onToggle: () -> Unit) {
-    BoxWithConstraints(Modifier.width(100.dp).height(48.dp).alpha(if (enabled) 1f else .4f)
-        .background(Color(0xFF0D0F10), RoundedCornerShape(6.dp))
-        .border(1.dp, Color(0xFF5A6066), RoundedCornerShape(6.dp))
+    CaptureModeSwitchSurface(mode == CaptureMode.CINE, Modifier.alpha(if (enabled) 1f else .4f)
         .toggleable(value = mode == CaptureMode.CINE, enabled = enabled, role = Role.Switch, onValueChange = { onToggle() })
-        .semantics { contentDescription = "撮影モード"; stateDescription = captureModeSwitchState(mode) }
-        .padding(2.dp)) {
-        val thumbWidth = maxWidth / 2
-        val thumbOffset by animateDpAsState(if (mode == CaptureMode.CINE) thumbWidth else 0.dp, tween(180), label = "mode-thumb")
-        Box(Modifier.offset(x = thumbOffset).width(thumbWidth).fillMaxHeight().background(Color(0xFFCFD3D6), RoundedCornerShape(4.dp)))
-        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+        .semantics { contentDescription = "撮影モード"; stateDescription = captureModeSwitchState(mode) }) {
             listOf(CaptureMode.STILL, CaptureMode.CINE).forEach { choice ->
                 BoxWithConstraints(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
                     val density = LocalDensity.current
@@ -532,7 +525,6 @@ private fun exposureKeyValue(key: CaptureKey, probe: CameraProbe, refreshGenerat
                         fontSize = size.sp, fontFamily = FontFamily.Monospace, maxLines = 1, softWrap = false)
                 }
             }
-        }
     }
 }
 

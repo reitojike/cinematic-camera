@@ -1,6 +1,6 @@
 # Feature Specification: カメラロールのデザイン統一
 
-Branch: feat/design-camera-roll / Created: 2026-11-06 / Status: Draft
+Branch: feat/design-camera-roll / Created: 2026-11-06 / Status: 実装統合済み・実機未検証
 Input: [Issue #174](https://github.com/reitojike/cinematic-camera/issues/174)、INSTRUCTIONS.md C。A→B後の独立PR。
 
 ## User Scenarios & Testing
