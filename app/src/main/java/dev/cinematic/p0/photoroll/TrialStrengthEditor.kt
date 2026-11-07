@@ -68,7 +68,7 @@ internal class TrialStrengthEditor private constructor(
             revision = if (values != requestedValues) nextRevision() else revision)
     }
 
-    /** Closing the controls accepts only the displayed in-memory trial; it does not save settings. */
+    /** Caller must confirm durable metadata saving before adopting this accepted close. */
     fun close(token: PhotoEditInputToken): TrialStrengthEditor {
         val current = session ?: return this
         if (!current.active || current.inputToken != token || hasUnappliedChanges || displayedValues != requestedValues) return this
