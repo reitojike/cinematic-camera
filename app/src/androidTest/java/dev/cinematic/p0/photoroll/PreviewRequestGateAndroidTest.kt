@@ -62,6 +62,15 @@ class PreviewRequestGateAndroidTest {
             assertNull(failures.get())
             instrumentation.runOnMainSync { assertEquals(400, displayed.value) }
             assertEquals(listOf(0, 20), computed.toList())
+            fun containsLatest(node: android.view.accessibility.AccessibilityNodeInfo?): Boolean =
+                node != null && (node.text?.toString() == "synthetic=400" ||
+                    (0 until node.childCount).any { containsLatest(node.getChild(it)) })
+            val deadline = android.os.SystemClock.uptimeMillis() + 5000
+            while (!containsLatest(fixture.fixtureRoot()) && android.os.SystemClock.uptimeMillis() < deadline) {
+                android.os.SystemClock.sleep(50)
+                instrumentation.waitForIdleSync()
+            }
+            assertTrue("Latest synthetic result is visible", containsLatest(fixture.fixtureRoot()))
         }
     }
     @Test fun cancelledAwaitKeepsOwnerUntilProducerCompletes() {
