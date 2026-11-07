@@ -8,5 +8,5 @@ Issue先行、標準Androidの対応宣言、秘密除外、実機未検証の�
 ## Verification
 既存署名鍵の存在を確認してから既存JDK/SDKでlintDebug/testDebugUnitTest/assembleDebugとgit diff --checkを実施。生成APKのminSdkを確認する。新しい署名鍵は作らない。
 ## Stop / Convergence
-golden変更・SDK下限以外の挙動変更が必要なら停止。CIとcanonical/独立レビューは最終headで確認。マージしない。APK配布・Release・実機操作はしない。
+golden変更・SDK下限以外の挙動変更が必要なら停止。CIとcanonical/独立レビューは最終headで確認。本人はAndroid 12以前を対象外にする影響を了承し、見た目・出力不変の設定変更はCI/レビュー成功後のマージを許可した。全ゲートが揃った場合のみ通常マージする。APK配布・Release・実機操作はしない。
 公式根拠: https://developer.android.com/guide/topics/manifest/uses-sdk-element

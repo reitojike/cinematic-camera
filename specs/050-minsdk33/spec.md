@@ -23,4 +23,4 @@ compileSdk/targetSdk、署名、保存形式とgoldenは変更しない。実機
 ## Success Criteria
 - SC-001: 最低対応の宣言が33。
 - SC-002: lint、unit、debug buildと変更検査の結果を明記する。
-- SC-003: CIとレビューを経て個別マージ承認待ちで停止する。
+- SC-003: CIとレビューが揃い、SDK下限変更への本人承認を確認した場合のみ通常マージする。
