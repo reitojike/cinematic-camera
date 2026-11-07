@@ -54,6 +54,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
     var pickerPending by rememberSaveable { mutableStateOf(false) }
     var retry by remember { mutableIntStateOf(0) }
     var explicitRetry by remember { mutableStateOf(false) }
+    var previewOperation by remember { mutableStateOf(PreviewOperation.OPEN) }
     var selection by remember { mutableStateOf(PhotoRollSelection()) }
     var savedOriginalIdentity by rememberSaveable { mutableStateOf<String?>(null) }
     var savedProcessingContract by rememberSaveable { mutableStateOf<String?>(null) }
@@ -112,8 +113,10 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         PhotoRollPreviewMode.STAGE_CLEAR, PhotoRollPreviewMode.MANUAL_TRIAL)
     val saveableMode = renderer.mode in setOf(PhotoRollPreviewMode.STAGE_CLEAR, PhotoRollPreviewMode.MANUAL_TRIAL)
 
-    fun updateTrialEditor(next: TrialStrengthEditor) {
+    fun updateTrialEditor(next: TrialStrengthEditor, restoring: Boolean = false) {
         val changesRequest = next.ticket != trialEditor.ticket
+        if (changesRequest) previewOperation = previewOperationForChange(
+            trialEditor.requestedValues, next.requestedValues, restoring)
         trialEditor = next
         savedStrength = next.requestedStrength
         savedWarmth = next.requestedValues.temperature ?: 0.0
@@ -165,6 +168,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         savedOriginalIdentity = null; savedProcessingContract = null
         renderer.discardTransientInputs()
         cancellationOwner.cancel(); explicitRetry = false; fromFiles = files
+        previewOperation = PreviewOperation.OPEN
         savedStrength = .5
         savedWarmth = 0.0; savedExposureEv = 0.0
         trialEditor = TrialStrengthEditor.empty(if (manualTrial) PhotoAdjustmentPolicy.defaults else PhotoEditValues(.5))
@@ -173,7 +177,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
     }
 
     fun closeRoll() { if (editSavePending) return; navigation.exit(); cancellationOwner.cancel(); renderer.discardTransientInputs(); close() }
-    fun backToList() { if (editSavePending) return; recipeLoaded = false; recipeRecoveryNeeded = false; skipDurableRecipe = false; savedOriginalIdentity = null; savedProcessingContract = null; cancellationOwner.cancel(); renderer.discardTransientInputs(); explicitRetry = false; savedStrength = .5; savedWarmth = 0.0; savedExposureEv = 0.0; trialEditor = TrialStrengthEditor.empty(if (manualTrial) PhotoAdjustmentPolicy.defaults else PhotoEditValues(.5)); selectedUri = null; preview = null; comparison = null; comparisonLabel = null; pageCursor = null; selection = selection.clear(); retry++ }
+    fun backToList() { if (editSavePending) return; recipeLoaded = false; recipeRecoveryNeeded = false; skipDurableRecipe = false; savedOriginalIdentity = null; savedProcessingContract = null; cancellationOwner.cancel(); renderer.discardTransientInputs(); explicitRetry = false; previewOperation = PreviewOperation.OPEN; savedStrength = .5; savedWarmth = 0.0; savedExposureEv = 0.0; trialEditor = TrialStrengthEditor.empty(if (manualTrial) PhotoAdjustmentPolicy.defaults else PhotoEditValues(.5)); selectedUri = null; preview = null; comparison = null; comparisonLabel = null; pageCursor = null; selection = selection.clear(); retry++ }
     BackHandler {
         if (editSavePending) return@BackHandler
         val edit = trialEditor.session
@@ -271,6 +275,8 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         val job = currentCoroutineContext()
         val shouldStop = { !job.isActive || cancellation.isCanceled }
         val requestScope = this
+        val timing = if (android.util.Log.isLoggable("PreviewTiming", android.util.Log.DEBUG))
+            PreviewTiming(strengthTicket.revision, previewOperation, sink = { android.util.Log.d("PreviewTiming", it) }) else null
         // WithContext may discard a completed result when Main resumes into cancellation.
         // Until the current ticket adopts it, this request still owns its display copies.
         var pendingPreview: PhotoRollRenderResult.Preview? = null
@@ -294,7 +300,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                             savedProcessingContract = PhotoEditRestoration.contract()
                             val restoredValues = restore ?: PhotoAdjustmentPolicy.defaults
                             if (restoredValues != trialEditor.requestedValues) {
-                                updateTrialEditor(TrialStrengthEditor.empty(restoredValues))
+                                updateTrialEditor(TrialStrengthEditor.empty(restoredValues), restoring = true)
                                 throw CancellationException("Restored edit recipe requires a new render ticket")
                             }
                         }
@@ -307,10 +313,12 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                     val adjustments = if (manualTrial) PhotoAdjustmentPolicy.adjustments(strengthTicket.values) else PhotoAdjustments()
                     val request = PhotoRollRenderRequest(original, strength = strengthTicket.strength, adjustments = adjustments,
                         mode = renderer.mode, maxEdge = renderer.maxEdge,
-                        explicitRetry = retryThisRequest, onStage = { stage -> requestScope.launch(Dispatchers.Main) {
+                        explicitRetry = retryThisRequest, onStage = { stage -> timing?.enter(stage.name); requestScope.launch(Dispatchers.Main) {
                             if (selection.accepts(ticket) && trialEditor.accepts(strengthTicket)) renderStage = stage
                         } })
+                    timing?.enter("RENDER")
                     val rendered = renderer.render(request, cancellation)
+                    timing?.enter("VERIFY_RESULT")
                     if (rendered is PhotoRollRenderResult.Preview) {
                         pendingPreview = rendered
                         val bitmap = rendered.bitmap
@@ -349,6 +357,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                     rendered
                 }
             }
+            timing?.enter("ADOPT_STATE")
             if (selection.accepts(ticket) && trialEditor.accepts(strengthTicket)) when (result) {
                 is PhotoRollRenderResult.Preview -> {
                     if (strengthEditable) trialEditor = trialEditor.shown(strengthTicket,
@@ -374,15 +383,18 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                         PhotoRollPreviewMode.STAGE_CLEAR -> "Stage Clear v1・強度${trialStrengthLabel(requireNotNull(result.appliedStrength))}・表示用。完成JPEGは保存操作で確認できます"
                     })
                     pendingPreview = null
+                    timing?.finish("STATE_ADOPTED")
                 }
                 is PhotoRollRenderResult.Unavailable -> selection = selection.finish(ticket, false, result.reason)
             }
-        } catch (cancelled: CancellationException) { throw cancelled }
+        } catch (cancelled: CancellationException) { timing?.finish("CANCELLED"); throw cancelled }
         catch (failure: Exception) {
             if (selection.accepts(ticket) && trialEditor.accepts(strengthTicket) &&
                 failure !is android.os.OperationCanceledException && failure !is DngVerificationStopped) {
                 renderer.discardTransientInputs()
             }
+            timing?.finish(if (shouldStop() || failure is android.os.OperationCanceledException ||
+                failure is DngVerificationStopped) "CANCELLED" else "FAILED")
             if (failure is PhotoEditRestoreFailure && selection.accepts(ticket) && trialEditor.accepts(strengthTicket))
                 recipeRecoveryNeeded = true
             val message = when (failure) {
@@ -396,6 +408,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
             }
             selection = selection.finish(ticket, false, message)
         } finally {
+            timing?.finish(if (shouldStop()) "CANCELLED" else "NOT_ADOPTED")
             pendingPreview?.recycleDisplayPixels()
             cancellationOwner.finish(cancellation)
         }
