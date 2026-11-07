@@ -67,6 +67,17 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    testOptions {
+        managedDevices {
+            localDevices {
+                create("pixel2api37") {
+                    device = "Pixel 2"
+                    apiLevel = 37
+                    systemImageSource = "google"
+                }
+            }
+        }
+    }
     lint { abortOnError = true }
 }
 dependencies {
