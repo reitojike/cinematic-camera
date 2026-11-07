@@ -38,3 +38,12 @@ Android上で同APKの個別arm、各arm warm-up、AB/BA反復、全体/対象�
 samplerなしtimingと別memory観測、合成JPEG一致、原本不変、取消/回収を確認して採否を判断する。
 GMDは共通枠の予約と単独高負荷実行規則に従う。AVD値を実機へ外挿しない。
 差分・取消/回収不成立・OOM・速度根拠不足なら採用を止め、数値やgoldenで隠さない。
+
+## 合成Android試験の境界
+
+OriginalRemainingRowsAndroidTest は隔離original24Probe/ATDで256×192の私有Float入力を使う。
+現行通常保存と同じFoundation2・Orton4・Character2・Glow1を固定し、tone/Mistの4条件を比較する。
+各条件1回warm-up後、正順/逆順/正順で各3回を測り、別のsampler付き試行でメモリを観測する。
+時間はkernel renderだけで、raw-bit hash、テスト専用8bit変換/JPEG、入力照合とcleanupを含まない。
+同じ最終rasterのテストJPEG一致は確認するが、DNG decode/実factory/公開JPEGの一致へ読み替えない。
+取消・故障と再試行を検査し、実機速度・瞬間peak・撮影復帰は未確認のまま残す。
