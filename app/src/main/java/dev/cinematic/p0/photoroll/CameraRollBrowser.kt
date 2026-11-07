@@ -1,5 +1,6 @@
 package dev.cinematic.p0.photoroll
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.verticalScroll
@@ -16,6 +17,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextAlign
 import dev.cinematic.p0.CaptureDesign
 import dev.cinematic.p0.settingsOutline
 
@@ -67,27 +69,47 @@ internal fun CameraRollBrowser(listing: PhotoRollListing, access: CameraRollAcce
             }
         }
         if (loading || opening) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = CaptureDesign.Amber, trackColor = CaptureDesign.Line)
-        CameraRollGrid(listing.items, enabled, if (compact) Modifier.height(gridHeight) else Modifier.weight(1f), header = {
+        val header: @Composable () -> Unit = {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (detail) Text(if (mode == PhotoRollPreviewMode.MANUAL_TRIAL)
                     "DNGは最大24MPの試験品質で現像します。顔保護なし・診断露出・暫定色です。JPEG保存は手動のみで、原本は変更しません。"
                     else "DNGは最大1024pxの試験現像です。顔保護なし・暫定色で、共有写真へは保存しません", color = CaptureDesign.Amber, style = CaptureDesign.Explanation)
-                Column(Modifier.fillMaxWidth().settingsOutline(access.selected && !(access.images && access.videos)).padding(8.dp)) {
-                    Text(if (access.selected && !access.images && !access.videos) "選択した写真・動画だけにアクセスできます" else access.description,
-                        style = CaptureDesign.Explanation, color = CaptureDesign.Muted)
-                    Row {
-                        TextButton(onClick = permission, enabled = permissionEnabled, shape = RectangleShape) { Text("アクセス許可・選び直す", style = CaptureDesign.Explanation) }
-                        TextButton(onClick = settings, enabled = enabled, shape = RectangleShape) { Text("設定", style = CaptureDesign.Explanation) }
+                if (!(access.images && access.videos)) {
+                    val partial = access.selected
+                    Column(Modifier.fillMaxWidth().settingsOutline(partial).padding(8.dp)) {
+                        Text(if (partial && !access.images && !access.videos) "選択した写真・動画だけにアクセスできます" else access.description,
+                            style = CaptureDesign.Explanation, color = if (partial) CaptureDesign.Amber else CaptureDesign.Muted)
+                        FlowRow {
+                            TextButton(onClick = permission, enabled = permissionEnabled, shape = RectangleShape,
+                                colors = ButtonDefaults.textButtonColors(
+                                    contentColor = if (partial) CaptureDesign.Amber else CaptureDesign.Text,
+                                    disabledContentColor = CaptureDesign.Disabled)) {
+                                Text(if (partial) "選び直す" else "アクセス許可・選び直す", style = CaptureDesign.Explanation)
+                            }
+                            TextButton(onClick = settings, enabled = enabled, shape = RectangleShape) { Text("設定", style = CaptureDesign.Explanation) }
+                        }
                     }
                 }
                 notice?.let { Text(it, color = CaptureDesign.Failed, style = CaptureDesign.Explanation) }
                 listing.message?.let { Text(it, color = CaptureDesign.Muted, style = CaptureDesign.Explanation) }
-                if (!loading && listing.items.isEmpty()) Text("該当する項目がありません。アクセス許可や絞り込みを確認してください。DNGはFilesの「内部ストレージ」からも選べます",
-                    color = CaptureDesign.Text, style = CaptureDesign.Explanation)
             }
-        }, footer = {
+        }
+        val moreItems: @Composable () -> Unit = {
             if (listing.hasMore) TextButton(onClick = more, enabled = refreshEnabled, shape = RectangleShape) { Text("さらに読み込む") }
-        }, select = select)
+        }
+        val contentModifier = if (compact) Modifier.height(gridHeight) else Modifier.weight(1f)
+        if (!loading && listing.items.isEmpty()) {
+            BoxWithConstraints(contentModifier.fillMaxWidth()) {
+                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = maxHeight)) {
+                    header()
+                    CameraRollEmptyState(permissionEnabled, filesEnabled, permission, files,
+                        Modifier.weight(1f).fillMaxWidth().heightIn(min = 240.dp))
+                    moreItems()
+                }
+            }
+        } else {
+            CameraRollGrid(listing.items, enabled, contentModifier, header = header, footer = moreItems, select = select)
+        }
         Column(Modifier.fillMaxWidth().heightIn(min = 64.dp).border(1.dp, CaptureDesign.Line).padding(horizontal = 12.dp, vertical = 4.dp)) {
             Text(CameraRollKind.entries.joinToString(" · ") { kind -> "${kind.label} ${listing.items.count { it.kind == kind }}" } + if (listing.hasMore) "（読込済み）" else "",
                 style = CaptureDesign.Label, color = CaptureDesign.Muted)
@@ -98,4 +120,27 @@ internal fun CameraRollBrowser(listing: PhotoRollListing, access: CameraRollAcce
         }
     }
 }
+}
+
+@Composable
+private fun CameraRollEmptyState(permissionEnabled: Boolean, filesEnabled: Boolean,
+    permission: () -> Unit, files: () -> Unit, modifier: Modifier = Modifier) {
+    Column(modifier.padding(24.dp), verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("該当する項目がありません。アクセス許可や絞り込みを確認してください。DNGはFilesの「内部ストレージ」からも選べます",
+            color = CaptureDesign.Muted, style = CaptureDesign.Explanation, textAlign = TextAlign.Center)
+        FlowRow(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
+            Button(onClick = permission, enabled = permissionEnabled, shape = RectangleShape,
+                colors = ButtonDefaults.buttonColors(containerColor = CaptureDesign.Text, contentColor = CaptureDesign.Ink,
+                    disabledContainerColor = CaptureDesign.Panel, disabledContentColor = CaptureDesign.Disabled)) {
+                Text("アクセスを許可", style = CaptureDesign.Explanation)
+            }
+            OutlinedButton(onClick = files, enabled = filesEnabled, shape = RectangleShape,
+                border = BorderStroke(1.dp, if (filesEnabled) CaptureDesign.Border else CaptureDesign.Line),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = CaptureDesign.Text,
+                    disabledContentColor = CaptureDesign.Disabled)) {
+                Text("Filesから選ぶ", style = CaptureDesign.Explanation)
+            }
+        }
+    }
 }
