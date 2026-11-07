@@ -113,17 +113,10 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         PhotoRollPreviewMode.STAGE_CLEAR, PhotoRollPreviewMode.MANUAL_TRIAL)
     val saveableMode = renderer.mode in setOf(PhotoRollPreviewMode.STAGE_CLEAR, PhotoRollPreviewMode.MANUAL_TRIAL)
 
-    fun updateTrialEditor(next: TrialStrengthEditor) {
+    fun updateTrialEditor(next: TrialStrengthEditor, restoring: Boolean = false) {
         val changesRequest = next.ticket != trialEditor.ticket
-        if (changesRequest) {
-            val old = trialEditor.requestedValues
-            val changed = next.requestedValues
-            val causes = listOfNotNull(
-                PreviewOperation.STRENGTH.takeIf { old.strength != changed.strength },
-                PreviewOperation.TEMPERATURE.takeIf { old.temperature != changed.temperature },
-                PreviewOperation.BRIGHTNESS.takeIf { old.brightness != changed.brightness })
-            previewOperation = causes.singleOrNull() ?: PreviewOperation.MULTIPLE
-        }
+        if (changesRequest) previewOperation = previewOperationForChange(
+            trialEditor.requestedValues, next.requestedValues, restoring)
         trialEditor = next
         savedStrength = next.requestedStrength
         savedWarmth = next.requestedValues.temperature ?: 0.0
@@ -307,7 +300,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                             savedProcessingContract = PhotoEditRestoration.contract()
                             val restoredValues = restore ?: PhotoAdjustmentPolicy.defaults
                             if (restoredValues != trialEditor.requestedValues) {
-                                updateTrialEditor(TrialStrengthEditor.empty(restoredValues))
+                                updateTrialEditor(TrialStrengthEditor.empty(restoredValues), restoring = true)
                                 throw CancellationException("Restored edit recipe requires a new render ticket")
                             }
                         }

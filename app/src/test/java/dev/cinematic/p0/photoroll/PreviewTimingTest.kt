@@ -5,6 +5,17 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PreviewTimingTest {
+    @Test fun restoringSavedValuesRemainsOpenEvenWhenEveryControlDiffers() {
+        val defaults = dev.cinematic.p0.photoedit.PhotoEditValues(.5, 0.0, 0.0)
+        val changes = listOf(defaults.copy(strength = .8), defaults.copy(temperature = 40.0),
+            defaults.copy(brightness = .5), defaults.copy(strength = .7, temperature = 20.0, brightness = .2))
+        val expected = listOf(PreviewOperation.STRENGTH, PreviewOperation.TEMPERATURE,
+            PreviewOperation.BRIGHTNESS, PreviewOperation.MULTIPLE)
+        changes.forEachIndexed { index, values ->
+            assertEquals(PreviewOperation.OPEN, previewOperationForChange(defaults, values, restoring = true))
+            assertEquals(expected[index], previewOperationForChange(defaults, values, restoring = false))
+        }
+    }
     @Test fun sectionsSumToTotalAndFinishIsOnce() {
         var now = 10L
         val output = mutableListOf<String>()
