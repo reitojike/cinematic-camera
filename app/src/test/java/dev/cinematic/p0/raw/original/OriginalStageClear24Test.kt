@@ -11,6 +11,66 @@ import org.junit.Test
 import kotlin.math.*
 
 class OriginalStageClear24Test {
+    @Test fun emptyFoundationWorkersMatchSerialFloatBitsAndExternalRoiStaysOnCaller() {
+        for ((width, height) in listOf(48 to 32, 174 to 116)) for (strength in listOf(0.0, .5, 1.0)) {
+            val rgb = FloatArray(width * height * 3) { i -> (((i * 37L) % 4096) / 2048f) - .05f }
+            fun render(workers: Int, roi: OriginalMask): Pair<FloatArray, FloatArray> {
+                val root = Files.createTempDirectory("original-foundation-rows").toFile()
+                val work = OriginalRasterWorkspace(root.resolve("attempt"))
+                try {
+                    var foundationPixels: FloatArray? = null
+                    val result = OriginalStageClear24(work, parallelFoundationWorkers = workers)
+                        .render(MemoryRaster(width, height, rgb), .23, strength, foundation = roi,
+                            stage = { name, raster -> if (name == "r7_foundation") foundationPixels = pixels(raster) })
+                    assertFalse(work.hasPendingOwners)
+                    return requireNotNull(foundationPixels) to pixels(result.raster)
+                } finally { work.disposeConfirmed(); check(root.delete()) }
+            }
+            val serial = render(1, OriginalMask.NONE)
+            val parallel = render(2, OriginalMask.NONE)
+            serial.first.indices.forEach { i -> assertEquals("foundation $width/$height/$strength/$i", serial.first[i].toRawBits(), parallel.first[i].toRawBits()) }
+            serial.second.indices.forEach { i -> assertEquals("final $width/$height/$strength/$i", serial.second[i].toRawBits(), parallel.second[i].toRawBits()) }
+            if (width == 48 && strength == .5) {
+                val caller = Thread.currentThread()
+                val external = render(2, OriginalMask { _, row ->
+                    assertSame("external ROI callback must stay on caller", caller, Thread.currentThread())
+                    row.fill(0f)
+                })
+                serial.first.indices.forEach { i -> assertEquals(serial.first[i].toRawBits(), external.first[i].toRawBits()) }
+                serial.second.indices.forEach { i -> assertEquals(serial.second[i].toRawBits(), external.second[i].toRawBits()) }
+            }
+        }
+    }
+
+    @Test fun emptyFoundationWorkerCancellationAndFailureCloseOwners() {
+        for (mode in listOf("cancel", "failure")) {
+            val width = 48; val height = 32
+            val rgb = FloatArray(width * height * 3) { i -> (((i * 37L) % 4096) / 2048f) - .05f }
+            val root = Files.createTempDirectory("original-foundation-stop").toFile()
+            val work = OriginalRasterWorkspace(root.resolve("attempt"))
+            val armed = AtomicBoolean(false)
+            val calls = AtomicInteger()
+            val cancelled = AtomicBoolean(false)
+            val fault = IOException("synthetic foundation worker failure")
+            val stop = {
+                if (armed.get() && Thread.currentThread().name == "original-r7-row" && calls.incrementAndGet() == 5) {
+                    if (mode == "failure") throw fault else cancelled.set(true)
+                }
+                cancelled.get()
+            }
+            try {
+                if (mode == "cancel") assertThrows(CancellationException::class.java) {
+                    OriginalStageClear24(work, parallelFoundationWorkers = 2).render(MemoryRaster(width, height, rgb), .23, .5,
+                        stop = stop, stage = { name, _ -> if (name == "r7_tone") armed.set(true) })
+                } else assertSame(fault, assertThrows(IOException::class.java) {
+                    OriginalStageClear24(work, parallelFoundationWorkers = 2).render(MemoryRaster(width, height, rgb), .23, .5,
+                        stop = stop, stage = { name, _ -> if (name == "r7_tone") armed.set(true) })
+                })
+                assertTrue("foundation worker did not reach its checkpoints", calls.get() >= 5)
+                assertFalse(work.hasPendingOwners)
+            } finally { work.closePending(); work.disposeConfirmed(); check(root.delete()) }
+        }
+    }
     @Test fun toneGainOncePerPixelMatchesPreviousPerChannelFloatBits() {
         for (width in listOf(1, 48, 1024)) {
             val row = FloatArray(width * 3) { i -> (((i * 97L) % 8192) / 2048f) - .2f }

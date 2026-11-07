@@ -31,7 +31,10 @@ internal fun originalToneRow(row: FloatArray, toneRow: FloatArray, percentiles: 
 internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, private val trace: OriginalStageTrace? = null,
     private val parallelOrtonWorkers: Int = 1,
     private val ortonRowProbe: ((Int) -> Unit)? = null,
-    private val parallelCharacterWorkers: Int = 1) {
+    private val parallelCharacterWorkers: Int = 1,
+    private val parallelFoundationWorkers: Int = 1,
+    private val parallelGlowWorkers: Int = 1,
+    private val glowRowProbe: ((String, Int) -> Unit)? = null) {
     private val luma = StageClearV1.LUMA
     private fun y(row: FloatArray, i: Int) = row[i] * luma[0] + row[i + 1] * luma[1] + row[i + 2] * luma[2]
     private fun image(width: Int, row: FloatArray) = LinearSrgbImage.takeOwnership(width, 1, row)
@@ -78,9 +81,19 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, p
             originalToneRow(row, toneRow, percentiles)
         }
         val roiRow = FloatArray(width)
-        base = rowStep(base, "r7_foundation", OriginalStage.R7_FOUNDATION) { yy, row ->
-            foundation.row(yy, roiRow); checkMask(roiRow)
-            values(R7Base.foundation(image(width, row), FloatPlane(width, 1, roiRow), externalEv))
+        require(parallelFoundationWorkers in 1..2)
+        // Only the built-in empty ROI has a stateless row callback. External ROI callbacks stay serial.
+        val parallelFoundation = parallelFoundationWorkers > 1 && foundation === OriginalMask.NONE
+        val workerRoiRows = if (parallelFoundation) ThreadLocal.withInitial { FloatArray(width) } else null
+        val workerStop = { stop() || Thread.currentThread().isInterrupted }
+        base = rowStep(base, "r7_foundation", OriginalStage.R7_FOUNDATION, parallelRows = parallelFoundation) { yy, row ->
+            if (parallelFoundation) originalCheckpoint(workerStop)
+            val activeRoiRow = workerRoiRows?.get() ?: roiRow
+            foundation.row(yy, activeRoiRow); checkMask(activeRoiRow)
+            if (parallelFoundation) originalCheckpoint(workerStop)
+            values(R7Base.foundation(image(width, row), FloatPlane(width, 1, activeRoiRow), externalEv)).also {
+                if (parallelFoundation) originalCheckpoint(workerStop)
+            }
         }
         base = rowStep(base, "r7_vibrance", OriginalStage.R7_VIBRANCE, parallelRows = true) { _, row -> values(R7Base.vibrance(image(width, row))) }
         base = rowStep(base, "r7_crisp", OriginalStage.R7_CRISP, parallelRows = true) { _, row -> values(R7Base.crisp(image(width, row))) }
@@ -180,7 +193,13 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, p
     }
 
     private fun glow(base: OriginalRasterFile, skin: OriginalField, strength: Double, stop: () -> Boolean): OriginalRasterFile {
+        require(parallelGlowWorkers in setOf(1, 2, 4))
         val width = base.width
+        val parallel = parallelGlowWorkers > 1
+        val workerStop = { stop() || Thread.currentThread().isInterrupted }
+        fun mapRows(source: OriginalRasterFile, transform: (Int, FloatArray) -> FloatArray): OriginalRasterFile =
+            if (parallel) work.mapParallelRows(source, stop, parallelGlowWorkers, transform)
+            else work.map(source, stop, transform)
         fun project(rgb: FloatArray, out: FloatArray) {
             repeat(width) { p ->
                 val yy = max(0f, y(rgb, p * 3))
@@ -197,28 +216,49 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, p
                 out[p] = max(0f, (yy - StageClearGlowV1.THRESHOLD.toFloat()) / (1 - StageClearGlowV1.THRESHOLD).toFloat()).pow(1.5f)
             }
         }
-        val skinRow = FloatArray(width); val haloRow = FloatArray(width)
-        val bloomRows = bloom.map { FloatArray(width * 3) }; val tint = StageClearGlowV1.HALATION_TINT
-        val light = work.map(base, stop) { yy, rgb ->
-            skin.row(yy, skinRow); halation.row(yy, haloRow)
-            bloom.forEachIndexed { i, pair -> pair.first.row(yy, bloomRows[i]) }
-            FloatArray(rgb.size) { i ->
-                var b = 0f; bloom.indices.forEach { k -> b += bloom[k].second * bloomRows[k][i] }
-                rgb[i] + ((StageClearGlowV1.BLOOM * strength).toFloat() * b +
-                    (StageClearGlowV1.HALATION * strength).toFloat() * haloRow[i / 3] * tint[i % 3]) *
-                    (1f - StageClearGlowV1.SKIN_PROTECT.toFloat() * skinRow[i / 3].coerceIn(0f, 1f))
-            }
+        // Scratch rows belong to one worker; field.row synchronizes its shared reduced-row cache.
+        class LightRows {
+            val skin = FloatArray(width)
+            val halo = FloatArray(width)
+            val bloomRows = bloom.map { FloatArray(width * 3) }
         }
-        val soft = OriginalFields.blur(light, StageClearGlowV1.DIFFUSION_RADIUS, 3, stop) { rgb, out -> rgb.copyInto(out) }
-        val softRow = FloatArray(width * 3)
-        val result = work.map(light, stop) { yy, rgb ->
-            soft.row(yy, softRow); skin.row(yy, skinRow)
+        val serialLightRows = if (parallel) null else LightRows()
+        val workerLightRows = if (parallel) ThreadLocal.withInitial { LightRows() } else null
+        val tint = StageClearGlowV1.HALATION_TINT
+        val light = mapRows(base) { yy, rgb ->
+            glowRowProbe?.invoke("light", yy)
+            if (parallel) originalCheckpoint(workerStop)
+            val rows = workerLightRows?.get() ?: requireNotNull(serialLightRows)
+            skin.row(yy, rows.skin); halation.row(yy, rows.halo)
+            bloom.forEachIndexed { i, pair -> if (parallel) originalCheckpoint(workerStop); pair.first.row(yy, rows.bloomRows[i]) }
             FloatArray(rgb.size) { i ->
-                val blurred = softRow[i].coerceIn(0f, 1f)
+                if (parallel && i % 192 == 0) originalCheckpoint(workerStop)
+                var b = 0f; bloom.indices.forEach { k -> b += bloom[k].second * rows.bloomRows[k][i] }
+                rgb[i] + ((StageClearGlowV1.BLOOM * strength).toFloat() * b +
+                    (StageClearGlowV1.HALATION * strength).toFloat() * rows.halo[i / 3] * tint[i % 3]) *
+                    (1f - StageClearGlowV1.SKIN_PROTECT.toFloat() * rows.skin[i / 3].coerceIn(0f, 1f))
+            }.also { if (parallel) originalCheckpoint(workerStop) }
+        }
+        // Ordered map completion closes all light workers before global diffusion observes light.
+        val soft = OriginalFields.blur(light, StageClearGlowV1.DIFFUSION_RADIUS, 3, stop) { rgb, out -> rgb.copyInto(out) }
+        class DiffusionRows {
+            val skin = FloatArray(width)
+            val soft = FloatArray(width * 3)
+        }
+        val serialDiffusionRows = if (parallel) null else DiffusionRows()
+        val workerDiffusionRows = if (parallel) ThreadLocal.withInitial { DiffusionRows() } else null
+        val result = mapRows(light) { yy, rgb ->
+            glowRowProbe?.invoke("diffusion", yy)
+            if (parallel) originalCheckpoint(workerStop)
+            val rows = workerDiffusionRows?.get() ?: requireNotNull(serialDiffusionRows)
+            soft.row(yy, rows.soft); skin.row(yy, rows.skin)
+            FloatArray(rgb.size) { i ->
+                if (parallel && i % 192 == 0) originalCheckpoint(workerStop)
+                val blurred = rows.soft[i].coerceIn(0f, 1f)
                 rgb[i] + (StageClearGlowV1.DIFFUSION * strength).toFloat() *
                     (blurred - rgb[i].coerceIn(0f, 1f) * blurred) *
-                    (1f - StageClearGlowV1.SKIN_PROTECT.toFloat() * skinRow[i / 3].coerceIn(0f, 1f))
-            }
+                    (1f - StageClearGlowV1.SKIN_PROTECT.toFloat() * rows.skin[i / 3].coerceIn(0f, 1f))
+            }.also { if (parallel) originalCheckpoint(workerStop) }
         }
         work.release(light)
         return result
