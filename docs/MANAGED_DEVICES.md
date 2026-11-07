@@ -1,6 +1,6 @@
 # Gradle Managed Deviceによる自動検証
 
-Issue #190。タスクごとの手動AVD作成を止め、Google公式の
+Issue #190、#192。タスクごとの手動AVD作成を止め、Google公式の
 [Gradle Managed Devices](https://developer.android.com/studio/test/managed-devices)を利用する。
 製品仕様、実機AC、必須CIは変更しない。
 
@@ -13,6 +13,19 @@ RAM 7556MiBを定義する。画面全体の目安は約411×923dp（system bar�
 この構成での生成configは2G、初回起動のhardware-qemu.iniは4096MiBだった。profileの7556MiBを実割当とみなさず、起動後の実RAM割当を確認する。独自のconfig書換えでRAMを強制しない。
 Windows x86_64のsystem imageを使うためTensor G4 / GPU / camera / 実機性能は再現しない。
 API 37のGoogle APIs imageと組み合わせ、公開DSLの `sdkVersion` を使用する。
+
+同じprofileで、公式の[Automated Test Device（ATD）](https://developer.android.com/studio/test/managed-devices#gmd-atd)の
+`pixel9aapi37atd`（`systemImageSource = "google-atd"`）も定義する。用途で使い分ける:
+
+| 端末 | 使う試験 | 制約 |
+|---|---|---|
+| `pixel9aapi37atd`（既定） | 合成データのみを使い、SystemUI・IME・Google標準アプリに依存しないCompose/View回帰 | SystemUI・Settings・IME・多くのGoogleアプリが無く、hardware renderingが無効。`uiAutomation.takeScreenshot()` / `screencap` / `PixelCopy` は内容を取得できない |
+| `pixel9aapi37` | SystemUI・通知・IME・権限ダイアログ・Play services、または表示合成結果の取得が必要な試験 | 2 vCPUの割当に対して起動直後やsnapshot復帰直後の標準アプリ負荷が大きく、OS側ANRダイアログが試験画面を覆うことがある |
+
+ATDで画素を判定する試験は、表示のキャプチャではなく、対象Windowの `decorView.draw(Canvas(bitmap))`
+（ソフトウェア描画）で読む。これはViewツリーの描画内容を検証するもので、表示合成・GPU経路は検証しない。
+`Bitmap.Config.HARDWARE` の画像はソフトウェアCanvasに描けないため、実画像を表示する試験では
+デコード設定を確認してから使う。
 
 既存のAndroidJUnitRunnerとandroidTestを利用し、独自AVD作成スクリプト、quarantine、shardは追加しない。
 AGPがデバイスの作成・起動・テスト・終了を管理する。再利用するのは同じ構成とAGPの共有キャッシュであり、
@@ -44,13 +57,13 @@ if (-not (Test-Path -LiteralPath $env:ANDROID_AVD_HOME -PathType Container)) { t
 まずは端末を起動しないtask確認:
 
 ```powershell
-.\gradlew.bat :app:pixel9aapi37DebugAndroidTest --dry-run --no-daemon --max-workers=1
+.\gradlew.bat :app:pixel9aapi37atdDebugAndroidTest --dry-run --no-daemon --max-workers=1
 ```
 
 合成画像のみを使う比較gesture回帰（実カメラ撮影・実RAW・共有保存はしない）:
 
 ```powershell
-.\gradlew.bat :app:pixel9aapi37DebugAndroidTest --no-daemon --max-workers=1 `
+.\gradlew.bat :app:pixel9aapi37atdDebugAndroidTest --rerun --no-daemon --max-workers=1 `
   "-Pandroid.testInstrumentationRunnerArguments.class=dev.cinematic.p0.photoroll.PhotoRollComparisonGestureAndroidTest" `
   "-Pandroid.testInstrumentationRunnerArguments.isolated=true"
 ```
@@ -59,8 +72,19 @@ if (-not (Test-Path -LiteralPath $env:ANDROID_AVD_HOME -PathType Container)) { t
 既存androidTestには実入力・追加引数・高負荷benchmarkを前提とするものもあるため、
 初回から全クラスを一括実行せず、試験ごとの前提を読んで対象classを選ぶ。
 
-headless環境でGPUが使用できない場合は公式の
+入力・APKが前回と同じ場合、GradleはテストtaskをUP-TO-DATEとして端末を起動しない。
+再実行が目的なら `--rerun` を付け、UP-TO-DATEの回を実行結果として扱わない。
+
+`pixel9aapi37` でheadless環境のGPUが使用できない場合は公式の
 `"-Pandroid.testoptions.manageddevices.emulator.gpu=swiftshader_indirect"` を追加する。
+GPU指定は実際に `hardware-qemu.ini` の `hw.gpu.mode` で確認する。Windowsでは `auto-no-window` や
+`angle_indirect` を指定してもCPU描画（lavapipe）になることがあり、ホストGPUを使うのは `host` のみである。
+`host` はホストのGPUドライバ側の障害でエミュレーターごと終了し得るため、既定にはしない。
+ホストの仮想化はAndroid公式の推奨どおりWHPXを使う（AEHDは2026-12-31に提供終了）。
+
+ANRや負荷を調べるため `logcat -b all` を常時取得すると、adbd・logcat・logdがゲストCPUを大きく使い、
+負荷を押し上げる。必要な期間・bufferに限定する。snapshot復帰後のlogcat bufferには生成時の記録が残るため、
+復帰後のsessionの事象と区別する。
 HTML reportの場所はGradleの出力を確認する。task解決、APK build、端末setup、実テストの結果を分けて記録し、
 未実行・skip・環境失敗を合格扱いしない。
 

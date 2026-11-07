@@ -1,11 +1,13 @@
 package dev.cinematic.p0.photoroll
 
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Rect
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.ViewConfiguration
+import android.view.Window
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.mutableStateOf
@@ -29,6 +31,15 @@ class PhotoRollComparisonGestureAndroidTest {
         var x = 0f
         var y = 0f
         var downTime = 0L
+        var window: Window? = null
+        // Draw the view tree into a software bitmap. ATD images disable hardware rendering, so display
+        // screenshots and PixelCopy have no frames to read; this checks the composed UI, not the display.
+        fun capture(): Bitmap {
+            val decor = requireNotNull(window).decorView
+            val bitmap = Bitmap.createBitmap(decor.width, decor.height, Bitmap.Config.ARGB_8888)
+            instrumentation.runOnMainSync { decor.draw(Canvas(bitmap)) }
+            return bitmap
+        }
         fun touch(action: Int) {
             val now = SystemClock.uptimeMillis()
             if (action == MotionEvent.ACTION_DOWN) downTime = now
@@ -41,7 +52,7 @@ class PhotoRollComparisonGestureAndroidTest {
             var actual = 0
             do {
                 instrumentation.waitForIdleSync()
-                val screenshot = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
+                val screenshot = capture()
                 try { actual = screenshot.getPixel(x.toInt(), y.toInt()) } finally { screenshot.recycle() }
                 if (actual == expected) return
                 SystemClock.sleep(50)
@@ -49,7 +60,7 @@ class PhotoRollComparisonGestureAndroidTest {
             assertEquals(expected, actual)
         }
         fun imageBounds(color: Int): Rect {
-            val screenshot = requireNotNull(instrumentation.uiAutomation.takeScreenshot())
+            val screenshot = capture()
             try {
                 val pixels = IntArray(screenshot.width * screenshot.height)
                 screenshot.getPixels(pixels, 0, screenshot.width, 0, 0, screenshot.width, screenshot.height)
@@ -75,6 +86,7 @@ class PhotoRollComparisonGestureAndroidTest {
             scenario.onActivity { activity ->
                 x = activity.window.decorView.width / 2f
                 y = activity.window.decorView.height / 2f
+                window = activity.window
             }
             awaitColor(Color.BLUE)
             val frame = imageBounds(Color.BLUE)
