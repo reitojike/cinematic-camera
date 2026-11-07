@@ -2,7 +2,7 @@
 
 **Feature Branch**: `docs/design-settings-handoff`
 **Created**: 2026-11-06
-**Status**: Draft・実装/検証中
+**Status**: 実装統合済み・実機未検証
 **Input**: [Issue #172](https://github.com/reitojike/cinematic-camera/issues/172)。2026-11-06 design-handoff INSTRUCTIONS.md Aと共通仕様。基準mainは57bc2cf。
 
 ## User Scenarios & Testing

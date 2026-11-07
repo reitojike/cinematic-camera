@@ -21,7 +21,14 @@ import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.cinematic.p0.CaptureDesign
+import dev.cinematic.p0.captureControlSurface
+import dev.cinematic.p0.CaptureModeSwitchSurface
 import dev.cinematic.p0.photoedit.*
+
+internal fun developModeColor(mode: PhotoRollPreviewMode) =
+    if (mode == PhotoRollPreviewMode.PRIVATE_TRIAL) CaptureDesign.Amber else CaptureDesign.Text
+
+internal fun developShowsFaceWarning(mode: PhotoRollPreviewMode) = mode != PhotoRollPreviewMode.STAGE_CLEAR
 
 internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePhase?, pending: Boolean, editing: Boolean): String = when {
     mode == PhotoRollPreviewMode.PRIVATE_TRIAL -> "共有保存なし"
@@ -63,14 +70,16 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
         // Expanded source details must not squeeze the editor or footer out of reach.
         val compact = information || maxHeight < (560 * LocalDensity.current.fontScale).dp || maxWidth < (360 * LocalDensity.current.fontScale).dp
         Column(Modifier.fillMaxSize().background(CaptureDesign.Ink).then(if (compact) Modifier.verticalScroll(rememberScrollState()) else Modifier)) {
-            Row(Modifier.fillMaxWidth().heightIn(min = 44.dp).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = back, shape = RectangleShape, modifier = Modifier.semantics { contentDescription = "一覧へ戻る" }) { Text("‹") }
-                Text(when (mode) { PhotoRollPreviewMode.STAGE_CLEAR -> "DNG 現像"; PhotoRollPreviewMode.PRIVATE_TRIAL -> "試験 1024px"
-                    PhotoRollPreviewMode.DNG_TRIAL -> "DNG 試験表示"; PhotoRollPreviewMode.STAGE_CLEAR_TRIAL -> "Stage Clear 試験"
-                    else -> "DNG 試験現像" }, Modifier.border(1.dp, CaptureDesign.Amber).padding(4.dp), style = CaptureDesign.Label, color = CaptureDesign.Amber)
-                Text(name, Modifier.padding(8.dp), style = CaptureDesign.Label, color = CaptureDesign.Text)
-                Text(saveLabel, Modifier.border(1.dp, saveColor).padding(4.dp).semantics { liveRegion = LiveRegionMode.Polite }, style = CaptureDesign.Label, color = saveColor)
-                Text("顔保護なし", Modifier.padding(8.dp), style = CaptureDesign.Label, color = CaptureDesign.Amber)
+                Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+                    Text(when (mode) { PhotoRollPreviewMode.STAGE_CLEAR -> "DNG 現像"; PhotoRollPreviewMode.PRIVATE_TRIAL -> "試験 1024px"
+                        PhotoRollPreviewMode.DNG_TRIAL -> "DNG 試験表示"; PhotoRollPreviewMode.STAGE_CLEAR_TRIAL -> "Stage Clear 試験"
+                        else -> "DNG 試験現像" }, Modifier.border(1.dp, developModeColor(mode)).padding(4.dp), style = CaptureDesign.Label, color = developModeColor(mode))
+                    Text(name, Modifier.padding(8.dp), style = CaptureDesign.Label, color = CaptureDesign.Text)
+                    Text(saveLabel, Modifier.border(1.dp, saveColor).padding(4.dp).semantics { liveRegion = LiveRegionMode.Polite }, style = CaptureDesign.Label, color = saveColor)
+                    if (developShowsFaceWarning(mode)) Text("顔保護なし", Modifier.padding(8.dp), style = CaptureDesign.Label, color = CaptureDesign.Amber)
+                }
                 TextButton(onClick = { information = !information }, shape = RectangleShape,
                     modifier = Modifier.semantics { contentDescription = "原本情報と試験品質の注意" }) { Text("ⓘ") }
             }
@@ -98,28 +107,31 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                 } else Text(if (phase == PhotoRollPhase.PAUSED) "処理を中断しました" else "原本の確認待ち", color = CaptureDesign.Muted)
             }
             if (message != null && phase != PhotoRollPhase.BLOCKED) Text(message, Modifier.fillMaxWidth().padding(8.dp), color = CaptureDesign.Muted, style = CaptureDesign.Explanation)
+            if (session != null) key(parameter) { TrialStrengthEditorPane(state, readState, parameter, foreground, phase, change, reset, apply, close) }
             Row(Modifier.fillMaxWidth().heightIn(min = 72.dp)) {
                 PhotoEditParameter.entries.forEach { key ->
                     val supported = mode in setOf(PhotoRollPreviewMode.MANUAL_TRIAL, PhotoRollPreviewMode.STAGE_CLEAR, PhotoRollPreviewMode.PRIVATE_TRIAL) && (key == PhotoEditParameter.STRENGTH || adjustments)
                     val value = when (key) { PhotoEditParameter.STRENGTH -> requested.strength; PhotoEditParameter.TEMPERATURE -> requested.temperature; PhotoEditParameter.BRIGHTNESS -> requested.brightness }
                     val displayed = state.displayedValues?.let { when (key) { PhotoEditParameter.STRENGTH -> it.strength; PhotoEditParameter.TEMPERATURE -> it.temperature; PhotoEditParameter.BRIGHTNESS -> it.brightness } }
                     val dirty = supported && value != displayed
-                    TextButton(onClick = { parameter = key; if (session == null) begin() }, enabled = supported && foreground && (session != null || beginEnabled),
-                        modifier = Modifier.weight(1f).heightIn(min = 72.dp).border(1.dp, CaptureDesign.Line), shape = RectangleShape, contentPadding = PaddingValues(4.dp)) {
+                    val keyEnabled = supported && foreground && (session != null || beginEnabled)
+                    TextButton(onClick = { parameter = key; if (session == null) begin() }, enabled = keyEnabled,
+                        modifier = Modifier.weight(1f).heightIn(min = 72.dp).captureControlSurface(session != null && parameter == key)
+                            .semantics { selected = session != null && parameter == key }, shape = RectangleShape, contentPadding = PaddingValues(4.dp),
+                        colors = ButtonDefaults.textButtonColors(contentColor = CaptureDesign.Text, disabledContentColor = CaptureDesign.Disabled)) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(when (key) { PhotoEditParameter.STRENGTH -> "STRENGTH"; PhotoEditParameter.TEMPERATURE -> "色温度"; PhotoEditParameter.BRIGHTNESS -> "明るさ" }, style = CaptureDesign.Label)
-                            Text(if (supported && value != null) editValueLabel(key, value) else "—", style = CaptureDesign.Value, color = if (dirty) CaptureDesign.Amber else CaptureDesign.Text)
+                            Text(if (supported && value != null) editValueLabel(key, value) else "—", style = CaptureDesign.Value, color = if (!keyEnabled) CaptureDesign.Disabled else if (dirty) CaptureDesign.Amber else CaptureDesign.Text)
                             Text(when { !supported -> "未対応"; dirty -> "指定 · 未反映"; key == PhotoEditParameter.TEMPERATURE -> "相対"; key == PhotoEditParameter.BRIGHTNESS -> "EV"; else -> "表示中" },
-                                style = CaptureDesign.Label, color = if (dirty) CaptureDesign.Amber else CaptureDesign.Muted)
+                                style = CaptureDesign.Label, color = if (!keyEnabled) CaptureDesign.Disabled else if (dirty) CaptureDesign.Amber else CaptureDesign.Muted)
                             if (supported && dirty) Text(
                                 displayed?.let { "表示中 ${editValueLabel(key, it)}" } ?: "表示中の値なし",
-                                style = CaptureDesign.Label, color = CaptureDesign.Muted)
+                                style = CaptureDesign.Label, color = if (keyEnabled) CaptureDesign.Muted else CaptureDesign.Disabled)
                         }
                     }
                 }
                 TextButton(onClick = { comparing = !comparing }, enabled = compareEnabled, modifier = Modifier.weight(1f).heightIn(min = 72.dp), shape = RectangleShape) { Text("比較", style = CaptureDesign.Label) }
             }
-            if (session != null) key(parameter) { TrialStrengthEditorPane(state, readState, parameter, foreground, phase, change, reset, apply, close) }
             Row(Modifier.fillMaxWidth().heightIn(min = 96.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween) {
                 TextButton(onClick = { session?.let { cancel(it.inputToken) } }, enabled = foreground && session != null,
@@ -136,10 +148,13 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                     }
                     Text(if (savePhase == PhotoRollSavePhase.PUBLISHED) "↗" else "↓", color = if (saveEnabled) CaptureDesign.Ink else saveColor, fontSize = 26.sp)
                 }
-                Row(Modifier.width(100.dp).heightIn(min = 48.dp).border(1.dp, CaptureDesign.Border)) {
+                CaptureModeSwitchSurface(comparing) {
                     listOf(false, true).forEach { before -> TextButton(onClick = { comparing = before }, enabled = compareEnabled,
-                        modifier = Modifier.weight(1f).heightIn(min = 48.dp).background(if (comparing == before) CaptureDesign.Selected else CaptureDesign.Ink)
-                            .semantics { selected = comparing == before }, shape = RectangleShape, contentPadding = PaddingValues(2.dp)) { Text(if (before) "比較" else "表示", style = CaptureDesign.Label) } }
+                        modifier = Modifier.weight(1f).fillMaxHeight().semantics { selected = comparing == before },
+                        shape = RectangleShape, contentPadding = PaddingValues(2.dp)) {
+                        Text(if (before) "比較" else "表示", style = CaptureDesign.Label,
+                            color = if (!compareEnabled) CaptureDesign.Disabled else if (comparing == before) CaptureDesign.Ink else CaptureDesign.Muted)
+                    } }
                 }
             }
             if (phase == PhotoRollPhase.PAUSED) TextButton(onClick = retry, enabled = foreground, shape = RectangleShape) { Text("原本を確認して再試行") }

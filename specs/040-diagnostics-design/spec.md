@@ -1,6 +1,6 @@
 # Feature Specification: 診断画面のデザイン統一
 
-Branch: feat/design-diagnostics / Created: 2026-11-06 / Status: Draft
+Branch: feat/design-diagnostics / Created: 2026-11-06 / Status: 実装統合済み・実機未検証
 Input: [Issue #173](https://github.com/reitojike/cinematic-camera/issues/173)、引継ぎINSTRUCTIONS.md B。A #172の共通トークン後に実施。
 
 ## User Scenarios & Testing
