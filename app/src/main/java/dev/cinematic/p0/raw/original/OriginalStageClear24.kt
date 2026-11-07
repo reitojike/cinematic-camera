@@ -11,9 +11,11 @@ internal fun interface OriginalMask { fun row(y: Int, weights: FloatArray)
 }
 
 /** The tone field and gain are shared by all three channels of a pixel. */
-internal fun originalToneRow(row: FloatArray, toneRow: FloatArray, percentiles: DoubleArray): FloatArray {
+internal fun originalToneRow(row: FloatArray, toneRow: FloatArray, percentiles: DoubleArray,
+    checkpoint: (() -> Unit)? = null): FloatArray {
     val output = FloatArray(row.size)
     repeat(toneRow.size) { p ->
+        if (checkpoint != null && p % 64 == 0) checkpoint()
         val value = toneRow[p].toDouble()
         val delta = -R7BaseV1.HIGHLIGHTS * max(value - percentiles[1], 0.0) -
             R7BaseV1.SHADOWS * min(value - percentiles[0], 0.0)
@@ -34,7 +36,11 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, p
     private val parallelCharacterWorkers: Int = 1,
     private val parallelFoundationWorkers: Int = 1,
     private val parallelGlowWorkers: Int = 1,
-    private val glowRowProbe: ((String, Int) -> Unit)? = null) {
+    private val glowRowProbe: ((String, Int) -> Unit)? = null,
+    private val fuseR7ColorRows: Boolean = false,
+    private val parallelToneWorkers: Int = 1,
+    private val parallelMistWorkers: Int = 1,
+    private val remainingRowProbe: ((String, Int) -> Unit)? = null) {
     private val luma = StageClearV1.LUMA
     private fun y(row: FloatArray, i: Int) = row[i] * luma[0] + row[i + 1] * luma[1] + row[i + 2] * luma[2]
     private fun image(width: Int, row: FloatArray) = LinearSrgbImage.takeOwnership(width, 1, row)
@@ -45,12 +51,13 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, p
 
     fun render(input: OriginalRaster, externalEv: Double, strength: Double = .5,
         foundation: OriginalMask = OriginalMask.NONE, faces: OriginalMask = OriginalMask.NONE,
-        stop: () -> Boolean = { false }, stage: (String, OriginalRasterFile) -> Unit = { _, _ -> }): Result {
+        stop: () -> Boolean = { false }, stage: ((String, OriginalRasterFile) -> Unit)? = null): Result {
+        require(!fuseR7ColorRows || stage == null) { "Fused rows do not expose intermediate stage rasters" }
         validateOriginalSize(input.width, input.height)
         require(externalEv.isFinite() && strength.isFinite() && strength in 0.0..1.0)
         val width = input.width; val height = input.height
         fun emit(name: String, raster: OriginalRasterFile): OriginalRasterFile {
-            originalCheckpoint(stop); stage(name, raster); originalCheckpoint(stop); return raster
+            originalCheckpoint(stop); stage?.invoke(name, raster); originalCheckpoint(stop); return raster
         }
         fun rowStep(previous: OriginalRasterFile, name: String, timing: OriginalStage, parallelRows: Boolean = false,
             transform: (Int, FloatArray) -> FloatArray): OriginalRasterFile {
@@ -76,9 +83,18 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, p
         }, stop, .5, .92)
         field to percentiles
         }
-        base = rowStep(base, "r7_tone", OriginalStage.R7_TONE_APPLY) { yy, row ->
-            tone.row(yy, toneRow)
-            originalToneRow(row, toneRow, percentiles)
+        require(parallelToneWorkers in 1..2)
+        val parallelTone = parallelToneWorkers > 1
+        val workerToneRows = if (parallelTone) ThreadLocal.withInitial { FloatArray(width) } else null
+        val toneCheckpoint: (() -> Unit)? = if (parallelTone) {
+            { originalCheckpoint { stop() || Thread.currentThread().isInterrupted } }
+        } else null
+        base = rowStep(base, "r7_tone", OriginalStage.R7_TONE_APPLY, parallelRows = parallelTone) { yy, row ->
+            remainingRowProbe?.invoke("tone", yy)
+            toneCheckpoint?.invoke()
+            val activeToneRow = workerToneRows?.get() ?: toneRow
+            tone.row(yy, activeToneRow)
+            originalToneRow(row, activeToneRow, percentiles, toneCheckpoint).also { toneCheckpoint?.invoke() }
         }
         val roiRow = FloatArray(width)
         require(parallelFoundationWorkers in 1..2)
@@ -95,9 +111,15 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, p
                 if (parallelFoundation) originalCheckpoint(workerStop)
             }
         }
-        base = rowStep(base, "r7_vibrance", OriginalStage.R7_VIBRANCE, parallelRows = true) { _, row -> values(R7Base.vibrance(image(width, row))) }
-        base = rowStep(base, "r7_crisp", OriginalStage.R7_CRISP, parallelRows = true) { _, row -> values(R7Base.crisp(image(width, row))) }
-        base = rowStep(base, "r7_skin", OriginalStage.R7_SKIN, parallelRows = true) { _, row -> values(R7Base.skin(image(width, row))) }
+        if (fuseR7ColorRows) {
+            base = rowStep(base, "r7_skin", OriginalStage.R7_COLOR_FUSED, parallelRows = true) { _, row ->
+                originalR7ColorRow(width, row, workerStop)
+            }
+        } else {
+            base = rowStep(base, "r7_vibrance", OriginalStage.R7_VIBRANCE, parallelRows = true) { _, row -> values(R7Base.vibrance(image(width, row))) }
+            base = rowStep(base, "r7_crisp", OriginalStage.R7_CRISP, parallelRows = true) { _, row -> values(R7Base.crisp(image(width, row))) }
+            base = rowStep(base, "r7_skin", OriginalStage.R7_SKIN, parallelRows = true) { _, row -> values(R7Base.skin(image(width, row))) }
+        }
 
         val skin = originalStage(trace, OriginalStage.SKIN_FIELD) { OriginalFields.blur(base, StageClearGlowV1.SKIN_RADIUS, 1, stop) { rgb, out ->
             val frame = image(width, rgb); val lab = FloatArray(3)
@@ -265,6 +287,9 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, p
     }
 
     private fun mist(source: OriginalRasterFile, skin: OriginalField, amount: Double, stop: () -> Boolean): OriginalRasterFile {
+        require(parallelMistWorkers in 1..2)
+        val parallel = parallelMistWorkers > 1
+        val workerStop = { stop() || Thread.currentThread().isInterrupted }
         val width = source.width
         val halos = StageClearMistV1.KERNELS.map { (radius, weight) ->
             OriginalFields.blur(source, radius, 3, stop) { rgb, out ->
@@ -276,16 +301,28 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, p
                 }
             } to weight
         }
-        val rows = halos.map { FloatArray(width * 3) }; val skinRow = FloatArray(width)
-        return work.map(source, stop) { yy, rgb ->
-            skin.row(yy, skinRow); halos.forEachIndexed { k, field -> field.first.row(yy, rows[k]) }
-            FloatArray(rgb.size) { i ->
-                var halo = 0f; halos.indices.forEach { k -> halo += halos[k].second * rows[k][i] }
-                val candidate = rgb[i] + StageClearMistV1.MIST_AMOUNT.toFloat() * halo *
-                    (1f - StageClearMistV1.SKIN_PROTECT.toFloat() * skinRow[i / 3].coerceIn(0f, 1f))
-                rgb[i] + amount.toFloat() * (candidate - rgb[i])
-            }
+        class MistRows {
+            val halos = halos.map { FloatArray(width * 3) }
+            val skin = FloatArray(width)
         }
+        val serialRows = if (parallel) null else MistRows()
+        val workerRows = if (parallel) ThreadLocal.withInitial { MistRows() } else null
+        val transform: (Int, FloatArray) -> FloatArray = { yy, rgb ->
+            remainingRowProbe?.invoke("mist", yy)
+            if (parallel) originalCheckpoint(workerStop)
+            val rows = workerRows?.get() ?: requireNotNull(serialRows)
+            skin.row(yy, rows.skin)
+            halos.forEachIndexed { k, field -> field.first.row(yy, rows.halos[k]) }
+            FloatArray(rgb.size) { i ->
+                if (parallel && i % 192 == 0) originalCheckpoint(workerStop)
+                var halo = 0f; halos.indices.forEach { k -> halo += halos[k].second * rows.halos[k][i] }
+                val candidate = rgb[i] + StageClearMistV1.MIST_AMOUNT.toFloat() * halo *
+                    (1f - StageClearMistV1.SKIN_PROTECT.toFloat() * rows.skin[i / 3].coerceIn(0f, 1f))
+                rgb[i] + amount.toFloat() * (candidate - rgb[i])
+            }.also { if (parallel) originalCheckpoint(workerStop) }
+        }
+        return if (parallel) work.mapParallelRows(source, stop, parallelMistWorkers, transform)
+        else work.map(source, stop, transform)
     }
 
     private fun orton(source: OriginalRasterFile, skin: OriginalField, amount: Double, stop: () -> Boolean): OriginalRasterFile {

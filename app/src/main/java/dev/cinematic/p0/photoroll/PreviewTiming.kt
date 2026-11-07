@@ -1,5 +1,7 @@
 package dev.cinematic.p0.photoroll
 
+import dev.cinematic.p0.photoedit.PhotoEditValues
+
 /** Request acceptance to UI-state adoption, not physical touch-to-photon latency. No source data. */
 internal class PreviewTiming(
     private val revision: Long,
@@ -37,3 +39,12 @@ internal class PreviewTiming(
 
 internal enum class PreviewOperation { OPEN, STRENGTH, TEMPERATURE, BRIGHTNESS, MULTIPLE }
 
+/** A restored recipe is still opening a photo, never a user slider adjustment. */
+internal fun previewOperationForChange(previous: PhotoEditValues, next: PhotoEditValues, restoring: Boolean): PreviewOperation {
+    if (restoring) return PreviewOperation.OPEN
+    val causes = listOfNotNull(
+        PreviewOperation.STRENGTH.takeIf { previous.strength != next.strength },
+        PreviewOperation.TEMPERATURE.takeIf { previous.temperature != next.temperature },
+        PreviewOperation.BRIGHTNESS.takeIf { previous.brightness != next.brightness })
+    return causes.singleOrNull() ?: PreviewOperation.MULTIPLE
+}
