@@ -197,7 +197,6 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, p
         val width = base.width
         val parallel = parallelGlowWorkers > 1
         val workerStop = { stop() || Thread.currentThread().isInterrupted }
-        fun checkpoint() { if (parallel) originalCheckpoint(workerStop) }
         fun mapRows(source: OriginalRasterFile, transform: (Int, FloatArray) -> FloatArray): OriginalRasterFile =
             if (parallel) work.mapParallelRows(source, stop, parallelGlowWorkers, transform)
             else work.map(source, stop, transform)
@@ -228,17 +227,17 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, p
         val tint = StageClearGlowV1.HALATION_TINT
         val light = mapRows(base) { yy, rgb ->
             glowRowProbe?.invoke("light", yy)
-            checkpoint()
+            if (parallel) originalCheckpoint(workerStop)
             val rows = workerLightRows?.get() ?: requireNotNull(serialLightRows)
             skin.row(yy, rows.skin); halation.row(yy, rows.halo)
-            bloom.forEachIndexed { i, pair -> checkpoint(); pair.first.row(yy, rows.bloomRows[i]) }
+            bloom.forEachIndexed { i, pair -> if (parallel) originalCheckpoint(workerStop); pair.first.row(yy, rows.bloomRows[i]) }
             FloatArray(rgb.size) { i ->
-                if (i % 192 == 0) checkpoint()
+                if (parallel && i % 192 == 0) originalCheckpoint(workerStop)
                 var b = 0f; bloom.indices.forEach { k -> b += bloom[k].second * rows.bloomRows[k][i] }
                 rgb[i] + ((StageClearGlowV1.BLOOM * strength).toFloat() * b +
                     (StageClearGlowV1.HALATION * strength).toFloat() * rows.halo[i / 3] * tint[i % 3]) *
                     (1f - StageClearGlowV1.SKIN_PROTECT.toFloat() * rows.skin[i / 3].coerceIn(0f, 1f))
-            }.also { checkpoint() }
+            }.also { if (parallel) originalCheckpoint(workerStop) }
         }
         // Ordered map completion closes all light workers before global diffusion observes light.
         val soft = OriginalFields.blur(light, StageClearGlowV1.DIFFUSION_RADIUS, 3, stop) { rgb, out -> rgb.copyInto(out) }
@@ -250,16 +249,16 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, p
         val workerDiffusionRows = if (parallel) ThreadLocal.withInitial { DiffusionRows() } else null
         val result = mapRows(light) { yy, rgb ->
             glowRowProbe?.invoke("diffusion", yy)
-            checkpoint()
+            if (parallel) originalCheckpoint(workerStop)
             val rows = workerDiffusionRows?.get() ?: requireNotNull(serialDiffusionRows)
             soft.row(yy, rows.soft); skin.row(yy, rows.skin)
             FloatArray(rgb.size) { i ->
-                if (i % 192 == 0) checkpoint()
+                if (parallel && i % 192 == 0) originalCheckpoint(workerStop)
                 val blurred = rows.soft[i].coerceIn(0f, 1f)
                 rgb[i] + (StageClearGlowV1.DIFFUSION * strength).toFloat() *
                     (blurred - rgb[i].coerceIn(0f, 1f) * blurred) *
                     (1f - StageClearGlowV1.SKIN_PROTECT.toFloat() * rows.skin[i / 3].coerceIn(0f, 1f))
-            }.also { checkpoint() }
+            }.also { if (parallel) originalCheckpoint(workerStop) }
         }
         work.release(light)
         return result
