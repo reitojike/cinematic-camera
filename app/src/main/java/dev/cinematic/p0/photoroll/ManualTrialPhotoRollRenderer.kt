@@ -126,17 +126,25 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
     }
 }
 
-internal fun <T> awaitTrialPreview(future: java.util.concurrent.CompletableFuture<T>, cancellation: CancellationSignal,
-    awaitCancelledOwner: Boolean = false): T {
-    try { while (true) {
-        cancellation.throwIfCanceled()
-        try { return future.get(250, TimeUnit.MILLISECONDS) }
-        catch (_: TimeoutException) { /* Keep the queue owner until it completes or cancellation stops it. */ }
-        catch (failure: ExecutionException) { throw (failure.cause ?: failure) }
-        catch (_: InterruptedException) { Thread.currentThread().interrupt(); throw OperationCanceledException() }
-    } } finally {
+internal fun <T> awaitTrialPreview(
+    future: java.util.concurrent.CompletableFuture<T>,
+    cancellation: CancellationSignal,
+    awaitCancelledOwner: Boolean = false,
+): T {
+    try {
+        while (true) {
+            cancellation.throwIfCanceled()
+            try { return future.get(250, TimeUnit.MILLISECONDS) }
+            catch (_: TimeoutException) { /* Keep checking cancellation while the queue owns its work. */ }
+            catch (failure: ExecutionException) { throw (failure.cause ?: failure) }
+            catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw OperationCanceledException()
+            }
+        }
+    } finally {
         // A cancelled await is not proof that the queue producer released its resources.
-        // This runs only on the existing IO caller, never Main; normal mode keeps its old behavior.
+        // Only the existing IO caller waits; normal mode keeps its old behavior.
         if (awaitCancelledOwner) awaitPreviewOwnerCompletion(future)
     }
 }
