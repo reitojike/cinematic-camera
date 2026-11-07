@@ -4,6 +4,7 @@ import dev.cinematic.p0.raw.*
 import java.nio.file.Files
 import java.io.IOException
 import java.util.concurrent.CancellationException
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Assert.*
@@ -11,6 +12,39 @@ import org.junit.Test
 import kotlin.math.*
 
 class OriginalStageClear24Test {
+    @Test fun foundationRequiresExplicitOptInWhileGlowRemainsOnCaller() {
+        for (workers in listOf(null, 2)) {
+            val root = Files.createTempDirectory("original-foundation-opt-in").toFile()
+            val work = OriginalRasterWorkspace(root.resolve("attempt"))
+            val inFoundation = AtomicBoolean(false)
+            val foundationThreads = ConcurrentHashMap.newKeySet<Thread>()
+            val caller = Thread.currentThread()
+            var glowRows = 0
+            val glowProbe: (String, Int) -> Unit = { _, _ ->
+                assertSame("Glow must remain serial", caller, Thread.currentThread())
+                glowRows++
+            }
+            try {
+                val renderer = if (workers == null) OriginalStageClear24(work, glowRowProbe = glowProbe)
+                    else OriginalStageClear24(work, parallelFoundationWorkers = workers, glowRowProbe = glowProbe)
+                renderer.render(MemoryRaster(48, 32, FloatArray(48 * 32 * 3) { .3f }), .23, .5,
+                    stop = {
+                        if (inFoundation.get()) foundationThreads.add(Thread.currentThread())
+                        false
+                    }, stage = { name, _ ->
+                        if (name == "r7_tone") inFoundation.set(true)
+                        if (name == "r7_foundation") inFoundation.set(false)
+                    })
+                assertTrue(foundationThreads.contains(caller))
+                val workerThreads = foundationThreads.filter { it !== caller }
+                if (workers == null) assertTrue(workerThreads.isEmpty())
+                else assertTrue("Foundation workers=${workerThreads.size}", workerThreads.size in 1..2)
+                assertTrue(glowRows > 0)
+                assertFalse(work.hasPendingOwners)
+            } finally { work.closePending(); work.disposeConfirmed(); check(root.delete()) }
+        }
+    }
+
     @Test fun emptyFoundationWorkersMatchSerialFloatBitsAndExternalRoiStaysOnCaller() {
         for ((width, height) in listOf(48 to 32, 174 to 116)) for (strength in listOf(0.0, .5, 1.0)) {
             val rgb = FloatArray(width * height * 3) { i -> (((i * 37L) % 4096) / 2048f) - .05f }
@@ -38,6 +72,20 @@ class OriginalStageClear24Test {
                 })
                 serial.first.indices.forEach { i -> assertEquals(serial.first[i].toRawBits(), external.first[i].toRawBits()) }
                 serial.second.indices.forEach { i -> assertEquals(serial.second[i].toRawBits(), external.second[i].toRawBits()) }
+                fun statefulRoi(workers: Int): Pair<FloatArray, FloatArray> {
+                    var nextRow = 0
+                    val output = render(workers, OriginalMask { y, row ->
+                        assertSame("stateful ROI callback must stay on caller", caller, Thread.currentThread())
+                        assertEquals(nextRow++, y)
+                        row.fill((y % 5) / 4f)
+                    })
+                    assertEquals(height, nextRow)
+                    return output
+                }
+                val statefulSerial = statefulRoi(1)
+                val statefulCandidate = statefulRoi(2)
+                assertArrayEquals(statefulSerial.first, statefulCandidate.first, 0f)
+                assertArrayEquals(statefulSerial.second, statefulCandidate.second, 0f)
             }
         }
     }

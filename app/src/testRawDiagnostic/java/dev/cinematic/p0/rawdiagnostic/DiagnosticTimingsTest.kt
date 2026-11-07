@@ -5,6 +5,20 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DiagnosticTimingsTest {
+    @Test fun comparisonArmsKeepExplicitSerialBaselinesIndependentOfProductionSave() {
+        assertEquals(1, DiagnosticComparison.FOUNDATION.foundationWorkers(1))
+        assertEquals(2, DiagnosticComparison.FOUNDATION.foundationWorkers(2))
+        for (arm in 1..2) {
+            assertEquals(1, DiagnosticComparison.FOUNDATION.glowWorkers(arm))
+            assertEquals(1, DiagnosticComparison.GLOW_TWO.foundationWorkers(arm))
+            assertEquals(1, DiagnosticComparison.GLOW_FOUR.foundationWorkers(arm))
+        }
+        assertEquals(1, DiagnosticComparison.GLOW_TWO.glowWorkers(1))
+        assertEquals(2, DiagnosticComparison.GLOW_TWO.glowWorkers(2))
+        assertEquals(1, DiagnosticComparison.GLOW_FOUR.glowWorkers(1))
+        assertEquals(4, DiagnosticComparison.GLOW_FOUR.glowWorkers(2))
+    }
+
     @Test fun excludesChildrenAndCpuButRetainsRepeatedTopLevelSpans() {
         val timing = DiagnosticTimings()
         timing.finished(OriginalStage.ORTON, 100, true)
