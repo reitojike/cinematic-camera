@@ -110,7 +110,7 @@ BはGlow2/Mist2/tone2/色融合on。sRGB近似は対象外。全JPEG厳密一致
 Glow/Mistはfield生成を含む全工程、toneは適用、色は旧3段合計対融合1段。全体と残差も併記する。
 
 性能判定は正逆両方で工程中央値10%以上短縮なら採用候補、両方未満なら今回条件で見送り。
-順序で10%判定が食い違う場合とR7が短縮した場合だけ追加比較する。R7 toneと色融合は別に切り分ける。
+順序で10%判定が食い違う場合とR7対象区間が両順10%以上短縮した場合だけ追加比較する。R7 toneと色融合は別に切り分ける。
 10%は事前に決めた実務上の性能基準であり統計的有意差や機能安全の代替ではない。
 品質/原本/取消/owner gate不成立や測定未完は性能採否に変換しない。見送りは条件と結果を一覧に残す。
 
@@ -136,5 +136,9 @@ samplerの終了未確認でも既存gateを保持し次の試行を開始しな
 
 正逆の私有reportは tools/raw-diagnostic/compare_raw4.py で集計する。入力識別情報はreportにないため、
 同じ原本bytes/APKと端末状態を本人側で照合し --same-input-build-confirmed を明示する。
-10%未満を見送りとして記録し、閾値不一致またはR7対象区間の短縮時だけ追加比較する。
+10%未満を見送りとして記録し、閾値不一致またはR7対象区間が両順10%以上短縮した時だけ追加比較する。
 詳細と採否の固定labelは tools/raw-diagnostic/README.md を参照。性能採用labelは製品既定変更や安全合格を許可しない。
+
+RAW4の合成検証結果と枠解放は[Issue #78](https://github.com/reitojike/cinematic-camera/issues/78#issuecomment-6709899746)を参照。
+通常debug lint/unit/両ABI buildも成功（907 tests、failure/error0、既存skip4）。
+当日の12MP手順・所要目安・#208録画準備は[RAW4_DEVICE_CHECKLIST](RAW4_DEVICE_CHECKLIST.md)を参照。
