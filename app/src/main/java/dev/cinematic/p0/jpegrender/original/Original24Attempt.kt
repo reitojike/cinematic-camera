@@ -37,7 +37,8 @@ internal class Original24Attempt(context: Context, private val request: Original
     private val scratchDirectory: File, private val trace: OriginalStageTrace? = null,
     private val parallelOrtonWorkers: Int = 4,
     private val ortonRowProbe: ((Int) -> Unit)? = null,
-    private val parallelCharacterWorkers: Int = 2) : AutoCloseable {
+    private val parallelCharacterWorkers: Int = 2,
+    private val parallelFoundationWorkers: Int = 1) : AutoCloseable {
     private val context = context.applicationContext
     private val active = AtomicBoolean(false)
     private var started = false
@@ -124,7 +125,8 @@ internal class Original24Attempt(context: Context, private val request: Original
                     consume(y, row)
                 }
             }
-            val rendered = OriginalStageClear24(work, trace, parallelOrtonWorkers, ortonRowProbe, parallelCharacterWorkers)
+            val rendered = OriginalStageClear24(work, trace, parallelOrtonWorkers, ortonRowProbe, parallelCharacterWorkers,
+                parallelFoundationWorkers)
                 .render(adjusted, ev, request.strength, stop = stop)
             checkpoint(); Original24Resources.requireAvailable(context)
             val digest = MessageDigest.getInstance("SHA-256")

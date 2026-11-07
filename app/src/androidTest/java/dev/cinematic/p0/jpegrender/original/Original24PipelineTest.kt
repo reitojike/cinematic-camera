@@ -36,7 +36,9 @@ class Original24PipelineTest {
         require(parallelOrtonWorkers in setOf(1, 2, 4))
         val parallelCharacterWorkers = args.getString("parallelCharacterWorkers")?.toInt() ?: 2
         require(parallelCharacterWorkers in 1..2)
-        val dimensions = when (size) { "SMALL" -> 64 to 48; "12MP" -> 4000 to 3000; "24MP" -> 6000 to 4000; else -> error("Unknown fixed case") }
+        val parallelFoundationWorkers = args.getString("parallelFoundationWorkers")?.toInt() ?: 1
+        require(parallelFoundationWorkers in 1..2)
+        val dimensions = when (size) { "SMALL" -> 64 to 48; "1MP" -> 1024 to 768; "12MP" -> 4000 to 3000; "24MP" -> 6000 to 4000; else -> error("Unknown fixed case") }
         val reportFile = File(context.filesDir, "original24-$runId.json")
         check(reportFile.createNewFile())
         val reports = JSONArray()
@@ -44,6 +46,7 @@ class Original24PipelineTest {
             .put("applicationId", context.packageName).put("size", size)
             .put("parallelOrtonWorkers", parallelOrtonWorkers)
             .put("parallelCharacterWorkers", parallelCharacterWorkers)
+            .put("parallelFoundationWorkers", parallelFoundationWorkers)
             .put("complete", false).put("status", "STARTED")
             .put("heapLimitBytes", Runtime.getRuntime().maxMemory()).put("abi", Build.SUPPORTED_ABIS[0]).put("cases", reports)
         reportFile.writeText(all.toString(2))
@@ -86,7 +89,8 @@ class Original24PipelineTest {
                         }
                     } else null
                     val attempt = Original24Attempt(context, request, io, File(root, "scratch-$orientation-$index"), trace,
-                        parallelOrtonWorkers = parallelOrtonWorkers, parallelCharacterWorkers = parallelCharacterWorkers)
+                        parallelOrtonWorkers = parallelOrtonWorkers, parallelCharacterWorkers = parallelCharacterWorkers,
+                        parallelFoundationWorkers = parallelFoundationWorkers)
                     var failure: Throwable? = null
                     try {
                         metrics.stage("before")
