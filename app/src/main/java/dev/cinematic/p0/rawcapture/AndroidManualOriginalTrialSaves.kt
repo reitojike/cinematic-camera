@@ -243,7 +243,9 @@ internal object AndroidManualOriginalTrialSaves {
             val directory = RenderedJpegFiles(File(app.noBackupFilesDir, "raw-captures"), request.captureId,
                 request.generation).generationRoot()
             if (!directory.isDirectory && !directory.mkdirs()) throw IOException("Trial generation directory unavailable")
-            val engine = Original24Attempt(app, request, io, File(directory, "original-work")).also { attempt = it }
+            // Only this production save opts in; low-level and diagnostic serial baselines stay explicit.
+            val engine = Original24Attempt(app, request, io, File(directory, "original-work"),
+                parallelFoundationWorkers = 2).also { attempt = it }
             if (stopped.get() || stop()) engine.requestStop()
             val result = engine.render(stop)
             engine.close()

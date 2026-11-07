@@ -1,7 +1,7 @@
 # RAW実機診断
 
-関連: #78 / #81 / #101、候補 #185（head `8ef8013`）。製品採用や実機性能の合格を意味しない。
-#189のmain統合後に、この診断変更のCI・レビューを完了してから実機へ進む。
+関連: #78 / #81 / #101、比較候補 #185（head `8ef8013`）、診断入口の統合 #196。
+診断の比較結果と通常製品の保存経路の検証は別に扱う。
 
 ## build条件
 
@@ -43,8 +43,9 @@ APK導入、Files選択、比較条件/測定modeの選択、開始、取消、�
 
 ## 比較と反復
 
-- R7 Foundation: 現製品1 workerと#185候補2 worker。empty ROIのみ並列、外部ROI callbackはserial。
-  通常既定は1のまま。tone gain onceの過去変更とは別の比較。
+- R7 Foundation: 旧baseline 1 workerと2 worker。empty ROIのみ並列、外部ROI callbackはserial。
+  通常原寸手動保存のcallerは2を明示する。Original24Attempt/OriginalStageClear24のAPI既定は1を維持し、
+  この診断も製品callerを使わず各armの1/2を明示する。tone gain onceの過去変更とは別の比較。
 - Glow: 1対2、または1対4を選択。light/diffusionの2つの行合成だけ並列化し、間のglobal blur境界を保持。
   worker専有行buffer、既存ordered executorとowner管理を使う。通常既定1を変えない。
 - 一つのsessionはwarmup AB、その後ABBAAB（逆順はBA/BAABBA）。各arm初回除外後ちょうど3成功、計8回。

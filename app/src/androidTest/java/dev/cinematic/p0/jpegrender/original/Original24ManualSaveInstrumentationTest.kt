@@ -13,6 +13,8 @@ import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.raw.PhotoAdjustments
 import dev.cinematic.p0.rawcapture.*
 import dev.cinematic.p0.testing.writeSyntheticTrialDng
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.Closeable
 import java.io.File
 import java.util.UUID
@@ -155,6 +157,30 @@ class Original24ManualSaveInstrumentationTest {
             assertEquals(fingerprint, DngContentVerifier.verify(fingerprint, { requireNotNull(resolver.openInputStream(sourceUri)) }))
             assertFalse(save.hasUnreleasedResources)
             AndroidManualOriginalTrialSaves.discardPreview(app).get(30, TimeUnit.SECONDS)
+
+            // The real save factory selects two Foundation workers. Compare its public JPEG with
+            // the explicit serial baseline, after the save has returned its coordinator admission.
+            // This extra attempt is synthetic-only and cannot insert or publish a MediaStore row.
+            val serialBytes = ByteArrayOutputStream()
+            val serialIo = object : AutoRenderIo {
+                override fun openOriginal() = requireNotNull(resolver.openInputStream(sourceUri))
+                override fun openOriginalDescriptor(): AutoReadOnlyDescriptor = error("Use verified snapshot")
+                override fun openOutput() = serialBytes
+                override fun openOutputRead() = ByteArrayInputStream(serialBytes.toByteArray())
+            }
+            val serialScratch = File(app.cacheDir, "synthetic-original24-serial-${UUID.randomUUID()}")
+            val serialAttempt = Original24Attempt(app, save.request, serialIo, serialScratch,
+                parallelFoundationWorkers = 1, parallelGlowWorkers = 1)
+            val serialResult = serialAttempt.use { it.render { false } }
+            assertFalse(serialAttempt.hasUnreleasedResources)
+            assertFalse(serialScratch.exists())
+            assertEquals(record.fingerprint, serialResult.fingerprint)
+            assertEquals(inspection.output, serialResult.output)
+            assertEquals(proof.geometry, serialResult.geometry)
+            assertEquals(save.geometry, serialResult.observedGeometry)
+            assertEquals(proof.externalEv, serialResult.externalEv, 0.0)
+            assertEquals(record, journal.read())
+            assertEquals(fingerprint, DngContentVerifier.verify(fingerprint, { requireNotNull(resolver.openInputStream(sourceUri)) }))
             success = true
         } catch (error: Throwable) { failure = error; throw error }
         finally {
