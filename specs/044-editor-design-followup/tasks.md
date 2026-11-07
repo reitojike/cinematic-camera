@@ -20,7 +20,8 @@
 ## 検証境界
 実装converge: FR001–006 / SC001–003を照合し、未実装差分なし。
 機械検証: lintDebug / testDebugUnitTest / assembleDebug / assembleDebugAndroidTest とdiff検査成功。
-専用API37エミュレーターでDevelopViewAndroidTestとCaptureControlVisualsAndroidTest成功（2 tests）。
+共通GMD導入前の専用API37エミュレーターでDevelopViewAndroidTestとCaptureControlVisualsAndroidTest成功（2 tests）。
+この過去の実績をGMDでの成功に読み替えず、再実行はplanの共通GMD手順に従う。
 現像はfont scale 1.3でも同テスト成功。撮影は共有部品の縦/横回転fixtureであり、実カメラ起動試験ではない。
 初回のa11y更新待ち・子ノード選択によるfixture失敗は、待機とclickable祖先の明示選択状態検査へ修正。
 実機の見え方・操作感、実DNG、24MP保存は未検証。実装head `ef3302d` の独立レビューはOK。GitHub CI/canonical review、最終head照合、mergeは未完。

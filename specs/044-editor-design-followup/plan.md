@@ -22,7 +22,11 @@ PhotoEditBarは表示色だけ追加引数で受け取り、gesture/key/semantic
 ## Validation
 撮影の共通部品は縦・横回転で選択semanticsとcaller-owned toggleを合成fixtureで確認する。現像の表示/比較は同じ側を再度押しても反転しないことを検証する。
 既存DevelopViewAndroidTestに長い名前の固定情報、選択状態・編集終了、目盛り順を追加。合成bitmapのみ。
-既存unit、lintDebug、assembleDebug、assembleDebugAndroidTest、git diff --check。AVDが利用可能ならisolated=trueでfocused instrumentation。
+既存unit、lintDebug、assembleDebug、assembleDebugAndroidTest、git diff --check。
+自動instrumentationは[共通GMD手順](../../docs/MANAGED_DEVICES.md)に従い、ホスト実行枠と共通環境を確認してから
+`pixel9aapi37DebugAndroidTest` を `isolated=true`、対象classを
+`dev.cinematic.p0.photoroll.DevelopViewAndroidTest,dev.cinematic.p0.photoroll.CaptureControlVisualsAndroidTest` に限定して実行する。
+タスク専用の手動AVDは起動・新規作成しない。
 実写真、実機、24MP性能は試さない。確認手順は既存BUILD_VALIDATIONとtestを参照。
 
 ## Project Structure
