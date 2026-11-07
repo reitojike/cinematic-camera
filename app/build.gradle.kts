@@ -67,6 +67,23 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    testOptions {
+        managedDevices {
+            localDevices {
+                create("pixel9aapi37") {
+                    device = "Pixel 9a"
+                    sdkVersion = 37
+                    systemImageSource = "google"
+                }
+                // Automated Test Device: no SystemUI/IME/most Google apps, hardware rendering disabled.
+                create("pixel9aapi37atd") {
+                    device = "Pixel 9a"
+                    sdkVersion = 37
+                    systemImageSource = "google-atd"
+                }
+            }
+        }
+    }
     lint { abortOnError = true }
 }
 dependencies {

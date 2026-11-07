@@ -19,6 +19,7 @@ think-canvasの適用可能な方針を本プロジェクトへ合わせ、製�
   機械的検証の証拠を扱います。指定/受付/実測、保存/DNG有効性を区別し、実機証拠なしで合格にしません。
 - 日々の作業状況・確認のやり取りはIssue等で管理します。specは確定した仕様・受入条件、tasksはAC対応の完了状態、
   P0_REPORTは最終検証結果・制約・採否根拠に限定し、時系列の進捗ログをリポジトリ内の文書へ積み上げません。
+- エミュレーター自動検証は[共通Gradle Managed Device](docs/MANAGED_DEVICES.md)を使い、タスク別の手動AVDを新規作成しません。
 - PR前は変更一覧と秘密除外を確認し、`./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug --no-daemon`
   と`git diff --check`を変更に応じて実行します。Windowsでは`./gradlew`を`.\gradlew.bat`に置き換えます。
   実際の[Android CI](.github/workflows/android.yml)を合否の根拠にし、未実行・環境失敗は明示します。
