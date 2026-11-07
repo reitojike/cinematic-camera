@@ -75,6 +75,12 @@ android {
                     sdkVersion = 37
                     systemImageSource = "google"
                 }
+                // Automated Test Device: no SystemUI/IME/most Google apps, hardware rendering disabled.
+                create("pixel9aapi37atd") {
+                    device = "Pixel 9a"
+                    sdkVersion = 37
+                    systemImageSource = "google-atd"
+                }
             }
         }
     }
