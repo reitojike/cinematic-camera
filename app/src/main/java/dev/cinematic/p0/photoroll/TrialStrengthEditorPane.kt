@@ -13,7 +13,7 @@ import dev.cinematic.p0.CaptureRulerHeading
 import dev.cinematic.p0.photoedit.*
 import java.util.Locale
 
-internal fun trialStrengthLabel(value: Double) = String.format(Locale.ROOT, "%.1f", value * 100).removeSuffix(".0")
+internal fun trialStrengthLabel(value: Double) = String.format(Locale.ROOT, "%.0f", value * 100)
 internal fun editValueLabel(parameter: PhotoEditParameter, value: Double): String = when (parameter) {
     PhotoEditParameter.STRENGTH -> trialStrengthLabel(value)
     PhotoEditParameter.TEMPERATURE -> String.format(Locale.ROOT, "%+.0f", value)
@@ -50,8 +50,10 @@ internal fun editValueLabel(parameter: PhotoEditParameter, value: Double): Strin
         PhotoEditBar(title, value,
             valueNow = { readState().session?.draft?.let { when (parameter) { PhotoEditParameter.STRENGTH -> it.strength
                 PhotoEditParameter.TEMPERATURE -> it.temperature; PhotoEditParameter.BRIGHTNESS -> it.brightness } } ?: Double.NaN },
-            scale = scale, interactionKey = token, enabled = foreground, formatValue = { editValueLabel(parameter, it) },
+            scale = scale, interactionKey = token to parameter, enabled = foreground, formatValue = { editValueLabel(parameter, it) },
             onValueChange = { change(token, parameter, it) }, onValueChangeFinished = { apply(token) },
+            baseline = if (parameter == PhotoEditParameter.STRENGTH) .5 else 0.0,
+            quantization = if (parameter == PhotoEditParameter.STRENGTH) .01 else null,
             valueColor = if (value != displayed) CaptureDesign.Amber else CaptureDesign.Text)
     }
 }
