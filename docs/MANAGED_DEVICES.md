@@ -6,7 +6,14 @@ Issue #190。タスクごとの手動AVD作成を止め、Google公式の
 
 ## 固定構成と再利用
 
-`app/build.gradle.kts` の `pixel2api37`（Pixel 2 / API 37 / Google APIs）を共通で使う。
+`app/build.gradle.kts` の `pixel9aapi37`（Pixel 9a / API 37 / Google APIs）を共通で使う。
+AGP 9.5.1 / sdklib 32.5.1同梱の公式Pixel 9a profileは1080×2424、論理density 420dpi、
+RAM 7556MiBを定義する。画面全体の目安は約411×923dp（system bar領域を除く前）。
+製品仕様の6.3inch / 8GBとprofileの6.24inch / 7556MiBは一致する表記ではなく、
+起動後の実RAM割当は別途確認する。独自のconfig書換えでRAMを強制しない。
+Windows x86_64のsystem imageを使うためTensor G4 / GPU / camera / 実機性能は再現しない。
+API 37のGoogle APIs imageと組み合わせ、公開DSLの `sdkVersion` を使用する。
+
 既存のAndroidJUnitRunnerとandroidTestを利用し、独自AVD作成スクリプト、quarantine、shardは追加しない。
 AGPがデバイスの作成・起動・テスト・終了を管理する。再利用するのは同じ構成とAGPの共有キャッシュであり、
 毎回同じ起動済み端末やテストで変更した状態が残ることには依存しない。
@@ -25,13 +32,13 @@ JDK/SDK/共有Gradleキャッシュを既存開発環境で設定したうえで
 まずは端末を起動しないtask確認:
 
 ```powershell
-.\gradlew.bat :app:pixel2api37DebugAndroidTest --dry-run --no-daemon --max-workers=1
+.\gradlew.bat :app:pixel9aapi37DebugAndroidTest --dry-run --no-daemon --max-workers=1
 ```
 
 合成画像のみを使う比較gesture回帰（実カメラ撮影・実RAW・共有保存はしない）:
 
 ```powershell
-.\gradlew.bat :app:pixel2api37DebugAndroidTest --no-daemon --max-workers=1 `
+.\gradlew.bat :app:pixel9aapi37DebugAndroidTest --no-daemon --max-workers=1 `
   "-Pandroid.testInstrumentationRunnerArguments.class=dev.cinematic.p0.photoroll.PhotoRollComparisonGestureAndroidTest" `
   "-Pandroid.testInstrumentationRunnerArguments.isolated=true"
 ```

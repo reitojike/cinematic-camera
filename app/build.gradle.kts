@@ -70,9 +70,9 @@ android {
     testOptions {
         managedDevices {
             localDevices {
-                create("pixel2api37") {
-                    device = "Pixel 2"
-                    apiLevel = 37
+                create("pixel9aapi37") {
+                    device = "Pixel 9a"
+                    sdkVersion = 37
                     systemImageSource = "google"
                 }
             }
