@@ -112,3 +112,17 @@ kernelの再現入口は`dev.cinematic.p0.jpegrender.original.OriginalBloomField
 同candidate APK内の単独reduce3回/共有1回を各3組交互順で測り、全reduced fieldのraw-bit SHAを比較する。
 fixture生成でcacheが温まるためcold diskの比較ではない。旧mainとの速度比較は別APKの全段診断と区別する。
 全段`Original24PipelineTest`は`syntheticInputSha256/Bytes`も記録し、同じ固定fixtureであることを照合する。
+
+## Foundationの限定採用（Issue #78 / #185）
+
+`AndroidManualOriginalTrialSaves.Backend.render`から`Original24Attempt`へFoundation=2を明示する。
+`Original24Attempt`と`OriginalStageClear24`の既定1は、既存callerと診断baselineを暗黙に変更しないため維持する。
+診断は`DiagnosticComparison`が引き続き1/2を明示し、比較対象外Foundation/Glow=1、Orton=4、Character=2を保つ。
+既存の`OriginalMask.NONE` identity検査、worker専有ROI行、Java標準ExecutorService/Futureの
+最大2 worker・4 in-flight rows・順序付き読書きを再利用し、別の並列基盤は追加しない。
+失敗時shutdownNowと終了確認、未終了executorのowner保持、全owner解放後のcoordinator返却も既存経路を使う。
+
+既存のraw-bit一致/取消/例外/cleanup回帰に加え、下位API既定serial・明示2とGlow serial維持、
+stateful非空ROIのcaller順序をunitで確認する。実factory保存の合成instrumentationでは
+同じrecipeの明示1 worker JPEGと通常保存JPEGのfingerprint/出力を照合し、同じURIの再照合と原本不変を保つ。
+通常保存のPixel実機ACと端末全体の性能・瞬間peakは、この機械的検証とは別の未検証項目とする。

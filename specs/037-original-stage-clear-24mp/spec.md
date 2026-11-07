@@ -33,3 +33,11 @@ opt-in合成診断で段階別の単調時計時間を記録する。固定段�
 共有は最大3本とし、既存accum上限と追加Double payload 512KiBを超える場合や、
 1px軸・小入力・軸順切替等は走査前に従来の順次経路を選ぶ。途中失敗を再走査で隠さない。
 原本・cancel・close・全画素処理・品質表示と保存gateは変えない。採否は同条件の実測で判断する。
+
+## Foundationの2 worker採用（Issue #78 / #185）
+
+通常の原寸手動保存だけ、statelessな明示空ROIのFoundationを2 workerで処理する。
+下位renderer/attempt APIの既定と診断の比較baselineは1のまま、Glowも製品1を維持する。
+外部ROI callbackは値が全てゼロでもcaller上で順次実行し、callbackのthread-safetyを仮定しない。
+画素式・演算順・全行の出力順、取消/失敗時のowner保持と保存coordinator・journal・公開gateは変えない。
+同一入力の診断JPEG一致を通常保存の実機合格へ読み替えず、手動保存・FGS・撮影復帰は別途確認する。
