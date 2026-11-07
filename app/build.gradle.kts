@@ -4,6 +4,13 @@ plugins {
 }
 
 val original24Probe = providers.gradleProperty("cinematicOriginal24Probe").orNull == "true"
+val rawDiagnostic = providers.gradleProperty("cinematicRawDiagnostic").orNull == "true"
+require(!(original24Probe && rawDiagnostic)) { "Choose one diagnostic build type" }
+// A variant-specific false positive must never suppress a normal or aggregate lint invocation.
+val diagnosticLintTasks = setOf("lintRawDiagnostic", "testRawDiagnosticUnitTest", "assembleRawDiagnostic", "processReleaseMainManifest")
+val requestedTaskNames = gradle.startParameter.taskNames.map { it.substringAfterLast(':') }
+val diagnosticLintInvocation = rawDiagnostic && "lintRawDiagnostic" in requestedTaskNames &&
+    requestedTaskNames.all { it in diagnosticLintTasks }
 
 // Draft opt-in: default debug builds require no signing inputs and remain unchanged.
 val cinematicSigningMode = providers.environmentVariable("CINEMATIC_SIGNING_MODE").orElse("ephemeral_debug").get()
@@ -11,6 +18,7 @@ require(cinematicSigningMode in setOf("ephemeral_debug", "stable_internal")) {
     "CINEMATIC_SIGNING_MODE must be ephemeral_debug or stable_internal"
 }
 val stableInternalSigning = cinematicSigningMode == "stable_internal"
+require(!rawDiagnostic || !stableInternalSigning) { "RAW diagnostics use ephemeral_debug signing only" }
 fun requiredSigningInput(name: String): String = providers.environmentVariable(name).orNull
     ?.takeIf { it.isNotBlank() } ?: throw GradleException("Stable internal signing requires environment input: $name")
 if (stableInternalSigning) {
@@ -59,6 +67,24 @@ android {
             if (stableInternalSigning) signingConfig = signingConfigs.getByName("cinematicInternal")
         }
     }
+    // Same optimization recipe as the earlier Pixel photo probe, not the same measurement harness.
+    if (rawDiagnostic) {
+        if (providers.gradleProperty("cinematicRawDiagnosticTests").orNull == "true") {
+            testBuildType = "rawDiagnostic"
+            sourceSets.getByName("androidTest").manifest.srcFile("src/rawDiagnosticTest/AndroidManifest.xml")
+        }
+        buildTypes.create("rawDiagnostic") {
+            initWith(buildTypes.getByName("release"))
+            applicationIdSuffix = ".rawdiagnostic"
+            isDebuggable = false
+            isJniDebuggable = false
+            isMinifyEnabled = false
+            isShrinkResources = false
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += "release"
+            externalNativeBuild { cmake { arguments += "-DCMAKE_BUILD_TYPE=RelWithDebInfo" } }
+        }
+    }
     if (original24Probe) {
         testBuildType = "original24Probe"
         sourceSets.getByName("androidTest").manifest.srcFile("src/original24ProbeTest/AndroidManifest.xml")
@@ -84,7 +110,10 @@ android {
             }
         }
     }
-    lint { abortOnError = true }
+    lint {
+        abortOnError = true
+        if (diagnosticLintInvocation) lintConfig = file("src/rawDiagnostic/lint.xml")
+    }
 }
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2026.09.00"))

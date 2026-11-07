@@ -37,6 +37,56 @@ jobs:
           cache-provider: basic
       - name: lint・unit・debug build
         run: ./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :rawprobe:lintNormalDebug :rawprobe:assembleNormalDebug :rawprobe:assembleNormalDebugAndroidTest :rawprobe:lintLargeHeapDebug :rawprobe:assembleLargeHeapDebug :rawprobe:assembleLargeHeapDebugAndroidTest --no-daemon
+      - name: RAW diagnostic lint・unit・build and release manifest
+        run: ./gradlew :app:lintRawDiagnostic :app:testRawDiagnosticUnitTest :app:assembleRawDiagnostic :app:processReleaseMainManifest -PcinematicRawDiagnostic=true -Pandroid.onlyEnableUnitTestForTheTestedBuildType=false --no-daemon
+      - name: Compile synthetic RAW diagnostic instrumentation
+        run: ./gradlew :app:assembleRawDiagnosticAndroidTest -PcinematicRawDiagnostic=true -PcinematicRawDiagnosticTests=true --no-daemon
+      - name: Verify RAW diagnostic optimization recipe
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk=app/build/outputs/apk/rawDiagnostic/app-rawDiagnostic.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify "$apk"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest print "$apk" > "$RUNNER_TEMP/raw-diagnostic-manifest.xml"
+          python3 - <<'PY'
+          import json
+          import os
+          import shlex
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          android = '{http://schemas.android.com/apk/res/android}'
+          manifest = ET.parse(Path(os.environ['RUNNER_TEMP']) / 'raw-diagnostic-manifest.xml').getroot()
+          app = manifest.find('application')
+          assert manifest.attrib['package'] == 'dev.cinematic.p0.rawdiagnostic'
+          assert app.attrib.get(android + 'debuggable', 'false') == 'false'
+          assert app.attrib.get(android + 'largeHeap', 'false') == 'false'
+          assert app.find('profileable').attrib[android + 'shell'] == 'true'
+          assert not manifest.findall('uses-permission'), 'diagnostic must request no permissions'
+          activities = app.findall('activity')
+          assert len(activities) == 1 and activities[0].attrib[android + 'name'] == 'dev.cinematic.p0.rawdiagnostic.RawDiagnosticActivity'
+          assert not any(app.findall(tag) for tag in ('service', 'provider', 'receiver', 'activity-alias'))
+          for variant in ('debug', 'release'):
+              path = Path(f'app/build/intermediates/merged_manifest/{variant}/process{variant.title()}MainManifest/AndroidManifest.xml')
+              normal = ET.parse(path).getroot().find('application')
+              assert normal.find('profileable') is None, f'profileable leaked into {variant}'
+
+          abis = set()
+          for path in Path('app/.cxx/RelWithDebInfo').glob('*/*/compile_commands.json'):
+              abi = path.parent.name
+              if abi not in ('arm64-v8a', 'x86_64'):
+                  continue
+              commands = json.loads(path.read_text())
+              assert any(Path(entry['file']).name == 'dng_decoder.cpp' for entry in commands)
+              assert any('libraw-src' in entry['file'] for entry in commands)
+              for entry in commands:
+                  flags = entry.get('arguments') or shlex.split(entry['command'])
+                  assert [flag for flag in flags if flag.startswith('-O')] == ['-O2'], entry['file']
+                  assert '-DNDEBUG' in flags, entry['file']
+              abis.add(abi)
+          assert abis == {'arm64-v8a', 'x86_64'}, abis
+          print('RAW diagnostic manifest and native O2/NDEBUG verified; normal manifests are not profileable.')
+          PY
       - name: Prepare isolated RAW diagnostic
         shell: bash
         run: |
@@ -119,5 +169,8 @@ jobs:
             app/build/reports/tests/testDebugUnitTest/
             app/build/test-results/testDebugUnitTest/
             app/build/reports/lint-results-debug.*
+            app/build/reports/tests/testRawDiagnosticUnitTest/
+            app/build/test-results/testRawDiagnosticUnitTest/
+            app/build/reports/lint-results-rawDiagnostic.*
           if-no-files-found: warn
           retention-days: 7
