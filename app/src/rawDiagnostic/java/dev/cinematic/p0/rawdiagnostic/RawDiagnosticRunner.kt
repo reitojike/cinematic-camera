@@ -27,7 +27,8 @@ internal class RawDiagnosticRunner(private val context: Context) {
     private val harnessIo = DiagnosticIoOwner()
     @Volatile private var attemptQuiescent = true
     @Volatile private var cleanupHeld = false
-    val resourcesQuiescent get() = attemptQuiescent && !harnessIo.hasOpenResources && !cleanupHeld
+    @Volatile private var samplerQuiescent = true
+    val resourcesQuiescent get() = attemptQuiescent && samplerQuiescent && !harnessIo.hasOpenResources && !cleanupHeld
     @Volatile private var activeAttempt: Original24Attempt? = null
     fun cancel() { stopped.set(true); activeAttempt?.requestStop() }
     private fun checkpoint() { if (stopped.get()) throw java.util.concurrent.CancellationException() }
@@ -50,6 +51,14 @@ internal class RawDiagnosticRunner(private val context: Context) {
         return JSONObject().put("managedUsedBytes", runtime.totalMemory() - runtime.freeMemory())
             .put("nativeAllocatedBytes", Debug.getNativeHeapAllocatedSize()).put("pssKiB", info.totalPss)
     }
+    private fun memorySummary(s: DiagnosticMemorySampler.Summary) = JSONObject()
+        .put("quiescent", s.quiescent).put("failed", s.failed).put("sampleCount", s.sampleCount)
+        .put("observedMaxManagedBytes", s.observedMaxManagedBytes ?: JSONObject.NULL)
+        .put("observedMaxNativeBytes", s.observedMaxNativeBytes ?: JSONObject.NULL)
+        .put("requestedIntervalNanos", s.requestedIntervalNanos).put("meanIntervalNanos", s.meanIntervalNanos ?: JSONObject.NULL)
+        .put("maxGapNanos", s.maxGapNanos).put("elapsedNanos", s.elapsedNanos)
+        .put("collectionTotalNanos", s.collectionTotalNanos).put("collectionMaxNanos", s.collectionMaxNanos)
+        .put("skippedIntervals", s.skippedIntervals).put("failedSamples", s.failedSamples)
     private fun requireResources() {
         checkpoint()
         val info = ActivityManager.MemoryInfo().also {
@@ -60,20 +69,28 @@ internal class RawDiagnosticRunner(private val context: Context) {
             (context.getSystemService(Context.POWER_SERVICE) as PowerManager).currentThermalStatus < 2)
     }
 
-    fun run(uri: Uri, observeMemory: Boolean, reverse: Boolean, comparison: DiagnosticComparison, update: (String) -> Unit): String {
+    fun run(uri: Uri, observeMemory: Boolean, reverse: Boolean, comparison: DiagnosticComparison, update: (String) -> Unit): String =
+        runSession(uri, observeMemory, reverse, comparison, false, update)
+
+    fun runCancellation(uri: Uri, update: (String) -> Unit): String =
+        runSession(uri, false, false, DiagnosticComparison.RAW4, true, update)
+
+    private fun runSession(uri: Uri, observeMemory: Boolean, reverse: Boolean, comparison: DiagnosticComparison,
+        cancelProbe: Boolean, update: (String) -> Unit): String {
         // UUID paths stay private and are never serialized into the report.
         val root = File(context.noBackupFilesDir, "raw-diagnostic-${UUID.randomUUID()}")
         check(root.mkdir())
         val reportFile = File(root, "report.json")
         val runs = JSONArray()
-        val report = JSONObject().put("schema", 1).put("scope", "private-original24-no-publication")
-            .put("mode", if (observeMemory) "MEMORY_BOUNDARIES_NOT_TIMING" else "TIMING")
+        val report = JSONObject().put("schema", 2).put("scope", "private-original24-no-publication")
+            .put("mode", if (cancelProbe) "CANCELLATION_BOUNDARIES_NOT_TIMING" else if (observeMemory) "MEMORY_PERIODIC_NOT_TIMING" else "TIMING")
             .put("comparison", comparison.name)
             .put("strength", .5).put("warmth", 0).put("exposureAdjustmentEv", 0)
             .put("ortonWorkers", 4).put("characterWorkers", 2)
-            .put("order", if (reverse) "BA-BAABBA" else "AB-ABBAAB")
+            .put("order", if (cancelProbe) "BB" else DiagnosticPlan.order(reverse, observeMemory))
+            .put("performanceThresholdPercent", 10).put("performanceDecision", if (cancelProbe || observeMemory) "NOT_TIMING" else "REQUIRES_BOTH_ORDERS")
             .put("runs", runs).put("complete", false)
-        if (observeMemory) report.put("sampling", "stage boundaries; irregular intervals; not a peak guarantee; not comparable timing")
+        if (observeMemory) report.put("sampling", "managed/native 100ms target; PSS before/after only; observed maxima, not peak guarantees; not comparable timing")
         fun persist() {
             harnessIo.output(reportFile.outputStream()).use { it.write(report.toString(2).toByteArray(Charsets.UTF_8)) }
         }
@@ -99,14 +116,17 @@ internal class RawDiagnosticRunner(private val context: Context) {
             val reference = SharedOriginalReference("content://diagnostic.local/input", fingerprint, OriginalGrant.USER_SELECTED)
             var baseline: OriginalFingerprint? = null
             val successes = intArrayOf(0, 0)
-            for ((index, arm) in DiagnosticPlan.workers(reverse).withIndex()) {
-                val workers = comparison.foundationWorkers(arm)
-                val glowWorkers = comparison.glowWorkers(arm)
+            val plannedArms = if (cancelProbe) listOf(2, 2) else DiagnosticPlan.workers(reverse, observeMemory)
+            for ((index, arm) in plannedArms.withIndex()) {
+                val profile = comparison.profile(arm)
+                val workers = profile.foundation
+                val glowWorkers = profile.glow
                 requireResources()
                 val item = JSONObject().put("sequence", index).put("arm", arm).put("foundationWorkers", workers).put("glowWorkers", glowWorkers)
-                    .put("excludedWarmup", DiagnosticPlan.excluded(index)).put("status", "STARTED")
+                    .put("toneWorkers", profile.tone).put("mistWorkers", profile.mist).put("fuseR7ColorRows", profile.fuseColor)
+                    .put("excludedWarmup", (!cancelProbe && DiagnosticPlan.excluded(index, observeMemory))).put("status", "STARTED")
                     .put("environmentBefore", environment())
-                runs.put(item); persist(); update("Attempt ${index + 1}/8; arm $arm")
+                runs.put(item); persist(); update("Attempt ${index + 1}/${plannedArms.size}; arm $arm")
                 val attemptRoot = File(root, "attempt-$index"); check(attemptRoot.mkdir())
                 val output = File(attemptRoot, "result.jpg")
                 val io = object : AutoRenderIo {
@@ -116,26 +136,41 @@ internal class RawDiagnosticRunner(private val context: Context) {
                     override fun openOutputRead() = harnessIo.input(output.inputStream())
                 }
                 val timing = DiagnosticTimings()
-                val boundaries = JSONArray()
-                var nativeMax = 0L; var pssMax = 0L
-                fun sample(): JSONObject = memory().also {
-                    nativeMax = maxOf(nativeMax, it.getLong("nativeAllocatedBytes"))
-                    pssMax = maxOf(pssMax, it.getLong("pssKiB"))
-                }
-                val trace = if (observeMemory) dev.cinematic.p0.raw.original.OriginalStageTrace { stage, _, completed ->
-                    boundaries.put(JSONObject().put("stage", stage.name).put("completed", completed).put("memory", sample()))
-                } else timing
-                if (observeMemory) item.put("memoryBefore", sample())
+                // PSS is deliberately outside the periodic sampler and render interval.
+                if (observeMemory) item.put("memoryBefore", memory())
+                val sampler = if (observeMemory) DiagnosticMemorySampler(readMemory = {
+                    val runtime = Runtime.getRuntime()
+                    DiagnosticMemorySampler.Reading(runtime.totalMemory() - runtime.freeMemory(), Debug.getNativeHeapAllocatedSize())
+                }) else null
+                val probeStop = AtomicBoolean()
+                val cancelBoundary = if (index == 0) dev.cinematic.p0.raw.original.OriginalStage.NATIVE_DECODE
+                    else dev.cinematic.p0.raw.original.OriginalStage.R7_FOUNDATION
+                val trace = if (cancelProbe) dev.cinematic.p0.raw.original.OriginalStageTrace { stage, _, completed ->
+                    if (stage == cancelBoundary && completed) {
+                        probeStop.set(true)
+                        activeAttempt?.requestStop()
+                    }
+                } else if (observeMemory) null else timing
                 val attempt = Original24Attempt(context, Original24Request("diagnostic", index + 1L, reference), io,
-                    File(attemptRoot, "scratch"), trace, parallelFoundationWorkers = workers, parallelGlowWorkers = glowWorkers)
+                    File(attemptRoot, "scratch"), trace, parallelFoundationWorkers = workers, parallelGlowWorkers = glowWorkers,
+                    parallelToneWorkers = profile.tone, parallelMistWorkers = profile.mist, fuseR7ColorRows = profile.fuseColor)
                 attemptQuiescent = false
                 activeAttempt = attempt
                 if (stopped.get()) attempt.requestStop()
                 val start = System.nanoTime()
                 var success = false
+                var memoryValid = true
+                var probeCancelled = false
                 var elapsed = 0L
                 try {
-                    val result = attempt.use { it.render(stopped::get) }
+                    val result = attempt.use {
+                        if (sampler != null) {
+                            samplerQuiescent = false
+                            check(sampler.start())
+                        }
+                        it.render { stopped.get() || probeStop.get() }
+                    }
+                    check(!cancelProbe) // A cancellation probe must not return a completed result.
                     elapsed = System.nanoTime() - start
                     check(!attempt.hasUnreleasedResources)
                     val matches = baseline?.let { it == result.fingerprint } ?: true
@@ -143,17 +178,24 @@ internal class RawDiagnosticRunner(private val context: Context) {
                     item.put("status", "SUCCESS").put("jpegMatchesSessionBaseline", matches)
                         .put("sourceUnchanged", true).put("sameJpegReadback", true)
                     if (!matches) throw IOException()
-                    if (!DiagnosticPlan.excluded(index)) successes[arm - 1]++
                     success = true
                 } catch (failure: Exception) {
-                    item.put("status", if (stopped.get()) "STOPPED" else "FAILED")
+                    probeCancelled = cancelProbe && probeStop.get() && !stopped.get() && failure is java.util.concurrent.CancellationException
+                    item.put("status", if (probeCancelled) "CANCELLED_EXPECTED" else if (stopped.get()) "STOPPED" else "FAILED")
                     // No class/message/stack: providers and codecs can embed private data.
-                    throw failure
+                    if (!probeCancelled) throw failure
                 } finally {
                     if (elapsed == 0L) elapsed = System.nanoTime() - start
+                    if (sampler != null) {
+                        val observed = sampler.stopAndJoin()
+                        samplerQuiescent = observed.quiescent
+                        memoryValid = observed.quiescent && !observed.failed && observed.sampleCount > 0
+                        item.put("memoryObserved", memorySummary(observed))
+                        if (!memoryValid) item.put("status", "FAILED_MEMORY_OBSERVATION")
+                    }
                     attemptQuiescent = !attempt.hasUnreleasedResources
                     if (attemptQuiescent) activeAttempt = null
-                    if (!observeMemory) {
+                    if (!observeMemory && !cancelProbe) {
                         val spans = JSONArray()
                         timing.spans.forEach { span -> spans.put(JSONObject().put("stage", span.stage.name)
                             .put("elapsedNanos", span.nanos).put("completed", span.completed)) }
@@ -161,22 +203,32 @@ internal class RawDiagnosticRunner(private val context: Context) {
                             .put("unattributedResidualNanos", timing.residualNanos(elapsed))
                     }
                     item.put("environmentAfter", environment())
-                    if (observeMemory) item.put("memoryAfter", sample()).put("memoryBoundaries", boundaries)
-                        .put("sampledNativeAllocatedMaxBytes", nativeMax).put("sampledPssMaxKiB", pssMax)
+                    if (observeMemory) item.put("memoryAfter", memory())
                     persist()
                     // Failed attempts remain private for owner cleanup; successful scratch is already disposed.
                     if (success) check(output.delete())
                 }
+                check(memoryValid)
+                if (cancelProbe) {
+                    check(probeCancelled && attemptQuiescent && !output.exists())
+                    DngContentVerifier.verify(fingerprint, { harnessIo.input(input.inputStream()) }, stopped::get)
+                    item.put("cancelBoundary", cancelBoundary.name).put("ownerClosed", true)
+                        .put("noCompletedResult", true).put("partialJpegAbsent", true).put("sourceUnchanged", true)
+                        .put("privateFailedScratchRetained", File(attemptRoot, "scratch").exists())
+                    persist()
+                    successes[arm - 1]++
+                } else if (!DiagnosticPlan.excluded(index, observeMemory)) successes[arm - 1]++
             }
             // Verify provider bytes again outside timing; no writes to original, ever.
             DngContentVerifier.verify(fingerprint, { harnessIo.input(requireNotNull(context.contentResolver.openInputStream(uri))) }, stopped::get)
-            report.put("selectedOriginalUnchanged", true).put("complete", successes.all { it >= 3 })
-                .put("measuredSuccessesA", successes[0]).put("measuredSuccessesB", successes[1]).put("status", "SUCCESS")
+            report.put("selectedOriginalUnchanged", true).put("complete", if (cancelProbe) successes[1] == 2 else successes.all { it == (if (observeMemory) 1 else DiagnosticPlan.MEASURED_PER_ARM) })
+                .put("measuredSuccessesA", if (cancelProbe) 0 else successes[0]).put("measuredSuccessesB", if (cancelProbe) 0 else successes[1])
+                .put("expectedCancellationChecks", if (cancelProbe) successes[1] else 0).put("status", "SUCCESS")
         } catch (_: Exception) {
             report.put("status", if (stopped.get()) "STOPPED" else "FAILED")
         } finally {
             // Imported source is a disposable private copy; failed scratch is retained, not shared or uploaded.
-            val cleanup = harnessIo.finish(attemptQuiescent) {
+            val cleanup = harnessIo.finish(attemptQuiescent && samplerQuiescent) {
                 source?.let { !it.exists() || it.delete() } ?: true
             }
             cleanupHeld = !cleanup.quiescent || !cleanup.sourceRemoved || cleanup.closeFailed
