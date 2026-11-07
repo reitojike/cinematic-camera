@@ -282,14 +282,16 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         val job = currentCoroutineContext()
         val shouldStop = { !job.isActive || cancellation.isCanceled }
         val requestScope = this
+        val serialPreview = renderer.mode == PhotoRollPreviewMode.MANUAL_TRIAL &&
+            android.util.Log.isLoggable("PreviewSerial", android.util.Log.DEBUG)
         val timing = if (android.util.Log.isLoggable("PreviewTiming", android.util.Log.DEBUG))
-            PreviewTiming(strengthTicket.revision, previewOperation, sink = { android.util.Log.d("PreviewTiming", it) }) else null
+            PreviewTiming(strengthTicket.revision, previewOperation, sink = { android.util.Log.d("PreviewTiming", "serial=$serialPreview $it") }) else null
         // WithContext may discard a completed result when Main resumes into cancellation.
         // Until the current ticket adopts it, this request still owns its display copies.
         var pendingPreview: PhotoRollRenderResult.Preview? = null
         try {
             val result = withContext(Dispatchers.IO) {
-                run {
+                PreviewRequestGate.process.run(serialPreview) {
                     val original = renderer.checkOriginal(repository, Uri.parse(source), selectedFromFiles, cancellation)
                     val restore = if (manualTrial) try {
                         if (restoreRecipeThisRequest) {
@@ -320,7 +322,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                     val adjustments = if (manualTrial) PhotoAdjustmentPolicy.adjustments(strengthTicket.values) else PhotoAdjustments()
                     val request = PhotoRollRenderRequest(original, strength = strengthTicket.strength, adjustments = adjustments,
                         mode = renderer.mode, maxEdge = renderer.maxEdge,
-                        explicitRetry = retryThisRequest, onStage = { stage -> timing?.enter(stage.name); requestScope.launch(Dispatchers.Main) {
+                        explicitRetry = retryThisRequest, awaitCancelledOwner = serialPreview, onStage = { stage -> timing?.enter(stage.name); requestScope.launch(Dispatchers.Main) {
                             if (selection.accepts(ticket) && trialEditor.accepts(strengthTicket)) renderStage = stage
                         } })
                     timing?.enter("RENDER")
