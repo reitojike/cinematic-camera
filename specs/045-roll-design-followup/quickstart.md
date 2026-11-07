@@ -1,5 +1,7 @@
 # カメラロール表示の検証
 
+[Issue #187](https://github.com/reitojike/cinematic-camera/issues/187)
+
 ## 機械的検証
 
 - ベース: main `a3beed6`（R7 tone補正を含む）。
@@ -36,4 +38,5 @@ adb -s <dedicated-emulator> shell am instrument -w -e isolated true -e class dev
 
 実機では、通常文字/大きい文字、縦/横、全面・部分・混合・未許可を確認し、
 空状態の2操作が既存のpermission/Filesへ遷移すること、読込中に既存写真が残ることを確認する。
-実素材と実権限での確認は未実施。公開・CI・canonical/独立レビュー・merge条件の確認は別途必要。
+実素材と実権限での確認は未実施。実装commit `8336569` は独立レビューOK・ローカルconverge済み。
+Issue #187はローカル実装後に関連付けた。公開後の最終headのCI・canonical review・未解決会話・merge条件の確認は未完。

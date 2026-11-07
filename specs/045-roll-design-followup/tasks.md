@@ -1,5 +1,7 @@
 # Tasks: カメラロール表示の追補
 
+[Issue #187](https://github.com/reitojike/cinematic-camera/issues/187)
+
 ## Setup / Foundation
 - [x] T001 原典・既存041・Constitutionを確認し specs/045-roll-design-followup/spec.md と plan.md を定める。
 - [x] T002 044の変更境界を確認し、app/src/main/java/dev/cinematic/p0/ の共有ファイルは今回は変更しないと定める。
@@ -17,7 +19,7 @@
 
 ## Cross-cutting validation
 - [x] T008 app のlint/unit/assemble/debugAndroidTest、git diff --checkを実行し specs/045-roll-design-followup/quickstart.md に保証範囲を記録する。
-- [ ] T009 許可後のIssue/Draft PRにspecs/045-roll-design-followup/の結果を関連付け、最終headのCI/canonical/独立レビュー/会話を確認する。
+- [ ] T009 Issue #187に対応するDraft PRへ結果を関連付け、最終headのCI/canonical/独立レビュー/未解決会話を確認する。実装commit `8336569` の独立レビューとローカルconvergeは完了。公開後のCI/canonical review・mergeは未完。
 
 ## Dependencies / Strategy
 T001→T002→US1→US2→US3→T008→T009。CameraRollBrowserの同一ファイルを編集するためUS1/US2は並走しない。044の検証中に本specと合成テスト設計だけ先行できる。合成テスト成功と実機未確認を分ける。

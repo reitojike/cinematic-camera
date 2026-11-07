@@ -1,12 +1,12 @@
 # Implementation Plan: カメラロール表示の追補
 
-Branch: `fix/roll-design-followup` / [spec](spec.md) / Issue作成許可待ち。
+Branch: `fix/roll-design-followup` / [spec](spec.md) / [Issue #187](https://github.com/reitojike/cinematic-camera/issues/187)。
 
 ## Summary / Technical Context
 既存Kotlin/Compose/Material3。CameraX 1.6.2と依存関係は無変更。変更はCameraRollBrowser/CameraRollGridと合成UIテスト。
 
 ## Constitution Check
-原本・保存・制御・権限判定を変更せず、表示の事実と合成/実機の検証を区別する。新規Issue/PRは権限待ちで外部変更を行わない。公開用文書へ個人パスや写真を含めない。
+原本・保存・制御・権限判定を変更せず、表示の事実と合成/実機の検証を区別する。公開IssueとDraft PRの作成許可を確認済み。CI・canonical review・mergeの完了とは区別する。公開用文書へ個人パスや写真を含めない。
 
 ## Research / Design
 - existing CameraRollAccessを入力として使用。images && videosを全面許可とし、それ以外でselectedがある場合は破線/アンバー。混合許可はaccess.descriptionをそのまま使い、選択のみだけ原典の短い説明へ置換。

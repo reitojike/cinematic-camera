@@ -1,7 +1,7 @@
 # Feature Specification: カメラロールの権限案内と空状態の補正
 
-Branch: `fix/roll-design-followup` / Status: 実装・合成検証済み、実機未確認 / Issue作成許可待ち。
-既存041・Issue #174の追加修正。2026-11-06 design-handoff のINSTRUCTIONS.mdを文言と数値の正とする。
+Branch: `fix/roll-design-followup` / Status: 実装・合成検証済み、実機未確認 / [Issue #187](https://github.com/reitojike/cinematic-camera/issues/187)。
+既存041・Issue #174の追加修正。ローカル実装・合成検証後にIssue #187へ関連付けた。2026-11-06 design-handoff のINSTRUCTIONS.mdを文言と数値の正とする。
 
 ## User Scenarios & Testing
 
