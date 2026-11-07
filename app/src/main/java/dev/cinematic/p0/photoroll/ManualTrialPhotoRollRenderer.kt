@@ -54,7 +54,7 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
                 val handle = awaitTrialPreview(AndroidManualOriginalTrialSaves.prepare(app, request.original.reference,
                     request.strength, resources().developConditions(rendererAvailable = true), request.adjustments) {
                     cancellation.isCanceled
-                }, cancellation)
+                }, cancellation, request.awaitCancelledOwner)
                 cancellation.throwIfCanceled()
                 require(handle.matches(request.original.reference) && handle.appliedStrength == request.strength &&
                     handle.appliedAdjustments == request.adjustments)
@@ -77,7 +77,7 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
         cancellation.setOnCancelListener { AndroidManualOriginalTrialSaves.invalidatePreviews() }
         future.whenComplete { delivery, _ -> if (abandoned.get() || cancellation.isCanceled) delivery?.close() }
         try {
-            val delivery = awaitTrialPreview(future, cancellation)
+            val delivery = awaitTrialPreview(future, cancellation, request.awaitCancelledOwner)
             delivery.use {
                 cancellation.throwIfCanceled()
                 val handle = delivery.save
@@ -126,12 +126,25 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
     }
 }
 
-internal fun <T> awaitTrialPreview(future: java.util.concurrent.CompletableFuture<T>, cancellation: CancellationSignal): T {
-    while (true) {
-        cancellation.throwIfCanceled()
-        try { return future.get(250, TimeUnit.MILLISECONDS) }
-        catch (_: TimeoutException) { /* Keep the queue owner until it completes or cancellation stops it. */ }
-        catch (failure: ExecutionException) { throw (failure.cause ?: failure) }
-        catch (_: InterruptedException) { Thread.currentThread().interrupt(); throw OperationCanceledException() }
+internal fun <T> awaitTrialPreview(
+    future: java.util.concurrent.CompletableFuture<T>,
+    cancellation: CancellationSignal,
+    awaitCancelledOwner: Boolean = false,
+): T {
+    try {
+        while (true) {
+            cancellation.throwIfCanceled()
+            try { return future.get(250, TimeUnit.MILLISECONDS) }
+            catch (_: TimeoutException) { /* Keep checking cancellation while the queue owns its work. */ }
+            catch (failure: ExecutionException) { throw (failure.cause ?: failure) }
+            catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw OperationCanceledException()
+            }
+        }
+    } finally {
+        // A cancelled await is not proof that the queue producer released its resources.
+        // Only the existing IO caller waits; normal mode keeps its old behavior.
+        if (awaitCancelledOwner) awaitPreviewOwnerCompletion(future)
     }
 }

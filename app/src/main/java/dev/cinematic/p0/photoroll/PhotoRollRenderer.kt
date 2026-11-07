@@ -22,6 +22,8 @@ internal data class PhotoRollRenderRequest(
     val maxEdge: Int = 1024,
     val mode: PhotoRollPreviewMode = PhotoRollPreviewMode.STAGE_CLEAR,
     val explicitRetry: Boolean = false,
+    /** Diagnostic serial admission keeps the permit until an abandoned queue future finishes. */
+    val awaitCancelledOwner: Boolean = false,
     val onStage: (PhotoRollRenderStage) -> Unit = {},
 )
 
