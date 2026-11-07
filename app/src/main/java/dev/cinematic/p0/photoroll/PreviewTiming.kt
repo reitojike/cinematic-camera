@@ -36,4 +36,3 @@ internal class PreviewTiming(
 }
 
 internal enum class PreviewOperation { OPEN, STRENGTH, TEMPERATURE, BRIGHTNESS, MULTIPLE }
-
