@@ -23,6 +23,8 @@ jobs:
       CINEMATIC_VERSION_CODE: ${{ github.run_number }}
     steps:
       - uses: actions/checkout@v7
+      - name: RAW4 diagnostic judgement unit tests
+        run: python3 -B -m unittest discover -s tools/raw-diagnostic -v
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
