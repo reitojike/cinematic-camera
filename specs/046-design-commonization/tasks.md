@@ -10,7 +10,7 @@
 ## US3
 - [x] T006 [US3] CaptureLayout.ktへ共通判定を追加しDiagnosticLayout.kt等4か所とunit testを移行。
 ## Validation / Convergence
-- [ ] T007 限定10ケースの前後画像比較は完了。操作回帰は実機診断優先で中断、撮影・設定・診断の全画面は実機確認待ち。
+- [ ] T007 限定10ケースの前後画像比較は完了。操作回帰6件もATDで完了。撮影・設定・診断の全画面は実機確認待ち。
 - [x] T008 specs/042・044・045/tasks.mdと044の対象外記録を証拠に沿って整理。
 - [x] T009 appのlint/unit（874件）/assemble/androidTestコンパイルとgit diff --check、公開差分検査（基準eb99733上）。
 - [ ] T010 Draft PR、最終head CI/canonical/独立review/thread0とconverge。mergeは未承認として停止。
