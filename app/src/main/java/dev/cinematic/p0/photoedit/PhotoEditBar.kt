@@ -10,7 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import dev.cinematic.p0.CaptureDesign
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -56,6 +56,7 @@ internal fun PhotoEditBar(
     onValueChange: (Double) -> Unit,
     modifier: Modifier = Modifier,
     onValueChangeFinished: () -> Unit = {},
+    valueColor: Color = CaptureDesign.Text,
 ) {
     require(scale.contains(value))
     val currentReadValue by rememberUpdatedState(valueNow)
@@ -64,8 +65,8 @@ internal fun PhotoEditBar(
     val currentOnValueChange by rememberUpdatedState(onValueChange)
     val currentOnFinished by rememberUpdatedState(onValueChangeFinished)
     val pressedKeys = remember(interactionKey, enabled) { mutableSetOf<Key>() }
-    val color = MaterialTheme.colorScheme.primary.copy(alpha = if (enabled) 1f else .38f)
-    val trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) .24f else .12f)
+    val color = if (enabled) valueColor else CaptureDesign.Disabled
+    val trackColor = if (enabled) CaptureDesign.Border else CaptureDesign.Disabled
     fun dispatch(input: PhotoEditBarInput?, key: Any) = dispatchPhotoEditBarInput(scale, key, currentKey,
         currentEnabled, currentReadValue, input, currentOnValueChange)
     fun step(direction: Int) = dispatch(PhotoEditBarInput.Step(direction), interactionKey)
@@ -80,7 +81,7 @@ internal fun PhotoEditBar(
         Row(Modifier.fillMaxWidth()) {
             repeat(5) { index ->
                 Text(formatValue(scale.atFraction(index / 4.0)), Modifier.weight(1f),
-                    style = CaptureDesign.Label, color = CaptureDesign.Muted, textAlign = TextAlign.Center)
+                    style = CaptureDesign.Label, color = if (enabled) CaptureDesign.Muted else CaptureDesign.Disabled, textAlign = TextAlign.Center)
             }
         }
         Canvas(Modifier.fillMaxWidth().height(48.dp)

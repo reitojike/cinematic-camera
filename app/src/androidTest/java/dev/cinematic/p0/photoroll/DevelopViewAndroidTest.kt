@@ -2,6 +2,7 @@ package dev.cinematic.p0.photoroll
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Rect
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
@@ -25,6 +26,7 @@ import java.io.File
 
 /** Presentation-only synthetic fixtures. No camera, DNG decoding or public save is invoked. */
 class DevelopViewAndroidTest {
+    @get:org.junit.Rule val diagnostic = SyntheticFixtureRule()
     @Test fun editingClosesBeforeSaveAndUnconfirmedDoesNotBecomePublished() {
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -47,7 +49,7 @@ class DevelopViewAndroidTest {
                 for (i in 0 until node.childCount) walk(node.getChild(i))?.let { return it }
                 return null
             }
-            return walk(instrumentation.uiAutomation.rootInActiveWindow)
+            return walk(diagnostic.fixtureRoot())
         }
         fun actionNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo {
             var current = node
@@ -62,7 +64,7 @@ class DevelopViewAndroidTest {
                 for (i in 0 until node.childCount) if (visit(node.getChild(i))) return true
                 return false
             }
-            visit(instrumentation.uiAutomation.rootInActiveWindow)
+            visit(diagnostic.fixtureRoot())
             SystemClock.sleep(180) // Let the accessibility scroll animation reach its viewport.
             instrumentation.waitForIdleSync()
         }
@@ -79,18 +81,18 @@ class DevelopViewAndroidTest {
                 if (++attempts % 5 == 0) scroll(false, (attempts / 15) % 2 == 0)
                 SystemClock.sleep(50)
             } while (SystemClock.uptimeMillis() < deadline)
+            diagnostic.failure(description)
             error("Missing $description (expected enabled=$enabled, observed=${find(description)?.let(::actionNode)?.isEnabled})")
         }
         fun capture(name: String) {
             instrumentation.waitForIdleSync()
-            requireNotNull(instrumentation.uiAutomation.takeScreenshot()).let { bitmap ->
+            diagnostic.captureSoftware().let { bitmap ->
                 try { File(context.getExternalFilesDir(null), "design-$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) } }
                 finally { bitmap.recycle() }
             }
         }
-        ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
-            scenario.onActivity { activity -> activity.setContent { CaptureTheme { Surface {
-                PhotoRollDevelopView("SYNTHETIC.dng", mode.value, state.value, { state.value }, phase.value,
+        diagnostic.content = { CaptureTheme { Surface {
+                PhotoRollDevelopView("SYNTHETIC_LONG_NAME_".repeat(12) + ".dng", mode.value, state.value, { state.value }, phase.value,
                     PhotoRollRenderStage.LOOK, if (phase.value == PhotoRollPhase.BLOCKED) "合成テストの停止理由" else when (mode.value) {
                         PhotoRollPreviewMode.MANUAL_TRIAL -> "強度50の縮小プレビューです。原寸の試験品質JPEGは手動保存時に生成します。顔保護なし・診断露出・暫定色です"
                         PhotoRollPreviewMode.PRIVATE_TRIAL -> "120×80・強度50の縮小試験JPEGです。顔保護なし・診断露出・撮影時WB/暫定色。共有写真へは保存しません"
@@ -104,7 +106,59 @@ class DevelopViewAndroidTest {
                     { token -> state.value = state.value.apply(token) },
                     { token -> state.value = state.value.cancel(token) },
                     { token -> state.value = state.value.close(token) }, Modifier.fillMaxSize().safeDrawingPadding()) { repeat(8) { Text("合成の原本情報 $it") } }
-            } } } }
+        } } }
+        ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
+            scenario.recreate() // Verify fixture installation and capture after host recreation.
+            // The source action is fixed, even when the central strip overflows.
+            instrumentation.waitForIdleSync()
+            val initialInfo = awaitNode("原本情報と試験品質の注意", true)
+            assertTrue("info must be visible without horizontal scrolling", initialInfo.isVisibleToUser)
+            assertTrue(awaitNode("一覧へ戻る", true).isVisibleToUser)
+            fun keyNode(label: String): AccessibilityNodeInfo {
+                fun walk(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+                    if (node == null) return null
+                    if (node.text?.toString() == label) {
+                        val action = actionNode(node)
+                        if (action.isClickable) return action
+                    }
+                    for (i in 0 until node.childCount) walk(node.getChild(i))?.let { return it }
+                    return null
+                }
+                return requireNotNull(walk(diagnostic.fixtureRoot())) { "Missing key $label" }
+            }
+            // Compose exposes selected Button nodes as checked; Tab nodes use isSelected.
+            fun keySelected(label: String): Boolean = keyNode(label).let { it.isSelected || (it.isCheckable && it.isChecked) }
+            capture("initial")
+            fun dump(node: AccessibilityNodeInfo?, depth: Int = 0): String {
+                if (node == null) return ""
+                return "${" ".repeat(depth)}text=${node.text} description=${node.contentDescription} selected=${node.isSelected} checkable=${node.isCheckable} checked=${node.isChecked} clickable=${node.isClickable} visible=${node.isVisibleToUser}\n" +
+                    (0 until node.childCount).joinToString("") { dump(node.getChild(it), depth + 1) }
+            }
+            File(context.getExternalFilesDir(null), "design-accessibility.txt")
+                .writeText(dump(diagnostic.fixtureRoot()))
+            assertTrue(keySelected("STRENGTH"))
+            assertFalse(keySelected("色温度"))
+            val rulerBounds = Rect().also { awaitNode("RESET").getBoundsInScreen(it) }
+            val keyBounds = Rect().also { keyNode("STRENGTH").getBoundsInScreen(it) }
+            assertTrue("ruler precedes the key row", rulerBounds.bottom <= keyBounds.top)
+            fun lastAction(label: String): AccessibilityNodeInfo {
+                val matches = mutableListOf<AccessibilityNodeInfo>()
+                fun walk(node: AccessibilityNodeInfo?) {
+                    if (node == null) return
+                    if (node.text?.toString() == label) matches += actionNode(node)
+                    for (i in 0 until node.childCount) walk(node.getChild(i))
+                }
+                walk(diagnostic.fixtureRoot())
+                return matches.last()
+            }
+            repeat(2) {
+                assertTrue(lastAction("比較").performAction(AccessibilityNodeInfo.ACTION_CLICK))
+                awaitNode("RAW基準表示（合成）")
+            }
+            repeat(2) {
+                assertTrue(lastAction("表示").performAction(AccessibilityNodeInfo.ACTION_CLICK))
+                awaitNode("現像結果 · 長押しで基準表示")
+            }
             val disabledSave = awaitNode("JPEGを保存", false)
             assertFalse("editing must not enable save", disabledSave.isEnabled)
             disabledSave.performAction(AccessibilityNodeInfo.ACTION_CLICK)
@@ -118,9 +172,14 @@ class DevelopViewAndroidTest {
 
             assertTrue(awaitNode("色温度", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
             awaitNode("色温度 · 相対（K値ではありません）")
-            assertTrue(awaitNode("×", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            capture("temperature")
+            assertTrue(keySelected("色温度"))
+            assertFalse(keySelected("STRENGTH"))
+            assertTrue(awaitNode("目盛りを閉じる", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
             instrumentation.waitForIdleSync()
             val readySave = awaitNode("JPEGを保存", true)
+            assertFalse(keySelected("色温度"))
+            assertFalse(keySelected("STRENGTH"))
             assertTrue(readySave.isEnabled)
             assertTrue(readySave.performAction(AccessibilityNodeInfo.ACTION_CLICK))
             instrumentation.waitForIdleSync()
@@ -133,6 +192,11 @@ class DevelopViewAndroidTest {
             instrumentation.waitForIdleSync()
             assertFalse(awaitNode("同じ保存を再照合", false).isEnabled)
             capture("private")
+            scenario.onActivity { mode.value = PhotoRollPreviewMode.STAGE_CLEAR }
+            awaitNode("DNG 現像")
+            assertNull(find("顔保護なし"))
+            capture("stage-clear")
+            scenario.onActivity { mode.value = PhotoRollPreviewMode.PRIVATE_TRIAL }
             scenario.onActivity { phase.value = PhotoRollPhase.BLOCKED }
             instrumentation.waitForIdleSync()
             capture("blocked")
@@ -143,7 +207,7 @@ class DevelopViewAndroidTest {
             }
             scenario.onActivity { phase.value = PhotoRollPhase.DISPLAYED; mode.value = PhotoRollPreviewMode.MANUAL_TRIAL; state.value = initial }
             repeat(4) { scroll(false, false) }
-            repeat(3) { scroll(true) }
+            // No horizontal scrolling is needed to reach the fixed info action.
             val info = awaitNode("原本情報と試験品質の注意", true)
             assertTrue(info.performAction(AccessibilityNodeInfo.ACTION_CLICK))
             instrumentation.waitForIdleSync()

@@ -11,10 +11,12 @@
 - [x] T005 [US3] CaptureScreen.ktへshell接続、footer/復旧/guard保持（FR004/005）。
 ## Validation
 - [x] T006 lint/unit/build/diff checkと可能なUI確認。
-- [ ] T007 B単独Draft PR/CI/review、実機未確認を明示。
+- [x] T007 B単独Draft PR/CI/review、実機未確認を明示。
 
 依存T001→T002→T003/T004→T005→T006→T007。実装は同一ファイル競合を避け逐次。独立に実施可能な検査はUS1の期限値レビューとUS2の情報対応表照合、US3のguard照合。
 
 ## Phase 1: Convergence
 
 - [x] T008 短辺・拡大文字で本文が0高にならない全体scroll切替を実装・検証（FR004/US3、partial）。
+
+統合の根拠: [最終headのCI・レビュー・merge確認](https://github.com/reitojike/cinematic-camera/pull/178#issuecomment-6688110174)。実機・実写真の未確認はこの完了状態に含めない。

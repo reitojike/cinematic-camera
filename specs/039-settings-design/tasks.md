@@ -16,6 +16,8 @@
 
 ## Verification
 - [x] T007 diff check、lint/unit/assemble、可能なUI確認を実施しquickstart.mdと照合。
-- [ ] T008 公開差分確認、Draft PR/必須CI/レビュー。実機確認は別途未検証として報告。
+- [x] T008 公開差分確認、Draft PR/必須CI/レビュー。実機確認は別途未検証として報告。
 
 依存: T001→T002→T003/T004→T005/T006→T007→T008。同じ画面を編集するため実装は逐次。並列可能な検査例はUS1のlayout試験とUS2のguardレビュー、US3のDialog文言チェック。tasks/分析時にextension hookなし。段階的にcompileしてから全体検証する。
+
+統合の根拠: [最終headのCI・レビュー・merge確認](https://github.com/reitojike/cinematic-camera/pull/176#issuecomment-6687943624)。実機・実写真の未確認はこの完了状態に含めない。

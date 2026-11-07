@@ -49,6 +49,7 @@ internal val LocalLandscapeDialHeight = staticCompositionLocalOf<Dp?> { null }
 fun CaptureRulerHeading(
     label: String, onClose: () -> Unit, closeEnabled: Boolean,
     modifier: Modifier = Modifier, rotation: Float = 0f, horizontal: Boolean = false, waiting: Boolean = false,
+    displayLabel: String = label,
     action: @Composable BoxScope.() -> Unit = {},
 ) {
     Row(modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -56,7 +57,7 @@ fun CaptureRulerHeading(
         BoxWithConstraints(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
             val density = LocalDensity.current
             val measurer = rememberTextMeasurer()
-            val title = captureRulerTitle(label, waiting)
+            val title = captureRulerTitle(displayLabel, waiting)
             val room = with(density) { captureModeLabelRoom(IntSize(maxWidth.roundToPx(), maxHeight.roundToPx()), horizontal) }
             val style = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp)
             val size = remember(title, room, density, measurer) {
@@ -274,12 +275,10 @@ fun CaptureControlKey(
     val naturalHeight = with(density) { footprint.height.toDp().coerceAtLeast(72.dp) }
     SideEffect { if (horizontal) onLandscapeNaturalHeight(naturalHeight.value) }
     val height = captureKeyHeight(naturalHeight.value, landscapeCommonHeight, horizontal).dp
-    BoxWithConstraints(modifier.height(height).background(if (selected) Color(0xFF1E2225) else Color.Transparent)
+    BoxWithConstraints(modifier.height(height).captureControlSurface(selected, decorationAlpha = if (enabled) 1f else .45f)
         .alpha(if (enabled) 1f else .45f)
         .clickable(enabled = enabled || onUnavailable != null, role = Role.Button) { if (enabled) onClick() else onUnavailable?.invoke() }
         .semantics { this.selected = selected; contentDescription = "$accessibleLabel $accessibleValue $tag${if (statusDescription.isNotBlank()) " $statusDescription" else ""}${if (!enabled) " 無効: ${unavailableReason ?: "操作不可"}" else ""}" }) {
-        if (selected) Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(3.dp).background(ScaleText))
-        Box(Modifier.align(Alignment.CenterEnd).width(1.dp).fillMaxHeight().background(Color.White.copy(alpha = .1f)))
         val availableSize = with(density) { IntSize(maxWidth.roundToPx(), maxHeight.roundToPx()) }
         val logicalRoom = if (horizontal) IntSize(availableSize.height, availableSize.width) else availableSize
         // Fit each line separately so a long status tag cannot make the numeric value smaller.
