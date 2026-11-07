@@ -10,6 +10,22 @@ internal fun interface OriginalMask { fun row(y: Int, weights: FloatArray)
     companion object { val NONE = OriginalMask { _, out -> out.fill(0f) } }
 }
 
+/** The tone field and gain are shared by all three channels of a pixel. */
+internal fun originalToneRow(row: FloatArray, toneRow: FloatArray, percentiles: DoubleArray): FloatArray {
+    val output = FloatArray(row.size)
+    repeat(toneRow.size) { p ->
+        val value = toneRow[p].toDouble()
+        val delta = -R7BaseV1.HIGHLIGHTS * max(value - percentiles[1], 0.0) -
+            R7BaseV1.SHADOWS * min(value - percentiles[0], 0.0)
+        val gain = 2.0.pow(delta)
+        val i = p * 3
+        output[i] = (row[i] * gain).toFloat()
+        output[i + 1] = (row[i + 1] * gain).toFloat()
+        output[i + 2] = (row[i + 2] * gain).toFloat()
+    }
+    return output
+}
+
 /** Full-size CPU reference using private row rasters and globally shared analysis/blur fields.
  * Returns pixels only: neither verified input/face/AE metadata nor CompletedRender/publication authority. */
 internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, private val trace: OriginalStageTrace? = null,
@@ -59,12 +75,7 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, p
         }
         base = rowStep(base, "r7_tone", OriginalStage.R7_TONE_APPLY) { yy, row ->
             tone.row(yy, toneRow)
-            FloatArray(row.size) { i ->
-                val value = toneRow[i / 3].toDouble()
-                val delta = -R7BaseV1.HIGHLIGHTS * max(value - percentiles[1], 0.0) -
-                    R7BaseV1.SHADOWS * min(value - percentiles[0], 0.0)
-                (row[i] * 2.0.pow(delta)).toFloat()
-            }
+            originalToneRow(row, toneRow, percentiles)
         }
         val roiRow = FloatArray(width)
         base = rowStep(base, "r7_foundation", OriginalStage.R7_FOUNDATION) { yy, row ->

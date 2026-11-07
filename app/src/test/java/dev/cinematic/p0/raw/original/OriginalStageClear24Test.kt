@@ -11,6 +11,22 @@ import org.junit.Test
 import kotlin.math.*
 
 class OriginalStageClear24Test {
+    @Test fun toneGainOncePerPixelMatchesPreviousPerChannelFloatBits() {
+        for (width in listOf(1, 48, 1024)) {
+            val row = FloatArray(width * 3) { i -> (((i * 97L) % 8192) / 2048f) - .2f }
+            val tone = FloatArray(width) { p -> (((p * 53L) % 4096) / 1024f) - 1.5f }
+            for (percentiles in listOf(doubleArrayOf(-.6, .8), doubleArrayOf(.5, .5))) {
+                val old = FloatArray(row.size) { i ->
+                    val value = tone[i / 3].toDouble()
+                    val delta = -R7BaseV1.HIGHLIGHTS * max(value - percentiles[1], 0.0) -
+                        R7BaseV1.SHADOWS * min(value - percentiles[0], 0.0)
+                    (row[i] * 2.0.pow(delta)).toFloat()
+                }
+                val current = originalToneRow(row, tone, percentiles)
+                old.indices.forEach { i -> assertEquals("width=$width sample=$i", old[i].toRawBits(), current[i].toRawBits()) }
+            }
+        }
+    }
     private class MemoryRaster(override val width: Int, override val height: Int, private val values: FloatArray) : OriginalRaster {
         override fun rows(stop: () -> Boolean, consume: (Int, FloatArray) -> Unit) {
             val row = FloatArray(width * 3)
