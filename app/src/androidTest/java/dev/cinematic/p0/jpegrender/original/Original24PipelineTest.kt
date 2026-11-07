@@ -9,6 +9,7 @@ import dev.cinematic.p0.raw.original.OriginalStageTrace
 import dev.cinematic.p0.raw.original.OriginalStage
 import dev.cinematic.p0.testing.writeSyntheticTrialDng
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.StandardOpenOption
 import java.util.concurrent.CancellationException
@@ -52,6 +53,7 @@ class Original24PipelineTest {
         reportFile.writeText(all.toString(2))
         val root = File(context.noBackupFilesDir, "original24-$runId")
         check(!root.exists() && root.mkdir())
+        var primaryFailure: Throwable? = null
         try {
             val orientations = if (size == "SMALL") listOf(1, 6) else listOf(1)
             for (orientation in orientations) {
@@ -116,26 +118,78 @@ class Original24PipelineTest {
                             .put("externalEv", result.externalEv).put("sourceUnchanged", true).put("sameJpegReadback", true)
                     } catch (error: Throwable) { failure = error; report.put("status", "failure").put("code", error.javaClass.simpleName); throw error }
                     finally {
-                        try { attempt.close() } catch (close: Throwable) { if (failure == null) throw close else if (close !== failure) failure.addSuppressed(close) }
-                        finally { metrics.stop(); metrics.appendTo(report); reportFile.writeText(all.toString(2)) }
+                        completeProbeActions(failure,
+                            { attempt.close() },
+                            { metrics.stop() },
+                            { metrics.appendTo(report) },
+                            { reportFile.writeText(all.toString(2)) })
                     }
                     assertFalse(attempt.hasUnreleasedResources)
                 }
                 if (size == "SMALL") assertNotEquals("Strength must affect real saved JPEG", hashes[0], hashes[1])
             }
             all.put("status", "success").put("complete", true)
-        } catch (error: Throwable) { all.put("status", "failure").put("code", error.javaClass.simpleName); throw error }
-        finally {
-            val json = all.toString(2)
-            reportFile.writeText(json)
-            // AGP/UTP collects this standard output directory before a managed device is released.
-            // Export only synthetic diagnostic JSON, after the measured window has closed.
-            args.getString("additionalTestOutputDir")?.let { path ->
-                val directory = File(path)
-                check(directory.isDirectory || directory.mkdirs())
-                Files.write(File(directory, reportFile.name).toPath(), json.toByteArray(Charsets.UTF_8),
-                    StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
-            }
+        } catch (error: Throwable) {
+            primaryFailure = error
+            all.put("status", "failure").put("code", error.javaClass.simpleName)
+            throw error
+        } finally {
+            completeProbeActions(primaryFailure,
+                { reportFile.writeText(all.toString(2)) },
+                {
+                    // AGP/UTP collects this directory before releasing a managed device.
+                    // Only synthetic JSON is exported, after the measured window closes.
+                    args.getString("additionalTestOutputDir")?.let { path ->
+                        val directory = File(path)
+                        check(directory.isDirectory || directory.mkdirs())
+                        Files.write(File(directory, reportFile.name).toPath(), all.toString(2).toByteArray(Charsets.UTF_8),
+                            StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
+                    }
+                })
         }
+    }
+
+    @Test fun reportFinalizationPreservesPrimaryFailures() {
+        for (primary in listOf(IOException("render"), AssertionError("assertion"), CancellationException("cancel"))) {
+            val privateWrite = IOException("private report")
+            val export = IOException("additional output")
+            val observed = assertThrows(Throwable::class.java) {
+                try { throw primary }
+                finally { completeProbeActions(primary, { throw privateWrite }, { throw export }) }
+            }
+            assertSame(primary, observed)
+            assertEquals(listOf(privateWrite, export), primary.suppressed.toList())
+        }
+    }
+
+    @Test fun reportFinalizationFailsSuccessfulBodyOnWriteFailure() {
+        var privateWritten = false
+        val export = IOException("additional output")
+        assertSame(export, assertThrows(IOException::class.java) {
+            completeProbeActions(null, { privateWritten = true }, { throw export })
+        })
+        assertTrue(privateWritten)
+        val privateWrite = IOException("private report")
+        val secondExport = IOException("second additional output")
+        assertSame(privateWrite, assertThrows(IOException::class.java) {
+            completeProbeActions(null, { throw privateWrite }, { throw secondExport })
+        })
+        assertEquals(listOf(secondExport), privateWrite.suppressed.toList())
+    }
+
+    @Test fun reportFinalizationRunsSuccessfulWritesInOrder() {
+        val writes = mutableListOf<String>()
+        completeProbeActions(null, { writes.add("private") }, { writes.add("additional") })
+        assertEquals(listOf("private", "additional"), writes)
+    }
+
+    private fun completeProbeActions(primary: Throwable?, vararg actions: () -> Unit) {
+        var failure = primary
+        for (action in actions) try { action() } catch (error: Throwable) {
+            val first = failure
+            if (first == null) failure = error else if (first !== error) first.addSuppressed(error)
+        }
+        // An in-flight primary is rethrown by its caller, never replaced by report/close failures.
+        if (primary == null) failure?.let { throw it }
     }
 }
