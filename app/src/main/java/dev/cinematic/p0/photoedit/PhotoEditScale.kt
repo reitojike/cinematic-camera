@@ -66,7 +66,7 @@ internal class PhotoEditBarGesture(
         require(scale.contains(startValue))
         require(listOf(downX, downY, trackLeft, trackWidth, touchSlop, thumbRadius).all { it.isFinite() })
         require(trackWidth > 0f && touchSlop >= 0f && thumbRadius >= 0f)
-        val thumbX = trackLeft + scale.fraction(startValue) * trackWidth
+        val thumbX = trackLeft + trackWidth / 2
         tapDirection = when {
             downX < thumbX - thumbRadius -> -1
             downX > thumbX + thumbRadius -> 1
@@ -91,12 +91,21 @@ internal class PhotoEditBarGesture(
         if (dragging) {
             // Only pointer motion is retained. The dispatcher applies each delta to the actual owner's draft.
             // Advance even at an endpoint, so outward motion is discarded rather than retraced on reversal.
-            val fractionDelta = (x.toDouble() - previousX) / trackWidth
+            val fractionDelta = -(x.toDouble() - previousX) / trackWidth
             previousX = x
             val input = fractionDelta.takeIf { it != 0.0 }?.let { PhotoEditBarInput.RelativeDrag(it) }
             return PhotoEditBarUpdate(input, consume = true, completed = !pressed)
         }
         if (pressed) return PhotoEditBarUpdate()
         return PhotoEditBarUpdate(tapDirection.takeIf { it != 0 }?.let { PhotoEditBarInput.Step(it) }, consume = true, completed = true)
+    }
+}
+
+/** Neighbour values stay centred on the continuous draft; endpoints have empty slots. */
+internal fun photoEditRulerValues(scale: PhotoEditScale, value: Double, visibleCount: Int): List<Double?> {
+    require(scale.contains(value) && visibleCount in listOf(1, 3, 5))
+    return (-(visibleCount / 2)..(visibleCount / 2)).map { offset ->
+        val candidate = value + offset * scale.tapStep
+        candidate.takeIf { scale.contains(it) }
     }
 }

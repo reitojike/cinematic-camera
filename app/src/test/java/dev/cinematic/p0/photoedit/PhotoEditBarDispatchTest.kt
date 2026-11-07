@@ -29,7 +29,7 @@ class PhotoEditBarDispatchTest {
         owner.pointer(gesture, 60f)
         owner.pointer(gesture, 50f)
         owner.pointer(gesture, 50f, false)
-        assertEquals(listOf(.6, .5), owner.notified)
+        assertEquals(listOf(.4, .5), owner.notified)
         assertEquals(displayedValue, owner.draft, 0.0)
     }
 
@@ -62,7 +62,7 @@ class PhotoEditBarDispatchTest {
                 val accepted = owner.draft
                 val count = owner.notified.size
                 val update = owner.pointer(gesture, upX, false)
-                assertEquals(accepted + (upX - 60f) / 100.0, owner.draft, 1e-12)
+                assertEquals(accepted - (upX - 60f) / 100.0, owner.draft, 1e-12)
                 if (upX == 60f) {
                     assertNull(update.input)
                     assertEquals(count, owner.notified.size)
@@ -79,20 +79,20 @@ class PhotoEditBarDispatchTest {
             owner.send(other)
             val accepted = owner.draft
             owner.pointer(gesture, 65f)
-            assertEquals(accepted + .05, owner.draft, 1e-12)
+            assertEquals(accepted - .05, owner.draft, 1e-12)
             owner.pointer(gesture, 55f)
-            assertEquals(accepted - .05, owner.draft, 1e-12)
+            assertEquals(accepted + .05, owner.draft, 1e-12)
             owner.pointer(gesture, 55f, false)
-            assertEquals(accepted - .05, owner.draft, 1e-12)
+            assertEquals(accepted + .05, owner.draft, 1e-12)
         }
         val owner = Driver()
         val gesture = owner.gesture()
-        owner.pointer(gesture, 250f)
+        owner.pointer(gesture, -150f)
         owner.send(PhotoEditBarInput.Step(-1))
         assertEquals(.9, owner.draft, 1e-12)
-        owner.pointer(gesture, 250f)
+        owner.pointer(gesture, -150f)
         assertEquals(.9, owner.draft, 1e-12)
-        owner.pointer(gesture, 245f)
+        owner.pointer(gesture, -145f)
         assertEquals(.85, owner.draft, 1e-12)
     }
 
@@ -101,10 +101,10 @@ class PhotoEditBarDispatchTest {
         val gesture = owner.gesture()
         owner.send(PhotoEditBarInput.Step(1))
         owner.pointer(gesture, 60f)
-        assertEquals(.7, owner.draft, 1e-12)
+        assertEquals(.5, owner.draft, 1e-12)
         assertNull(gesture.update(70f, 24f, true, false).input)
         owner.pointer(gesture, 70f, false)
-        assertEquals(.7, owner.draft, 1e-12)
+        assertEquals(.5, owner.draft, 1e-12)
     }
 
     @Test fun staleDisabledOrInvalidInputCannotReadOrMutateAnotherOwner() {

@@ -1,7 +1,6 @@
 package dev.cinematic.p0
 
 import android.view.HapticFeedbackConstants
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
@@ -169,15 +168,7 @@ fun ExposureSelectionScale(
             verticalAlignment = Alignment.CenterVertically) {
             ScaleArrow("‹", "$label 前の値", window.previous, interactive) { dispatch(it) }
             Box(Modifier.weight(1f).fillMaxHeight()) {
-                Canvas(Modifier.fillMaxSize()) {
-                    val spacing = 9.dp.toPx()
-                    var x = 0f
-                    while (x < size.width) {
-                        drawLine(CaptureDesign.Border, androidx.compose.ui.geometry.Offset(x, 0f),
-                            androidx.compose.ui.geometry.Offset(x, 6.dp.toPx()), 1.dp.toPx())
-                        x += spacing
-                    }
-                }
+                ControlRulerTicks(Modifier.fillMaxSize())
                 Row(Modifier.fillMaxSize()) {
                     slots.forEach { index ->
                         val isCurrent = index != null && index == shownIndex
