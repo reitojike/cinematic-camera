@@ -33,7 +33,7 @@ android {
     }
     defaultConfig {
         applicationId = "dev.cinematic.p0"
-        minSdk = 28
+        minSdk = 33
         targetSdk = 37
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
