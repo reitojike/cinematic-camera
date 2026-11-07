@@ -2,7 +2,24 @@
 
 [Issue #187](https://github.com/reitojike/cinematic-camera/issues/187)
 
-## 機械的検証
+## 現在の合成UI実行手順
+
+[共通Gradle Managed Device](../../docs/MANAGED_DEVICES.md)の `pixel9aapi37` を使う。
+同じホストではworker間で実行枠を確認して逐次排他とし、Dドライブ上の共通 `GRADLE_USER_HOME` /
+`ANDROID_AVD_HOME` と既存SDK/JDKを使用する。保存先の存在・生成先確認は共通手順に従う。
+`--max-workers=1` だけでは別Gradleプロセス同士を排他しない。
+
+```powershell
+.\gradlew.bat :app:pixel9aapi37DebugAndroidTest --no-daemon --max-workers=1 `
+  "-Pandroid.testInstrumentationRunnerArguments.class=dev.cinematic.p0.photoroll.CameraRollBrowserAndroidTest" `
+  "-Pandroid.testInstrumentationRunnerArguments.isolated=true"
+```
+
+対象classだけを実行し、`isolated=true` を実機の安全確認の省略に使わない。
+旧手動AVDは保全のみで起動せず、新規のタスク専用AVDも作らない。
+GMDのtask解決・build・setup・実テストの結果を分け、以下の旧試験実績をGMD実行済みとは扱わない。
+
+## 既存実績: 機械的検証
 
 - ベース: main `a3beed6`（R7 tone補正を含む）。
 - `lintDebug` / `testDebugUnitTest` / `assembleDebug` / `assembleDebugAndroidTest` 成功。
@@ -10,15 +27,10 @@
 - `git diff --check` 成功。新規依存・SDK導入なし。
 - Windowsでは既存SDK/JDKを指定し、`gradlew.bat`を `--offline --no-daemon --max-workers=2` で実行した。
 
-## 合成UI試験
+## 既存実績: 合成UI試験
 
-専用の空エミュレーターで、次のclassだけを `-e isolated true` とともに実行する。
-
-```text
-adb -s <dedicated-emulator> shell am instrument -w -e isolated true -e class dev.cinematic.p0.photoroll.CameraRollBrowserAndroidTest dev.cinematic.p0.test/androidx.test.runner.AndroidJUnitRunner
-```
-
-4テスト成功。CameraRollAccessと一覧を合成データで直接渡し、権限要求・Files・設定のcallbackを実操作へ接続しない。
+実装commit `8336569` 時点では、当時の専用空エミュレーターで
+`CameraRollBrowserAndroidTest` だけを `isolated=true` とともに実行し、4テスト成功。CameraRollAccessと一覧を合成データで直接渡し、権限要求・Files・設定のcallbackを実操作へ接続しない。
 既存PhotoRollActivityを起動してUIを置き換えるため、起動直後の既存repository readはあり得る。
 実写真、実権限付与、撮影、RAW現像、共有保存、外部viewerは試していない。
 
@@ -29,7 +41,7 @@ adb -s <dedicated-emulator> shell am instrument -w -e isolated true -e class dev
 - 412×924dp、320×480dp、924×412dp、412×924dp/fontScale 1.3で案内・2操作・フッターに到達。
   合成viewportを端末内へ縮尺表示する試験であり、実機の回転・タッチ操作感の合格ではない。
 
-## 画素確認と残る確認
+## 既存実績: 画素確認と残る確認
 
 テストが生成したPNGを開き、全面空の説明/2操作が一覧領域の中央にあること、
 選択・混合の帯がアンバーの破線/本文であること、保持タイルのplaceholderが共通Panel色であることを確認した。
