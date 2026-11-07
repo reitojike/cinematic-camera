@@ -48,10 +48,10 @@ APK導入、Files選択、比較条件/測定modeの選択、開始、取消、�
   この診断も製品callerを使わず各armの1/2を明示する。tone gain onceの過去変更とは別の比較。
 - Glow: 1対2、または1対4を選択。light/diffusionの2つの行合成だけ並列化し、間のglobal blur境界を保持。
   worker専有行buffer、既存ordered executorとowner管理を使う。通常既定1を変えない。
-- 一つのsessionはwarmup AB、その後ABBAAB（逆順はBA/BAABBA）。各arm初回除外後ちょうど3成功、計8回。
+- 一つのsessionはwarmup AB、その後ABBAを2巡（逆順はBA/BAABを2巡）。各arm初回除外後ちょうど4成功、計10回。
   失敗/取消/不一致があれば停止し、不足分を成功扱いせず、少数試行からP95や確定的改善率を出さない。
 - 同じsession内の入力・設定は固定。strength=.5、warmth/追加EV=0、Orton4/Character2。
-  比較対象以外のFoundation/Glowは1。最初の成功JPEGを基準に全試行のfingerprint一致をboolだけ残す。
+  旧Foundation/Glow比較は比較対象以外のFoundation/Glowが1。RAW4とR7追加比較はFoundation2を共通基準にする。最初の成功JPEGを基準に全試行のfingerprint一致をboolだけ残す。
   hash値・写真bytes・写真名・URI・撮影情報・端末serial・例外本文/stackをreportへ出さない。
 - session開始前にsource commit/APK hash/ABI/build条件を別の検証記録に残す。入力対応表は公開しない。
   同じ端末状態・明るさ・給電・設定で順序を交替し、各sessionを冷却後に開始する。
@@ -65,9 +65,10 @@ APK導入、Files選択、比較条件/測定modeの選択、開始、取消、�
 外側elapsedからtop-level工程和を引いた値を未分解残差とする。CPU/GC/IOへ推測配賦しない。
 clock/record observer自身の費用は完全には除去できない。通常経路はtrace=nullでclock/event収集しない。
 
-メモリmodeは別session。before、各stage完了、afterの不定間隔境界でmanaged使用量、native allocated bytes、
-PSS KiBを観測し、native/PSSはsampled maxも出す。周期samplerではなく、工程内部の瞬間peakを捉えない。
-Debug.getMemoryInfo等の負荷を含むためメモリmodeから時間改善を主張しない。各項目の最大値を足して同時peakとしない。
+メモリmodeは別session。100ms目標の周期samplerでmanaged使用量とnative allocated bytesを観測する。
+PSS KiBはsamplerの外でbefore/afterのみ。samplerは定数領域の集計とし、実間隔、最大gap、欠測、収集費用を残す。
+工程内部の瞬間peakを保証せず「観測最大」と呼ぶ。メモリmodeから時間改善を主張せず、各項目の最大値を足して同時peakとしない。
+停止/join未確認ならowner HOLDで次試行を禁止する。dumpsysの高速ポーリングは行わない。
 
 各試行の前後にthermal status、電池温度（0.1℃単位）、battery status/充電状態を記録。
 thermal API未対応/欠測は-1、電池温度欠測は-1、充電不明はnullとして解釈する。
@@ -84,7 +85,7 @@ JVMのraster一致/取消試験、APK build、synthetic Android実行、本人�
 この入口は出力JPEGを削除するため目視画質確認や製品Save/FGS復帰試験の代わりにならない。
 24MP成功を全DNGメーカー互換やメモリ安全保証へ一般化しない。
 
-## 合成検証の証拠
+## 旧診断入口の合成検証の証拠（RAW4統合前）
 
 - 診断variantのlint・全JVM unit・assemble、およびrelease manifest生成に成功。879 tests、failure/error 0、既存skip 4。
 - 通常debugのlint・全JVM unit・assembleにも成功。874 tests、failure/error 0、既存skip 4。debug/releaseのmanifestに診断入口/profileableがないことを確認。
@@ -99,3 +100,41 @@ JVMのraster一致/取消試験、APK build、synthetic Android実行、本人�
 [profileable](https://developer.android.com/guide/topics/manifest/profileable-element)、
 [SAF](https://developer.android.com/training/data-storage/shared/documents-files)、
 [CMake build type](https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html)。
+
+## RAW4一括診断（Issue #78、製品既定は変更しない）
+
+要件: 同じ入力・同じAPK・Foundation2/Orton4/Character2固定で、AはGlow1/Mist1/tone1/色融合off、
+BはGlow2/Mist2/tone2/色融合on。sRGB近似は対象外。全JPEG厳密一致・既存golden・取消とowner契約を維持する。
+1 sessionはwarmup AB後ABBAを2巡、逆順はwarmup BA後BAABを2巡。計10回、測定各arm4回。
+時間とメモリは別session。時間は既存traceの同じ境界で各試行内の反復stageを合計してから中央値を取る。
+Glow/Mistはfield生成を含む全工程、toneは適用、色は旧3段合計対融合1段。全体と残差も併記する。
+
+性能判定は正逆両方で工程中央値10%以上短縮なら採用候補、両方未満なら今回条件で見送り。
+順序で10%判定が食い違う場合とR7が短縮した場合だけ追加比較する。R7 toneと色融合は別に切り分ける。
+10%は事前に決めた実務上の性能基準であり統計的有意差や機能安全の代替ではない。
+品質/原本/取消/owner gate不成立や測定未完は性能採否に変換しない。見送りは条件と結果を一覧に残す。
+
+設計: 既存診断variant/runner/UI/私有reportを再利用し、明示profileを追加する。正逆sessionは別開始とし、
+冷却・端末状態・同一入力/APKの確認後に比較する。入力の名前/URI/hash値/写真/例外本文をreportへ出さない。
+100msのmanaged/native観測はメモリsessionだけ。PSSは周期samplerと分離した前後観測。
+観測最大は保証peakではなく、実際の間隔・sample数・収集費用と失敗を記録する。無制限bufferは使わない。
+samplerの終了未確認でも既存gateを保持し次の試行を開始しない。製品save/FGS/撮影復帰は別検証。
+
+検証計画: profile/順序/中央値/閾値/欠測/取消/ownerのJVM試験、4候補同時onのFloat/JPEG一致と
+診断UI/lifecycle合成試験、通常と診断lint/unit/build、公開前差分検査と独立レビュー。
+実機性能・実写真品質・写真利用/インストールはこの実装/合成検証に含めない。
+### 少回数のメモリと取消確認
+
+時間は正順10回＋逆順10回（合計20回）。メモリは別の1 sessionでA/B各1回、合計2回に限定する。
+取消は専用ボタンからRAW4 onを2回だけ実行し、native decode完了後とR7 Foundation完了後に協調取消する。
+この境界取消はnative処理内部の任意時点の取消試験を代替しない。終了owner、部分JPEGなし、完了結果なし、
+原本不変を記録し、性能測定の成功件数に含めない。失敗scratchは既存契約どおり私有保持し、勝手に削除しない。
+本人が途中で取消した場合は診断成功に補完せず停止する。24MPを自動選択/先行測定しない。
+
+所要時間は同じ診断APK・同じ入力で観測した1回時間をTとすると、時間20T＋メモリ2回分＋取消2回の到達/回収時間。
+これにFiles選択/入力照合/冷却が加わる。別buildの旧35秒を代入した実機完了時刻は約束しない。
+
+正逆の私有reportは tools/raw-diagnostic/compare_raw4.py で集計する。入力識別情報はreportにないため、
+同じ原本bytes/APKと端末状態を本人側で照合し --same-input-build-confirmed を明示する。
+10%未満を見送りとして記録し、閾値不一致またはR7対象区間の短縮時だけ追加比較する。
+詳細と採否の固定labelは tools/raw-diagnostic/README.md を参照。性能採用labelは製品既定変更や安全合格を許可しない。
