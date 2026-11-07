@@ -34,7 +34,8 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, p
     private val parallelCharacterWorkers: Int = 1,
     private val parallelFoundationWorkers: Int = 1,
     private val parallelGlowWorkers: Int = 1,
-    private val glowRowProbe: ((String, Int) -> Unit)? = null) {
+    private val glowRowProbe: ((String, Int) -> Unit)? = null,
+    private val skipZeroKeepOrton: Boolean = false) {
     private val luma = StageClearV1.LUMA
     private fun y(row: FloatArray, i: Int) = row[i] * luma[0] + row[i + 1] * luma[1] + row[i + 2] * luma[2]
     private fun image(width: Int, row: FloatArray) = LinearSrgbImage.takeOwnership(width, 1, row)
@@ -331,6 +332,10 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, p
             val a = FloatArray(3); val b = FloatArray(3); val orton = FloatArray(rgb.size)
             repeat(width) { p ->
                 if (parallelOrtonWorkers > 1 && p % 64 == 0) originalCheckpoint(workerStop)
+                if (skipZeroKeepOrton) {
+                    OrtonZeroKeepCandidate.pixel(before, after, p * 3, activeSkinRow[p].coerceIn(0f, 1f), a, b, orton)
+                    return@repeat
+                }
                 StageClearColor.toLab(before, p * 3, a); StageClearColor.toLab(after, p * 3, b)
                 val keep = activeSkinRow[p].coerceIn(0f, 1f)
                 val scale = (1f - keep) + keep * min(1f, hypot(a[1], a[2]) / max(hypot(b[1], b[2]), StageClearOrtonV1.CHROMA_FLOOR.toFloat()))
