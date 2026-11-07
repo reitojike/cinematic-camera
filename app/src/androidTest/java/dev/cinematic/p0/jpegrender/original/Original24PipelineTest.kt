@@ -125,6 +125,17 @@ class Original24PipelineTest {
             }
             all.put("status", "success").put("complete", true)
         } catch (error: Throwable) { all.put("status", "failure").put("code", error.javaClass.simpleName); throw error }
-        finally { reportFile.writeText(all.toString(2)) }
+        finally {
+            val json = all.toString(2)
+            reportFile.writeText(json)
+            // AGP/UTP collects this standard output directory before a managed device is released.
+            // Export only synthetic diagnostic JSON, after the measured window has closed.
+            args.getString("additionalTestOutputDir")?.let { path ->
+                val directory = File(path)
+                check(directory.isDirectory || directory.mkdirs())
+                Files.write(File(directory, reportFile.name).toPath(), json.toByteArray(Charsets.UTF_8),
+                    StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
+            }
+        }
     }
 }
