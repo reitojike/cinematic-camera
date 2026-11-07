@@ -1,6 +1,7 @@
 # Implementation Plan: 現像デザインの差分修正
 
-Branch: `fix/editor-design-followup` / [spec](spec.md) / Issue作成許可待ち。
+Branch: `fix/editor-design-followup` / [spec](spec.md) / [Issue #186](https://github.com/reitojike/cinematic-camera/issues/186)。
+Issueはローカル実装後に公開許可を得て起票した。
 
 ## Summary / Technical Context
 Kotlin / 既存Compose・Material3。追加依存なし、CameraX 1.6.2を維持。

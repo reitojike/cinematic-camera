@@ -3,7 +3,7 @@
 **Feature Branch**: `fix/editor-design-followup`
 **Created**: 2026-11-07
 **Status**: Draft
-**Issue**: 作成許可待ち。既存の仕様根拠は #175 / spec042。
+**Issue**: [#186](https://github.com/reitojike/cinematic-camera/issues/186)。既存の仕様根拠は #175 / spec042。
 
 ## User Scenarios & Testing
 ### User Story 1 - 調整対象を識別する (P1)
