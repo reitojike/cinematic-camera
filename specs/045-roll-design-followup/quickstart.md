@@ -4,17 +4,19 @@
 
 ## 現在の合成UI実行手順
 
-[共通Gradle Managed Device](../../docs/MANAGED_DEVICES.md)の `pixel9aapi37` を使う。
-同じホストではworker間で実行枠を確認して逐次排他とし、Dドライブ上の共通 `GRADLE_USER_HOME` /
-`ANDROID_AVD_HOME` と既存SDK/JDKを使用する。保存先の存在・生成先確認は共通手順に従う。
+[共通Gradle Managed Device](../../docs/MANAGED_DEVICES.md)の `pixel9aapi37atd` を使う。
+同じホストではworker間で実行枠を確認し、移行の初回確認は単独で行う。共通 `GRADLE_USER_HOME` /
+枠専用の `ANDROID_AVD_HOME` と既存SDK/JDKを使用する。保存先の存在・生成先確認は共通手順に従う。
 `--max-workers=1` だけでは別Gradleプロセス同士を排他しない。
 
 ```powershell
-.\gradlew.bat :app:pixel9aapi37DebugAndroidTest --no-daemon --max-workers=1 `
+.\gradlew.bat :app:pixel9aapi37atdDebugAndroidTest --rerun --no-daemon --max-workers=1 `
   "-Pandroid.testInstrumentationRunnerArguments.class=dev.cinematic.p0.photoroll.CameraRollBrowserAndroidTest" `
   "-Pandroid.testInstrumentationRunnerArguments.isolated=true"
 ```
 
+現在の試験はActivity再生成後の合成fixtureを検証し、画面はViewツリーのソフトウェア描画として保存する。
+実画像を読み込まず、HARDWARE bitmapを前提にしない。表示合成・GPU・実権限ダイアログ・実機は検証しない。
 対象classだけを実行し、`isolated=true` を実機の安全確認の省略に使わない。
 旧手動AVDは保全のみで起動せず、新規のタスク専用AVDも作らない。
 GMDのtask解決・build・setup・実テストの結果を分け、以下の旧試験実績をGMD実行済みとは扱わない。

@@ -4,7 +4,6 @@ import android.graphics.Bitmap
 import java.io.File
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
-import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
@@ -18,8 +17,9 @@ import dev.cinematic.p0.CaptureTheme
 import org.junit.Assert.*
 import org.junit.Test
 
-/** Synthetic access and listing data only. Run with -e isolated true on the dedicated emulator. */
+/** Synthetic access and listing data only. Run with isolated=true on the shared API 37 ATD. */
 class CameraRollBrowserAndroidTest {
+    @get:org.junit.Rule val diagnostic = SyntheticFixtureRule()
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val full = CameraRollAccess(true, true, true, false)
     private val selected = CameraRollAccess(true, false, false, true)
@@ -35,7 +35,7 @@ class CameraRollBrowserAndroidTest {
             for (index in 0 until node.childCount) visit(node.getChild(index))?.let { return it }
             return null
         }
-        return visit(instrumentation.uiAutomation.rootInActiveWindow)
+        return visit(diagnostic.fixtureRoot())
     }
     private fun actionable(node: AccessibilityNodeInfo): AccessibilityNodeInfo {
         var current = node
@@ -50,7 +50,7 @@ class CameraRollBrowserAndroidTest {
             for (index in 0 until node.childCount) if (visit(node.getChild(index))) return true
             return false
         }
-        visit(instrumentation.uiAutomation.rootInActiveWindow)
+        visit(diagnostic.fixtureRoot())
         SystemClock.sleep(180)
     }
     private fun await(text: String, enabled: Boolean? = null): AccessibilityNodeInfo {
@@ -69,7 +69,7 @@ class CameraRollBrowserAndroidTest {
     }
     private fun capture(name: String) {
         instrumentation.waitForIdleSync()
-        requireNotNull(instrumentation.uiAutomation.takeScreenshot()).let { bitmap ->
+        diagnostic.captureSoftware().let { bitmap ->
             try {
                 File(instrumentation.targetContext.getExternalFilesDir(null), "roll-design-$name.png")
                     .outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
@@ -82,10 +82,9 @@ class CameraRollBrowserAndroidTest {
         val state = mutableStateOf(initial)
         var permissions = 0
         var files = 0
-        // Existing activity starts on an empty dedicated emulator, then the UI is replaced.
+        // Existing activity starts on an empty ATD; lifecycle callbacks install synthetic content.
         // Initial repository reads may occur; fixtures do not request permissions or launch viewers.
-        ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
-            scenario.onActivity { activity -> activity.setContent {
+        diagnostic.content = {
                 val fixture = state.value
                 BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
                     val nativeDensity = LocalDensity.current.density
@@ -100,7 +99,9 @@ class CameraRollBrowserAndroidTest {
                         }
                     }
                 }
-            } }
+        }
+        ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
+            scenario.recreate()
             block(scenario, { fixture -> scenario.onActivity { state.value = fixture }; instrumentation.waitForIdleSync() },
                 { permissions to files })
         }
