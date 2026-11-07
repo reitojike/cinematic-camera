@@ -106,6 +106,15 @@ class OriginalRemainingRowsAndroidTest {
                 if (mode != "MEMORY") sample.put("renderNanos", renderNanos).put("stageNanos", stageTimes)
                 if (memoryReport != null) sample.put("memory", memoryReport)
                 samples.put(sample)
+                // GMD preserves logcat, but may discard instrumentation stream status bundles.
+                val observed = JSONObject().put("mode", mode).put("toneWorkers", arm.tone).put("mistWorkers", arm.mist)
+                    .put("rawBitsEqual", true).put("testJpegEqual", true)
+                if (mode != "MEMORY") observed.put("renderNanos", renderNanos)
+                    .put("toneNanos", stageTimes.getLong("R7_TONE_APPLY"))
+                    .put("mistNanos", stageTimes.getLong("MIST"))
+                if (memoryReport != null) for (key in listOf("sampledManagedMaxBytes", "sampledNativeMaxBytes", "sampledPssMaxKiB"))
+                    observed.put(key, memoryReport.getLong(key))
+                android.util.Log.i("RemainingRowsProbe", observed.toString())
             } catch (error: Throwable) {
                 if (phase == null) throw error
                 if (fault) assertSame(injected, error) else assertTrue(error is CancellationException)
@@ -133,6 +142,7 @@ class OriginalRemainingRowsAndroidTest {
             val report = JSONObject().put("width", width).put("height", height).put("samples", samples)
                 .put("scope", "synthetic-float-kernel-and-test-JPEG; no-DNG/no-production-save/no-device-speed")
                 .put("sourceUnchanged", true).put("status", "SUCCESS")
+            android.util.Log.i("RemainingRowsProbe", "SUCCESS sourceUnchanged=true safetyCases=4 retryExact=true")
             inst.sendStatus(0, Bundle().apply { putString("stream", "\nRemainingRowsReport " + report + "\n") })
         } finally {
             assertTrue(source.delete())

@@ -47,3 +47,12 @@ OriginalRemainingRowsAndroidTest は隔離original24Probe/ATDで256×192の私�
 時間はkernel renderだけで、raw-bit hash、テスト専用8bit変換/JPEG、入力照合とcleanupを含まない。
 同じ最終rasterのテストJPEG一致は確認するが、DNG decode/実factory/公開JPEGの一致へ読み替えない。
 取消・故障と再試行を検査し、実機速度・瞬間peak・撮影復帰は未確認のまま残す。
+
+## 限定評価後の判断
+
+[Issue #78の結果](https://github.com/reitojike/cinematic-camera/issues/78#issuecomment-6709302793)に条件と元観測値を記録した。
+小型合成では全armのraw-bit/テストJPEG一致と取消・故障回収を確認したが、対象段の安定した改善は確認できなかった。
+256×192・各3回中央値はtone適用45.619→52.866ms、Mist全段120.914→240.203ms（それぞれ単独2worker）。
+小型debug/ATDの結果を原寸/実機の改善・悪化へ外挿せず、既定serialを維持する。
+追加重計測・製品採用・PR公開は現段階で見送り、比較候補と限定証拠だけをローカル保存する。
+再開する場合は最新実機の支配段階、今回不足した条件、同じ案を再測定する理由を先に確認する。
