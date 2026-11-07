@@ -67,6 +67,17 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    testOptions {
+        managedDevices {
+            localDevices {
+                create("pixel9aapi37") {
+                    device = "Pixel 9a"
+                    sdkVersion = 37
+                    systemImageSource = "google"
+                }
+            }
+        }
+    }
     lint { abortOnError = true }
 }
 dependencies {
