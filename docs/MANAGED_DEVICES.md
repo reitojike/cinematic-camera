@@ -10,7 +10,7 @@ Issue #190。タスクごとの手動AVD作成を止め、Google公式の
 AGP 9.5.1 / sdklib 32.5.1同梱の公式Pixel 9a profileは1080×2424、論理density 420dpi、
 RAM 7556MiBを定義する。画面全体の目安は約411×923dp（system bar領域を除く前）。
 製品仕様の6.3inch / 8GBとprofileの6.24inch / 7556MiBは一致する表記ではなく、
-起動後の実RAM割当は別途確認する。独自のconfig書換えでRAMを強制しない。
+この構成での生成configは2G、初回起動のhardware-qemu.iniは4096MiBだった。profileの7556MiBを実割当とみなさず、起動後の実RAM割当を確認する。独自のconfig書換えでRAMを強制しない。
 Windows x86_64のsystem imageを使うためTensor G4 / GPU / camera / 実機性能は再現しない。
 API 37のGoogle APIs imageと組み合わせ、公開DSLの `sdkVersion` を使用する。
 
@@ -20,7 +20,7 @@ AGPがデバイスの作成・起動・テスト・終了を管理する。再�
 
 - 同じホストのworktreeでは同じSDK、`GRADLE_USER_HOME`、`ANDROID_AVD_HOME` を使う。タスク名入りのAVDやキャッシュを作らない。
 - GradleキャッシュとAVD実体は別の保存先。AGP 9.5.1ではAVD実体は `ANDROID_AVD_HOME/gradle-managed`（AVD home未指定時は `ANDROID_USER_HOME/avd/gradle-managed`）へ置かれる。`GRADLE_USER_HOME` の指定だけではAVDを移せない。
-- [Android公式環境変数](https://developer.android.com/tools/variables)を用い、プロセス内で共通開発ドライブの `ANDROID_AVD_HOME` を明示する。既存 `ANDROID_USER_HOME` / adb認証状態は変更しない。ユーザー固有の絶対パスはGitへ保存せず、グローバル設定も変更しない。
+- [Android公式環境変数](https://developer.android.com/tools/variables)を用い、プロセス内で共通開発ドライブの `ANDROID_AVD_HOME` を明示する。指定前に共通AVDディレクトリを作成し、存在を確認する。未作成パスはSDK側で無視され既定先へfallbackし得るため、初回setupで生成先も確認する。既存 `ANDROID_USER_HOME` / adb認証状態は変更しない。ユーザー固有の絶対パスはGitへ保存せず、グローバル設定も変更しない。
 - 作業checkout/build/logは開発用ドライブ配下へ置く。SDK/JDKの移設や既存AVDの削除は別作業とする。
 - 複数workerのGMDはホスト単位で逐次実行する。`--max-workers=1` だけでは別Gradleプロセス同士を排他しない。
 - 初回のsystem image取得、SDK license、仮想化環境が必要ならその条件を確認してから進める。独自回避はしない。
@@ -29,6 +29,18 @@ AGPがデバイスの作成・起動・テスト・終了を管理する。再�
 ## 実行
 
 JDK/SDK/共有Gradleキャッシュを既存開発環境で設定したうえで、リポジトリrootで実行する。
+`ANDROID_AVD_HOME` は全worktree共通の開発ドライブ上の既存ディレクトリへ指定する。
+PowerShellでは、正しい共通パスを設定済みであることを確認してから実行する:
+
+```powershell
+if (-not $env:ANDROID_AVD_HOME) { throw "Set the shared development-drive AVD directory first" }
+New-Item -ItemType Directory -Path $env:ANDROID_AVD_HOME -Force | Out-Null
+if (-not (Test-Path -LiteralPath $env:ANDROID_AVD_HOME -PathType Container)) { throw "Shared AVD directory is missing" }
+```
+
+初回setupでは `ANDROID_AVD_HOME/gradle-managed` の生成configとhardware-qemu.iniの実data pathを確認する。
+意図しない既定先への生成を発見したら、その実行だけを止めて保存先を修正する。
+
 まずは端末を起動しないtask確認:
 
 ```powershell
