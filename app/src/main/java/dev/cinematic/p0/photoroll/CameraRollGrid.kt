@@ -16,7 +16,6 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -77,12 +76,12 @@ private fun CameraRollThumbnail(item: PhotoRollItem, foreground: Boolean) {
         bitmap = loadCameraRollThumbnail(resolver, Uri.parse(item.uri), signal)
         finished = true
     }
-    Box(Modifier.fillMaxWidth().aspectRatio(1f).background(MaterialTheme.colorScheme.surfaceVariant),
+    Box(Modifier.fillMaxWidth().aspectRatio(1f).background(CaptureDesign.Panel),
         contentAlignment = Alignment.Center) {
         val image = bitmap
         if (image != null) Image(image.asImageBitmap(), item.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         else Text(if (finished) "${item.kind.label}\nプレビューなし" else item.kind.label,
-            style = MaterialTheme.typography.labelMedium)
+            style = CaptureDesign.Label, color = CaptureDesign.Muted)
         val tag = when (item.kind) {
             CameraRollKind.DNG -> "DNG"
             CameraRollKind.RAW -> "RAW ↗"
