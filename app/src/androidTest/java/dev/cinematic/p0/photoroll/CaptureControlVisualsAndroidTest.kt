@@ -22,6 +22,7 @@ import org.junit.Test
 
 /** Shared presentation fixture only: no camera, media access or capture is started. */
 class CaptureControlVisualsAndroidTest {
+    @get:org.junit.Rule val diagnostic = SyntheticFixtureRule()
     @Test fun shootingKeyRotationAndCallerOwnedToggleRemainAvailable() {
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -40,7 +41,7 @@ class CaptureControlVisualsAndroidTest {
                 for (i in 0 until node.childCount) walk(node.getChild(i))?.let { return it }
                 return null
             }
-            return walk(instrumentation.uiAutomation.rootInActiveWindow)
+            return walk(diagnostic.fixtureRoot())
         }
         fun await(description: String, expectedSelected: Boolean? = null, expectedChecked: Boolean? = null): AccessibilityNodeInfo {
             repeat(40) {
@@ -49,10 +50,10 @@ class CaptureControlVisualsAndroidTest {
                     (expectedChecked == null || it.isChecked == expectedChecked) }?.let { return it }
                 Thread.sleep(50)
             }
+            diagnostic.failure(description)
             error("Missing $description")
         }
-        ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
-            scenario.onActivity { activity -> activity.setContent { CaptureTheme {
+        diagnostic.content = { CaptureTheme {
                 Column(Modifier.fillMaxSize().safeDrawingPadding()) {
                     CaptureControlKey("ISO", "100", "AUTO", selected.value, true, {},
                         Modifier.width(120.dp), horizontal = horizontal.value,
@@ -62,7 +63,8 @@ class CaptureControlVisualsAndroidTest {
                         Text("STILL", Modifier.weight(1f)); Text("CINE", Modifier.weight(1f))
                     }
                 }
-            } } }
+        } }
+        ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
             for (landscape in listOf(false, true)) {
                 scenario.onActivity { horizontal.value = landscape; selected.value = true }
                 val observed = await("ISO 100  AUTO")
@@ -71,7 +73,7 @@ class CaptureControlVisualsAndroidTest {
                 val key = await("ISO 100  AUTO", expectedSelected = true)
                 assertTrue("selected button must expose checked or selected", key.isSelected || (key.isCheckable && key.isChecked))
                 instrumentation.waitForIdleSync()
-                requireNotNull(instrumentation.uiAutomation.takeScreenshot()).let { bitmap ->
+                requireNotNull(diagnostic.automation.takeScreenshot()).let { bitmap ->
                     try { File(instrumentation.targetContext.getExternalFilesDir(null),
                         "design-shooting-control-${if (landscape) "horizontal" else "vertical"}.png").outputStream().use {
                         bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
