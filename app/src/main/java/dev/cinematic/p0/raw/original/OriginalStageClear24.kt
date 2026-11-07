@@ -34,7 +34,8 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, p
     private val parallelCharacterWorkers: Int = 1,
     private val parallelFoundationWorkers: Int = 1,
     private val parallelGlowWorkers: Int = 1,
-    private val glowRowProbe: ((String, Int) -> Unit)? = null) {
+    private val glowRowProbe: ((String, Int) -> Unit)? = null,
+    private val fuseR7ColorRows: Boolean = false) {
     private val luma = StageClearV1.LUMA
     private fun y(row: FloatArray, i: Int) = row[i] * luma[0] + row[i + 1] * luma[1] + row[i + 2] * luma[2]
     private fun image(width: Int, row: FloatArray) = LinearSrgbImage.takeOwnership(width, 1, row)
@@ -45,12 +46,13 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, p
 
     fun render(input: OriginalRaster, externalEv: Double, strength: Double = .5,
         foundation: OriginalMask = OriginalMask.NONE, faces: OriginalMask = OriginalMask.NONE,
-        stop: () -> Boolean = { false }, stage: (String, OriginalRasterFile) -> Unit = { _, _ -> }): Result {
+        stop: () -> Boolean = { false }, stage: ((String, OriginalRasterFile) -> Unit)? = null): Result {
+        require(!fuseR7ColorRows || stage == null) { "Fused rows do not expose intermediate stage rasters" }
         validateOriginalSize(input.width, input.height)
         require(externalEv.isFinite() && strength.isFinite() && strength in 0.0..1.0)
         val width = input.width; val height = input.height
         fun emit(name: String, raster: OriginalRasterFile): OriginalRasterFile {
-            originalCheckpoint(stop); stage(name, raster); originalCheckpoint(stop); return raster
+            originalCheckpoint(stop); stage?.invoke(name, raster); originalCheckpoint(stop); return raster
         }
         fun rowStep(previous: OriginalRasterFile, name: String, timing: OriginalStage, parallelRows: Boolean = false,
             transform: (Int, FloatArray) -> FloatArray): OriginalRasterFile {
@@ -95,9 +97,15 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, p
                 if (parallelFoundation) originalCheckpoint(workerStop)
             }
         }
-        base = rowStep(base, "r7_vibrance", OriginalStage.R7_VIBRANCE, parallelRows = true) { _, row -> values(R7Base.vibrance(image(width, row))) }
-        base = rowStep(base, "r7_crisp", OriginalStage.R7_CRISP, parallelRows = true) { _, row -> values(R7Base.crisp(image(width, row))) }
-        base = rowStep(base, "r7_skin", OriginalStage.R7_SKIN, parallelRows = true) { _, row -> values(R7Base.skin(image(width, row))) }
+        if (fuseR7ColorRows) {
+            base = rowStep(base, "r7_skin", OriginalStage.R7_COLOR_FUSED, parallelRows = true) { _, row ->
+                originalR7ColorRow(width, row, workerStop)
+            }
+        } else {
+            base = rowStep(base, "r7_vibrance", OriginalStage.R7_VIBRANCE, parallelRows = true) { _, row -> values(R7Base.vibrance(image(width, row))) }
+            base = rowStep(base, "r7_crisp", OriginalStage.R7_CRISP, parallelRows = true) { _, row -> values(R7Base.crisp(image(width, row))) }
+            base = rowStep(base, "r7_skin", OriginalStage.R7_SKIN, parallelRows = true) { _, row -> values(R7Base.skin(image(width, row))) }
+        }
 
         val skin = originalStage(trace, OriginalStage.SKIN_FIELD) { OriginalFields.blur(base, StageClearGlowV1.SKIN_RADIUS, 1, stop) { rgb, out ->
             val frame = image(width, rgb); val lab = FloatArray(3)

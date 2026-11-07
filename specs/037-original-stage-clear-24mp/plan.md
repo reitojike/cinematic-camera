@@ -126,3 +126,15 @@ fixture生成でcacheが温まるためcold diskの比較ではない。旧main�
 stateful非空ROIのcaller順序をunitで確認する。実factory保存の合成instrumentationでは
 同じrecipeの明示1 worker JPEGと通常保存JPEGのfingerprint/出力を照合し、同じURIの再照合と原本不変を保つ。
 通常保存のPixel実機ACと端末全体の性能・瞬間peakは、この機械的検証とは別の未検証項目とする。
+
+## R7色3段の行融合試作（Issue #78）
+
+既定falseの明示opt-inでvibrance→crisp→skinだけを既存ordered 2worker内で連結する。
+数式、Float丸め、RGB/Lab往復、tone統計、Foundation ROI、Look空間依存は変更しない。
+完成rasterを受け取るstage callbackとの同時指定は開始前に拒否する。既定の段別経路は維持する。
+融合区間は独立したwall spanとし、旧3段の時間へ分配しない。各kernelの前後で協調取消を確認する。
+worker/FDの終了確認とpending owner保持は既存workspaceに委ね、原本/公開gateを変更しない。
+
+24MPの中間2本の累計生成576MBと再読込576MBを省く静的見込みであり、RAMやscratch peakの削減ではない。
+bit一致、顔cut、外部ROI、取消、故障、回収と同APK合成JPEGを比較する。goldenを変更しない。
+通常保存への採用は最新版の実機内訳を踏まえて別判断。GPU、近似式、他段の並列化を含めない。

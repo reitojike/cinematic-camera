@@ -39,3 +39,11 @@
 - [ ] 実factoryの合成保存JPEGと明示1 workerの同一recipe出力を照合し、原本不変・同じURI再照合を確認する。
 - [ ] 公開差分検査、最終headのlint/unit/build、CI/canonical/独立レビューで限定採用を判断する。
 - [ ] Pixelの通常手動保存・FGS・撮影復帰で原本保持と同じ結果の表示を確認する。
+
+## R7色3段融合の限定比較（Issue #78）
+
+- [x] 性能履歴・既存試作を照合し、式/丸め/統計境界/ownerを維持するopt-inを用意する。
+- [x] 行・全LookのFloat一致、顔cut・外部ROI・取消/故障/既存owner回帰を確認する。
+- [ ] 同APK合成DNGのJPEG一致、向き、原本不変、attempt回収と生成画像を確認する。
+- [ ] 公開検査・lint/unit/build・独立レビュー後、品質条件を満たす場合にDraft PRを作る。
+- [ ] 最新版の実機内訳を踏まえて通常保存への採用を別判断する。
