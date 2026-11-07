@@ -36,16 +36,17 @@ class RawDiagnosticSmokeTest {
             putByteArray("bytes", dev.cinematic.p0.testing.syntheticTrialDng(64, 48))
         })
     }
-    @Test fun eightFreshAttemptsAndPrivacyForEveryComparison() {
+    @Test fun tenFreshAttemptsAndPrivacyForEveryComparison() {
         val info = context.packageManager.getPackageInfo(context.packageName, PackageManager.GET_PERMISSIONS)
         assertEquals(0, context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE)
         assertTrue(info.requestedPermissions.isNullOrEmpty())
         assertTrue(context.contentResolver.persistedUriPermissions.isEmpty())
-        for (comparison in DiagnosticComparison.entries) {
+        val cases = DiagnosticComparison.entries.map { it to false } + (DiagnosticComparison.RAW4 to true)
+        for ((comparison, reverse) in cases) {
             val existingRoots = context.noBackupFilesDir.listFiles().orEmpty().map { it.name }.toSet()
             val runner = RawDiagnosticRunner(context)
             val progress = mutableListOf<String>()
-            val reportText = runner.run(uri(), false, false, comparison, progress::add)
+            val reportText = runner.run(uri(), false, reverse, comparison, progress::add)
             val report = JSONObject(reportText)
             assertEquals(reportText, "SUCCESS", report.getString("status"))
             assertTrue(report.getBoolean("complete"))
@@ -53,13 +54,19 @@ class RawDiagnosticSmokeTest {
             assertTrue(report.getBoolean("privateInputRemoved"))
             assertTrue(report.getBoolean("resourcesQuiescent"))
             assertTrue(runner.resourcesQuiescent)
-            assertEquals(3, report.getInt("measuredSuccessesA"))
-            assertEquals(3, report.getInt("measuredSuccessesB"))
+            assertEquals(4, report.getInt("measuredSuccessesA"))
+            assertEquals(4, report.getInt("measuredSuccessesB"))
             val runs = report.getJSONArray("runs")
-            assertEquals(8, runs.length()); assertEquals(8, progress.size)
-            for (index in 0 until 8) {
+            assertEquals(10, runs.length()); assertEquals(10, progress.size)
+            for (index in 0 until 10) {
                 val run = runs.getJSONObject(index)
                 assertEquals(index, run.getInt("sequence"))
+                val profile = comparison.profile(run.getInt("arm"))
+                assertEquals(profile.foundation, run.getInt("foundationWorkers"))
+                assertEquals(profile.glow, run.getInt("glowWorkers"))
+                assertEquals(profile.tone, run.getInt("toneWorkers"))
+                assertEquals(profile.mist, run.getInt("mistWorkers"))
+                assertEquals(profile.fuseColor, run.getBoolean("fuseR7ColorRows"))
                 assertEquals(index < 2, run.getBoolean("excludedWarmup"))
                 assertTrue(run.getBoolean("jpegMatchesSessionBaseline"))
                 assertTrue(run.getBoolean("sameJpegReadback"))
@@ -70,10 +77,19 @@ class RawDiagnosticSmokeTest {
             assertFalse(reportText.contains("fixture.dng"))
             assertFalse(reportText.contains("Synthetic"))
             assertFalse(reportText.contains("sha256", ignoreCase = true))
+            if (comparison == DiagnosticComparison.RAW4) {
+                // Only fixed-schema numeric synthetic reports; never copies source/photos or paths into the report.
+                val configured = InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")
+                val outputRoot = if (configured != null) File(configured) else
+                    File(requireNotNull(context.externalMediaDirs.firstOrNull()), "additional_test_output")
+                val reports = File(outputRoot, "raw4-synthetic")
+                check(reports.isDirectory || reports.mkdirs())
+                File(reports, if (reverse) "reverse.json" else "forward.json").writeText(reportText)
+            }
             val sessionRoot = context.noBackupFilesDir.listFiles().orEmpty().single {
                 it.name.startsWith("raw-diagnostic-") && it.name !in existingRoots
             }
-            assertEquals((0 until 8).map { "attempt-$it" }.toSet(),
+            assertEquals((0 until 10).map { "attempt-$it" }.toSet(),
                 sessionRoot.listFiles().orEmpty().filter { it.isDirectory }.map { it.name }.toSet())
             assertTrue(context.contentResolver.persistedUriPermissions.isEmpty())
         }
@@ -83,16 +99,42 @@ class RawDiagnosticSmokeTest {
         assertTrue(roots.none { root -> root.walkTopDown().any { it.extension == "jpg" } })
     }
     @Test fun memoryModeAndReverseOrderAreSeparate() {
-        val report = JSONObject(RawDiagnosticRunner(context).run(uri(), true, true, DiagnosticComparison.FOUNDATION) {})
+        val report = JSONObject(RawDiagnosticRunner(context).run(uri(), true, true, DiagnosticComparison.RAW4) {})
         assertEquals("SUCCESS", report.getString("status"))
-        assertEquals("MEMORY_BOUNDARIES_NOT_TIMING", report.getString("mode"))
-        assertEquals("BA-BAABBA", report.getString("order"))
+        assertEquals("MEMORY_PERIODIC_NOT_TIMING", report.getString("mode"))
+        assertEquals("BA", report.getString("order"))
         val runs = report.getJSONArray("runs")
-        for (index in 0 until 8) {
+        assertEquals(2, runs.length())
+        for (index in 0 until 2) {
             val run = runs.getJSONObject(index)
-            assertEquals(DiagnosticPlan.workers(true)[index], run.getInt("arm"))
-            assertTrue(run.has("memoryBoundaries"))
+            assertEquals(DiagnosticPlan.workers(true, memory = true)[index], run.getInt("arm"))
+            assertTrue(run.has("memoryObserved"))
+            assertTrue(run.getJSONObject("memoryObserved").getBoolean("quiescent"))
+            assertTrue(run.getJSONObject("memoryObserved").getLong("sampleCount") > 0)
+            assertFalse(run.has("memoryBoundaries"))
             assertFalse(run.has("renderAndCloseNanos"))
+        }
+    }
+    @Test fun boundedCancellationChecksNeverCountAsTimingSuccess() {
+        val runner = RawDiagnosticRunner(context)
+        val report = JSONObject(runner.runCancellation(uri()) {})
+        assertEquals("SUCCESS", report.getString("status"))
+        assertEquals("CANCELLATION_BOUNDARIES_NOT_TIMING", report.getString("mode"))
+        assertEquals(2, report.getInt("expectedCancellationChecks"))
+        assertEquals(0, report.getInt("measuredSuccessesB"))
+        assertTrue(report.getBoolean("selectedOriginalUnchanged"))
+        assertTrue(report.getBoolean("privateInputRemoved"))
+        assertTrue(runner.resourcesQuiescent)
+        val runs = report.getJSONArray("runs")
+        assertEquals(2, runs.length())
+        for (index in 0 until 2) {
+            val item = runs.getJSONObject(index)
+            assertEquals("CANCELLED_EXPECTED", item.getString("status"))
+            assertTrue(item.getBoolean("ownerClosed"))
+            assertTrue(item.getBoolean("noCompletedResult"))
+            assertTrue(item.getBoolean("partialJpegAbsent"))
+            assertTrue(item.getBoolean("sourceUnchanged"))
+            assertFalse(item.has("renderAndCloseNanos"))
         }
     }
     private fun views(view: View): List<View> = listOf(view) +
@@ -103,7 +145,7 @@ class RawDiagnosticSmokeTest {
         }
     }
     private fun awaitStatus(scenario: ActivityScenario<RawDiagnosticActivity>, predicate: (String) -> Boolean): String {
-        val deadline = SystemClock.uptimeMillis() + 15000
+        val deadline = SystemClock.uptimeMillis() + 30000
         var status = ""
         do {
             scenario.onActivity { activity ->
@@ -137,7 +179,7 @@ class RawDiagnosticSmokeTest {
                         scenario.moveToState(Lifecycle.State.RESUMED)
                     }
                     // Recreation intentionally leaves old owner results on the old Activity. Inspect its private report.
-                    val deadline = SystemClock.uptimeMillis() + 15000
+                    val deadline = SystemClock.uptimeMillis() + 30000
                     var stopped: JSONObject? = null
                     do {
                         stopped = context.noBackupFilesDir.listFiles().orEmpty()
