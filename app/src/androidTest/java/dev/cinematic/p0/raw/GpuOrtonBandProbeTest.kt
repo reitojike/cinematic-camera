@@ -11,6 +11,7 @@ import java.io.File
 import java.util.concurrent.CancellationException
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.math.pow
 
 /** Synthetic-only comparison. PNG is private test output, never a product photo. */
 class GpuOrtonBandProbeTest {
@@ -72,13 +73,16 @@ class GpuOrtonBandProbeTest {
         val image = LinearSrgbImage(17, 13, FloatArray(17 * 13 * 3) { .2f })
         val skin = FloatPlane(17, 13, FloatArray(17 * 13))
         val mist = StageClearMist.render(image, skin, .5)
-        var checks = 0
-        try {
-            GpuOrtonBandProbe.render(mist, skin, 4) { ++checks >= 4 }
-            fail("Expected cooperative cancellation")
-        } catch (_: CancellationException) { /* no output is returned */ }
-        val next = GpuOrtonBandProbe.render(mist, skin, 4)
-        assertEquals(17, next.output.width)
+        // After upload, after draw, and after readback respectively.
+        for (stopAt in listOf(4, 5, 6)) {
+            var checks = 0
+            try {
+                GpuOrtonBandProbe.render(mist, skin, 4) { ++checks >= stopAt }
+                fail("Expected cooperative cancellation")
+            } catch (_: CancellationException) { /* no output is returned */ }
+            val next = GpuOrtonBandProbe.render(mist, skin, 4)
+            assertEquals(17, next.output.width)
+        }
     }
 
     private fun candidate(base: LinearSrgbImage, faces: FaceMask, strength: Double, band: Int): LinearSrgbImage {
@@ -90,10 +94,16 @@ class GpuOrtonBandProbeTest {
         }.image
     }
     private fun pixels(image: LinearSrgbImage) = IntArray(image.pixelCount) { p ->
-        val r = (StageClearColor.linearToUnit(image[p * 3]) * 255).roundToInt()
-        val g = (StageClearColor.linearToUnit(image[p * 3 + 1]) * 255).roundToInt()
-        val b = (StageClearColor.linearToUnit(image[p * 3 + 2]) * 255).roundToInt()
+        val r = previewChannel(image[p * 3])
+        val g = previewChannel(image[p * 3 + 1])
+        val b = previewChannel(image[p * 3 + 2])
         (255 shl 24) or (r shl 16) or (g shl 8) or b
+    }
+    // Exact display quantizer from Original24PreviewSession; CPU golden is unchanged.
+    private fun previewChannel(linear: Float): Int {
+        val value = linear.toDouble().coerceIn(0.0, 1.0)
+        return ((if (value <= .0031308) 12.92 * value else 1.055 * value.pow(1.0 / 2.4) - .055) * 255)
+            .roundToInt().coerceIn(0, 255)
     }
     private fun png(name: String, width: Int, height: Int, pixels: IntArray) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
