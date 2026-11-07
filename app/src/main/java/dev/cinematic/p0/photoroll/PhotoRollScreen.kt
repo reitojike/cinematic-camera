@@ -34,10 +34,13 @@ import dev.cinematic.p0.rawcapture.DngContentChanged
 import dev.cinematic.p0.rawcapture.DngVerificationStopped
 import dev.cinematic.p0.photoedit.PhotoEditInputToken
 import dev.cinematic.p0.photoedit.PhotoEditValues
+import dev.cinematic.p0.photoedit.PhotoEditRestoration
+import dev.cinematic.p0.photoedit.AndroidPhotoEditRecipes
 import dev.cinematic.p0.photoedit.PhotoAdjustmentPolicy
 import dev.cinematic.p0.raw.PhotoAdjustments
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -52,6 +55,12 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
     var retry by remember { mutableIntStateOf(0) }
     var explicitRetry by remember { mutableStateOf(false) }
     var selection by remember { mutableStateOf(PhotoRollSelection()) }
+    var savedOriginalIdentity by rememberSaveable { mutableStateOf<String?>(null) }
+    var savedProcessingContract by rememberSaveable { mutableStateOf<String?>(null) }
+    var skipDurableRecipe by rememberSaveable { mutableStateOf(false) }
+    var recipeRecoveryNeeded by remember { mutableStateOf(false) }
+    var recipeLoaded by rememberSaveable { mutableStateOf(false) }
+    var editSavePending by remember { mutableStateOf(false) }
     var savedStrength by rememberSaveable { mutableDoubleStateOf(.5) }
     var savedWarmth by rememberSaveable { mutableDoubleStateOf(0.0) }
     var savedExposureEv by rememberSaveable { mutableDoubleStateOf(0.0) }
@@ -90,6 +99,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
     var folderMenu by remember { mutableStateOf(false) }
     val saveScope = rememberCoroutineScope()
     val context = LocalContext.current
+    val editRecipes = remember(context.applicationContext) { AndroidPhotoEditRecipes(context) }
     val currentForeground by rememberUpdatedState(foreground)
     val access = remember(accessEpoch, foreground) { currentCameraRollAccess(context) }
     val currentQuery by rememberUpdatedState(PhotoRollQuery(folderKey, kindFilter, after = pageCursor,
@@ -122,7 +132,37 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         val nextToken = reset.session?.inputToken ?: return
         updateTrialEditor(reset.apply(nextToken))
     }
+    fun closeTrialEdit(token: PhotoEditInputToken) {
+        if (editSavePending) return
+        val current = trialEditor
+        val accepted = current.close(token)
+        if (accepted === current) return
+        if (!manualTrial) { trialEditor = accepted; return }
+        val original = current.original ?: return
+        val ticket = current.ticket
+        // Queue admission is synchronous with the accepted UI action, even across recreation.
+        val write = editRecipes.save(original, accepted.requestedValues)
+        editSavePending = true
+        notice = null
+        saveScope.launch {
+            try {
+                // Closing accepts this exact recipe. Finish its small atomic write even if the
+                // Activity leaves; cancellation must not report an unknown commit as a failure.
+                withContext(NonCancellable + Dispatchers.IO) { write.get() }
+                if (trialEditor.accepts(ticket) && trialEditor.session?.inputToken == token) {
+                    trialEditor = accepted
+                    notice = "調整設定をこの端末に保持しました。JPEGの保存とは別です"
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (trialEditor.accepts(ticket)) notice = "調整設定の保持を確認できません。調整を閉じる操作を再試行してください"
+            } finally { editSavePending = false }
+        }
+    }
     fun chooseDng(uri: String, files: Boolean) {
+        if (editSavePending) return
+        recipeLoaded = false; recipeRecoveryNeeded = false; skipDurableRecipe = false
+        savedOriginalIdentity = null; savedProcessingContract = null
         renderer.discardTransientInputs()
         cancellationOwner.cancel(); explicitRetry = false; fromFiles = files
         savedStrength = .5
@@ -132,9 +172,10 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         selection = selection.clear(); pageCursor = null; selectedUri = uri; retry++
     }
 
-    fun closeRoll() { navigation.exit(); cancellationOwner.cancel(); renderer.discardTransientInputs(); close() }
-    fun backToList() { cancellationOwner.cancel(); renderer.discardTransientInputs(); explicitRetry = false; savedStrength = .5; savedWarmth = 0.0; savedExposureEv = 0.0; trialEditor = TrialStrengthEditor.empty(if (manualTrial) PhotoAdjustmentPolicy.defaults else PhotoEditValues(.5)); selectedUri = null; preview = null; comparison = null; comparisonLabel = null; pageCursor = null; selection = selection.clear(); retry++ }
+    fun closeRoll() { if (editSavePending) return; navigation.exit(); cancellationOwner.cancel(); renderer.discardTransientInputs(); close() }
+    fun backToList() { if (editSavePending) return; recipeLoaded = false; recipeRecoveryNeeded = false; skipDurableRecipe = false; savedOriginalIdentity = null; savedProcessingContract = null; cancellationOwner.cancel(); renderer.discardTransientInputs(); explicitRetry = false; savedStrength = .5; savedWarmth = 0.0; savedExposureEv = 0.0; trialEditor = TrialStrengthEditor.empty(if (manualTrial) PhotoAdjustmentPolicy.defaults else PhotoEditValues(.5)); selectedUri = null; preview = null; comparison = null; comparisonLabel = null; pageCursor = null; selection = selection.clear(); retry++ }
     BackHandler {
+        if (editSavePending) return@BackHandler
         val edit = trialEditor.session
         if (edit != null) cancelTrialEdit(edit.inputToken) else if (selectedUri != null) backToList() else closeRoll()
     }
@@ -185,6 +226,10 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         savePending = false
         val source = selectedUri
         val selectedFromFiles = fromFiles
+        val restoreRecipeThisRequest = manualTrial && !recipeLoaded
+        val skipRecipeThisRequest = skipDurableRecipe
+        val previousIdentity = savedOriginalIdentity
+        val previousContract = savedProcessingContract
         val retryThisRequest = explicitRetry
         explicitRetry = false
         if (source == null) {
@@ -233,8 +278,26 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
             val result = withContext(Dispatchers.IO) {
                 run {
                     val original = renderer.checkOriginal(repository, Uri.parse(source), selectedFromFiles, cancellation)
+                    val restore = if (manualTrial) try {
+                        if (restoreRecipeThisRequest) {
+                            if (skipRecipeThisRequest) null else editRecipes.read(original.reference)
+                        } else {
+                            PhotoEditRestoration.requireMatches(original.reference, previousIdentity, previousContract)
+                            null
+                        }
+                    } catch (failure: Exception) { throw PhotoEditRestoreFailure(failure) } else null
                     withContext(Dispatchers.Main) {
                         if (!selection.accepts(ticket) || !trialEditor.accepts(strengthTicket)) throw CancellationException("Photo selection changed")
+                        if (manualTrial && !recipeLoaded) {
+                            recipeLoaded = true
+                            savedOriginalIdentity = PhotoEditRestoration.identity(original.reference)
+                            savedProcessingContract = PhotoEditRestoration.contract()
+                            val restoredValues = restore ?: PhotoAdjustmentPolicy.defaults
+                            if (restoredValues != trialEditor.requestedValues) {
+                                updateTrialEditor(TrialStrengthEditor.empty(restoredValues))
+                                throw CancellationException("Restored edit recipe requires a new render ticket")
+                            }
+                        }
                         if (strengthEditable) {
                             trialEditor = trialEditor.bind(original.reference)
                                 ?: throw PhotoRollSourceFailure("原本の内容や参照が変わりました。Filesから選び直してください")
@@ -320,7 +383,10 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                 failure !is android.os.OperationCanceledException && failure !is DngVerificationStopped) {
                 renderer.discardTransientInputs()
             }
+            if (failure is PhotoEditRestoreFailure && selection.accepts(ticket) && trialEditor.accepts(strengthTicket))
+                recipeRecoveryNeeded = true
             val message = when (failure) {
+                is PhotoEditRestoreFailure -> "保持した調整設定を確認できません。原本は変更していません。設定を使わずに開くか、再試行してください"
                 is PhotoRollSourceFailure -> failure.userMessage
                 is DngContentChanged -> "原本の内容が変わったため停止しました。Filesから選び直してください"
                 is DngVerificationStopped -> "原本の確認を中断しました"
@@ -409,17 +475,17 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                     name = listing.items.firstOrNull { it.uri == selectedUri }?.name ?: "DNG（名前未取得）",
                     mode = renderer.mode, state = trialEditor, readState = { trialEditor }, phase = selection.phase,
                     stage = renderStage, message = notice ?: selection.message, preview = preview, comparison = comparison,
-                    comparisonLabel = comparisonLabel, foreground = foreground, savePhase = saved?.phase, savePending = savePending,
-                    saveEnabled = foreground && trialEditor.session == null && selection.phase == PhotoRollPhase.DISPLAYED && !savePending && owner != null &&
+                    comparisonLabel = comparisonLabel, foreground = foreground && !editSavePending, savePhase = saved?.phase, savePending = savePending || editSavePending,
+                    saveEnabled = foreground && !editSavePending && trialEditor.session == null && selection.phase == PhotoRollPhase.DISPLAYED && !savePending && owner != null &&
                         saved?.phase in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED, PhotoRollSavePhase.UNCONFIRMED),
-                    beginEnabled = strengthEditable && selection.phase == PhotoRollPhase.DISPLAYED && canBeginStrengthEdit(renderer.mode, foreground, savePending, saved?.phase),
-                    begin = { trialEditor = trialEditor.begin(tapStep = .01, adjustments = manualTrial) },
-                    back = ::backToList, retry = { explicitRetry = true; retry++ },
-                    change = { token, parameter, value -> trialEditor = trialEditor.change(token, parameter, value) },
-                    reset = ::resetTrialEdit, apply = { token -> updateTrialEditor(trialEditor.apply(token)) },
-                    cancel = ::cancelTrialEdit, close = { token -> trialEditor = trialEditor.close(token) },
+                    beginEnabled = !editSavePending && strengthEditable && selection.phase == PhotoRollPhase.DISPLAYED && canBeginStrengthEdit(renderer.mode, foreground, savePending, saved?.phase),
+                    begin = { if (!editSavePending) trialEditor = trialEditor.begin(tapStep = .01, adjustments = manualTrial) },
+                    back = ::backToList, retry = { if (!editSavePending) { explicitRetry = true; retry++ } },
+                    change = { token, parameter, value -> if (!editSavePending) trialEditor = trialEditor.change(token, parameter, value) },
+                    reset = { token -> if (!editSavePending) resetTrialEdit(token) }, apply = { token -> if (!editSavePending) updateTrialEditor(trialEditor.apply(token)) },
+                    cancel = { token -> if (!editSavePending) cancelTrialEdit(token) }, close = ::closeTrialEdit,
                     modifier = Modifier.weight(1f), save = saveAction@{
-                            if (!currentForeground || trialEditor.session != null || selection.phase != PhotoRollPhase.DISPLAYED ||
+                            if (!currentForeground || editSavePending || trialEditor.session != null || selection.phase != PhotoRollPhase.DISPLAYED ||
                                 savePending || saveSnapshot?.phase !in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED,
                                     PhotoRollSavePhase.UNCONFIRMED)) return@saveAction
                             val operation = jpegSave ?: return@saveAction
@@ -450,17 +516,27 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                                 }
                             }
                     }) {
+                    if (recipeRecoveryNeeded) TextButton(enabled = foreground && !editSavePending, onClick = {
+                        recipeLoaded = false; recipeRecoveryNeeded = false; skipDurableRecipe = true
+                        savedOriginalIdentity = null; savedProcessingContract = null
+                        updateTrialEditor(TrialStrengthEditor.empty(PhotoAdjustmentPolicy.defaults))
+                        retry++
+                    }) { Text("保持した設定を使わずに開く") }
+                    if (editSavePending) Text("調整設定を保持しています…", style = MaterialTheme.typography.bodySmall)
                     Text(saveDescription, style = MaterialTheme.typography.bodySmall)
                     Text(if (manualTrial) "試験品質です。顔保護なし・診断露出・暫定色です。24MP以下の対応DNGのみ、表示した調整値の原寸JPEGを手動保存します。"
                         else if (renderer.mode == PhotoRollPreviewMode.PRIVATE_TRIAL) "最大1024px・顔保護なし・診断露出・暫定色の試験表示です。共有保存はできません。"
                         else "表示と保存の確認は別です。調整はこの画面内で一時的です。", style = MaterialTheme.typography.bodySmall)
+                    if (manualTrial) Text("調整を閉じると設定を端末内に保持します。同じ原本を再選択して再利用できます。データ消去・再インストール後は復元できません。", style = MaterialTheme.typography.bodySmall)
                     trialEditor.original?.let { Text("原本確認済み: ${it.fingerprint.bytes} bytes（保存時は再確認）", style = MaterialTheme.typography.bodySmall) }
                     Text("左右タップは1段、ドラッグは連続値、離して画像を更新します。強度0とRAW基準表示は別です。調整を閉じてから保存します。", style = MaterialTheme.typography.bodySmall)
                     notice?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                    TextButton(enabled = foreground && selection.phase !in setOf(PhotoRollPhase.CHECKING, PhotoRollPhase.RENDERING),
+                    TextButton(enabled = foreground && !editSavePending && selection.phase !in setOf(PhotoRollPhase.CHECKING, PhotoRollPhase.RENDERING),
                         onClick = { explicitRetry = true; retry++ }) { Text("原本を確認して再試行") }
                 }
             }
         }
     }
 }
+
+private class PhotoEditRestoreFailure(cause: Exception) : java.io.IOException("Edit recipe restoration failed", cause)
