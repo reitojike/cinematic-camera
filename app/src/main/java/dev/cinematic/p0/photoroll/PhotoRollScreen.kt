@@ -284,7 +284,9 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         var pendingPreview: PhotoRollRenderResult.Preview? = null
         try {
             val result = withContext(Dispatchers.IO) {
+                if (serialPreview) timing?.enter("ADMISSION_WAIT")
                 PreviewRequestGate.process.run(serialPreview) {
+                    if (serialPreview) timing?.enter("CHECK_ORIGINAL")
                     val original = renderer.checkOriginal(repository, Uri.parse(source), selectedFromFiles, cancellation)
                     val restore = if (manualTrial) try {
                         if (restoreRecipeThisRequest) {
