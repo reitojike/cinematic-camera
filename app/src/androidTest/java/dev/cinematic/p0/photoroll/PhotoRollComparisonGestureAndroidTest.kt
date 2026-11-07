@@ -36,9 +36,13 @@ class PhotoRollComparisonGestureAndroidTest {
         // screenshots and PixelCopy have no frames to read; this checks the composed UI, not the display.
         fun capture(): Bitmap {
             val decor = requireNotNull(window).decorView
-            val bitmap = Bitmap.createBitmap(decor.width, decor.height, Bitmap.Config.ARGB_8888)
-            instrumentation.runOnMainSync { decor.draw(Canvas(bitmap)) }
-            return bitmap
+            var bitmap: Bitmap? = null
+            instrumentation.runOnMainSync {
+                val drawn = Bitmap.createBitmap(decor.width, decor.height, Bitmap.Config.ARGB_8888)
+                try { decor.draw(Canvas(drawn)) } catch (t: Throwable) { drawn.recycle(); throw t }
+                bitmap = drawn
+            }
+            return requireNotNull(bitmap)
         }
         fun touch(action: Int) {
             val now = SystemClock.uptimeMillis()

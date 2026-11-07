@@ -6,20 +6,22 @@ Issue #190、#192。タスクごとの手動AVD作成を止め、Google公式の
 
 ## 固定構成と再利用
 
-`app/build.gradle.kts` の `pixel9aapi37`（Pixel 9a / API 37 / Google APIs）を共通で使う。
+`app/build.gradle.kts` の `pixel9aapi37`（Pixel 9a / API 37 / Google APIs）と、同じprofileのATD `pixel9aapi37atd` を共通で使う。
 AGP 9.5.1 / sdklib 32.5.1同梱の公式Pixel 9a profileは1080×2424、論理density 420dpi、
 RAM 7556MiBを定義する。画面全体の目安は約411×923dp（system bar領域を除く前）。
 製品仕様の6.3inch / 8GBとprofileの6.24inch / 7556MiBは一致する表記ではなく、
 この構成での生成configは2G、初回起動のhardware-qemu.iniは4096MiBだった。profileの7556MiBを実割当とみなさず、起動後の実RAM割当を確認する。独自のconfig書換えでRAMを強制しない。
 Windows x86_64のsystem imageを使うためTensor G4 / GPU / camera / 実機性能は再現しない。
-API 37のGoogle APIs imageと組み合わせ、公開DSLの `sdkVersion` を使用する。
+API 37のGoogle APIs / Google ATD imageと組み合わせ、公開DSLの `sdkVersion` を使用する。
 
 同じprofileで、公式の[Automated Test Device（ATD）](https://developer.android.com/studio/test/managed-devices#gmd-atd)の
-`pixel9aapi37atd`（`systemImageSource = "google-atd"`）も定義する。用途で使い分ける:
+`pixel9aapi37atd`（`systemImageSource = "google-atd"`）も定義する。公式ページはATDの対応をAPI 30と記載しているが、
+API 37のgoogle_atd x86_64 imageはSDKで提供されており、本構成で合成UI回帰が完走することを確認している（#192）。
+公式の記載範囲外の構成として扱い、AGP・Emulator・image更新時は再確認する。用途で使い分ける:
 
 | 端末 | 使う試験 | 制約 |
 |---|---|---|
-| `pixel9aapi37atd`（既定） | 合成データのみを使い、SystemUI・IME・Google標準アプリに依存しないCompose/View回帰 | SystemUI・Settings・IME・多くのGoogleアプリが無く、hardware renderingが無効。`uiAutomation.takeScreenshot()` / `screencap` / `PixelCopy` は内容を取得できない |
+| `pixel9aapi37atd`（合成UI回帰の既定） | 合成データのみを使い、SystemUI・IME・Google標準アプリに依存しないCompose/View回帰 | SystemUI・Settingsアプリ・IME・多くのGoogleアプリが無く（Settings providerは残る）、hardware renderingが無効。`uiAutomation.takeScreenshot()` / `screencap` / `PixelCopy` は内容を取得できない |
 | `pixel9aapi37` | SystemUI・通知・IME・権限ダイアログ・Play services、または表示合成結果の取得が必要な試験 | 2 vCPUの割当に対して起動直後やsnapshot復帰直後の標準アプリ負荷が大きく、OS側ANRダイアログが試験画面を覆うことがある |
 
 ATDで画素を判定する試験は、表示のキャプチャではなく、対象Windowの `decorView.draw(Canvas(bitmap))`
