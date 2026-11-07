@@ -83,7 +83,7 @@ jobs:
             printf '# Cinematic Camera P0\n\n'
             printf -- '- source main: `%s`\n' "$CINEMATIC_RELEASE_COMMIT"
             printf -- '- versionName: `%s`, versionCode: `%s`\n' "$RELEASE_TAG" "$RELEASE_VERSION_CODE"
-            printf -- '- applicationId: `dev.cinematic.p0`; minSdk 28 / targetSdk 37\n'
+            printf -- '- applicationId: `dev.cinematic.p0`; minSdk 33 / targetSdk 37\n'
             printf -- '- 一時debug署名。継続更新用の固定署名鍵は未導入。\n'
             printf -- '- Pixel 9a実機ACは未検証。P1は未判定。\n'
             printf -- '- APK SHA-256: `%s`\n' "$(cut -d ' ' -f1 SHA256SUMS.txt)"
