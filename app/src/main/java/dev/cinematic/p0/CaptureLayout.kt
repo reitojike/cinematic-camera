@@ -22,3 +22,8 @@ object CaptureLayout {
 /** Diagnostics must never cover the stop rail once recording preparation begins. */
 fun recordingPanel(panel: CapturePanel, stage: RecordingStage): CapturePanel =
     if (panel == CapturePanel.DIAGNOSTICS && stage != RecordingStage.IDLE) CapturePanel.NONE else panel
+
+/** The caller retains each screen's thresholds and font-scale policy. */
+internal fun captureNeedsFullScroll(widthDp: Float, heightDp: Float, fontScale: Float,
+    minHeightDp: Float, minWidthDp: Float = 360f): Boolean =
+    heightDp < minHeightDp * fontScale || widthDp < minWidthDp * fontScale

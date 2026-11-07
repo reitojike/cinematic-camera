@@ -31,19 +31,20 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-private val ChromeText = Color(0xFFE4E6E8)
-private fun CaptureChromeTone.color(): Color = when (this) {
-    CaptureChromeTone.NORMAL -> Color(0xFFA3AAB1)
-    CaptureChromeTone.WARNING -> Color(0xFFE6A35C)
-    CaptureChromeTone.FAILURE -> Color(0xFFEF8A74)
-    CaptureChromeTone.RECORDING -> Color(0xFFFF7A6E)
-    CaptureChromeTone.ACCEPTED -> Color(0xFF7CC4A5)
+internal fun captureChromeColor(tone: CaptureChromeTone): Color = when (tone) {
+    CaptureChromeTone.NORMAL -> CaptureDesign.Muted
+    CaptureChromeTone.WARNING -> CaptureDesign.Amber
+    CaptureChromeTone.FAILURE -> CaptureDesign.Failed
+    CaptureChromeTone.RECORDING -> CaptureDesign.RecordingText
+    CaptureChromeTone.ACCEPTED -> CaptureDesign.Accepted
+    CaptureChromeTone.READY -> CaptureDesign.Inverted
+    CaptureChromeTone.DISABLED -> CaptureDesign.Disabled
 }
 private fun ShutterColor.color(): Color = when (this) {
-    ShutterColor.CONTROL -> Color(0xFFCFD3D6)
-    ShutterColor.RECORDING -> Color(0xFFE5483B)
-    ShutterColor.INACTIVE -> Color(0xFF4A5056)
-    ShutterColor.EXPOSING -> Color(0xFF8D9397)
+    ShutterColor.CONTROL -> CaptureDesign.Inverted
+    ShutterColor.RECORDING -> CaptureDesign.Recording
+    ShutterColor.INACTIVE -> CaptureDesign.ShutterInactive
+    ShutterColor.EXPOSING -> CaptureDesign.ShutterExposing
 }
 
 /** Fixed rail and button centre. Progress is shown in the status bar, never below the button. */
@@ -70,7 +71,7 @@ fun CaptureStatusBar(
     rotation: Float = 0f,
     horizontal: Boolean = false,
 ) {
-    Row(modifier.fillMaxWidth().height(44.dp).background(Color(0xFF0A0B0C).copy(alpha = .5f)).padding(horizontal = 8.dp),
+    Row(modifier.fillMaxWidth().height(44.dp).background(CaptureDesign.Ink.copy(alpha = .5f)).padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically) {
         Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -78,28 +79,39 @@ fun CaptureStatusBar(
         }
         TextButton(onClick = onSettings, enabled = settingsEnabled, modifier = Modifier.size(44.dp), contentPadding = PaddingValues(8.dp)) {
             Icon(painterResource(R.drawable.ic_settings), contentDescription = "撮影設定",
-                tint = if (settingsSelected) CaptureChromeTone.WARNING.color() else ChromeText,
+                tint = if (settingsSelected) captureChromeColor(CaptureChromeTone.WARNING) else CaptureDesign.Text,
                 modifier = Modifier.size(24.dp).graphicsLayer { rotationZ = rotation })
         }
     }
 }
 
+/** Editor variants retain their existing typography and borderless labels. */
+internal enum class StatusChipStyle { CAPTURE, EDITOR_BADGE, EDITOR_LABEL }
+
 @Composable
-private fun StatusChip(chip: CaptureStatusChip, rotation: Float, horizontal: Boolean) {
-    val color = if (chip.mode && chip.tone == CaptureChromeTone.NORMAL) ChromeText else chip.tone.color()
+internal fun StatusChip(chip: CaptureStatusChip, rotation: Float = 0f, horizontal: Boolean = false,
+    modifier: Modifier = Modifier, style: StatusChipStyle = StatusChipStyle.CAPTURE) {
+    val color = if (chip.mode && chip.tone == CaptureChromeTone.NORMAL) CaptureDesign.Text else captureChromeColor(chip.tone)
+    if (style != StatusChipStyle.CAPTURE) {
+        val paint = (if (style == StatusChipStyle.EDITOR_BADGE) Modifier.border(1.dp, color).padding(4.dp)
+            else Modifier.padding(8.dp)).then(modifier)
+        // Keep editor Text semantics; do not add the capture badge's contentDescription.
+        Text(chip.text, paint, style = CaptureDesign.Label, color = color)
+        return
+    }
     val background = when (chip.tone) {
-        CaptureChromeTone.RECORDING -> Color(0xFFE5483B).copy(alpha = .16f)
+        CaptureChromeTone.RECORDING -> CaptureDesign.Recording.copy(alpha = .16f)
         CaptureChromeTone.FAILURE -> color.copy(alpha = .12f)
         else -> Color.Transparent
     }
     val border = when {
         chip.mode -> color
-        chip.tone == CaptureChromeTone.RECORDING -> Color(0xFFE5483B)
-        chip.tone == CaptureChromeTone.NORMAL -> Color(0xFF2C3034)
+        chip.tone == CaptureChromeTone.RECORDING -> CaptureDesign.Recording
+        chip.tone == CaptureChromeTone.NORMAL -> CaptureDesign.Line
         else -> color
     }
     // Measure and rotate the complete badge, including its border and padding, around one centre.
-    Box(Modifier.semantics { contentDescription = chip.detail }
+    Box(modifier.semantics { contentDescription = chip.detail }
         .layout { measurable, constraints ->
             val badge = measurable.measure(controlScaleTextConstraints(constraints, horizontal))
             val placement = controlScaleTextPlacement(androidx.compose.ui.unit.IntSize(badge.width, badge.height), horizontal)

@@ -14,7 +14,7 @@ Branch: `fix/roll-design-followup` / [spec](spec.md) / [Issue #187](https://gith
 - 空状態の説明と2操作を専用のpresentation composableにする。読み込み中は空状態を表示しない。通常一覧のquery/state/callbackは触らない。
 - 空状態を一覧領域の中央へ置き、小画面で必要なスクロールを確保。操作の上位owner、フッター、試験注意は残す。
 - CameraRollGridのsurfaceVariantをCaptureDesign.Panelへ、代替文字をCaptureDesignへ。
-- settingsOutlineの配置変更、選択部品や狭幅判定の一括統一は第三のまとまりへ保留し、今回変更しない。
+- settingsOutlineの配置変更、選択部品や狭幅判定の一括統一は第三のまとまりへ保留した。[046-design-commonization](../046-design-commonization/spec.md) / Issue #195で対応する。
 - データモデル・外部APIは追加しない。research/構造は本planに統合する。
 
 ## Validation / Quickstart

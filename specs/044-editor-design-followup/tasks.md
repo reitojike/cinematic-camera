@@ -24,6 +24,8 @@
 この過去の実績をGMDでの成功に読み替えず、再実行はplanの共通GMD手順に従う。
 現像はfont scale 1.3でも同テスト成功。撮影は共有部品の縦/横回転fixtureであり、実カメラ起動試験ではない。
 初回のa11y更新待ち・子ノード選択によるfixture失敗は、待機とclickable祖先の明示選択状態検査へ修正。
-実機の見え方・操作感、実DNG、24MP保存は未検証。実装head `ef3302d` の独立レビューはOK。GitHub CI/canonical review、最終head照合、mergeは未完。
+実機の見え方・操作感、実DNG、24MP保存は未検証。実装head `ef3302d` の独立レビューはOK。最終head b51e471でCI/canonical/独立レビュー成功・未解決0を確認し、PR #188をafce68fへmerge済み。ATD合成2/2成功。実機未確認は継続。
 
-- [ ] T009 [Issue #186](https://github.com/reitojike/cinematic-camera/issues/186) のPRで必須CI・canonical review・最終head独立レビュー・未解決会話0件を確認し、許可範囲でmergeする。
+- [x] T009 [Issue #186](https://github.com/reitojike/cinematic-camera/issues/186) のPRで必須CI・canonical review・最終head独立レビュー・未解決会話0件を確認し、許可範囲でmergeする。
+
+統合根拠: [PR #188](https://github.com/reitojike/cinematic-camera/pull/188)。

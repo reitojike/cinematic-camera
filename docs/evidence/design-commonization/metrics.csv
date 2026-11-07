@@ -1,0 +1,11 @@
+﻿case,width,height,changedPixels,maxChannelDelta,sumChannelDelta,left,top,right,bottom
+capture-components-horizontal,1080,2422,0,0,0,1080,2422,-1,-1
+capture-components-vertical,1080,2422,0,0,0,1080,2422,-1,-1
+develop-adjusting,1080,2422,567,24,35721,1077,1981,1079,2169
+develop-disabled,1080,2422,33413,121,5720476,787,1981,1079,2358
+develop-display,1080,2422,567,24,35721,1077,1981,1079,2169
+develop-private,1080,2422,567,24,35721,1077,1981,1079,2169
+develop-saving,1080,2422,567,24,35721,1077,1981,1079,2169
+roll-empty,1080,2422,0,0,0,1080,2422,-1,-1
+roll-list,1080,2422,0,0,0,1080,2422,-1,-1
+roll-partial,1080,2422,0,0,0,1080,2422,-1,-1

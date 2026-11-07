@@ -16,18 +16,12 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-private val SensorText = Color(0xFFE4E6E8)
-private val SensorMuted = Color(0xFFA3AAB1)
-private val SensorAmber = Color(0xFFE6A35C)
-private val SensorAccepted = Color(0xFF7CC4A5)
-private val SensorFailed = Color(0xFFEF8A74)
-
 fun sensorControlColor(tone: SensorControlTone): Color = when (tone) {
-    SensorControlTone.NORMAL -> SensorText
-    SensorControlTone.MUTED -> SensorMuted
-    SensorControlTone.EDITING, SensorControlTone.PENDING -> SensorAmber
-    SensorControlTone.ACCEPTED -> SensorAccepted
-    SensorControlTone.FAILED, SensorControlTone.UNKNOWN -> SensorFailed
+    SensorControlTone.NORMAL -> CaptureDesign.Text
+    SensorControlTone.MUTED -> CaptureDesign.Muted
+    SensorControlTone.EDITING, SensorControlTone.PENDING -> CaptureDesign.Amber
+    SensorControlTone.ACCEPTED -> CaptureDesign.Accepted
+    SensorControlTone.FAILED, SensorControlTone.UNKNOWN -> CaptureDesign.Failed
 }
 
 internal fun evZeroShortcutSupported(range: IntRange?, step: Double?): Boolean =
@@ -110,8 +104,8 @@ fun FocusControlEditor(
     if (selectedFocus == null && autoSeed == null && observedAutoFocus != null) autoSeed = focusAutoSeed(autoSeed, observedAutoFocus)
     val selected = focusDialIndex(options, selectedFocus, autoSeed)
     Column(modifier.fillMaxWidth()) {
-        if (options.isEmpty()) Text("MF非対応", color = SensorMuted, fontSize = 12.sp)
-        else if (selected < 0) Text(if (selectedFocus == null) "AF実測待ち・値は未確認" else "MF指定値を確認できません", color = SensorMuted, fontSize = 12.sp)
+        if (options.isEmpty()) Text("MF非対応", color = CaptureDesign.Muted, fontSize = 12.sp)
+        else if (selected < 0) Text(if (selectedFocus == null) "AF実測待ち・値は未確認" else "MF指定値を確認できません", color = CaptureDesign.Muted, fontSize = 12.sp)
         else ExposureSelectionScale("FOCUS", focusDialLabels(options),
             selected, enabled && (selectedFocus != null || observedAutoFocus != null), { onSelect(options[it]) },
             modifier = valueModifier, rotation = rotation, horizontal = horizontal,

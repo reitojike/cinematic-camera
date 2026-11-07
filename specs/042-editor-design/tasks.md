@@ -21,3 +21,5 @@ T001→T002→T003→T004/T005→T006→T007→T008。同一画面の意味境�
 - [x] T009 合成DevelopViewAndroidTestで操作ノードの保存不可、指定/表示値、情報展開時の下端到達を通常/360×560dp・文字1.0/1.3で確認（FR003/005/006）。実機・実DNG・全mode/phaseの実入力組合せはT007の未確認範囲として残す。
 
 統合の根拠: [最終headのCI・レビュー・merge確認](https://github.com/reitojike/cinematic-camera/pull/177#issuecomment-6691388486)。実機・実写真の未確認はこの完了状態に含めない。
+
+T007の整理: 044の通常/360×560dp・font scale 1.3の合成検証は完了。全mode/phaseの実入力組合せは網羅していないため、T007全体は未完了のまま。実機の見え方・操作感も未確認である。

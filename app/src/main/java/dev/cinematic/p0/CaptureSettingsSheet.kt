@@ -12,13 +12,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.RectangleShape
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextDecoration
@@ -28,12 +22,6 @@ import androidx.compose.ui.window.Dialog
 
 private data class SettingsChange(val epoch: Int, val section: String, val target: String, val before: String)
 
-internal fun Modifier.settingsOutline(pending: Boolean = false): Modifier = drawBehind {
-    val width = 1.dp.toPx()
-    drawRect(if (pending) CaptureDesign.Amber else CaptureDesign.Border,
-        topLeft = Offset(width / 2, width / 2), size = Size((size.width - width).coerceAtLeast(0f), (size.height - width).coerceAtLeast(0f)),
-        style = Stroke(width, pathEffect = if (pending) PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 3.dp.toPx())) else null))
-}
 
 @Composable private fun SettingNote(text: String) = Text(text, color = CaptureDesign.Muted, style = CaptureDesign.Explanation)
 
@@ -50,10 +38,10 @@ internal fun Modifier.settingsOutline(pending: Boolean = false): Modifier = draw
 
 @Composable private fun SettingChoice(label: String, selected: Boolean, enabled: Boolean, modifier: Modifier = Modifier,
     unsupported: Boolean = false, pending: Boolean = false, trailing: String? = null, action: () -> Unit) {
-    val background = when { pending -> CaptureDesign.Amber.copy(alpha = .12f); selected -> CaptureDesign.Inverted; else -> Color.Transparent }
+    val background = captureChoiceBackground(selected, pending)
     val foreground = when { unsupported -> CaptureDesign.Disabled; pending -> CaptureDesign.Amber; selected -> CaptureDesign.Ink; else -> CaptureDesign.Text }
     TextButton(onClick = action, enabled = enabled,
-        modifier = modifier.heightIn(min = 44.dp).settingsOutline(pending).semantics { this.selected = selected },
+        modifier = modifier.heightIn(min = 44.dp).captureOutline(pending).semantics { this.selected = selected },
         shape = RectangleShape, contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
         colors = ButtonDefaults.textButtonColors(containerColor = background, contentColor = foreground,
             disabledContainerColor = background, disabledContentColor = foreground)) {
@@ -92,7 +80,7 @@ internal fun Modifier.settingsOutline(pending: Boolean = false): Modifier = draw
             SettingsChange(probe.currentEpoch, section, target, before) else null
     }
     BoxWithConstraints(Modifier.fillMaxSize()) {
-    val compact = maxHeight < 240.dp
+    val compact = captureNeedsFullScroll(maxWidth.value, maxHeight.value, 1f, 240f, minWidthDp = 0f)
     Column(if (compact) Modifier.fillMaxSize().verticalScroll(rememberScrollState()) else Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("撮影設定", Modifier.weight(1f), color = CaptureDesign.Text, fontSize = 15.sp)
@@ -196,7 +184,7 @@ internal fun Modifier.settingsOutline(pending: Boolean = false): Modifier = draw
         }
         pending?.let { current ->
             Text("適用中：${current.section} ${current.before} → ${current.target} · ${if (probe.bound) "接続後の設定確認中" else "再接続中（プレビュー一時停止・ロック解除）"}",
-                Modifier.fillMaxWidth().settingsOutline(true).background(CaptureDesign.Amber.copy(alpha = .08f)).padding(8.dp),
+                Modifier.fillMaxWidth().captureOutline(true).background(CaptureDesign.Amber.copy(alpha = .08f)).padding(8.dp),
                 color = CaptureDesign.Amber, style = CaptureDesign.Explanation)
         }
         HorizontalDivider(color = CaptureDesign.Line)
