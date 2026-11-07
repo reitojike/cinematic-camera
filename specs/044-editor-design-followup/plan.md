@@ -37,3 +37,6 @@ app/src/main/java/dev/cinematic/p0/ の共有表示部品と photoedit/、photor
 app/src/androidTest/java/dev/cinematic/p0/photoroll/DevelopViewAndroidTest.kt。
 
 モード表示は本人確認済みのFR-006に従い、縮小試験だけAmber、Stage Clearだけ顔保護注意を非表示にする。単体試験と3modeの合成画面で検証する。
+
+## 対象外の確定
+目盛りの数値を現在値の近傍にする変更は対象外。PhotoEditBarの固定5点表示を維持し、別途判断の追跡は閉じる。

@@ -19,7 +19,8 @@
 
 ## Cross-cutting validation
 - [x] T008 app のlint/unit/assemble/debugAndroidTest、git diff --checkを実行し specs/045-roll-design-followup/quickstart.md に保証範囲を記録する。
-- [ ] T009 Issue #187に対応するDraft PRへ結果を関連付け、最終headのCI/canonical/独立レビュー/未解決会話を確認する。実装commit `8336569` の独立レビューとローカルconvergeは完了。公開後のCI/canonical review・mergeは未完。
+- [x] T009 Issue #187に対応するDraft PRへ結果を関連付け、最終headのCI/canonical/独立レビュー/未解決会話を確認する。実装commit `8336569` の独立レビューとローカルconvergeは完了。最終head b3c20f0でCI/canonical/独立レビュー成功・未解決0、ATD4/4成功を確認し、PR #189をeb99733へmerge済み。実機・実権限・外部viewer未確認は継続。
 
 ## Dependencies / Strategy
 T001→T002→US1→US2→US3→T008→T009。CameraRollBrowserの同一ファイルを編集するためUS1/US2は並走しない。044の検証中に本specと合成テスト設計だけ先行できる。合成テスト成功と実機未確認を分ける。
+統合根拠: [PR #189](https://github.com/reitojike/cinematic-camera/pull/189)。

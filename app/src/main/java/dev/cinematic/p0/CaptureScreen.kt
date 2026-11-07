@@ -51,18 +51,9 @@ private fun Modifier.blockPanelBackground(): Modifier = pointerInput(Unit) {
     return graphicsLayer { rotationZ = angle }
 }
 
-private val Ink = CaptureDesign.Ink
-private val Sheet = CaptureDesign.Panel
-private val Foreground = CaptureDesign.Text
-private val Muted = CaptureDesign.Muted
-private val Amber = CaptureDesign.Amber
-private val Accepted = CaptureDesign.Accepted
-private val Failed = CaptureDesign.Failed
-private val Rec = CaptureDesign.Recording
-
 @Composable fun CaptureTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = darkColorScheme(primary = Foreground, background = Ink, surface = Sheet,
-        onSurface = Foreground, onBackground = Foreground, error = Failed), content = content)
+    MaterialTheme(colorScheme = darkColorScheme(primary = CaptureDesign.Text, background = CaptureDesign.Ink, surface = CaptureDesign.Panel,
+        onSurface = CaptureDesign.Text, onBackground = CaptureDesign.Text, error = CaptureDesign.Failed), content = content)
 }
 
 @Composable
@@ -177,7 +168,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
     val landscapeDialHeight = rememberLandscapeDialHeight(probe, liveIntent)
     CompositionLocalProvider(LocalCaptureAngle provides animatedAngle, LocalCaptureHorizontal provides orientation.horizontal,
         LocalLandscapeDialHeight provides if (orientation.horizontal) landscapeDialHeight else null) {
-    BoxWithConstraints(Modifier.fillMaxSize().background(Ink).safeDrawingPadding()) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(CaptureDesign.Ink).safeDrawingPadding()) {
         val dimensions = CaptureLayout.measure(maxHeight.value, panel)
         Column(Modifier.fillMaxSize()) {
             BoxWithConstraints(Modifier.height(dimensions.previewHeight.dp).fillMaxWidth().background(Color.Black)) {
@@ -204,10 +195,10 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                         role = Role.Button, onClick = { previewTap(null, null) })
                         .semantics { contentDescription = "目盛りを閉じる" })
                 }
-                if (probe.recordingStage == RecordingStage.RECORDING) Box(Modifier.fillMaxSize().border(1.dp, Rec))
+                if (probe.recordingStage == RecordingStage.RECORDING) Box(Modifier.fillMaxSize().border(1.dp, CaptureDesign.Recording))
                 val feedback = probe.focusFeedback
                 if (feedback != null && panel == CapturePanel.NONE && !probe.recordingBusy) {
-                    val focusColor = when (feedback.phase) { FocusPhase.PENDING -> Amber; FocusPhase.FAILED -> Failed; FocusPhase.COMPLETED -> if (feedback.afSucceeded == true) Accepted else Muted }
+                    val focusColor = when (feedback.phase) { FocusPhase.PENDING -> CaptureDesign.Amber; FocusPhase.FAILED -> CaptureDesign.Failed; FocusPhase.COMPLETED -> if (feedback.afSucceeded == true) CaptureDesign.Accepted else CaptureDesign.Muted }
                     Column(Modifier.offset(x = (maxWidth * feedback.point.first - 24.dp).coerceIn(0.dp, (maxWidth - 48.dp).coerceAtLeast(0.dp)),
                         y = (previewTop + (maxHeight - previewTop) * feedback.point.second - 24.dp).coerceIn(0.dp, (maxHeight - 48.dp).coerceAtLeast(0.dp))).size(48.dp).sensorRotation(), horizontalAlignment = Alignment.CenterHorizontally) {
                         Box(Modifier.size(32.dp).border(1.dp, focusColor))
@@ -215,8 +206,8 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                     }
                 }
                 if (!permission) Column(Modifier.align(Alignment.Center).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("カメラの許可が必要です", color = Foreground)
-                    Text("拒否後は端末のアプリ設定からも変更できます", color = Muted, fontSize = 12.sp)
+                    Text("カメラの許可が必要です", color = CaptureDesign.Text)
+                    Text("拒否後は端末のアプリ設定からも変更できます", color = CaptureDesign.Muted, fontSize = 12.sp)
                     TextButton(onClick = requestPermission) { Text("カメラを許可") }
                 }
                 if (panel != CapturePanel.DIAGNOSTICS) {
@@ -224,11 +215,11 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                         settingsEnabled = unlocked || recoveryRequired, settingsSelected = panel == CapturePanel.SETTINGS,
                         onSettings = { if (unlocked || recoveryRequired) { editor = editor.close(); panel = if (panel == CapturePanel.SETTINGS) CapturePanel.NONE else CapturePanel.SETTINGS } },
                         rotation = animatedAngle, horizontal = orientation.horizontal)
-                    if (!probe.bound && permission) Text("接続待ち・プレビュー停止中", Modifier.align(Alignment.Center).sensorRotation().background(Ink.copy(alpha = .7f)).padding(12.dp), color = Foreground, fontSize = 13.sp)
+                    if (!probe.bound && permission) Text("接続待ち・プレビュー停止中", Modifier.align(Alignment.Center).sensorRotation().background(CaptureDesign.Ink.copy(alpha = .7f)).padding(12.dp), color = CaptureDesign.Text, fontSize = 13.sp)
                     if (probe.bound && !probe.controlReady && !probe.busy && !recoveryRequired) {
                         val recoveryEpoch = probe.currentEpoch
-                        Column(Modifier.align(Alignment.Center).sensorRotation().background(Ink.copy(alpha = .8f)).padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("設定状態を確認・復旧してください", color = Failed, fontSize = 13.sp)
+                        Column(Modifier.align(Alignment.Center).sensorRotation().background(CaptureDesign.Ink.copy(alpha = .8f)).padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("設定状態を確認・復旧してください", color = CaptureDesign.Failed, fontSize = 13.sp)
                             if (probe.canRecoverControls) TextButton(onClick = { probe.recoverControls(recoveryEpoch) }) { Text("再接続") }
                         }
                     }
@@ -238,21 +229,21 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                         failure = probe.lastFailure, recordingFailure = probe.recordingFailure.takeIf { probe.mode == CaptureMode.CINE },
                         notice = pendingNotice ?: notice, phase = null)
                     val banner = message?.text
-                    val bannerColor = when (message?.tone) { FeedbackTone.FAILURE -> Failed; FeedbackTone.WARNING -> Amber; else -> Muted }
-                    if (recoveryRequired) Column(Modifier.align(Alignment.Center).widthIn(max = 300.dp).sensorRotation().background(Ink.copy(alpha = .9f)).padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("撮影状態が不明です。停止して接続をやり直してください", color = Failed, fontSize = 12.sp)
+                    val bannerColor = when (message?.tone) { FeedbackTone.FAILURE -> CaptureDesign.Failed; FeedbackTone.WARNING -> CaptureDesign.Amber; else -> CaptureDesign.Muted }
+                    if (recoveryRequired) Column(Modifier.align(Alignment.Center).widthIn(max = 300.dp).sensorRotation().background(CaptureDesign.Ink.copy(alpha = .9f)).padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("撮影状態が不明です。停止して接続をやり直してください", color = CaptureDesign.Failed, fontSize = 12.sp)
                         TextButton(onClick = probe::stop) { Text("停止・復旧") }
                     } else if (!(probe.bound && !probe.controlReady && !probe.busy)) banner?.let { Text(it, Modifier.align(if (orientation.horizontal) Alignment.Center else Alignment.TopCenter)
                         .padding(top = if (orientation.horizontal) 0.dp else 48.dp).widthIn(max = if (orientation.horizontal) 220.dp else 380.dp)
-                        .sensorRotation().background(Ink.copy(alpha = .8f)).padding(8.dp), color = bannerColor, fontSize = 12.sp) }
+                        .sensorRotation().background(CaptureDesign.Ink.copy(alpha = .8f)).padding(8.dp), color = bannerColor, fontSize = 12.sp) }
                     if (panel == CapturePanel.NONE) Column(Modifier.align(Alignment.BottomCenter)) {
                         if (editor.selected != null) Box(Modifier.weight(1f, fill = false)
-                            .then(if (orientation.horizontal) Modifier.height(48.dp + landscapeDialHeight).background(Color(0xF00D0F10)) else Modifier)) {
+                            .then(if (orientation.horizontal) Modifier.height(48.dp + landscapeDialHeight).background(CaptureDesign.Ruler) else Modifier)) {
                             Box(Modifier.matchParentSize().blockPanelBackground())
                             Ruler(probe, editor, probe.canSelectLiveControls, exposureEditable,
                                 change = { editor = it }, auto = { editor = editor.cancel(); probe.setExposureAuto() }, refreshGeneration = measurementTick)
                         }
-                        Box(Modifier.fillMaxWidth().background(if (editor.selected == null) Ink.copy(alpha = .5f) else Color(0xF00D0F10))) {
+                        Box(Modifier.fillMaxWidth().background(if (editor.selected == null) CaptureDesign.Ink.copy(alpha = .5f) else CaptureDesign.Ruler)) {
                             Box(Modifier.matchParentSize().blockPanelBackground())
                             val rows = captureKeyRows()
                             val landscapeHeights = remember { mutableStateMapOf<CaptureKey, Float>() }
@@ -275,7 +266,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                                             onClick = { editor = editor.select(key) }, modifier = Modifier.weight(1f).heightIn(max = keyMaxHeight),
                                             displayLabel = captureKeyVisualLabel(key), unit = shown.unit, rotation = animatedAngle, horizontal = orientation.horizontal,
                                             landscapeCommonHeight = commonHeight, onLandscapeNaturalHeight = { landscapeHeights[key] = it },
-                                            valueColor = if (feedback.affected) sensorControlColor(feedback.tone) else Foreground,
+                                            valueColor = if (feedback.affected) sensorControlColor(feedback.tone) else CaptureDesign.Text,
                                             statusDescription = shown.contentDescription,
                                             widthSamples = if (key == CaptureKey.ISO) probe.exposureChoices.iso.map { it.toString() }
                                                 else probe.exposureChoices.shutter.map { it.label.removeSuffix(" s") })
@@ -311,7 +302,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                     }
                 }
                 if (panel == CapturePanel.SETTINGS) Box(Modifier.align(Alignment.BottomCenter)
-                    .fillMaxWidth().height(dimensions.settingsHeight.dp).background(Sheet)) {
+                    .fillMaxWidth().height(dimensions.settingsHeight.dp).background(CaptureDesign.Panel)) {
                     // Sibling shield consumes blank space without cancelling child scroll gestures.
                     Box(Modifier.matchParentSize().blockPanelBackground())
                     CaptureSettingsSheet(probe, unlocked,
@@ -333,7 +324,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                     ownsCapture, recoveryRequired || probe.controlReceipt.phase == ControlPhase.UNKNOWN),
                 openPhotos = { if (panel != CapturePanel.DIAGNOSTICS) { editor = editor.close(); openPhotos() } })
         }
-        if (panel == CapturePanel.DIAGNOSTICS) Box(Modifier.fillMaxSize().background(Ink)) {
+        if (panel == CapturePanel.DIAGNOSTICS) Box(Modifier.fillMaxSize().background(CaptureDesign.Ink)) {
             Box(Modifier.matchParentSize().blockPanelBackground())
             CaptureDiagnosticsSheet(probe, unlocked && !reportPending, export, measurementNow,
                 settings = { panel = CapturePanel.SETTINGS })
@@ -383,7 +374,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
     val source = probe.liveExposureTarget ?: probe.appliedExposure ?: autoSeed
     val pair = source?.let { choices.pair(it.iso, it.exposureNs) }
     val waitingForFresh = probe.liveExposureTarget == null && probe.appliedExposure == null && fresh == null
-    Box(Modifier.fillMaxWidth().background(Color(0xF00D0F10))) {
+    Box(Modifier.fillMaxWidth().background(CaptureDesign.Ruler)) {
         // Shield only the ISO/SS ruler; children retain their drag gestures.
         Box(Modifier.matchParentSize().blockPanelBackground())
         Column(Modifier.fillMaxWidth()) {
@@ -400,14 +391,14 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
             if (pair == null || count == 0 || probe.selectedReport?.manualBlockReason != null) {
                 Box(Modifier.fillMaxWidth().height(56.dp), contentAlignment = Alignment.Center) {
                     Text(probe.selectedReport?.manualBlockReason ?: if (count == 0) "端末/session範囲内に標準段階なし" else "AUTO実測待ち・値は未推定",
-                        Modifier.padding(horizontal = 14.dp).sensorRotation(), color = Muted, fontSize = 12.sp)
+                        Modifier.padding(horizontal = 14.dp).sensorRotation(), color = CaptureDesign.Muted, fontSize = 12.sp)
                 }
             } else {
                 val index = if (key == CaptureKey.ISO) choices.iso.indexOf(pair.iso) else choices.shutter.indexOfFirst { it.exposureNs == pair.exposureNs }
                 ExposureSelectionScale(if (key == CaptureKey.SHUTTER) "シャッタースピード" else key.name,
                     if (key == CaptureKey.ISO) choices.iso.map { it.toString() } else choices.shutter.map { it.label.removeSuffix(" s") },
                     index, exposureEnabled && !waitingForFresh, { probe.selectExposure(key, it) }, rotation = LocalCaptureAngle.current,
-                    horizontal = LocalCaptureHorizontal.current, valueColor = if (probe.exposureOperationPending) Amber else Foreground,
+                    horizontal = LocalCaptureHorizontal.current, valueColor = if (probe.exposureOperationPending) CaptureDesign.Amber else CaptureDesign.Text,
                     descriptions = if (key == CaptureKey.ISO) choices.iso.map { it.toString() }
                         else choices.shutter.map { captureShutterDescription(it.label.removeSuffix(" s")) },
                     allowCurrentSelection = !probe.manualExposure && probe.liveExposureTarget == null && probe.appliedExposure == null,
@@ -425,7 +416,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
     val intent = probe.liveControlIntent
     val focus = if (intent != null) intent.overrides.focusDistance else probe.overrides.focusDistance
     val observedFocus = if (key == CaptureKey.FOCUS && focus == null) autofocusObservation(probe, refreshGeneration) else null
-    Column(Modifier.fillMaxWidth().heightIn(min = 104.dp).background(Color(0xF00D0F10)),
+    Column(Modifier.fillMaxWidth().heightIn(min = 104.dp).background(CaptureDesign.Ruler),
         horizontalAlignment = Alignment.CenterHorizontally) {
         CaptureRulerHeading(key.name, onClose = { change(editor.close()) }, closeEnabled = editor.submitting == null,
             rotation = LocalCaptureAngle.current, horizontal = LocalCaptureHorizontal.current,
@@ -484,12 +475,12 @@ private fun exposureKeyValue(key: CaptureKey, probe: CameraProbe, refreshGenerat
 
 @Composable private fun CaptureBar(probe: CameraProbe, ready: Boolean, interactable: Boolean, shutter: () -> Unit, mode: () -> Unit,
     photosEnabled: Boolean, openPhotos: () -> Unit) {
-    Row(Modifier.fillMaxWidth().height(CaptureLayout.CAPTURE_RAIL.dp).background(Ink).padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().height(CaptureLayout.CAPTURE_RAIL.dp).background(CaptureDesign.Ink).padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-            Box(Modifier.size(52.dp).alpha(if (photosEnabled) 1f else .4f).border(1.dp, Muted, RoundedCornerShape(6.dp))
+            Box(Modifier.size(52.dp).alpha(if (photosEnabled) 1f else .4f).border(1.dp, CaptureDesign.Muted, RoundedCornerShape(6.dp))
                 .clickable(enabled = interactable && photosEnabled, role = Role.Button, onClick = openPhotos), contentAlignment = Alignment.Center) {
                 Icon(androidx.compose.ui.res.painterResource(android.R.drawable.ic_menu_gallery), "写真一覧を開く",
-                    Modifier.size(28.dp).sensorRotation(), tint = Muted)
+                    Modifier.size(28.dp).sensorRotation(), tint = CaptureDesign.Muted)
             }
         }
         CaptureShutter(chromeInput(probe, ready, interactable), shutter, rotation = LocalCaptureAngle.current)
@@ -521,7 +512,7 @@ private fun exposureKeyValue(key: CaptureKey, probe: CameraProbe, refreshGenerat
                         val text = measurable.measure(controlScaleTextConstraints(constraints, horizontal))
                         val placement = controlScaleTextPlacement(IntSize(text.width, text.height), horizontal)
                         layout(placement.size.width, placement.size.height) { text.place(placement.offset.x, placement.offset.y) }
-                    }.graphicsLayer { rotationZ = angle }, color = if (mode == choice) Ink else Muted,
+                    }.graphicsLayer { rotationZ = angle }, color = if (mode == choice) CaptureDesign.Ink else CaptureDesign.Muted,
                         fontSize = size.sp, fontFamily = FontFamily.Monospace, maxLines = 1, softWrap = false)
                 }
             }
@@ -557,15 +548,6 @@ private fun exposureModeFeedback(probe: CameraProbe): ControlPhase {
         else ControlPhase.ACCEPTED
 }
 
-@Composable private fun PanelHeader(title: String, close: () -> Unit) {
-    Row(Modifier.fillMaxWidth().height(44.dp).padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(title, Modifier.weight(1f), color = Foreground, fontSize = 14.sp)
-        TextButton(onClick = close, modifier = Modifier.size(44.dp).semantics { contentDescription = "閉じる" }, contentPadding = PaddingValues(0.dp)) { Text("×", fontSize = 22.sp) }
-    }
-}
 @Composable private fun Mono(text: String, color: Color, modifier: Modifier = Modifier, size: Int = 11, rotate: Boolean = true) {
     Text(text, if (rotate) modifier.sensorRotation() else modifier, color = color, fontFamily = FontFamily.Monospace, fontSize = size.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, textAlign = TextAlign.Center)
-}
-@Composable private fun Gear() {
-    Icon(androidx.compose.ui.res.painterResource(android.R.drawable.ic_menu_preferences), contentDescription = "撮影設定", tint = Foreground, modifier = Modifier.size(24.dp).sensorRotation())
 }

@@ -9,6 +9,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -16,11 +19,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
 /** Shared paint only; callers retain click, selection semantics and disabled behavior. */
-internal fun Modifier.captureControlSurface(selected: Boolean, decorationAlpha: Float = 1f): Modifier =
+internal fun Modifier.captureControlSurface(selected: Boolean, decorationAlpha: Float = 1f,
+    divider: Boolean = true, roundTopLineToPixels: Boolean = false): Modifier =
     background(if (selected) CaptureDesign.Selected else Color.Transparent).drawWithContent {
         drawContent()
-        if (selected) drawRect(CaptureDesign.Text.copy(alpha = decorationAlpha), size = Size(size.width, 3.dp.toPx()))
-        drawRect(Color.White.copy(alpha = .1f * decorationAlpha), topLeft = Offset(size.width - 1.dp.toPx(), 0f),
+        if (selected) {
+            // Diagnostic tabs previously used a measured 3.dp Box; preserve its pixel rounding.
+            val topLineHeight = if (roundTopLineToPixels) 3.dp.roundToPx().toFloat() else 3.dp.toPx()
+            drawRect(CaptureDesign.Text.copy(alpha = decorationAlpha), size = Size(size.width, topLineHeight))
+        }
+        if (divider) drawRect(Color.White.copy(alpha = .1f * decorationAlpha), topLeft = Offset(size.width - 1.dp.toPx(), 0f),
             size = Size(1.dp.toPx(), size.height))
     }
 
@@ -29,12 +37,32 @@ internal fun Modifier.captureControlSurface(selected: Boolean, decorationAlpha: 
 internal fun CaptureModeSwitchSurface(secondSelected: Boolean, modifier: Modifier = Modifier,
     content: @Composable RowScope.() -> Unit) {
     BoxWithConstraints(modifier.width(100.dp).height(48.dp)
-        .background(Color(0xFF0D0F10), RoundedCornerShape(6.dp))
-        .border(1.dp, Color(0xFF5A6066), RoundedCornerShape(6.dp)).padding(2.dp)) {
+        .background(CaptureDesign.SwitchBackground, RoundedCornerShape(6.dp))
+        .border(1.dp, CaptureDesign.SwitchBorder, RoundedCornerShape(6.dp)).padding(2.dp)) {
         val thumbWidth = maxWidth / 2
         val thumbOffset by animateDpAsState(if (secondSelected) thumbWidth else 0.dp, tween(180), label = "mode-thumb")
         Box(Modifier.offset(x = thumbOffset).width(thumbWidth).fillMaxHeight()
             .background(CaptureDesign.Inverted, RoundedCornerShape(4.dp)))
         Row(Modifier.fillMaxSize(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, content = content)
     }
+}
+
+internal fun Modifier.captureOutline(pending: Boolean = false): Modifier = drawBehind {
+    val width = 1.dp.toPx()
+    drawRect(if (pending) CaptureDesign.Amber else CaptureDesign.Border,
+        topLeft = Offset(width / 2, width / 2), size = Size((size.width - width).coerceAtLeast(0f), (size.height - width).coerceAtLeast(0f)),
+        style = Stroke(width, pathEffect = if (pending) PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 3.dp.toPx())) else null))
+}
+
+/** Inverted-choice paint only; input, disabled foreground and semantics stay with the caller. */
+internal fun Modifier.captureChoiceSurface(selected: Boolean, pending: Boolean = false,
+    unselectedBackground: Color = Color.Transparent): Modifier =
+    background(captureChoiceBackground(selected, pending, unselectedBackground))
+
+/** Shared fill also serves Material buttons without changing their internal paint order. */
+internal fun captureChoiceBackground(selected: Boolean, pending: Boolean = false,
+    unselectedBackground: Color = Color.Transparent): Color = when {
+    pending -> CaptureDesign.Amber.copy(alpha = .12f)
+    selected -> CaptureDesign.Inverted
+    else -> unselectedBackground
 }

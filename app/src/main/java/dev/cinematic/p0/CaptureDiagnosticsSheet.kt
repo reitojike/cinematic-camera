@@ -39,7 +39,7 @@ private enum class DiagnosticTab(val label: String) { CONTROL("制御"), OUTPUT(
     BoxWithConstraints(Modifier.fillMaxSize()) {
         // Keep at least a readable body viewport after header, summary, tabs and footer.
         // Narrow/large-text layouts wrap the fixed sections, so scroll the whole sheet.
-        val compact = diagnosticNeedsFullScroll(maxWidth.value, maxHeight.value, LocalDensity.current.fontScale)
+        val compact = captureNeedsFullScroll(maxWidth.value, maxHeight.value, LocalDensity.current.fontScale.coerceAtLeast(1f), 520f)
         Column(if (compact) Modifier.fillMaxSize().verticalScroll(rememberScrollState()) else Modifier.fillMaxSize()) {
             Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -66,8 +66,8 @@ private enum class DiagnosticTab(val label: String) { CONTROL("制御"), OUTPUT(
             }
             Row(Modifier.fillMaxWidth()) {
                 DiagnosticTab.entries.forEach { candidate ->
-                    Column(Modifier.weight(1f).background(if (candidate == tab) CaptureDesign.Selected else CaptureDesign.Ink)) {
-                        Box(Modifier.fillMaxWidth().height(3.dp).background(if (candidate == tab) CaptureDesign.Text else Color.Transparent))
+                    Column(Modifier.weight(1f).background(CaptureDesign.Ink).captureControlSurface(candidate == tab, divider = false, roundTopLineToPixels = true)) {
+                        Spacer(Modifier.fillMaxWidth().height(3.dp))
                         TextButton(onClick = { tab = candidate }, modifier = Modifier.fillMaxWidth().heightIn(min = 41.dp).semantics { selected = candidate == tab },
                             shape = RectangleShape) { Text(candidate.label, fontFamily = FontFamily.Monospace) }
                     }

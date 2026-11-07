@@ -13,15 +13,10 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-private val PanelText = CaptureDesign.Text
-private val PanelMuted = CaptureDesign.Muted
-private val PanelWarning = CaptureDesign.Amber
-private val PanelFailure = CaptureDesign.Failed
-
 @Composable private fun PanelSection(title: String, content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(title, color = PanelMuted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
-        HorizontalDivider(color = PanelMuted.copy(alpha = .3f))
+        Text(title, color = CaptureDesign.Muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+        HorizontalDivider(color = CaptureDesign.Muted.copy(alpha = .3f))
         content()
     }
 }
@@ -30,11 +25,11 @@ private val PanelFailure = CaptureDesign.Failed
     val state = probe.stillExposure ?: return
     val shown = state.presentation()
     PanelSection("STILL / 設定と保存状態") {
-        Text("${shown.stage} · ${shown.phase}", color = if (shown.recoveryRequired) PanelFailure else PanelWarning, fontSize = 12.sp)
-        Text("撮影target: ${shown.captureTarget}\npreview target: ${shown.previewTarget}", color = PanelText, fontSize = 12.sp)
-        Text("preview API受付: ${shown.previewApi}\n撮影API受付: ${shown.captureApi}", color = PanelMuted, fontSize = 11.sp)
-        Text("直近preview実測: ${shown.previewActual}\n直近撮影実測: ${shown.stillActual}\n保存結果: ${shown.files}", color = PanelMuted, fontSize = 11.sp)
-        Text("${state.detail}。受付・実測・保存は別結果で、明るさ一致は未検証です。", color = PanelMuted, fontSize = 11.sp)
-        if (shown.recoveryRequired) TextButton(onClick = probe::stop) { Text("停止・復旧", color = PanelFailure) }
+        Text("${shown.stage} · ${shown.phase}", color = if (shown.recoveryRequired) CaptureDesign.Failed else CaptureDesign.Amber, fontSize = 12.sp)
+        Text("撮影target: ${shown.captureTarget}\npreview target: ${shown.previewTarget}", color = CaptureDesign.Text, fontSize = 12.sp)
+        Text("preview API受付: ${shown.previewApi}\n撮影API受付: ${shown.captureApi}", color = CaptureDesign.Muted, fontSize = 11.sp)
+        Text("直近preview実測: ${shown.previewActual}\n直近撮影実測: ${shown.stillActual}\n保存結果: ${shown.files}", color = CaptureDesign.Muted, fontSize = 11.sp)
+        Text("${state.detail}。受付・実測・保存は別結果で、明るさ一致は未検証です。", color = CaptureDesign.Muted, fontSize = 11.sp)
+        if (shown.recoveryRequired) TextButton(onClick = probe::stop) { Text("停止・復旧", color = CaptureDesign.Failed) }
     }
 }

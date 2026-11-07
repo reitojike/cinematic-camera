@@ -20,6 +20,13 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.draw.alpha
+import dev.cinematic.p0.captureChromeColor
+import dev.cinematic.p0.CaptureChromeTone
+import dev.cinematic.p0.CaptureStatusChip
+import dev.cinematic.p0.StatusChip
+import dev.cinematic.p0.StatusChipStyle
+import dev.cinematic.p0.captureNeedsFullScroll
 import dev.cinematic.p0.CaptureDesign
 import dev.cinematic.p0.captureControlSurface
 import dev.cinematic.p0.CaptureModeSwitchSurface
@@ -59,26 +66,32 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
     val unapplied = mode in setOf(PhotoRollPreviewMode.MANUAL_TRIAL, PhotoRollPreviewMode.STAGE_CLEAR,
         PhotoRollPreviewMode.PRIVATE_TRIAL) && state.displayedValues != requested
     val saveLabel = developSaveLabel(mode, savePhase, savePending, session != null)
-    val saveColor = when {
-        savePending || savePhase == PhotoRollSavePhase.SAVING -> CaptureDesign.Amber
-        savePhase == PhotoRollSavePhase.PUBLISHED -> CaptureDesign.Accepted
-        savePhase in setOf(PhotoRollSavePhase.UNCONFIRMED, PhotoRollSavePhase.HOLD) -> CaptureDesign.Failed
-        saveEnabled -> CaptureDesign.Inverted
-        else -> CaptureDesign.Disabled
+    val saveTone = when {
+        savePending || savePhase == PhotoRollSavePhase.SAVING -> CaptureChromeTone.WARNING
+        savePhase == PhotoRollSavePhase.PUBLISHED -> CaptureChromeTone.ACCEPTED
+        savePhase in setOf(PhotoRollSavePhase.UNCONFIRMED, PhotoRollSavePhase.HOLD) -> CaptureChromeTone.FAILURE
+        saveEnabled -> CaptureChromeTone.READY
+        else -> CaptureChromeTone.DISABLED
     }
+    val saveColor = captureChromeColor(saveTone)
     BoxWithConstraints(modifier.fillMaxSize()) {
         // Expanded source details must not squeeze the editor or footer out of reach.
-        val compact = information || maxHeight < (560 * LocalDensity.current.fontScale).dp || maxWidth < (360 * LocalDensity.current.fontScale).dp
+        val compact = information || captureNeedsFullScroll(maxWidth.value, maxHeight.value, LocalDensity.current.fontScale, 560f)
         Column(Modifier.fillMaxSize().background(CaptureDesign.Ink).then(if (compact) Modifier.verticalScroll(rememberScrollState()) else Modifier)) {
             Row(Modifier.fillMaxWidth().heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = back, shape = RectangleShape, modifier = Modifier.semantics { contentDescription = "一覧へ戻る" }) { Text("‹") }
                 Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
-                    Text(when (mode) { PhotoRollPreviewMode.STAGE_CLEAR -> "DNG 現像"; PhotoRollPreviewMode.PRIVATE_TRIAL -> "試験 1024px"
+                    val modeLabel = when (mode) { PhotoRollPreviewMode.STAGE_CLEAR -> "DNG 現像"; PhotoRollPreviewMode.PRIVATE_TRIAL -> "試験 1024px"
                         PhotoRollPreviewMode.DNG_TRIAL -> "DNG 試験表示"; PhotoRollPreviewMode.STAGE_CLEAR_TRIAL -> "Stage Clear 試験"
-                        else -> "DNG 試験現像" }, Modifier.border(1.dp, developModeColor(mode)).padding(4.dp), style = CaptureDesign.Label, color = developModeColor(mode))
-                    Text(name, Modifier.padding(8.dp), style = CaptureDesign.Label, color = CaptureDesign.Text)
-                    Text(saveLabel, Modifier.border(1.dp, saveColor).padding(4.dp).semantics { liveRegion = LiveRegionMode.Polite }, style = CaptureDesign.Label, color = saveColor)
-                    if (developShowsFaceWarning(mode)) Text("顔保護なし", Modifier.padding(8.dp), style = CaptureDesign.Label, color = CaptureDesign.Amber)
+                        else -> "DNG 試験現像" }
+                    StatusChip(CaptureStatusChip("mode", modeLabel, mode = true,
+                        tone = if (mode == PhotoRollPreviewMode.PRIVATE_TRIAL) CaptureChromeTone.WARNING else CaptureChromeTone.NORMAL),
+                        style = StatusChipStyle.EDITOR_BADGE)
+                    StatusChip(CaptureStatusChip("name", name, mode = true), style = StatusChipStyle.EDITOR_LABEL)
+                    StatusChip(CaptureStatusChip("save", saveLabel, tone = saveTone),
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }, style = StatusChipStyle.EDITOR_BADGE)
+                    if (developShowsFaceWarning(mode)) StatusChip(CaptureStatusChip("face-warning", "顔保護なし", tone = CaptureChromeTone.WARNING),
+                        style = StatusChipStyle.EDITOR_LABEL)
                 }
                 TextButton(onClick = { information = !information }, shape = RectangleShape,
                     modifier = Modifier.semantics { contentDescription = "原本情報と試験品質の注意" }) { Text("ⓘ") }
@@ -130,7 +143,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                         }
                     }
                 }
-                TextButton(onClick = { comparing = !comparing }, enabled = compareEnabled, modifier = Modifier.weight(1f).heightIn(min = 72.dp), shape = RectangleShape) { Text("比較", style = CaptureDesign.Label) }
+                TextButton(onClick = { comparing = !comparing }, enabled = compareEnabled, modifier = Modifier.weight(1f).heightIn(min = 72.dp).captureControlSurface(selected = false), shape = RectangleShape) { Text("比較", style = CaptureDesign.Label) }
             }
             Row(Modifier.fillMaxWidth().heightIn(min = 96.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween) {
@@ -148,7 +161,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                     }
                     Text(if (savePhase == PhotoRollSavePhase.PUBLISHED) "↗" else "↓", color = if (saveEnabled) CaptureDesign.Ink else saveColor, fontSize = 26.sp)
                 }
-                CaptureModeSwitchSurface(comparing) {
+                CaptureModeSwitchSurface(comparing, Modifier.alpha(if (compareEnabled) 1f else .4f)) {
                     listOf(false, true).forEach { before -> TextButton(onClick = { comparing = before }, enabled = compareEnabled,
                         modifier = Modifier.weight(1f).fillMaxHeight().semantics { selected = comparing == before },
                         shape = RectangleShape, contentPadding = PaddingValues(2.dp)) {

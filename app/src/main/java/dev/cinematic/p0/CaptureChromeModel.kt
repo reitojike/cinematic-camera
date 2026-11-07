@@ -33,7 +33,7 @@ data class CaptureChromeInput(
     val recordingSaveSucceeded: Boolean? = null,
 )
 
-enum class CaptureChromeTone { NORMAL, WARNING, FAILURE, RECORDING, ACCEPTED }
+enum class CaptureChromeTone { NORMAL, WARNING, FAILURE, RECORDING, ACCEPTED, READY, DISABLED }
 enum class ShutterColor { CONTROL, RECORDING, INACTIVE, EXPOSING }
 data class CaptureShutterModel(
     val innerDp: Int,

@@ -37,10 +37,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 
-private val ScaleText = Color(0xFFE4E6E8)
-private val ScaleMuted = Color(0xFFA3AAB1)
-private val ScaleLine = Color(0xFF3A3F44)
-
 /** Supplied from all session capabilities so switching controls does not resize the landscape dial. */
 internal val LocalLandscapeDialHeight = staticCompositionLocalOf<Dp?> { null }
 
@@ -72,7 +68,7 @@ fun CaptureRulerHeading(
                 layout(placement.size.width, placement.size.height) { text.place(placement.offset.x, placement.offset.y) }
             }.graphicsLayer { rotationZ = rotation }.semantics {
                 contentDescription = captureRulerDescription(label, waiting)
-            }, style = style.copy(fontSize = size.sp), color = ScaleText, maxLines = 1, softWrap = false,
+            }, style = style.copy(fontSize = size.sp), color = CaptureDesign.Text, maxLines = 1, softWrap = false,
                 textAlign = TextAlign.Center)
         }
         Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.CenterEnd) {
@@ -96,7 +92,7 @@ fun ExposureSelectionScale(
     modifier: Modifier = Modifier,
     rotation: Float = 0f,
     horizontal: Boolean = false,
-    valueColor: Color = ScaleText,
+    valueColor: Color = CaptureDesign.Text,
     canSelect: () -> Boolean = { true },
     descriptions: List<String> = labels,
     allowCurrentSelection: Boolean = false,
@@ -177,7 +173,7 @@ fun ExposureSelectionScale(
                     val spacing = 9.dp.toPx()
                     var x = 0f
                     while (x < size.width) {
-                        drawLine(ScaleLine, androidx.compose.ui.geometry.Offset(x, 0f),
+                        drawLine(CaptureDesign.Border, androidx.compose.ui.geometry.Offset(x, 0f),
                             androidx.compose.ui.geometry.Offset(x, 6.dp.toPx()), 1.dp.toPx())
                         x += spacing
                     }
@@ -186,7 +182,7 @@ fun ExposureSelectionScale(
                     slots.forEach { index ->
                         val isCurrent = index != null && index == shownIndex
                         Box(Modifier.weight(1f).fillMaxHeight()
-                            .background(if (isCurrent) Color(0xFF1E2225) else Color.Transparent)
+                            .background(if (isCurrent) CaptureDesign.Selected else Color.Transparent)
                             .clickable(enabled = interactive && index != null, role = Role.RadioButton,
                                 onClick = { index?.let { dispatch(it) } })
                             .semantics {
@@ -214,7 +210,7 @@ fun ExposureSelectionScale(
                                         text.place(placement.offset.x, placement.offset.y)
                                     }
                                 }.graphicsLayer { rotationZ = rotation },
-                                    color = if (isCurrent) valueColor else ScaleMuted, fontSize = readableSize.sp,
+                                    color = if (isCurrent) valueColor else CaptureDesign.Muted, fontSize = readableSize.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     fontFamily = FontFamily.Monospace, maxLines = 1, softWrap = false,
                                     overflow = TextOverflow.Visible, textAlign = TextAlign.Center)
@@ -233,7 +229,7 @@ private fun ScaleArrow(text: String, description: String, target: Int?, enabled:
     Box(Modifier.width(48.dp).fillMaxHeight().alpha(if (target != null) 1f else .3f)
         .clickable(enabled = enabled && target != null, role = Role.Button) { target?.let(select) }
         .semantics { contentDescription = description }, contentAlignment = Alignment.Center) {
-        Text(text, color = ScaleText, fontSize = 22.sp, fontFamily = FontFamily.Monospace)
+        Text(text, color = CaptureDesign.Text, fontSize = 22.sp, fontFamily = FontFamily.Monospace)
     }
 }
 
@@ -245,8 +241,8 @@ internal fun captureControlHeading(label: String, displayLabel: String, unit: St
 fun CaptureControlKey(
     label: String, value: String, tag: String, selected: Boolean, enabled: Boolean,
     onClick: () -> Unit, modifier: Modifier = Modifier, unit: String = "",
-    rotation: Float = 0f, horizontal: Boolean = false, valueColor: Color = ScaleText,
-    tagColor: Color = ScaleMuted, unavailableReason: String? = null, onUnavailable: (() -> Unit)? = null,
+    rotation: Float = 0f, horizontal: Boolean = false, valueColor: Color = CaptureDesign.Text,
+    tagColor: Color = CaptureDesign.Muted, unavailableReason: String? = null, onUnavailable: (() -> Unit)? = null,
     statusDescription: String = "",
     widthSamples: List<String> = listOf(value),
     displayLabel: String = label,
@@ -305,7 +301,7 @@ fun CaptureControlKey(
             layout(placement.size.width, placement.size.height) { content.place(placement.offset.x, placement.offset.y) }
         }.graphicsLayer { rotationZ = rotation }.padding(horizontal = 4.dp, vertical = 2.dp),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(heading, color = ScaleMuted, style = smallStyle.copy(fontSize = sizes.first.sp), maxLines = 1, softWrap = false, overflow = TextOverflow.Visible)
+            Text(heading, color = CaptureDesign.Muted, style = smallStyle.copy(fontSize = sizes.first.sp), maxLines = 1, softWrap = false, overflow = TextOverflow.Visible)
             Text(visibleValue, color = valueColor, style = valueStyle.copy(fontSize = sizes.second.sp), maxLines = 1, softWrap = false, overflow = TextOverflow.Visible)
             Text(tag.ifEmpty { " " }, color = tagColor, style = smallStyle.copy(fontSize = sizes.third.sp), maxLines = 1, softWrap = false, overflow = TextOverflow.Visible)
         }

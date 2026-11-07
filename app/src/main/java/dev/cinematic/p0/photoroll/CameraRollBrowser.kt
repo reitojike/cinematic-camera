@@ -19,7 +19,9 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.style.TextAlign
 import dev.cinematic.p0.CaptureDesign
-import dev.cinematic.p0.settingsOutline
+import dev.cinematic.p0.captureOutline
+import dev.cinematic.p0.captureChoiceSurface
+import dev.cinematic.p0.captureNeedsFullScroll
 
 @Composable
 internal fun CameraRollBrowser(listing: PhotoRollListing, access: CameraRollAccess, filter: PhotoRollKindFilter,
@@ -36,7 +38,7 @@ internal fun CameraRollBrowser(listing: PhotoRollListing, access: CameraRollAcce
     }
     BoxWithConstraints(modifier.fillMaxWidth()) {
     val gridHeight = maxHeight.coerceAtLeast(240.dp)
-    val compact = maxHeight < (520 * LocalDensity.current.fontScale).dp || maxWidth < (360 * LocalDensity.current.fontScale).dp
+    val compact = captureNeedsFullScroll(maxWidth.value, maxHeight.value, LocalDensity.current.fontScale, 520f)
     Column(Modifier.fillMaxSize().background(CaptureDesign.Ink).then(if (compact) Modifier.verticalScroll(rememberScrollState()) else Modifier)) {
         Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = close, shape = RectangleShape) { Text("‹ 撮影") }
@@ -50,7 +52,7 @@ internal fun CameraRollBrowser(listing: PhotoRollListing, access: CameraRollAcce
             PhotoRollKindFilter.entries.forEach { candidate ->
                 TextButton(onClick = { chooseFilter(candidate) }, enabled = enabled, shape = RectangleShape,
                     modifier = Modifier.semantics { selected = filter == candidate }
-                        .background(if (filter == candidate) CaptureDesign.Inverted else CaptureDesign.Ink),
+                        .captureChoiceSurface(filter == candidate, unselectedBackground = CaptureDesign.Ink),
                     contentPadding = PaddingValues(horizontal = 10.dp), colors = ButtonDefaults.textButtonColors(
                         contentColor = if (filter == candidate) CaptureDesign.Ink else CaptureDesign.Muted)) {
                     Text(when (candidate) { PhotoRollKindFilter.ALL -> "すべて"; PhotoRollKindFilter.IMAGES -> "画像"
@@ -76,7 +78,7 @@ internal fun CameraRollBrowser(listing: PhotoRollListing, access: CameraRollAcce
                     else "DNGは最大1024pxの試験現像です。顔保護なし・暫定色で、共有写真へは保存しません", color = CaptureDesign.Amber, style = CaptureDesign.Explanation)
                 if (!(access.images && access.videos)) {
                     val partial = access.selected
-                    Column(Modifier.fillMaxWidth().settingsOutline(partial).padding(8.dp)) {
+                    Column(Modifier.fillMaxWidth().captureOutline(partial).padding(8.dp)) {
                         Text(if (partial && !access.images && !access.videos) "選択した写真・動画だけにアクセスできます" else access.description,
                             style = CaptureDesign.Explanation, color = if (partial) CaptureDesign.Amber else CaptureDesign.Muted)
                         FlowRow {
