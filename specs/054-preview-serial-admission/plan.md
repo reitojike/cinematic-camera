@@ -8,3 +8,10 @@
 ## 既存futureの終了との関係
 Mutexだけでは、adapterの取消待ちが先に戻り、queue側のfutureが未完了のまま次の要求を通す可能性がある。候補をMANUAL_TRIALだけに限定し、render/prepareのawaitを取消したときも、既存queue producerのfuture終了までIO呼出側で待つ。future.cancelを解放証拠として使わず、producerの完了/例外と既存の回収を待つ。通常モードは元の早期復帰を維持する。
 これにより非協調的な既存処理が残っている間は最新要求も待つ。停止点の追加や待ち時間の上限保証はしない。queueが停止した場合に安全確認を飛ばして次を通すこともない。
+
+## Standard implementation references
+- Kotlin Mutex: https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.sync/-mutex/
+- Compose effect cancellation and restarting: https://developer.android.com/develop/ui/compose/side-effects
+- CompletableFuture completion: https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/concurrent/CompletableFuture.html
+
+The Android synthetic fixture verifies coroutine replacement, not touch-to-photon latency. It does not establish physical-device adoption or the entire PhotoRollScreen interaction contract. Existing source verification, revision tickets and Bitmap ownership remain authoritative.
