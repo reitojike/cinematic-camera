@@ -31,7 +31,7 @@ internal fun originalToneRow(row: FloatArray, toneRow: FloatArray, percentiles: 
 internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, private val trace: OriginalStageTrace? = null,
     private val parallelOrtonWorkers: Int = 1,
     private val ortonRowProbe: ((Int) -> Unit)? = null,
-    private val parallelCharacterWorkers: Int = 1) {
+    private val parallelCharacterWorkers: Int = 1, private val parallelFoundationWorkers: Int = 1) {
     private val luma = StageClearV1.LUMA
     private fun y(row: FloatArray, i: Int) = row[i] * luma[0] + row[i + 1] * luma[1] + row[i + 2] * luma[2]
     private fun image(width: Int, row: FloatArray) = LinearSrgbImage.takeOwnership(width, 1, row)
@@ -78,9 +78,19 @@ internal class OriginalStageClear24(private val work: OriginalRasterWorkspace, p
             originalToneRow(row, toneRow, percentiles)
         }
         val roiRow = FloatArray(width)
-        base = rowStep(base, "r7_foundation", OriginalStage.R7_FOUNDATION) { yy, row ->
-            foundation.row(yy, roiRow); checkMask(roiRow)
-            values(R7Base.foundation(image(width, row), FloatPlane(width, 1, roiRow), externalEv))
+        require(parallelFoundationWorkers in 1..2)
+        // Only the built-in empty ROI has a stateless row callback. External ROI callbacks stay serial.
+        val parallelFoundation = parallelFoundationWorkers > 1 && foundation === OriginalMask.NONE
+        val workerRoiRows = if (parallelFoundation) ThreadLocal.withInitial { FloatArray(width) } else null
+        val workerStop = { stop() || Thread.currentThread().isInterrupted }
+        base = rowStep(base, "r7_foundation", OriginalStage.R7_FOUNDATION, parallelRows = parallelFoundation) { yy, row ->
+            if (parallelFoundation) originalCheckpoint(workerStop)
+            val activeRoiRow = workerRoiRows?.get() ?: roiRow
+            foundation.row(yy, activeRoiRow); checkMask(activeRoiRow)
+            if (parallelFoundation) originalCheckpoint(workerStop)
+            values(R7Base.foundation(image(width, row), FloatPlane(width, 1, activeRoiRow), externalEv)).also {
+                if (parallelFoundation) originalCheckpoint(workerStop)
+            }
         }
         base = rowStep(base, "r7_vibrance", OriginalStage.R7_VIBRANCE, parallelRows = true) { _, row -> values(R7Base.vibrance(image(width, row))) }
         base = rowStep(base, "r7_crisp", OriginalStage.R7_CRISP, parallelRows = true) { _, row -> values(R7Base.crisp(image(width, row))) }
