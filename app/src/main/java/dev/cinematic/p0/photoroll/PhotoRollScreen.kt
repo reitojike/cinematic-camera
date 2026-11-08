@@ -52,6 +52,10 @@ import java.util.Locale
 @Composable
 internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRollRenderer, foreground: Boolean, close: () -> Unit) {
     var selectedUri by rememberSaveable { mutableStateOf<String?>(null) }
+    DisposableEffect(selectedUri, foreground) {
+        dev.cinematic.p0.diagnostics.PreviewPresentationTrace.invalidate()
+        onDispose { dev.cinematic.p0.diagnostics.PreviewPresentationTrace.invalidate() }
+    }
     var fromFiles by rememberSaveable { mutableStateOf(false) }
     var pickerPending by rememberSaveable { mutableStateOf(false) }
     var retry by remember { mutableIntStateOf(0) }
@@ -128,7 +132,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         if (changesRequest) previewOperation = previewOperationForChange(
             trialEditor.requestedValues, next.requestedValues, restoring)
         trialEditor = next
-        dev.cinematic.p0.diagnostics.PreviewPresentationTrace.bind(next.ticket)
+        if (changesRequest) dev.cinematic.p0.diagnostics.PreviewPresentationTrace.bind(next.ticket)
         savedStrength = next.requestedStrength
         savedWarmth = next.requestedValues.temperature ?: 0.0
         savedExposureEv = next.requestedValues.brightness ?: 0.0
@@ -151,7 +155,10 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         val current = trialEditor
         val next = current.apply(token)
         updateTrialEditor(next)
-        if (manualTrial && next.ticket == current.ticket) retry++
+        if (manualTrial && next.ticket == current.ticket) {
+            dev.cinematic.p0.diagnostics.PreviewPresentationTrace.bind(next.ticket)
+            retry++
+        }
     }
     fun resetTrialEdit(token: PhotoEditInputToken) {
         val reset = trialEditor.reset(token)

@@ -26,6 +26,12 @@ class PreviewPresentationLedgerTest {
         assertEquals(fresh, requireNotNull(ledger.start("middle", true)).inputId)
         assertTrue(requireNotNull(ledger.start("last", true)).exact)
     }
+    @Test fun leavingTheRunDiscardsBindings() {
+        val ledger = PreviewPresentationLedger()
+        ledger.bind("pending", ledger.nextInput())
+        ledger.clear()
+        assertNull(ledger.start("pending", true))
+    }
     @Test fun independentRequestsHaveIndependentGenerations() {
         val ledger = PreviewPresentationLedger()
         val input = ledger.nextInput()

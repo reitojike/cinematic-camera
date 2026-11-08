@@ -22,6 +22,9 @@ internal object PreviewPresentationTrace {
         if (id != null) mark("cc.preview.input:$id:$eventUptimeMs:${if (released) "UP" else "MOVE"}")
         try { return block() } finally { optional { activeInput.set(previous) } }
     }
+    fun invalidate() {
+        optional { ledger.clear(); synchronized(images) { images.clear() } }
+    }
     fun bind(key: Any) {
         if (enabled()) optional { activeInput.get()?.let { ledger.bind(key, it) } }
     }

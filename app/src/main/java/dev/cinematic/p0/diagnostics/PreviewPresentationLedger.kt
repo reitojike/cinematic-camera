@@ -7,6 +7,7 @@ internal class PreviewPresentationLedger(private val capacity: Int = 128) {
     private val pending = LinkedHashMap<Any, Long>()
     init { require(capacity > 0) }
     @Synchronized fun nextInput(): Long = ++nextId
+    @Synchronized fun clear() { pending.clear() }
     @Synchronized fun bind(key: Any, inputId: Long) {
         pending[key] = inputId
         while (pending.size > capacity) pending.remove(pending.keys.first())

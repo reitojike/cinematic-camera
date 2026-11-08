@@ -41,3 +41,9 @@ Trace内のIDや入力注入の名前は診断用契約であり、実機での�
 - https://developer.android.com/topic/performance/benchmarking/macrobenchmark-overview
 - https://perfetto.dev/docs/data-sources/frametimeline
 - https://github.com/google/perfetto/blob/v57.2/src/trace_processor/perfetto_sql/stdlib/android/frames/timeline.sql
+
+測定runは画面の作成/写真切替/背景化/終了で診断対応表を破棄する。
+さらに集計では同じtrace内にinject/input/request/adopt/drawが揃ったことを必須にする。
+trace開始前の残留世代やtrace停止後の再描画から結果を補完しない。
+注入が遅れた場合に同じミリ秒のMOVEが複数生じることがあるため、eventTimeとactionで
+一意対応できない入力は未判定として残す。注入API呼出し区間の長さや予定時刻への遅れも記録する。
