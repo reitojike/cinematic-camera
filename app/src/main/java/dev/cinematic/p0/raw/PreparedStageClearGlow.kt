@@ -21,10 +21,16 @@ internal class PreparedStageClearGlow private constructor(
         strength: Double,
         decisions: StageClearDecisions?,
         checkpoint: () -> Unit,
+    ): StageClearProtections.Result = render(faces, strength, decisions, null, checkpoint)
+
+    internal fun render(
+        faces: FaceMask, strength: Double, decisions: StageClearDecisions?,
+        timing: RawPreviewTiming?, checkpoint: () -> Unit,
     ): StageClearProtections.Result {
         require(strength.isFinite() && strength in 0.0..1.0)
         faces.requireAligned(base)
         checkpoint()
+        timing?.enter(RawPreviewTiming.Stage.SKIN_EXPAND)
         val skinValues = FloatArray(base.pixelCount)
         val skinRows = skin.rows(base.width, base.height)
         val row = FloatArray(base.width)
@@ -33,9 +39,10 @@ internal class PreparedStageClearGlow private constructor(
             repeat(base.width) { x -> skinValues[y * base.width + x] = row[x].coerceIn(0f, 1f) }
         }
         val originalSkin = FloatPlane.takeOwnership(base.width, base.height, skinValues)
+        timing?.enter(RawPreviewTiming.Stage.GLOW)
         val glowed = if (strength == 0.0) base else glow(strength, originalSkin, checkpoint)
         checkpoint()
-        return StageClearLook.renderFromGlowed(glowed, originalSkin, faces, strength, decisions, checkpoint)
+        return StageClearLook.renderFromGlowed(glowed, originalSkin, faces, strength, decisions, timing, checkpoint)
     }
 
     private fun glow(strength: Double, skin: FloatPlane, checkpoint: () -> Unit): LinearSrgbImage {

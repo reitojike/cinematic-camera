@@ -12,6 +12,7 @@ import dev.cinematic.p0.raw.FaceMask
 import dev.cinematic.p0.raw.LinearSrgbImage
 import dev.cinematic.p0.raw.PhotoAdjustments
 import dev.cinematic.p0.raw.PreparedStageClearGlow
+import dev.cinematic.p0.raw.RawPreviewTiming
 import dev.cinematic.p0.raw.R7Base
 import dev.cinematic.p0.raw.R7PreviewInputs
 import dev.cinematic.p0.raw.original.NativeOriginalRaster
@@ -55,6 +56,7 @@ internal class Original24PreviewSession(
     @Volatile private var closed = false
     private var failed = false
     private var decodeStarted = false
+    private var timingSequence = 0L
     private var asShot: LinearSrgbImage? = null
     private var base: LinearSrgbImage? = null
     private var baseAdjustments: PhotoAdjustments? = null
@@ -106,15 +108,21 @@ internal class Original24PreviewSession(
         check(!closed && !failed && !stopped) { "Original preview session is unavailable" }
         if (draft && !hasDraftDecisions) return@exclusive null
         val stop = { stopped || signal.isCanceled || shouldStop() }
+        val timing = if (android.util.Log.isLoggable("PreviewTiming", android.util.Log.DEBUG))
+            RawPreviewTiming.optional { RawPreviewTiming(if (draft) RawPreviewTiming.Kind.DRAFT else RawPreviewTiming.Kind.EXACT,
+                ++timingSequence, sink = { android.util.Log.d("RawPreviewTiming", it) }) } else null
         var result: Bitmap? = null
         var failure: Throwable? = null
         try {
             originalCheckpoint(stop)
             resourceAdmission() // Cached Look renders also need the fixed original-trial resource gate.
+            timing?.enter(RawPreviewTiming.Stage.VERIFY_BEFORE)
             verifyOriginal(stop)
+            timing?.enter(RawPreviewTiming.Stage.INPUT)
             val input = if (draft) draftInput ?: reduceDraftInput(requireNotNull(asShot), stop).also { draftInput = it }
                 else asShot ?: loadInput(stop).also { asShot = it }
             resourceAdmission()
+            timing?.enter(RawPreviewTiming.Stage.FOUNDATION)
             val foundation = if (draft) {
                 if (draftBase == null || draftAdjustments != adjustments) {
                     draftBase = null; draftGlow = null; draftAdjustments = null
@@ -135,17 +143,21 @@ internal class Original24PreviewSession(
                 }.image
             }
             val noProtection = FaceMask(foundation.width, foundation.height, FloatArray(foundation.pixelCount))
+            timing?.enter(RawPreviewTiming.Stage.GLOW_PREPARE)
             val glow = (if (draft) draftGlow else previewGlow) ?: PreparedStageClearGlow.prepare(foundation) {
                 originalCheckpoint(stop)
             }.also { if (draft) draftGlow = it else { previewGlow = it; previewFieldBuilds++ } }
-            val rendered = if (draft) glow.render(noProtection, strength, decisions = requireNotNull(previewDecisions)) {
+            val rendered = if (draft) glow.render(noProtection, strength, requireNotNull(previewDecisions), timing) {
                 originalCheckpoint(stop)
-            } else glow.render(noProtection, strength) { originalCheckpoint(stop) }
+            } else glow.render(noProtection, strength, null, timing) { originalCheckpoint(stop) }
             val image = rendered.image
             originalCheckpoint(stop)
             resourceAdmission()
+            timing?.enter(RawPreviewTiming.Stage.BITMAP)
             result = bitmap(image, stop)
+            timing?.enter(RawPreviewTiming.Stage.VERIFY_AFTER)
             verifyOriginal(stop)
+            timing?.enter(RawPreviewTiming.Stage.CLEANUP)
             releaseTransient()
             originalCheckpoint(stop)
             if (!draft) {
@@ -161,13 +173,19 @@ internal class Original24PreviewSession(
             if (error is OutOfMemoryError) throw IOException("Original preview memory unavailable", error)
             throw error
         } finally {
+            timing?.enter(RawPreviewTiming.Stage.CLEANUP)
+            var cleanupFailed = false
             try { releaseTransient() }
             catch (cleanup: Throwable) {
+                cleanupFailed = true
                 failed = true; clearInputs()
                 result?.recycle()
                 val primary = failure
                 if (primary == null) throw cleanup
                 if (primary !== cleanup) primary.addSuppressed(cleanup)
+            } finally {
+                timing?.finish(if (failure == null && !cleanupFailed) RawPreviewTiming.Outcome.SUCCESS
+                    else RawPreviewTiming.Outcome.FAILED)
             }
         }
     }
