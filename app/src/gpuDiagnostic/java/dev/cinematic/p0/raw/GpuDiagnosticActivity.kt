@@ -53,7 +53,7 @@ class GpuDiagnosticService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         latestStartId = startId
         val mode = intent?.action
-        if (mode !in setOf("small", "preview", "blur12", "orton12") || worker != null || dev.cinematic.p0.rawdiagnostic.RawDiagnosticActivity.activeOrHeld() || dev.cinematic.p0.photoroll.ForegroundExports.gate.active() != null) {
+        if (mode !in setOf("small", "preview", "blur12", "orton12") || worker != null || PreviewParallelDiagnosticActivity.active() || dev.cinematic.p0.rawdiagnostic.RawDiagnosticActivity.activeOrHeld() || dev.cinematic.p0.photoroll.ForegroundExports.gate.active() != null) {
             if (worker == null) stopSelfResult(startId)
             return START_NOT_STICKY
         }
