@@ -13,6 +13,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -31,6 +32,10 @@ internal fun PhotoRollComparisonImage(after: Bitmap, before: Bitmap?, foreground
     var comparing by remember(after, before, foreground) { mutableStateOf(false) }
     DisposableEffect(after, before, foreground) { onDispose { comparing = false } }
     val showBefore = (comparing || comparisonRequested) && before != null && beforeDescription != null && foreground
+    val shownBitmap = if (showBefore) before!! else after
+    val presentationMarker = Modifier.drawWithContent {
+        dev.cinematic.p0.diagnostics.PreviewPresentationTrace.draw(shownBitmap) { drawContent() }
+    }
     val comparison = if (before != null && beforeDescription != null && foreground) Modifier
         .pointerInput(after, before, foreground) {
             detectTapGestures(onLongPress = { comparing = true }, onPress = {
@@ -61,11 +66,11 @@ internal fun PhotoRollComparisonImage(after: Bitmap, before: Bitmap?, foreground
                     verticalArrangement = Arrangement.Center) {
                     Image((if (showBefore) before!! else after).asImageBitmap(),
                         if (showBefore) beforeDescription else afterDescription,
-                        Modifier.fillMaxWidth().aspectRatio(after.width.toFloat() / after.height).then(comparison),
+                        Modifier.fillMaxWidth().aspectRatio(after.width.toFloat() / after.height).then(comparison).then(presentationMarker),
                         contentScale = ContentScale.FillWidth)
                 } else Image((if (showBefore) before!! else after).asImageBitmap(),
                     if (showBefore) beforeDescription else afterDescription,
-                    Modifier.fillMaxSize().then(comparison), contentScale = ContentScale.Fit)
+                    Modifier.fillMaxSize().then(comparison).then(presentationMarker), contentScale = ContentScale.Fit)
             }
         }
     } else Column(modifier.background(CaptureDesign.Ink)) {
@@ -79,6 +84,6 @@ internal fun PhotoRollComparisonImage(after: Bitmap, before: Bitmap?, foreground
         }
         Image((if (showBefore) before!! else after).asImageBitmap(),
             if (showBefore) beforeDescription else afterDescription,
-            Modifier.fillMaxWidth().weight(1f).then(comparison), contentScale = ContentScale.Fit)
+            Modifier.fillMaxWidth().weight(1f).then(comparison).then(presentationMarker), contentScale = ContentScale.Fit)
     }
 }
