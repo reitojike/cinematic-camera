@@ -32,3 +32,5 @@
 - 画面の現行色・書体・寸法の実装は CaptureDesign を参照する。PNGの被写体・数値・ログは実機の状態の根拠にしない。
 
 - 統合診断には、合成1024pxのFoundation・Orton・Characterを独立に直列/2並列比較する明示入口を含む。raw-bit一致と時間を記録し、通常経路には接続しない。開くだけで実行せず、離脱時は取消し、worker終了までbusyを保持する。実写真の全プレビュー・操作遅延の検証とは区別する。専用テストも `previewParallelProbe=true` に限定する。
+
+- プレビュー入力と提示相関の試作は独立した `previewDiagnostic` variantに限る。release継承・非debuggable・profileableの非公開hostを使い、製品・統合診断Hub・通常CIには接続しない。合成fixtureは実screen/rendererを使うが、リソース条件は固定する。処理完了・draw・OS提示候補を区別し、FrameTimeline相関が未検証の間は50msを合格扱いにしない。手順と制約は [提示相関の診断](../../tools/preview-presentation/README.md) を参照する。

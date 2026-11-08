@@ -165,11 +165,13 @@ internal fun PhotoEditBar(
                         if (update.consume) change.consume()
                         val input = update.input
                         val ownerValue = currentReadValue()
-                        dispatch(if (input is PhotoEditBarInput.RelativeDrag) {
-                            if (allowed && scale.contains(ownerValue))
-                                PhotoEditBarInput.SetValue(rulerDrag.move(input.fractionDelta, ownerValue)) else null
-                        } else input, key)
-                        if (update.completed) finish(key)
+                        dev.cinematic.p0.diagnostics.PreviewPresentationTrace.input(change.uptimeMillis, !change.pressed) {
+                            dispatch(if (input is PhotoEditBarInput.RelativeDrag) {
+                                if (allowed && scale.contains(ownerValue))
+                                    PhotoEditBarInput.SetValue(rulerDrag.move(input.fractionDelta, ownerValue)) else null
+                            } else input, key)
+                            if (update.completed) finish(key)
+                        }
                     }
                 }
             }, verticalAlignment = Alignment.CenterVertically) {
