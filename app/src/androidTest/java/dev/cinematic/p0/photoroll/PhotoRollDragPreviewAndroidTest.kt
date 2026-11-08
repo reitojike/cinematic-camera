@@ -77,6 +77,8 @@ class PhotoRollDragPreviewAndroidTest {
         assertTrue(exact.request.strength > stale.request.strength)
         await("Stale coarse pair recycled") { stale.recycled() }
         assertFalse(hasColor(Color.MAGENTA))
+        awaitColor(Color.GREEN) // Keep the prior display while exact rendering is still blocked.
+        assertFalse(action("JPEGを保存").isEnabled)
         exact.complete(Color.CYAN)
         awaitColor(Color.CYAN)
         await("Old displayed pairs recycled") { initial.recycled() && first.recycled() && second.recycled() }
@@ -102,6 +104,8 @@ class PhotoRollDragPreviewAndroidTest {
         val exact = renderer.next(draft = false)
         assertEquals(.5, exact.request.strength, 0.0)
         assertTrue("Unchanged-value release must refresh exact decisions", exact.request.refreshDecisions)
+        awaitColor(Color.GREEN) // Initial OPEN followed by same-ticket release must not blank the image.
+        assertFalse(action("JPEGを保存").isEnabled)
         exact.complete(Color.CYAN)
         awaitColor(Color.CYAN)
         await("Draft display pair recycled") { unchanged.recycled() }
@@ -123,6 +127,7 @@ class PhotoRollDragPreviewAndroidTest {
         pendingCancel.complete(Color.MAGENTA)
         val restored = renderer.next(draft = false)
         assertEquals(.5, restored.request.strength, 0.0)
+        awaitColor(Color.RED) // Same-ticket cancellation retains its previous pixels until exact completion.
         restored.complete(Color.CYAN)
         awaitColor(Color.CYAN)
         await("Cancel releases displayed and rejected draft pairs") { cancelled.recycled() && pendingCancel.recycled() }
@@ -138,6 +143,7 @@ class PhotoRollDragPreviewAndroidTest {
         val otherPhoto = renderer.next(draft = false)
         assertNotEquals(oldPhoto.request.original.uri, otherPhoto.request.original.uri)
         assertEquals(.5, otherPhoto.request.strength, 0.0)
+        assertFalse("Different photo must not retain the previous result", hasColor(Color.CYAN))
         otherPhoto.complete(Color.GREEN)
         awaitColor(Color.GREEN)
         await("Photo switch releases old pixels") { oldPhoto.recycled() && restored.recycled() }
@@ -193,6 +199,24 @@ class PhotoRollDragPreviewAndroidTest {
         nextDrag.up()
         renderer.next(draft = false).complete(Color.BLUE)
         awaitColor(Color.BLUE)
+        assertEquals(0, renderer.saves.get())
+    }
+
+    @Test fun sourceVerificationFailureDropsTheRetainedImageAndCannotSave() = screen { renderer, _ ->
+        val initial = open(renderer)
+        val drag = beginDrag()
+        drag.move(72f)
+        val draft = renderer.next(draft = true)
+        draft.complete(Color.RED)
+        awaitColor(Color.RED)
+        drag.up()
+        val exact = renderer.next(draft = false)
+        awaitColor(Color.RED)
+        exact.failSource()
+        node("合成の原本確認失敗")
+        assertFalse(hasColor(Color.RED))
+        assertFalse(action("JPEGを保存").isEnabled)
+        await("Rejected request releases retained pixels") { initial.recycled() && draft.recycled() }
         assertEquals(0, renderer.saves.get())
     }
 
@@ -317,12 +341,15 @@ class PhotoRollDragPreviewAndroidTest {
         private val release = CountDownLatch(1)
         @Volatile private var color = Color.MAGENTA
         @Volatile private var producerCancelled = false
+        @Volatile private var sourceFailure = false
         @Volatile var finished = false
         @Volatile var result: PhotoRollRenderResult.Preview? = null
         fun complete(color: Int) { this.color = color; release.countDown() }
         fun cancelProducer() { producerCancelled = true; release.countDown() }
+        fun failSource() { sourceFailure = true; release.countDown() }
         fun pixels(): Pair<Bitmap, Bitmap> {
             check(release.await(30, TimeUnit.SECONDS)) { "Test did not release ${if (draft) "draft" else "exact"} renderer" }
+            if (sourceFailure) throw PhotoRollSourceFailure("合成の原本確認失敗")
             if (producerCancelled) throw CancellationException("Synthetic optional producer cancellation")
             fun bitmap(value: Int) = Bitmap.createBitmap(request.maxEdge, request.maxEdge, Bitmap.Config.ARGB_8888).apply { eraseColor(value) }
             return bitmap(color) to bitmap(Color.YELLOW)

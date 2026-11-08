@@ -106,6 +106,8 @@ class RawDiagnosticActivity : ComponentActivity() {
     companion object {
         // Process-wide gate survives Activity recreation until the current owner's finally closes it.
         private val busy = AtomicBoolean()
+        /** 統合診断の入口用。取消中・HOLDも含み、実行状態は変更しない。 */
+        internal fun activeOrHeld(): Boolean = busy.get()
         private val executor = Executors.newSingleThreadExecutor()
     }
 }

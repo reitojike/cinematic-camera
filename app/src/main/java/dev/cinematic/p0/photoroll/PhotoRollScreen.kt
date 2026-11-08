@@ -52,6 +52,10 @@ import java.util.Locale
 @Composable
 internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRollRenderer, foreground: Boolean, close: () -> Unit) {
     var selectedUri by rememberSaveable { mutableStateOf<String?>(null) }
+    DisposableEffect(selectedUri, foreground) {
+        dev.cinematic.p0.diagnostics.PreviewPresentationTrace.invalidate()
+        onDispose { dev.cinematic.p0.diagnostics.PreviewPresentationTrace.invalidate() }
+    }
     var fromFiles by rememberSaveable { mutableStateOf(false) }
     var pickerPending by rememberSaveable { mutableStateOf(false) }
     var retry by remember { mutableIntStateOf(0) }
@@ -128,12 +132,13 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         if (changesRequest) previewOperation = previewOperationForChange(
             trialEditor.requestedValues, next.requestedValues, restoring)
         trialEditor = next
+        if (changesRequest) dev.cinematic.p0.diagnostics.PreviewPresentationTrace.bind(next.ticket)
         savedStrength = next.requestedStrength
         savedWarmth = next.requestedValues.temperature ?: 0.0
         savedExposureEv = next.requestedValues.brightness ?: 0.0
         if (changesRequest) {
             cancellationOwner.cancel()
-            preview = null; comparison = null; comparisonLabel = null
+            // Keep the same photo visible while its new exact result is pending.
             jpegSave = null; saveSnapshot = null; explicitRetry = false
             selection = selection.pause()
         }
@@ -150,7 +155,10 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         val current = trialEditor
         val next = current.apply(token)
         updateTrialEditor(next)
-        if (manualTrial && next.ticket == current.ticket) retry++
+        if (manualTrial && next.ticket == current.ticket) {
+            dev.cinematic.p0.diagnostics.PreviewPresentationTrace.bind(next.ticket)
+            retry++
+        }
     }
     fun resetTrialEdit(token: PhotoEditInputToken) {
         val reset = trialEditor.reset(token)
@@ -258,6 +266,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                 if (!draftAdmission.canStart(draft, trialEditor, selectedUri)) continue
                 val cancellation = CancellationSignal()
                 draftCancellationOwner.begin(cancellation)
+                val presentation = dev.cinematic.p0.diagnostics.PreviewPresentationTrace.start(draft, exact = false)
                 var pending: PhotoRollRenderResult.Preview? = null
                 try {
                     val result = withContext(Dispatchers.IO) {
@@ -286,6 +295,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                     if (result != null && !cancellation.isCanceled && currentForeground &&
                         draftAdmission.canDisplay(draft, trialEditor, selectedUri)) {
                         draftAdmission.displayed(draft)
+                        dev.cinematic.p0.diagnostics.PreviewPresentationTrace.adopted(result.bitmap, presentation)
                         preview = result.bitmap; comparison = result.comparisonBitmap
                         comparisonLabel = result.comparisonLabel; draftShown = true
                         trialEditor = trialEditor.showingDraft()
@@ -314,9 +324,10 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
       lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
         draftAdmission.invalidate()
         draftShown = false
-        preview = null
-        comparison = null
-        comparisonLabel = null
+        if (!retainDevelopPreview(preview != null, selectedUri, selection.ticket?.source,
+                currentForeground)) {
+            preview = null; comparison = null; comparisonLabel = null
+        }
         jpegSave = null
         saveSnapshot = null
         savePending = false
@@ -366,6 +377,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         cancellationOwner.begin(cancellation)
         val job = currentCoroutineContext()
         val shouldStop = { !job.isActive || cancellation.isCanceled }
+        val presentation = dev.cinematic.p0.diagnostics.PreviewPresentationTrace.start(strengthTicket, exact = true)
         val requestScope = this
         val serialPreview = manualTrial && android.util.Log.isLoggable("PreviewSerial", android.util.Log.DEBUG)
         val timing = if (android.util.Log.isLoggable("PreviewTiming", android.util.Log.DEBUG))
@@ -460,6 +472,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                         strengthTicket.values.copy(strength = requireNotNull(
                             if (result.mode == PhotoRollPreviewMode.PRIVATE_TRIAL) result.trialStrength else result.appliedStrength)))
                     draftShown = false
+                    dev.cinematic.p0.diagnostics.PreviewPresentationTrace.adopted(result.bitmap, presentation)
                     preview = result.bitmap
                     comparison = result.comparisonBitmap?.takeIf { before ->
                         strengthEditable && result.comparisonLabel != null && before !== result.bitmap && !before.isRecycled &&
@@ -482,7 +495,10 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                     pendingPreview = null
                     timing?.finish("STATE_ADOPTED")
                 }
-                is PhotoRollRenderResult.Unavailable -> selection = selection.finish(ticket, false, result.reason)
+                is PhotoRollRenderResult.Unavailable -> {
+                    preview = null; comparison = null; comparisonLabel = null
+                    selection = selection.finish(ticket, false, result.reason)
+                }
             }
         } catch (cancelled: CancellationException) { timing?.finish("CANCELLED"); throw cancelled }
         catch (failure: Exception) {
@@ -503,7 +519,10 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                 is SecurityException -> "原本の読み取り権限がありません。Filesから選び直してください"
                 else -> "原本を読み取れないか、現像できませんでした。Filesから選び直してください"
             }
-            selection = selection.finish(ticket, false, message)
+            if (selection.accepts(ticket) && trialEditor.accepts(strengthTicket)) {
+                preview = null; comparison = null; comparisonLabel = null
+                selection = selection.finish(ticket, false, message)
+            }
         } finally {
             timing?.finish(if (shouldStop()) "CANCELLED" else "NOT_ADOPTED")
             pendingPreview?.recycleDisplayPixels()
@@ -515,8 +534,8 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().safeDrawingPadding()) {
             // Process save status survives selection/lifecycle reloads; cancel must not wait for preview IO.
-            ForegroundSaveNotice(jpegSave, foreground)
             if (selectedUri == null) {
+                ForegroundSaveNotice(jpegSave, foreground)
                 CameraRollBrowser(listing, access, kindFilter, folderKey, loading, viewerPending, notice, renderer.mode,
                     foreground && !viewerPending && !permissionPending,
                     foreground && !loading && !viewerPending && !permissionPending,
@@ -584,6 +603,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                 PhotoRollDevelopView(
                     name = listing.items.firstOrNull { it.uri == selectedUri }?.name ?: "DNG（名前未取得）",
                     mode = renderer.mode, state = trialEditor, readState = { trialEditor }, phase = selection.phase,
+                    statusOverlay = { ForegroundSaveNotice(jpegSave, foreground, activeOnly = true) },
                     stage = renderStage, message = notice ?: if (draftShown) "操作中は最大256pxの近似表示です。離すと最大1024pxで再計算します" else selection.message, preview = preview, comparison = comparison,
                     comparisonLabel = comparisonLabel, foreground = foreground && !editSavePending, savePhase = saved?.phase, savePending = savePending || editSavePending,
                     saveEnabled = foreground && !editSavePending && trialEditor.session == null && selection.phase == PhotoRollPhase.DISPLAYED && !savePending && owner != null &&
@@ -595,7 +615,10 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                         val next = trialEditor.change(token, parameter, value)
                         if (next !== trialEditor) {
                             trialEditor = next
-                            if (manualTrial) draftAdmission.request(next)?.let { draftRequests.trySend(it) }
+                            if (manualTrial) draftAdmission.request(next)?.let {
+                                dev.cinematic.p0.diagnostics.PreviewPresentationTrace.bind(it)
+                                draftRequests.trySend(it)
+                            }
                         }
                     } },
                     reset = { token -> if (!editSavePending) resetTrialEdit(token) }, apply = { token -> if (!editSavePending) applyTrialEdit(token) },
@@ -632,6 +655,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                                 }
                             }
                     }) {
+                    ForegroundSaveNotice(jpegSave, foreground)
                     if (recipeRecoveryNeeded) TextButton(enabled = foreground && !editSavePending, onClick = {
                         recipeLoaded = false; recipeRecoveryNeeded = false; skipDurableRecipe = true
                         savedOriginalIdentity = null; savedProcessingContract = null

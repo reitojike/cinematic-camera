@@ -23,8 +23,14 @@
 - 合成試験、エミュレーター、実機GPU、個人写真の比較は異なる証拠であり、代替しない。エミュレーター時間は実機の速度保証ではない。
 - [GPU 帯比較基盤](../051-gpu-band-probe/spec.md) は製品未採用。専用引数 gpuBandProbe=true の明示時だけ合成エミュレーター試験を実行し、通常 CI・合成 UI では起動しない。製品接続は #212 の実機 GPU と実写での再判定を条件とする。
 
+- [GPU合成診断](../../docs/GPU_DIAGNOSTIC.md) は製品未接続の独立 `gpuDiagnostic` アプリ。`cinematicGpuDiagnostic=true` の明示ビルドと画面からの明示起動だけで動く。GPU部分は合成専用。統合入口には既存RAW保存比較とCPUプレビューを含むが、GPUを製品処理へ接続しない。写真一覧権限は持たず、CPU側の入力はFilesで明示的に選ぶ。専用instrumentationも `gpuPixelProbe=true` と `isolated=true` がなければGPUを初期化しない。
+- GPU合成診断の1024pxは全LookのCPU差、12MPはぼかし/Orton単体の負荷を測る。12MP単体や背景FGS試験の成功を、全保存出力・製品保存復旧の採用条件の達成に読み替えない。
 ## 詳細契約と手順
 
 - [設定の詳細](../039-settings-design/spec.md)、[診断の詳細](../040-diagnostics-design/spec.md)、[共通表示](../046-design-commonization/spec.md)、[最低対応](../050-minsdk33/spec.md)。
 - 実行手順は [MANAGED_DEVICES](../../docs/MANAGED_DEVICES.md)、[OPERATIONS](../../docs/OPERATIONS.md)、現行CIを参照する。
 - 画面の現行色・書体・寸法の実装は CaptureDesign を参照する。PNGの被写体・数値・ログは実機の状態の根拠にしない。
+
+- 統合診断には、合成1024pxのFoundation・Orton・Characterを独立に直列/2並列比較する明示入口を含む。raw-bit一致と時間を記録し、通常経路には接続しない。開くだけで実行せず、離脱時は取消し、worker終了までbusyを保持する。実写真の全プレビュー・操作遅延の検証とは区別する。専用テストも `previewParallelProbe=true` に限定する。
+
+- プレビュー入力と提示相関の試作は独立した `previewDiagnostic` variantに限る。release継承・非debuggable・profileableの非公開hostを使い、製品・統合診断Hub・通常CIには接続しない。合成fixtureは実screen/rendererを使うが、リソース条件は固定する。処理完了・draw・OS提示候補を区別し、FrameTimeline相関が未検証の間は50msを合格扱いにしない。手順と制約は [提示相関の診断](../../tools/preview-presentation/README.md) を参照する。
