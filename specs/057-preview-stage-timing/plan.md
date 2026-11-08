@@ -1,8 +1,11 @@
-# Plan: preview stage timing
-Issue: #223
+# 計画: プレビューの工程境界の計測
 
-Use System.nanoTime at existing orchestration boundaries. RawPreviewTiming owns a monotonic clock, exclusive stage accumulation and injectable sink. The session creates it only when PreviewTiming DEBUG is enabled. Existing render overloads delegate to timing-aware overloads with null; existing callers and save paths remain unchanged. No pixel-loop timer is added.
+実装Issue: #223 / 文書の日本語化: #226
 
-Foundation includes warmth, R7 and exposure work; Glow preparation is recorded separately so strength-only reuse can be distinguished from adjustment rebuilds. Repeated protection passes accumulate under the same stage. Timer total excludes pre-session request work and comparison Bitmap construction and must not be described as end-to-end display latency.
+既存の呼び出し境界でSystem.nanoTimeを使用する。RawPreviewTimingは単調増加する時計、重複しない工程別時間の集計、差し替え可能な出力先を持つ。セッションはPreviewTimingのDEBUGが有効な場合だけ計測器を作る。既存のrenderオーバーロードは計測器にnullを渡す形で残し、既存の呼び出し側と保存経路を変えない。画素ループ内にはタイマーを追加しない。
 
-Synthetic tests verify exact raw float bits, decisions, checkpoint counts, cancellation outcome, repeated-stage sums and sink failure isolation. Run lintDebug, testDebugUnitTest, assembleDebug and diff checks, then Draft PR, required CI, canonical and independent review. Real-device timing remains unmeasured. This instrumentation changes no product defaults or output.
+Foundationには色温度、R7、露出の処理を含める。Glowの準備を別に記録し、強さだけを変えたときの再利用と、調整値の変更による再生成を区別できるようにする。保護処理が繰り返された場合は同じ工程に加算する。全体時間には要求の前処理と比較用Bitmapの生成を含めず、操作から表示までの遅延とは説明しない。
+
+合成データのテストで、浮動小数点のビット列、判定値、取消の確認回数、取消結果、繰り返し工程の時間の合計、診断出力の失敗の隔離を確認する。lintDebug、testDebugUnitTest、assembleDebug、差分検査を実施し、Draft PR、必須CI、canonicalレビュー、独立レビューへ進める。実機の時間は未計測として扱う。この計測追加で製品の既定動作や出力は変えない。
+
+日本語化は既存の仕様・計画・完了状態の表記を揃える文書のみの変更とし、追加の機能仕様は作らない。実装の意味と未確認範囲が変わっていないことを独立レビューで確認する。
