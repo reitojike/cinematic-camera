@@ -49,7 +49,7 @@ class DevelopViewAndroidTest {
                 for (i in 0 until node.childCount) walk(node.getChild(i))?.let { return it }
                 return null
             }
-            return walk(diagnostic.fixtureRoot())
+            return walk(diagnostic.fixtureRoot() ?: diagnostic.automation.rootInActiveWindow?.takeIf { it.packageName == context.packageName })
         }
         fun actionNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo {
             var current = node
@@ -212,13 +212,9 @@ class DevelopViewAndroidTest {
             assertTrue(info.performAction(AccessibilityNodeInfo.ACTION_CLICK))
             instrumentation.waitForIdleSync()
             awaitNode("合成の原本情報 0")
-            repeat(4) { scroll(false) }
-            assertFalse(awaitNode("同じ保存を再照合", false).isEnabled)
-            capture("info-footer")
-            repeat(4) { scroll(false, false) }
-            awaitNode("合成の原本情報 0")
-            capture("info-top")
-            assertTrue(awaitNode("原本情報と試験品質の注意", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            capture("info-dialog")
+            assertTrue(awaitNode("閉じる", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            instrumentation.waitForIdleSync()
             assertTrue(awaitNode("比較", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
             awaitNode("RAW基準表示（合成）")
             assertTrue(awaitNode("取消", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))

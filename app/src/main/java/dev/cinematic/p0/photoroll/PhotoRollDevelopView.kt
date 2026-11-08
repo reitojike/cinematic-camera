@@ -55,7 +55,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
     save: () -> Unit, begin: () -> Unit, back: () -> Unit, retry: () -> Unit,
     change: (PhotoEditInputToken, PhotoEditParameter, Double) -> Unit, reset: (PhotoEditInputToken) -> Unit,
     apply: (PhotoEditInputToken) -> Unit, cancel: (PhotoEditInputToken) -> Unit, close: (PhotoEditInputToken) -> Unit,
-    modifier: Modifier = Modifier, info: @Composable () -> Unit) {
+    modifier: Modifier = Modifier, statusOverlay: @Composable () -> Unit = {}, info: @Composable () -> Unit) {
     var information by remember { mutableStateOf(false) }
     var parameter by remember { mutableStateOf(PhotoEditParameter.STRENGTH) }
     var comparing by remember(preview, comparison, foreground) { mutableStateOf(false) }
@@ -76,7 +76,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
     val saveColor = captureChromeColor(saveTone)
     BoxWithConstraints(modifier.fillMaxSize()) {
         // Expanded source details must not squeeze the editor or footer out of reach.
-        val compact = information || captureNeedsFullScroll(maxWidth.value, maxHeight.value, LocalDensity.current.fontScale, 560f)
+        val compact = captureNeedsFullScroll(maxWidth.value, maxHeight.value, LocalDensity.current.fontScale, 560f)
         Column(Modifier.fillMaxSize().background(CaptureDesign.Ink).then(if (compact) Modifier.verticalScroll(rememberScrollState()) else Modifier)) {
             Row(Modifier.fillMaxWidth().heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = back, shape = RectangleShape, modifier = Modifier.semantics { contentDescription = "一覧へ戻る" }) { Text("‹") }
@@ -96,30 +96,34 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                 TextButton(onClick = { information = !information }, shape = RectangleShape,
                     modifier = Modifier.semantics { contentDescription = "原本情報と試験品質の注意" }) { Text("ⓘ") }
             }
-            if (information) Column(Modifier.fillMaxWidth().heightIn(max = 180.dp).verticalScroll(rememberScrollState()).padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(name, style = CaptureDesign.Explanation, color = CaptureDesign.Text)
-                Text("原本は読み取り専用です。コピー・上書き・公開は行いません。", style = CaptureDesign.Explanation, color = CaptureDesign.Muted)
-                info()
-            }
-            Box(if (compact) Modifier.fillMaxWidth().height(260.dp) else Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                if (preview != null && phase == PhotoRollPhase.DISPLAYED) PhotoRollComparisonImage(preview, comparison, foreground,
-                    "現像結果（表示用）", comparisonLabel, Modifier.fillMaxSize(), comparing, { comparing = it }, unapplied)
+            Box((if (compact) Modifier.fillMaxWidth().height(260.dp) else Modifier.fillMaxWidth().weight(1f))
+                .semantics { contentDescription = "現像画像の表示領域" }, contentAlignment = Alignment.Center) {
+                val updating = phase in setOf(PhotoRollPhase.CHECKING, PhotoRollPhase.RENDERING, PhotoRollPhase.PAUSED)
+                if (preview != null && phase != PhotoRollPhase.BLOCKED) PhotoRollComparisonImage(preview,
+                    comparison.takeIf { compareEnabled }, foreground, "現像結果（表示用）", comparisonLabel,
+                    Modifier.fillMaxSize(), comparing && compareEnabled, { comparing = it }, unapplied || updating,
+                    fillImageWidth = true)
                 else if (phase == PhotoRollPhase.BLOCKED) Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(message ?: "現像を開始・完了できません", color = CaptureDesign.Failed, style = CaptureDesign.Explanation)
                     TextButton(onClick = retry, enabled = foreground, shape = RectangleShape) { Text("原本を確認して再試行") }
-                } else if (phase in setOf(PhotoRollPhase.CHECKING, PhotoRollPhase.RENDERING)) Column(Modifier.padding(16.dp)) {
-                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(PhotoRollRenderStage.DECODE to "DECODE", PhotoRollRenderStage.INPUTS to "測光", PhotoRollRenderStage.BASE to "R7土台",
-                            PhotoRollRenderStage.LOOK to "LOOK", PhotoRollRenderStage.DISPLAY to "表示").forEach { (candidate, label) ->
-                            Text(label, style = CaptureDesign.Label, color = if (candidate == stage) CaptureDesign.Amber else CaptureDesign.Muted)
-                        }
+                } else Text(if (updating) "画像を準備中…" else "原本の確認待ち", color = CaptureDesign.Muted)
+                Column(Modifier.align(Alignment.TopCenter).fillMaxWidth().background(CaptureDesign.Ink.copy(alpha = .9f))) {
+                    statusOverlay()
+                }
+                Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(CaptureDesign.Ink.copy(alpha = .9f))) {
+                    if (updating) Text(if (preview != null) "更新中 · 直前の表示です" else
+                        if (phase == PhotoRollPhase.CHECKING) "原本を確認中…" else stage?.label ?: "DNGを処理中…",
+                        Modifier.padding(8.dp).semantics { liveRegion = LiveRegionMode.Polite },
+                        color = CaptureDesign.Amber, style = CaptureDesign.Explanation)
+                    if (message != null && phase != PhotoRollPhase.BLOCKED && !updating) TextButton(
+                        onClick = { information = true }, shape = RectangleShape) {
+                        Text(message, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            color = CaptureDesign.Muted, style = CaptureDesign.Explanation)
                     }
-                    Text(if (phase == PhotoRollPhase.CHECKING) "原本を確認中…" else stage?.label ?: "DNGを処理中…",
-                        Modifier.padding(top = 12.dp).semantics { liveRegion = LiveRegionMode.Polite }, color = CaptureDesign.Amber, style = CaptureDesign.Explanation)
-                } else Text(if (phase == PhotoRollPhase.PAUSED) "処理を中断しました" else "原本の確認待ち", color = CaptureDesign.Muted)
+                    if (phase == PhotoRollPhase.PAUSED) TextButton(onClick = retry, enabled = foreground,
+                        shape = RectangleShape) { Text("原本を確認して再試行") }
+                }
             }
-            if (message != null && phase != PhotoRollPhase.BLOCKED) Text(message, Modifier.fillMaxWidth().padding(8.dp), color = CaptureDesign.Muted, style = CaptureDesign.Explanation)
             if (session != null) key(parameter) { TrialStrengthEditorPane(state, readState, parameter, foreground, phase, change, reset, apply, close) }
             Row(Modifier.fillMaxWidth().heightIn(min = 72.dp)) {
                 PhotoEditParameter.entries.forEach { key ->
@@ -137,8 +141,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                             Text(if (supported && value != null) editValueLabel(key, value) else "—", style = CaptureDesign.Value, color = if (!keyEnabled) CaptureDesign.Disabled else if (dirty) CaptureDesign.Amber else CaptureDesign.Text)
                             Text(when { !supported -> "未対応"; dirty -> "指定 · 未反映"; key == PhotoEditParameter.TEMPERATURE -> "相対"; key == PhotoEditParameter.BRIGHTNESS -> "EV"; else -> "表示中" },
                                 style = CaptureDesign.Label, color = if (!keyEnabled) CaptureDesign.Disabled else if (dirty) CaptureDesign.Amber else CaptureDesign.Muted)
-                            if (supported && dirty) Text(
-                                displayed?.let { "表示中 ${editValueLabel(key, it)}" } ?: "表示中の値なし",
+                            Text(if (supported && dirty) displayed?.let { "表示中 ${editValueLabel(key, it)}" } ?: "表示中の値なし" else " ",
                                 style = CaptureDesign.Label, color = if (keyEnabled) CaptureDesign.Muted else CaptureDesign.Disabled)
                         }
                     }
@@ -170,7 +173,15 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                     } }
                 }
             }
-            if (phase == PhotoRollPhase.PAUSED) TextButton(onClick = retry, enabled = foreground, shape = RectangleShape) { Text("原本を確認して再試行") }
         }
     }
+    if (information) AlertDialog(onDismissRequest = { information = false },
+        title = { Text("原本情報と試験品質の注意") },
+        text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(name, style = CaptureDesign.Explanation)
+            Text("原本は読み取り専用です。コピー・上書き・公開は行いません。", style = CaptureDesign.Explanation)
+            message?.let { Text(it, style = CaptureDesign.Explanation) }
+            info()
+        } }, confirmButton = { TextButton(onClick = { information = false }) { Text("閉じる") } })
+
 }

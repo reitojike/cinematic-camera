@@ -1,0 +1,4 @@
+# 合成確認手順
+
+合成Bitmapを使用し、現像画面の通知なし→長文通知→処理中→表示完了でviewportの座標・寸法が不変なことを確認する。画像は縦横比を維持して横幅いっぱいになり、縦に収まらない場合だけ領域内をスクロールできる。別画像、失敗、背景での保持禁止は単体試験する。
+既存DevelopViewAndroidTestとPhotoRollComparisonGestureAndroidTestを共有ATDで実行する。lintDebug/testDebugUnitTest/assembleDebugとgit diff --checkを実行。実機操作感は未検証とする。
