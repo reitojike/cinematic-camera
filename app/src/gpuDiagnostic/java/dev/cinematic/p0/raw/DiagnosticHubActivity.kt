@@ -15,7 +15,7 @@ class DiagnosticHubActivity : Activity() {
         super.onCreate(state)
         val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         panel.addView(TextView(this).apply {
-            text = "統合診断・製品未採用\nGPUは合成データのみ。保存比較とプレビューはFilesから明示的に選んだ入力だけを使います。"
+            text = "統合診断・製品未採用\nGPUは合成データのみ。保存比較は私有領域のみ。CPUプレビューはFilesで選択し、保存ボタンは通常の共有JPEGを書き出します。"
         })
         listOf(
             "GPU合成診断" to GpuDiagnosticActivity::class.java,
@@ -25,7 +25,7 @@ class DiagnosticHubActivity : Activity() {
             panel.addView(Button(this).apply {
                 text = label
                 setOnClickListener {
-                    if (GpuDiagnosticService.active() || dev.cinematic.p0.photoroll.ForegroundExports.gate.active() != null) {
+                    if (RawDiagnosticActivity.activeOrHeld() || GpuDiagnosticService.active() || dev.cinematic.p0.photoroll.ForegroundExports.gate.active() != null) {
                         android.widget.Toast.makeText(this@DiagnosticHubActivity, "実行中の診断・保存が終わってから切り替えてください", android.widget.Toast.LENGTH_SHORT).show()
                     } else startActivity(Intent(this@DiagnosticHubActivity, target))
                 }
