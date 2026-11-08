@@ -45,23 +45,36 @@ class GpuDiagnosticActivity : Activity() {
 /** 製品保存と同じAPI別FGS種別だが、保存・復旧の試験ではない。 */
 class GpuDiagnosticService : Service() {
     @Volatile private var worker: Thread? = null
+    private val stop = AtomicBoolean(false)
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    private var latestStartId = 0
     private var reverse = false
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        latestStartId = startId
         val mode = intent?.action
         if (mode !in setOf("small", "preview", "blur12", "orton12") || worker != null) {
             if (worker == null) stopSelfResult(startId)
             return START_NOT_STICKY
         }
+        if (!busy.compareAndSet(false,true)) { stopSelfResult(startId); return START_NOT_STICKY }
+        cancellation = stop
         val observeMemory=intent?.getBooleanExtra("observeMemory",false) ?: false
         reverse=intent?.getBooleanExtra("reverse",false) ?: false
         stop.set(false)
+        try {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel("gpu-probe", "GPU合成診断", NotificationManager.IMPORTANCE_LOW))
         val notification = Notification.Builder(this, "gpu-probe").setSmallIcon(dev.cinematic.p0.R.drawable.ic_probe)
             .setContentTitle("GPU合成診断を実行中").setContentText("製品の写真や保存先には触れません").build()
         val type = if (Build.VERSION.SDK_INT >= 35) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING else ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
         startForeground(237, notification, type)
+        } catch (failure: Exception) {
+            cancellation = null; busy.set(false)
+            log("FGS開始失敗 type=${failure.javaClass.simpleName}")
+            stopSelfResult(latestStartId)
+            return START_NOT_STICKY
+        }
         val nextWorker = Thread({
             val sampling = AtomicBoolean(true)
             var managedMax = 0L; var nativeMax = 0L
@@ -86,7 +99,16 @@ class GpuDiagnosticService : Service() {
                 environment("end")
                 sampling.set(false); sampler?.interrupt(); sampler?.join()
                 if (observeMemory) log("観測最大 managedBytes=$managedMax nativeBytes=$nativeMax intervalMs=100 PSSは別計測")
-                worker = null; stopForeground(STOP_FOREGROUND_REMOVE); stopSelfResult(startId)
+                val owner = Thread.currentThread()
+                if (cancellation === stop) cancellation = null
+                busy.set(false)
+                main.post {
+                    if (worker === owner) {
+                        worker = null
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                        stopSelfResult(latestStartId)
+                    }
+                }
             }
         }, "gpu-probe-owner")
         worker = nextWorker
@@ -160,7 +182,7 @@ class GpuDiagnosticService : Service() {
             consume={_,frame->for(i in frame.rgba.indices step 4)gpuChecksum+=frame.rgba[i]},cancelled={stop.get()})
         val records=if(reverse){val g=gpuRun();cpuRun() to g}else{val c=cpuRun();c to gpuRun()}
         val cpuNs=records.first;val result=records.second
-        log("12MPぼかし単体 cpuNs=$cpuNs gpuNs=${result.elapsedNs} uploadNs=${result.uploadNs} drawNs=${result.drawNs} readbackNs=${result.readbackNs} passBytes=${result.largestPassBytes} renderer=${result.renderer} finite=${cpuChecksum.isFinite()&&gpuChecksum.isFinite()} reverse=$reverse・全保存経路ではない")
+        log("12MPぼかし単体 cpuNs=$cpuNs gpuNs=${result.elapsedNs} uploadNs=${result.uploadNs} drawNs=${result.drawNs} readbackNs=${result.readbackNs} passBytes=${result.largestPassBytes} renderer=${result.renderer} finite=${cpuChecksum.isFinite()&&gpuChecksum.isFinite()} reverse=$reverse quality=not_measured・finiteは品質一致を意味しない・全保存経路ではない")
     }
     /** 12MP負荷・一定色の品質試験。全Look/JPEGではない。文脈生成は各256行に含む。 */
     private fun runOrton12() {
@@ -201,9 +223,11 @@ class GpuDiagnosticService : Service() {
         return ((if(v<=.0031308)v*12.92 else 1.055*v.pow(1/2.4)-.055)*255).roundToInt().coerceIn(0,255)
     }
     companion object {
-        private val stop=AtomicBoolean(false)
-        fun cancel(){stop.set(true)}
-        fun cancelled()=stop.get()
+        private val busy=AtomicBoolean(false)
+        @Volatile private var cancellation:AtomicBoolean?=null
+        internal fun active()=busy.get()
+        fun cancel(){cancellation?.set(true)}
+        fun cancelled()=cancellation?.get()==true
         private fun log(value:String){android.util.Log.i("GpuDiagnostic",value)}
     }
 }

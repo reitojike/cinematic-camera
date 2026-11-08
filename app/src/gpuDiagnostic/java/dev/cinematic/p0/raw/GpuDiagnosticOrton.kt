@@ -26,7 +26,9 @@ internal object GpuDiagnosticOrton {
         }
         val soft = StageClearBlur.rgb(LinearSrgbImage.takeOwnership(image.width, image.height, bright), StageClearOrtonV1.RADIUS)
         val preparationNs = System.nanoTime() - preparationStarted
-        return prepared(image, soft, skin, mist.lightAddingStrength, bandHeight, stop).copy(cpuPrepareNs = preparationNs)
+        val started = System.nanoTime()
+        val result = prepared(image, soft, skin, mist.lightAddingStrength, bandHeight, stop)
+        return result.copy(gpuWallNs = System.nanoTime() - started, cpuPrepareNs = preparationNs)
     }
 
     /** 12MPでは呼び出し側が小さい帯を生成し、全原寸配列を保持しない。 */

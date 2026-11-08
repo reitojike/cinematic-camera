@@ -16,6 +16,29 @@ class GpuDiagnosticProbeTest {
         assumeTrue(InstrumentationRegistry.getArguments().getString("gpuPixelProbe") == "true")
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
     }
+    @Test fun repeatedStartsCancelAndStopService() {
+        val instrumentation=InstrumentationRegistry.getInstrumentation()
+        val context=instrumentation.targetContext
+        val activity=instrumentation.startActivitySync(android.content.Intent(context,GpuDiagnosticActivity::class.java)
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        fun await(label:String,predicate:()->Boolean){
+            val deadline=android.os.SystemClock.elapsedRealtime()+15000
+            while(!predicate() && android.os.SystemClock.elapsedRealtime()<deadline)Thread.sleep(50)
+            assertTrue(label,predicate())
+        }
+        try {
+            repeat(2){
+                instrumentation.runOnMainSync { repeat(3){context.startForegroundService(android.content.Intent(context,GpuDiagnosticService::class.java).setAction("small"))} }
+                await("処理開始"){GpuDiagnosticService.active()}
+                GpuDiagnosticService.cancel()
+                await("GPUと計測スレッドの終了"){!GpuDiagnosticService.active()}
+                val manager=context.getSystemService(android.app.ActivityManager::class.java)
+                @Suppress("DEPRECATION")
+                fun running()=manager.getRunningServices(100).any{it.service.className==GpuDiagnosticService::class.java.name}
+                await("連打後もFGSが終了"){!running()}
+            }
+        }finally{GpuDiagnosticService.cancel();instrumentation.runOnMainSync{activity.finish()}}
+    }
     @Test fun blurMatchesReferenceAndBandBoundaries() {
         val width=257;val height=193
         val input=LinearSrgbImage(width,height,FloatArray(width*height*3){i->((i/3)%width).toFloat()/(width-1)*1.6f-.02f})

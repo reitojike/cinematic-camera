@@ -24,7 +24,7 @@ internal object GpuBlurProbe {
         require(height - smallH <= 2 * (width - smallW)) { "縦優先の縮小はこの診断の対象外です" }
         fun checkpoint() { if (cancelled()) throw CancellationException("GPU診断を取り消しました") }
         checkpoint()
-        Session(cancelled).use { gpu ->
+        val observation = Session(cancelled).use { gpu ->
             val reducedHorizontal = FloatArray(Math.multiplyExact(Math.multiplyExact(smallW, height), 4))
             for (top in 0 until height step band) {
                 checkpoint()
@@ -44,9 +44,10 @@ internal object GpuBlurProbe {
                 consume(top, result)
             }
             checkpoint()
-            return Times(System.nanoTime() - started, gpu.uploadNs, gpu.drawNs,
+            Times(0, gpu.uploadNs, gpu.drawNs,
                 gpu.readbackNs, gpu.renderer, gpu.largestPassBytes)
         }
+        return observation.copy(elapsedNs = System.nanoTime() - started)
     }
 
     private class Session(private val cancelled: () -> Boolean) : AutoCloseable {

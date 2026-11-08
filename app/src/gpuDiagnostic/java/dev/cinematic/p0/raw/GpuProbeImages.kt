@@ -15,8 +15,8 @@ internal object GpuProbeImages {
                     output[(top * frame.width + p) * 3 + c] = frame.rgba[p * 4 + c]
                 } }
             }, cancelled = { GpuDiagnosticService.cancelled() })
-        android.util.Log.i("GpuDiagnostic", "blurNs=${times.elapsedNs} uploadNs=${times.uploadNs} drawNs=${times.drawNs} readbackNs=${times.readbackNs} passBytes=${times.largestPassBytes} renderer=${times.renderer}")
         lastWallNs.set(System.nanoTime() - started)
+        android.util.Log.i("GpuDiagnostic", "blurNs=${times.elapsedNs} uploadNs=${times.uploadNs} drawNs=${times.drawNs} readbackNs=${times.readbackNs} passBytes=${times.largestPassBytes} renderer=${times.renderer}")
         return LinearSrgbImage.takeOwnership(image.width, image.height, output)
     }
 }
