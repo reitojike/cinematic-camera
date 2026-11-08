@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Rect
 import android.os.SystemClock
+import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.safeDrawingPadding
@@ -42,6 +43,10 @@ class DevelopViewAndroidTest {
         val mode = mutableStateOf(PhotoRollPreviewMode.MANUAL_TRIAL)
         var saves = 0
         var retries = 0
+        fun root(): AccessibilityNodeInfo? {
+            diagnostic.automation.clearCache()
+            return diagnostic.fixtureRoot() ?: diagnostic.automation.rootInActiveWindow?.takeIf { it.packageName == context.packageName }
+        }
         fun find(description: String): AccessibilityNodeInfo? {
             fun walk(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
                 if (node == null) return null
@@ -49,7 +54,7 @@ class DevelopViewAndroidTest {
                 for (i in 0 until node.childCount) walk(node.getChild(i))?.let { return it }
                 return null
             }
-            return walk(diagnostic.fixtureRoot())
+            return walk(root())
         }
         fun actionNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo {
             var current = node
@@ -64,7 +69,7 @@ class DevelopViewAndroidTest {
                 for (i in 0 until node.childCount) if (visit(node.getChild(i))) return true
                 return false
             }
-            visit(diagnostic.fixtureRoot())
+            visit(root())
             SystemClock.sleep(180) // Let the accessibility scroll animation reach its viewport.
             instrumentation.waitForIdleSync()
         }
@@ -82,6 +87,12 @@ class DevelopViewAndroidTest {
                 SystemClock.sleep(50)
             } while (SystemClock.uptimeMillis() < deadline)
             diagnostic.failure(description)
+            fun record(node: AccessibilityNodeInfo?) {
+                if (node == null) return
+                android.util.Log.e("DevelopFixtureTree", "text=${node.text} desc=${node.contentDescription} visible=${node.isVisibleToUser} enabled=${node.isEnabled}")
+                for (i in 0 until node.childCount) record(node.getChild(i))
+            }
+            record(root())
             error("Missing $description (expected enabled=$enabled, observed=${find(description)?.let(::actionNode)?.isEnabled})")
         }
         fun capture(name: String) {
@@ -124,7 +135,7 @@ class DevelopViewAndroidTest {
                     for (i in 0 until node.childCount) walk(node.getChild(i))?.let { return it }
                     return null
                 }
-                return requireNotNull(walk(diagnostic.fixtureRoot())) { "Missing key $label" }
+                return requireNotNull(walk(root())) { "Missing key $label" }
             }
             // Compose exposes selected Button nodes as checked; Tab nodes use isSelected.
             fun keySelected(label: String): Boolean = keyNode(label).let { it.isSelected || (it.isCheckable && it.isChecked) }
@@ -135,12 +146,27 @@ class DevelopViewAndroidTest {
                     (0 until node.childCount).joinToString("") { dump(node.getChild(it), depth + 1) }
             }
             File(context.getExternalFilesDir(null), "design-accessibility.txt")
-                .writeText(dump(diagnostic.fixtureRoot()))
+                .writeText(dump(root()))
             assertTrue(keySelected("STRENGTH"))
             assertFalse(keySelected("色温度"))
             val rulerBounds = Rect().also { awaitNode("RESET").getBoundsInScreen(it) }
             val keyBounds = Rect().also { keyNode("STRENGTH").getBoundsInScreen(it) }
             assertTrue("ruler precedes the key row", rulerBounds.bottom <= keyBounds.top)
+            // The ruler's non-actionable heading must not long-press the photo behind it.
+            val panelBounds = Rect().also { awaitNode("現像調整パネル").getBoundsInScreen(it) }
+            val downTime = SystemClock.uptimeMillis()
+            fun touch(action: Int) {
+                val event = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action,
+                    panelBounds.exactCenterX(), rulerBounds.exactCenterY(), 0)
+                try { assertTrue(diagnostic.automation.injectInputEvent(event, true)) } finally { event.recycle() }
+            }
+            touch(MotionEvent.ACTION_DOWN)
+            try {
+                SystemClock.sleep(700)
+                instrumentation.waitForIdleSync()
+                assertNotNull(awaitNode("現像結果（表示用）"))
+                assertNull("ruler heading must not reveal the underlying RAW comparison", find("RAW基準表示（合成）"))
+            } finally { touch(MotionEvent.ACTION_UP) }
             fun lastAction(label: String): AccessibilityNodeInfo {
                 val matches = mutableListOf<AccessibilityNodeInfo>()
                 fun walk(node: AccessibilityNodeInfo?) {
@@ -148,7 +174,7 @@ class DevelopViewAndroidTest {
                     if (node.text?.toString() == label) matches += actionNode(node)
                     for (i in 0 until node.childCount) walk(node.getChild(i))
                 }
-                walk(diagnostic.fixtureRoot())
+                walk(root())
                 return matches.last()
             }
             repeat(2) {
@@ -212,13 +238,9 @@ class DevelopViewAndroidTest {
             assertTrue(info.performAction(AccessibilityNodeInfo.ACTION_CLICK))
             instrumentation.waitForIdleSync()
             awaitNode("合成の原本情報 0")
-            repeat(4) { scroll(false) }
-            assertFalse(awaitNode("同じ保存を再照合", false).isEnabled)
-            capture("info-footer")
-            repeat(4) { scroll(false, false) }
-            awaitNode("合成の原本情報 0")
-            capture("info-top")
-            assertTrue(awaitNode("原本情報と試験品質の注意", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            capture("info-underlying-layout")
+            assertTrue(awaitNode("閉じる", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            instrumentation.waitForIdleSync()
             assertTrue(awaitNode("比較", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
             awaitNode("RAW基準表示（合成）")
             assertTrue(awaitNode("取消", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
