@@ -56,7 +56,7 @@ android {
         }
     }
     buildTypes {
-    if (original24Probe) {
+        if (original24Probe) {
             create("original24Probe") {
                 initWith(getByName("debug"))
                 applicationIdSuffix = ".original24probe"
