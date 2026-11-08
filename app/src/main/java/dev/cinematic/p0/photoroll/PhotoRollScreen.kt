@@ -315,7 +315,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         draftAdmission.invalidate()
         draftShown = false
         if (!retainDevelopPreview(preview != null, selectedUri, selection.ticket?.source,
-                previewOperation != PreviewOperation.OPEN, currentForeground)) {
+                currentForeground)) {
             preview = null; comparison = null; comparisonLabel = null
         }
         jpegSave = null

@@ -212,7 +212,7 @@ class DevelopViewAndroidTest {
             assertTrue(info.performAction(AccessibilityNodeInfo.ACTION_CLICK))
             instrumentation.waitForIdleSync()
             awaitNode("合成の原本情報 0")
-            capture("info-dialog")
+            capture("info-underlying-layout")
             assertTrue(awaitNode("閉じる", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
             instrumentation.waitForIdleSync()
             assertTrue(awaitNode("比較", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))

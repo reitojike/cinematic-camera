@@ -5,11 +5,17 @@ import android.graphics.Color
 import android.graphics.Rect
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.Text
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Modifier
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
@@ -21,7 +27,9 @@ import org.junit.Test
 /** Synthetic pixels only. No camera, source URI, RAW processing or save. */
 class DevelopStableViewportAndroidTest {
     @get:org.junit.Rule val fixture = SyntheticFixtureRule()
-    @Test fun messagesAndPendingUpdatesDoNotMoveOrEraseThePhoto() {
+    @Test fun messagesAndPendingUpdatesDoNotMoveOrEraseThePhoto() = verifyViewport(false)
+    @Test fun compactHeightAndLargeTextKeepTheSameViewport() = verifyViewport(true)
+    private fun verifyViewport(compact: Boolean) {
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val image = Bitmap.createBitmap(60, 120, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.rgb(50, 120, 180)) }
@@ -29,12 +37,15 @@ class DevelopStableViewportAndroidTest {
         val message = mutableStateOf<String?>(null)
         val status = mutableStateOf(false)
         val editor = TrialStrengthEditor.empty(PhotoAdjustmentPolicy.defaults)
-        fixture.content = { CaptureTheme { Surface {
+        fixture.content = {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, if (compact) 1.8f else 1f)) {
+            CaptureTheme { Surface { Box(if (compact) Modifier.height(360.dp) else Modifier.fillMaxSize()) {
             PhotoRollDevelopView("SYNTHETIC", PhotoRollPreviewMode.MANUAL_TRIAL, editor, { editor }, phase.value,
                 PhotoRollRenderStage.LOOK, message.value, image, null, null, true, null, false, false, false,
                 {}, {}, {}, {}, { _, _, _ -> }, {}, {}, {}, {}, Modifier.fillMaxSize().safeDrawingPadding(),
                 statusOverlay = { if (status.value) Text("合成の保存状態") }) { Text("合成の情報") }
-        } } }
+        } } } } }
         fun find(label: String): AccessibilityNodeInfo? {
             fun walk(n: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
                 if (n == null) return null

@@ -4,12 +4,11 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DevelopPreviewRetentionTest {
-    @Test fun onlyAnAdjustmentOfTheSameVisiblePhotoRetainsPixels() {
-        assertTrue(retainDevelopPreview(true, "a", "a", true, true))
-        assertFalse(retainDevelopPreview(false, "a", "a", true, true))
-        assertFalse(retainDevelopPreview(true, null, "a", true, true))
-        assertFalse(retainDevelopPreview(true, "b", "a", true, true))
-        assertFalse(retainDevelopPreview(true, "a", "a", false, true))
-        assertFalse(retainDevelopPreview(true, "a", "a", true, false))
+    @Test fun samePhotoRetainsPixelsIncludingSameValueReleaseCancelAndRetry() {
+        assertTrue(retainDevelopPreview(true, "a", "a", true))
+        assertFalse(retainDevelopPreview(false, "a", "a", true))
+        assertFalse(retainDevelopPreview(true, null, "a", true))
+        assertFalse(retainDevelopPreview(true, "b", "a", true))
+        assertFalse(retainDevelopPreview(true, "a", "a", false))
     }
 }
