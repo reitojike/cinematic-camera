@@ -39,6 +39,6 @@
 
 [調整パイプライン](../036-photo-adjustment-pipeline/spec.md)、[原寸とプレビュー](../037-original-stage-clear-24mp/spec.md)、
 [現像UI](../044-editor-design-followup/spec.md)、[目盛りの現行操作](../048-editor-capture-ruler-parity/spec.md)、
-[ドラッグ表示と判定共有](../056-drag-preview-decisions/spec.md)、[診断直列受付](../054-preview-serial-admission/spec.md)、
-[境界時間の計測](../057-preview-stage-timing/spec.md)、[並列試験](../058-preview-row-workers/spec.md)。
+[ドラッグ表示と判定共有](../056-drag-preview-decisions/spec.md)、[診断直列受付と保持検証](../../docs/PREVIEW_DIAGNOSTICS.md)、
+[境界時間の計測](../../docs/PREVIEW_DIAGNOSTICS.md)、[並列試験](../058-preview-row-workers/spec.md)。
 048は042/044の古い「全範囲5ラベル・見た目だけ」の部分を置き換える。旧資料のDraft表示を現在のマージ状態とみなさない。

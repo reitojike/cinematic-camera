@@ -2,7 +2,7 @@
 
 ## 対応範囲
 
-- 最低対応は Android 13（API 33）。Android 12以前への新規インストールは対象外。SDK下限は GPU の製品採用を意味しない。
+- 最低対応は Android 13（API 33）。Android 12以前への新規インストールは対象外。SDK下限の宣言で既存インストールを削除・変更しない。SDK下限は GPU の製品採用を意味しない。対応宣言の根拠は [Android uses-sdk](https://developer.android.com/guide/topics/manifest/uses-sdk-element)、実値は app/build.gradle.kts を参照する。
 - 標準Android API / Jetpack / CameraXの管理境界を守る。標準から外れる理由は対応する技術設計に記録する。
 - 対応端末であってもRAW・手動制御・動画等の能力は実際の照会結果で判定し、モックの値を能力として表示しない。
 
@@ -25,9 +25,15 @@
 
 - [GPU合成診断](../../docs/GPU_DIAGNOSTIC.md) は製品未接続の独立 `gpuDiagnostic` アプリ。`cinematicGpuDiagnostic=true` の明示ビルドと画面からの明示起動だけで動く。GPU部分は合成専用。統合入口には既存RAW保存比較とCPUプレビューを含むが、GPUを製品処理へ接続しない。写真一覧権限は持たず、CPU側の入力はFilesで明示的に選ぶ。専用instrumentationも `gpuPixelProbe=true` と `isolated=true` がなければGPUを初期化しない。
 - GPU合成診断の1024pxは全LookのCPU差、12MPはぼかし/Orton単体の負荷を測る。12MP単体や背景FGS試験の成功を、全保存出力・製品保存復旧の採用条件の達成に読み替えない。
+## プレビュー診断の契約
+
+- PreviewTimingは要求受付からUI状態採用、RawPreviewTimingはEXACT/DRAFT別のセッション計算を記録する。計測は明示DEBUG時だけで保存経路には接続しない。前者の状態採用と後者の計算完了はいずれもOSの提示完了とは別。
+- 原本・URI・素材名・編集値・個人識別子は含めず、非重複の区間合計・取消/失敗を記録する。RawPreviewTimingの任意出力の失敗は現像結果や後片付けを変えない。
+- PreviewSerialはMANUAL_TRIALの診断専用で既定オフ。通常のdraft/exact排他と混同しない。詳細設計と明示有効化・停止手順は [プレビュー診断](../../docs/PREVIEW_DIAGNOSTICS.md) を参照する。
+
 ## 詳細契約と手順
 
-- [設定の詳細](../039-settings-design/spec.md)、[診断の詳細](../040-diagnostics-design/spec.md)、[共通表示](../046-design-commonization/spec.md)、[最低対応](../050-minsdk33/spec.md)。
+- [設定の詳細](../039-settings-design/spec.md)、[診断の詳細](../040-diagnostics-design/spec.md)、[共通表示](../046-design-commonization/spec.md)。
 - 実行手順は [MANAGED_DEVICES](../../docs/MANAGED_DEVICES.md)、[OPERATIONS](../../docs/OPERATIONS.md)、現行CIを参照する。
 - 画面の現行色・書体・寸法の実装は CaptureDesign を参照する。PNGの被写体・数値・ログは実機の状態の根拠にしない。
 
