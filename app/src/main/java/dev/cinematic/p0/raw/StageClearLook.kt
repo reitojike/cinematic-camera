@@ -40,21 +40,35 @@ internal object StageClearLook {
         strength: Double,
         decisions: StageClearDecisions?,
         checkpoint: () -> Unit,
+    ): StageClearProtections.Result = renderFromGlowed(glowed, originalSkin, faces, strength, decisions, null, checkpoint)
+
+    internal fun renderFromGlowed(
+        glowed: LinearSrgbImage, originalSkin: FloatPlane, faces: FaceMask,
+        strength: Double, decisions: StageClearDecisions?, timing: RawPreviewTiming?,
+        checkpoint: () -> Unit,
     ): StageClearProtections.Result {
         var firstAutoStrength: Double? = null
         var faceCutAutoStrength: Double? = null
+        timing?.enter(RawPreviewTiming.Stage.PROTECTIONS)
         val result = StageClearProtections.finish(glowed, faces, decisions?.faceCutFactor) { input ->
             checkpoint()
             val isFirstPass = firstAutoStrength == null
+            timing?.enter(RawPreviewTiming.Stage.MIST_AUTO)
             val autoStrength = if (decisions == null) StageClearMist.autoStrength(input) else {
                 if (isFirstPass) decisions.mistAutoStrength else requireNotNull(decisions.faceCutMistAutoStrength)
             }
             if (isFirstPass) firstAutoStrength = autoStrength else faceCutAutoStrength = autoStrength
+            timing?.enter(RawPreviewTiming.Stage.MIST)
             val mist = StageClearMist.render(input, originalSkin, strength, autoStrength)
             checkpoint()
+            timing?.enter(RawPreviewTiming.Stage.ORTON)
             val orton = StageClearOrton.render(mist, originalSkin)
             checkpoint()
-            StageClearCharacter.render(orton, strength).also { checkpoint() }
+            timing?.enter(RawPreviewTiming.Stage.CHARACTER)
+            StageClearCharacter.render(orton, strength).also {
+                checkpoint()
+                timing?.enter(RawPreviewTiming.Stage.PROTECTIONS)
+            }
         }.also { checkpoint() }
         return result.copy(decisions = StageClearDecisions(
             requireNotNull(firstAutoStrength), result.faceCutFactor, faceCutAutoStrength,
