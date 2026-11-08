@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Debug
 import android.os.IBinder
+import android.widget.CheckBox
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -26,10 +27,14 @@ class GpuDiagnosticActivity : Activity() {
         super.onCreate(state)
         val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         panel.addView(TextView(this).apply { text = "GPU合成診断・製品未採用\n写真は読みません。結果は診断ログへ記録します。背景検証は開始後にホームへ戻ってください。" })
+        val memory=CheckBox(this).apply { text="メモリ観測（速度比較とは分ける）" }
+        panel.addView(memory)
+        val reverse=CheckBox(this).apply { text="比較順を逆にする" }
+        panel.addView(reverse)
         for ((label, mode) in listOf("小型の正しさ確認" to "small", "1024px 全Look比較" to "preview", "12MP ぼかし単体" to "blur12", "12MP Orton単体" to "orton12")) {
             panel.addView(Button(this).apply {
                 text = label
-                setOnClickListener { startForegroundService(Intent(this@GpuDiagnosticActivity, GpuDiagnosticService::class.java).setAction(mode)) }
+                setOnClickListener { startForegroundService(Intent(this@GpuDiagnosticActivity, GpuDiagnosticService::class.java).setAction(mode).putExtra("observeMemory",memory.isChecked).putExtra("reverse",reverse.isChecked)) }
             })
         }
         panel.addView(Button(this).apply { text = "取り消す"; setOnClickListener { GpuDiagnosticService.cancel() } })
@@ -40,6 +45,7 @@ class GpuDiagnosticActivity : Activity() {
 /** 製品保存と同じAPI別FGS種別だが、保存・復旧の試験ではない。 */
 class GpuDiagnosticService : Service() {
     private var worker: Thread? = null
+    private var reverse = false
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val mode = intent?.action
@@ -47,6 +53,8 @@ class GpuDiagnosticService : Service() {
             if (worker == null) stopSelfResult(startId)
             return START_NOT_STICKY
         }
+        val observeMemory=intent?.getBooleanExtra("observeMemory",false) ?: false
+        reverse=intent?.getBooleanExtra("reverse",false) ?: false
         stop.set(false)
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel("gpu-probe", "GPU合成診断", NotificationManager.IMPORTANCE_LOW))
@@ -57,13 +65,13 @@ class GpuDiagnosticService : Service() {
         val nextWorker = Thread({
             val sampling = AtomicBoolean(true)
             var managedMax = 0L; var nativeMax = 0L
-            val sampler = Thread({
+            val sampler = if (observeMemory) Thread({
                 while (sampling.get()) {
                     managedMax = maxOf(managedMax, Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory())
                     nativeMax = maxOf(nativeMax, Debug.getNativeHeapAllocatedSize())
                     try { Thread.sleep(100) } catch (_: InterruptedException) { break }
                 }
-            }, "gpu-probe-memory").apply { start() }
+            }, "gpu-probe-memory").apply { start() } else null
             try {
                 environment("start")
                 when (mode) {
@@ -76,8 +84,8 @@ class GpuDiagnosticService : Service() {
             catch (failure: Throwable) { log("失敗 mode=$mode type=${failure.javaClass.simpleName}") }
             finally {
                 environment("end")
-                sampling.set(false); sampler.interrupt(); sampler.join()
-                log("観測最大 managedBytes=$managedMax nativeBytes=$nativeMax intervalMs=100 PSSは別計測")
+                sampling.set(false); sampler?.interrupt(); sampler?.join()
+                if (observeMemory) log("観測最大 managedBytes=$managedMax nativeBytes=$nativeMax intervalMs=100 PSSは別計測")
                 worker = null; stopForeground(STOP_FOREGROUND_REMOVE); stopSelfResult(startId)
             }
         }, "gpu-probe-owner")
@@ -107,9 +115,13 @@ class GpuDiagnosticService : Service() {
             val faces = FaceMask(width,height,FloatArray(width*height))
             for (strength in listOf(.25,.5,1.0)) {
                 checkpoint()
+                fun cpuRun():Pair<LinearSrgbImage,Long> {
                 val beforeCpu = System.nanoTime()
                 val cpu = StageClearLook.renderFromBase(base,faces,strength).image
                 val cpuNs = System.nanoTime()-beforeCpu
+                    return cpu to cpuNs
+                }
+                fun gpuRun():Pair<LinearSrgbImage,Long> {
                 val beforeGpu = System.nanoTime()
                 val glow = GpuDiagnosticGlow.render(base,strength,skin)
                 val blurNs=GpuProbeImages.lastWallNs.get() ?: 0L
@@ -122,6 +134,10 @@ class GpuDiagnosticService : Service() {
                 }.image
                 val gpuNs = System.nanoTime()-beforeGpu
                 log("対象GPU2工程 blurNs=$blurNs ortonNs=$ortonNs sumNs=${blurNs+ortonNs} ortonCpuPreparationNs=$ortonPreparationNs EGL初期化と転送同期readback込み")
+                    return gpu to gpuNs
+                }
+                val records=if(reverse){val g=gpuRun();cpuRun() to g}else{val c=cpuRun();c to gpuRun()}
+                val (cpu,cpuNs)=records.first;val (gpu,gpuNs)=records.second
                 var max = 0; var changed = 0; var flatEdges = 0
                 for (p in 0 until cpu.pixelCount) {
                     var delta = 0
@@ -129,7 +145,7 @@ class GpuDiagnosticService : Service() {
                     max = maxOf(max,delta); if(delta>0) changed++
                     if (dark && p%width>0 && quantize(cpu[p*3])!=quantize(cpu[(p-1)*3]) && quantize(gpu[p*3])==quantize(gpu[(p-1)*3])) flatEdges++
                 }
-                log("全Look width=$width dark=$dark strength=$strength cpuNs=$cpuNs gpuNs=$gpuNs max8=$max changed=$changed pixels=${cpu.pixelCount} newFlatEdges=$flatEdges")
+                log("全Look reverse=$reverse width=$width dark=$dark strength=$strength cpuNs=$cpuNs gpuNs=$gpuNs max8=$max changed=$changed pixels=${cpu.pixelCount} newFlatEdges=$flatEdges")
                 check(max<=2) { "プレビュー許容差を超えました" }
             }
         }
@@ -138,11 +154,13 @@ class GpuDiagnosticService : Service() {
         val width=4000; val height=3000
         val source:(Int,Int)->FloatArray={top,rows->FloatArray(width*rows*4){i->if(i%4==3)1f else sample((i/4)%width,top+(i/4)/width,width,height,i%4,false)}}
         var cpuChecksum=0.0;var gpuChecksum=0.0
-        val cpuNs=CpuBlurProbe.run(width,height,StageClearGlowV1.BLOOM_KERNELS.first().first,source=source,
+        fun cpuRun()=CpuBlurProbe.run(width,height,StageClearGlowV1.BLOOM_KERNELS.first().first,source=source,
             consume={_,frame->for(i in frame.rgba.indices step 4)cpuChecksum+=frame.rgba[i]},cancelled={stop.get()})
-        val result=GpuBlurProbe.run(width,height,StageClearGlowV1.BLOOM_KERNELS.first().first,source=source,
+        fun gpuRun()=GpuBlurProbe.run(width,height,StageClearGlowV1.BLOOM_KERNELS.first().first,source=source,
             consume={_,frame->for(i in frame.rgba.indices step 4)gpuChecksum+=frame.rgba[i]},cancelled={stop.get()})
-        log("12MPぼかし単体 cpuNs=$cpuNs gpuNs=${result.elapsedNs} uploadNs=${result.uploadNs} drawNs=${result.drawNs} readbackNs=${result.readbackNs} passBytes=${result.largestPassBytes} renderer=${result.renderer} finite=${cpuChecksum.isFinite()&&gpuChecksum.isFinite()} 順序CPU→GPU・全保存経路ではない")
+        val records=if(reverse){val g=gpuRun();cpuRun() to g}else{val c=cpuRun();c to gpuRun()}
+        val cpuNs=records.first;val result=records.second
+        log("12MPぼかし単体 cpuNs=$cpuNs gpuNs=${result.elapsedNs} uploadNs=${result.uploadNs} drawNs=${result.drawNs} readbackNs=${result.readbackNs} passBytes=${result.largestPassBytes} renderer=${result.renderer} finite=${cpuChecksum.isFinite()&&gpuChecksum.isFinite()} reverse=$reverse・全保存経路ではない")
     }
     /** 12MP負荷・一定色の品質試験。全Look/JPEGではない。文脈生成は各256行に含む。 */
     private fun runOrton12() {
@@ -156,20 +174,27 @@ class GpuDiagnosticService : Service() {
             val soft=LinearSrgbImage(width,rows,FloatArray(width*rows*3){
                 val inverse=1f-StageClearColor.linearToUnit(source[it%3]);1f-inverse*inverse
             })
-            val started=System.nanoTime()
-            val gpu=GpuDiagnosticOrton.prepared(image,soft,skin,.5,64){stop.get()}.output
-            totalNs+=System.nanoTime()-started;contexts++
-            // 一定色なので全画像ぼかしと帯内ぼかしが一致する。CPU比較はGPU時間の外。
-            val cpuStarted=System.nanoTime()
-            val cpu=CpuOrtonPrepared.render(image,soft,skin,.5)
-            cpuTotalNs+=System.nanoTime()-cpuStarted
+            fun gpuRun():LinearSrgbImage {
+                val started=System.nanoTime()
+                val gpu=GpuDiagnosticOrton.prepared(image,soft,skin,.5,64){stop.get()}.output
+                totalNs+=System.nanoTime()-started;contexts++
+                return gpu
+            }
+            fun cpuRun():LinearSrgbImage {
+                val started=System.nanoTime()
+                val cpu=CpuOrtonPrepared.render(image,soft,skin,.5)
+                cpuTotalNs+=System.nanoTime()-started
+                return cpu
+            }
+            val records=if(reverse){val g=gpuRun();cpuRun() to g}else{val c=cpuRun();c to gpuRun()}
+            val cpu=records.first;val gpu=records.second
             for(p in 0 until image.pixelCount){
                 var delta=0;repeat(3){c->delta=maxOf(delta,abs(quantize(cpu[p*3+c])-quantize(gpu[p*3+c])))}
                 max=maxOf(max,delta);if(delta>0)changed++
             }
             check(max<=1){"Orton単体の保存候補許容差を超えました"}
         }
-        log("12MPOrton単体 gpuNs=$totalNs cpuPreparedNs=$cpuTotalNs contexts=$contexts max8=$max changed=$changed pixels=${width*height} 一定色・全保存経路ではない")
+        log("12MPOrton単体 reverse=$reverse gpuNs=$totalNs cpuPreparedNs=$cpuTotalNs contexts=$contexts max8=$max changed=$changed pixels=${width*height} 一定色・全保存経路ではない")
     }
     private fun quantize(value:Float):Int {
         val v=value.coerceIn(0f,1f).toDouble()
