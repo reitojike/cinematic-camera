@@ -1,18 +1,19 @@
-# Preview stage boundary timing
+# プレビューの工程境界の計測
 
-Status: Draft
-Issue: #223
+状態: 実装・マージ済み（実機での計測は未確認）
+実装Issue: #223 / PR: #224
+文書の日本語化: #226
 
-## US1: Identify the next preview bottleneck
-When explicitly enabled, distinguish exact 1024px and draft 256px session work. Record admission, source verification, input loading, foundation (warmth/exposure/R7), Glow preparation, skin expansion, Glow, Mist decision/composition, Orton, Character, protections, Bitmap and cleanup. Only boundary timers change; pixel arithmetic, allocation ownership and cancellation boundaries remain unchanged.
+## US1: 次に改善するプレビューの工程を特定する
+明示的に計測を有効にした場合だけ、1024pxの正確表示と256pxの粗表示を区別する。実行許可の確認、原本照合、入力取得、土台（色温度・露出・R7）、Glowの準備、肌保護範囲の展開、Glow、Mistの判定と合成、Orton、Character、保護処理、Bitmap化、後片付けを記録する。変更は工程境界のタイマーに限り、画素の演算、メモリの所有関係、取消の確認箇所を変えない。
 
-## Acceptance criteria
-- Disabled by default; no save-path instrumentation.
-- Timing on/off preserves every synthetic output float bit and decision. Existing golden files stay unchanged.
-- Exclusive intervals sum to total session time, including repeated face-cut passes.
-- Failed/cancelled work and cleanup failures must not be reported as success. Optional log sink exceptions do not replace rendering results.
-- Log only exact/draft kind, sequence, outcome and elapsed times; no photos, URI, edit values or personal identifiers.
-- RawPreviewTiming measures session computation, not physical input-to-display latency. Existing PreviewTiming remains request/UI timing. Before-comparison Bitmap generation is outside this session interval.
+## 完了条件
+- 計測は既定で無効とし、保存経路には接続しない。
+- 合成データでは、計測の有無による出力の浮動小数点ビット列と判定値を完全一致させる。既存のgoldenは変更しない。
+- 重複しない各区間の合計をセッション全体の時間と一致させる。顔ガードによる再処理は、同じ工程の時間へ加算する。
+- 失敗・取消・後片付けの失敗を成功として記録しない。任意の診断出力の失敗で、描画結果を変えない。
+- ログに含めるのは正確表示/粗表示の区分、連番、結果、経過時間のみ。写真、URI、編集値、個人識別子を含めない。
+- RawPreviewTimingはセッションの計算時間を測り、操作から実表示までの遅延とは区別する。既存のPreviewTimingは要求/UI側の時間を扱う。比較用の処理前Bitmapの生成は、このセッション区間に含めない。
 
-## Out of scope / stop condition
-No pixel loops, approximation, blur, worker defaults, save output, UI behavior or golden changes. No device or personal-photo testing. Stop if output or algorithm changes become necessary.
+## 対象外と停止条件
+画素ループ、近似、ぼかし、並列数の既定値、保存出力、UI挙動、goldenは変更しない。実機や個人の写真を使って検証しない。出力またはアルゴリズムの変更が必要になった場合は停止する。
