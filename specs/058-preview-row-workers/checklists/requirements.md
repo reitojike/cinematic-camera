@@ -1,5 +1,5 @@
-# Specification Quality Checklist
-- [x] Scope and exclusions are bounded.
-- [x] Scenarios and measurable criteria cover behavior and failure.
-- [x] No open clarification; synthetic-only/default-unchanged constraints are explicit.
-- [x] Dependencies and stopping conditions are explicit.
+# 仕様の品質確認
+- [x] 対象範囲と対象外が明確である。
+- [x] シナリオと測定可能な条件が通常動作と失敗時を含む。
+- [x] 未決の確認事項がなく、合成データ限定・既定維持が明記されている。
+- [x] 依存関係と停止条件が明確である。

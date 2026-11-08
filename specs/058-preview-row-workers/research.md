@@ -1,4 +1,12 @@
-# Research
-Decision: share existing pixel formulas through optional internal execution context, rather than duplicate kernels in new files. Rationale: no drift and small review surface; saved row raster has different I/O and cannot directly serve preview. Alternatives: copying whole kernels increases complexity; reusing saved scratch raster adds file I/O; neither selected.
-Decision: JDK bounded executor, private scratch and disjoint ranges. Reference: https://developer.android.com/reference/java/util/concurrent/ExecutorService . No new dependency.
-Existing history: #170/#180/#183/#198 apply to original row processing, not array preview. PreparedGlow already retains strength-independent fields; no repeated investigation there.
+# 設計判断
+## 既存の演算式を共有する
+判断: 新しいファイルに演算を複製せず、内部の任意実行contextを通じて既存の画素計算を共有する。
+理由: 処理のずれを防ぎ、レビュー範囲を小さくできる。保存の行処理はI/Oが異なるため、プレビューには直接利用できない。
+比較した案: 全kernelの複製は複雑性を増やし、保存用rasterの利用はファイルI/Oを増やすため採用しない。
+
+## 有界executor
+判断: JDKの有界executor、worker専用の一時配列、重複しない出力範囲を使う。新しい依存は追加しない。
+公式資料: https://developer.android.com/reference/java/util/concurrent/ExecutorService
+
+## 既存の試行との関係
+#170・#180・#183・#198は原寸の行処理を対象としており、配列を使うプレビューとは別経路である。PreparedGlowは強度に依存しない結果を既に保持しているため、そこは再検証しない。

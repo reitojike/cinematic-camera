@@ -1,7 +1,7 @@
-# Tasks
-- [x] T001 Audit current preview and tried-candidate history (FR1).
-- [x] T002 Specify scoped worker candidate and unchanged-default boundaries (FR2-FR6).
-- [x] T003 Add bounded worker execution and safe cleanup tests (FR4).
-- [x] T004 Reuse Foundation/Orton/Character formulas with optional context (FR2-FR3).
-- [x] T005 Verify synthetic bit equality and host reference timings (SC1-SC3).
-- [ ] T006 Required checks, converge, Draft PR and reviews; no product connection (FR6).
+# タスク
+- [x] T001 現行プレビュー経路と試行済み候補の一覧を確認する（FR1）。
+- [x] T002 寿命を限定する候補と、既定動作を維持する境界を定義する（FR2-FR6）。
+- [x] T003 有界workerと安全な後片付けのテストを追加する（FR4）。
+- [x] T004 Foundation・Orton・Characterの演算式を任意contextから再利用する（FR2-FR3）。
+- [x] T005 合成データのビット一致とPC参考時間を確認する（SC1-SC3）。
+- [ ] T006 必須チェック、収束確認、Draft PRとレビューを完了する。製品には接続しない（FR6）。

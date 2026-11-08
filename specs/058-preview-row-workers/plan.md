@@ -1,9 +1,13 @@
-# Implementation Plan
-Issue #222 / spec 058. Kotlin/JVM, existing Android minSdk33; no dependencies.
-Use java.util.concurrent bounded executor as an explicitly constructed, scoped execution context. Each invocation partitions independent pixels into at most two ranges. Worker-local scratch avoids shared mutation; output ranges do not overlap. Existing entry calls pass no execution context and retain serial behavior. Orton's global blur is unchanged. Character's full-image coordinates remain intact. Foundation's formula is unchanged. No saved implementation changes.
+# 実装計画
+Issue #222 / spec 058。Kotlin/JVM、既存のAndroid minSdk33を使用し、新しい依存は追加しない。
 
-Constitution check: standard concurrency APIs, synthetic data only, unchanged golden/product/default/save, no personal material. Spec/Issue first. No timing-worker file overlap. Stop on mismatch.
+java.util.concurrentの有界executorを、明示的に構築して寿命を限定する実行contextとして使う。呼出しごとに独立画素を最大2範囲へ分ける。一時配列はworkerごとに持ち、出力の書込み範囲は重ねない。既存の呼出しはcontextを渡さず、直列動作を維持する。Ortonの全体ぼかし、Characterの全体画像座標、Foundationの計算式は変えない。保存専用実装は変更しない。
 
-Memory: no additional full-frame result arrays versus existing algorithms; two worker scratch buffers instead of one, at most two futures, plus two JVM thread stacks. Executor is closed after the candidate operation. Whole-image intermediates remain, so this is not a 24MP memory solution.
+## 基本方針の確認
+標準の並列APIを使い、合成データだけで確認する。golden・製品既定・保存出力を変えず、個人素材を扱わない。Issueとspecを先に作成し、計測担当のファイルと重複させない。不一致が出たら停止する。
 
-Validation: raw-bit baseline equivalence; dimensions/strength/skin/HDR boundaries; worker cancellation/failure/join/retry; host1024 repeated measurements; full required Gradle checks; independent and canonical review. Device speed/adoption explicitly unverified.
+## メモリ
+既存処理に比べて全画面の結果配列は増やさない。一時配列が1worker分から2worker分になり、最大2個のfutureと2スレッド分のstackが加わる。候補の処理終了時にexecutorを閉じる。全画面の中間画像は引き続き存在するため、24MPのメモリ問題を解決する案ではない。
+
+## 検証
+raw-bit一致、寸法・強度・肌・HDRの境界条件、取消・失敗・終了待ち・再試行を確認する。PC上の1024px反復計測、必須Gradleチェック、独立レビュー、canonicalレビューを行う。実機の速度と採否は未確認として残す。

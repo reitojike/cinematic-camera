@@ -1,30 +1,30 @@
-# Feature Specification: Exact preview worker candidate
+# 機能仕様: 正確なプレビューの並列実行候補
 
-**Feature Branch**: `perf/issue222-preview-workers`
-**Created**: 2026-11-08
-**Status**: Draft
-**Input**: Issue #222; examine saved-path parallelism for 1024px preview without changing output.
+**作業ブランチ**: `perf/issue222-preview-workers`
+**作成日**: 2026-11-08
+**状態**: Draft
+**入力**: Issue #222。保存で採用した並列化を、出力を変えず1024pxプレビューに利用できるか検証する。
 
-## User Scenarios & Testing
-### P1: Evaluate faster exact preview
-The developer can compare the existing one-worker stages with a two-worker candidate using synthetic images only. Every output float must match bit-for-bit. Ordinary previews and saved images retain their current behavior.
-### P1: Stop safely
-Cancellation or a worker failure terminates all workers before returning. A later attempt can succeed without stale workers or partial published output.
-### Edge cases
-Odd dimensions, one-row images, zero/full strength, dark gradients, HDR values, nonzero skin weights, cancellation and worker failures.
+## 利用シナリオと検証
+### P1: 正確なプレビューの高速化候補を比較する
+開発者は合成画像だけで、既存の1並列処理と2並列候補を比較できる。全出力の浮動小数点のビットが一致すること。通常のプレビューと保存の動作は変えない。
+### P1: 安全に中断する
+取消またはworkerの失敗時は、すべてのworkerが終了してから戻る。次の試行が成功し、前のworkerや部分的な出力が残らないこと。
+### 境界条件
+奇数寸法、1行画像、強度0と最大値、暗部グラデーション、HDR値、肌保護の重み、取消、workerの失敗を確認する。
 
-## Requirements
-- FR1: Establish whether saved Foundation, Orton and Character workers reach 1024px preview.
-- FR2: Provide only an explicitly requested 1/2-worker candidate; preserve default calls and arithmetic order.
-- FR3: Retain whole-image blur/global decisions; split only independent pixel ranges with private scratch.
-- FR4: Bound worker lifetime and memory; discard failed results and join all tasks.
-- FR5: Synthetic raw-bit agreement, no golden edits, real device or personal images.
-- FR6: No saved-path change, product connection, UI change or adoption claim.
+## 要求
+- FR1: 保存のFoundation・Orton・Character並列化が1024pxプレビューで使われているか確認する。
+- FR2: 明示的に指定した場合だけ1/2並列候補を利用できるようにし、既定の呼出しと演算順序を維持する。
+- FR3: 全体のぼかしと判定を維持し、独立した画素範囲だけを分割する。一時配列はworkerごとに持つ。
+- FR4: workerの寿命とメモリを制限する。失敗した結果を返さず、全workerの終了を待つ。
+- FR5: 合成データでraw-bit一致を確認する。goldenを変更せず、実機や個人写真を使わない。
+- FR6: 保存経路、製品への接続、UIを変更せず、製品採用を判断しない。
 
-## Success Criteria
-SC1: All synthetic outputs equal the unchanged baseline at every channel bit.
-SC2: Cancellation/failure tests leave no live candidate workers or returned partial image.
-SC3: Repeatable 1024px reference measurements and device limitations are recorded in Issue #222.
+## 完了条件
+SC1: 合成出力の全チャンネルのビットが既存の基準処理と一致する。
+SC2: 取消・失敗後に動作中のworkerや返却された部分画像が残らない。
+SC3: 1024pxの再現可能な参考計測と実機未確認の制約をIssue #222に記録する。
 
-## Assumptions and Limits
-Host timings are selection evidence only. Device adoption remains separate. The timing worker owns PreviewSession, PreparedGlow and StageClearLook. Stop on output mismatch or substantial complexity growth. One PR, at most two.
+## 前提と制約
+PCの時間は候補選別の参考に限り、実機での採否は別途判断する。計測担当のPreviewSession・PreparedGlow・StageClearLookと編集範囲を分ける。出力不一致または複雑性が大きく増える場合は停止する。原則1 PR、最大2 PRとする。

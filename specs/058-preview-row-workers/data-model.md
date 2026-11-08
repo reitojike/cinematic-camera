@@ -1,2 +1,2 @@
-# Data model
-PreviewPixelExecution: one or two workers, cancellation predicate, scoped lifetime. Ranges own scratch and disjoint output indices. A failed/cancelled invocation never returns its partial image. Closed execution cannot submit new work. No stored user data or public API.
+# データモデル
+PreviewPixelExecutionは1または2worker、取消判定、限定した寿命を持つ。各範囲は専用の一時配列と重複しない出力位置を持つ。失敗・取消時は部分画像を返さない。閉じたcontextは新しい仕事を受け付けない。利用者データの保存や公開APIは追加しない。
