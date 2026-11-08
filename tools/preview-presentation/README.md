@@ -47,3 +47,57 @@ Trace内のIDや入力注入の名前は診断用契約であり、実機での�
 trace開始前の残留世代やtrace停止後の再描画から結果を補完しない。
 注入が遅れた場合に同じミリ秒のMOVEが複数生じることがあるため、eventTimeとactionで
 一意対応できない入力は未判定として残す。注入API呼出し区間の長さや予定時刻への遅れも記録する。
+
+## オフライン相関器（合成試験のみ検証済み）
+
+Python 3.11以降の標準ライブラリだけを使用する。端末操作・trace収集・自動downloadは行わない。
+既に収集した同一traceファイルを、利用者が用意した公式Trace Processor **v57.2**で解析する。
+
+- `all_markers.sql`は未完了sliceも含む全診断markerと、drawのancestor doFrameを出す。
+  SF候補がない世代も混在検査から除かない。
+- `correlate.py`が両SQLを同じtraceへ適用し、読取前後のSHA-256が変わった場合は停止する。
+  CLIは `trace_processor query <trace> <SQL>` のCSV出力を読み、外部Python依存は不要。
+  process名の一致ではなく、明示したapp/injectorのupidを使用する。
+- eventTime/actionの双方で一意なinject/inputだけを結び、request/adoptは世代ごとに各１個必要。
+  時刻の近さ・行順・予定時刻による補完はしない。入力API終了前にinputが届くことは許容する。
+- 最初のdrawフレームだけを使う。同一doFrameの異なる世代、欠落、重複、時系列不整合、
+  SQL側でdrop/Unknown等によりUNRESOLVEDになった候補は未判定にする。
+  最初のフレームが不明な場合、後続の正常な再描画で救済しない。
+- 同一世代の再描画は重複計上しない。DRAFT/EXACTは別の世代として保持し、速い方を選ばない。
+- JSONには全注入、観測input、request/adopt/drawの世代の和集合を残す。入力未観測・要求なしも消さない。
+  `LINKED`は入力間の対応候補で、世代の表示成立や注入APIの成功を表すものではない。
+- 世代の出力は `CORRELATED_CANDIDATE` または理由付き `UNRESOLVED`。
+  全体は常に `CANDIDATE_ONLY`。候補の `latency_ns` はSF提示時刻からinject marker開始を引いた整数ns。
+  `input_latency_ns` はinput marker開始からの別指標。50ms合否、成功率、percentileは出さない。
+
+### 実行例
+
+まずtrace内のprocessのupidと画像windowのlayerを確認する。以下の20/10は説明用で実測値ではない。
+同一process内instrumentationならapp/injectorのupidを同じ値にする。
+layerにはtraceで確認した正確な名前を指定し、同時に複数のアプリ画面や注入元を測らない。
+
+```text
+python -B tools/preview-presentation/correlate.py --trace captured.perfetto-trace --trace-processor /path/to/trace_processor --app-upid 20 --injector-upid 10 --layer "exact image window layer"
+python -B -m unittest discover -s tools/preview-presentation -p "test_*.py" -v
+```
+
+Windowsでも引数は同じ。Trace Processorの実行ファイルとtraceのパスをその環境に合わせる。
+JSONが必要なら標準出力をローカルファイルへ保存する。trace・出力・端末情報はGitへ追加しない。
+このdirectoryの `.private/` はGit対象外。traceのhashとlayerを含む出力も公開前に確認する。
+形式不正、想定外のprocess、別のTP version、解析中のtrace変更はJSON候補を出さず終了code 2。
+UNRESOLVEDがある通常の集計は終了code 0だが、計測の合格ではない。
+
+### 検証境界
+
+合成unitはSQL出力を模した行を使う。drop/UnknownのfixtureはSQLのUNRESOLVED出力を模しており、
+実際のFrameTimeline parserやSQL述語を検証したものではない。CLI接続もsubprocess mockによる試験で、
+**両SQLの実行、公式binaryとの実接続、実traceとの照合は未実施**。
+
+今後、収集設定・trace欠落検出・公式SQLの列/NULL・token/layer対応を収集済み実traceで検証する必要がある。
+画面の被覆、背景状態、複数window、実際の画像内容、run境界、注入APIの戻り値も、この相関器だけでは証明しない。
+収集開始前の残留世代を補完せず、同一trace内でもrun境界を跨がないことをfixture側で確認する。
+単独で完全な「実表示50ms試験」にはならず、従来の処理時間/採用時間の意味も変更しない。
+
+CLI仕様の参照:
+- https://github.com/google/perfetto/blob/v57.2/src/trace_processor/shell/query_subcommand.cc
+- https://github.com/google/perfetto/blob/v57.2/src/trace_processor/shell/query.cc
