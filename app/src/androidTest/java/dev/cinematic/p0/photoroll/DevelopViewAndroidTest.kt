@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Rect
 import android.os.SystemClock
+import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.safeDrawingPadding
@@ -151,6 +152,21 @@ class DevelopViewAndroidTest {
             val rulerBounds = Rect().also { awaitNode("RESET").getBoundsInScreen(it) }
             val keyBounds = Rect().also { keyNode("STRENGTH").getBoundsInScreen(it) }
             assertTrue("ruler precedes the key row", rulerBounds.bottom <= keyBounds.top)
+            // The ruler's non-actionable heading must not long-press the photo behind it.
+            val panelBounds = Rect().also { awaitNode("現像調整パネル").getBoundsInScreen(it) }
+            val downTime = SystemClock.uptimeMillis()
+            fun touch(action: Int) {
+                val event = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action,
+                    panelBounds.exactCenterX(), rulerBounds.exactCenterY(), 0)
+                try { assertTrue(diagnostic.automation.injectInputEvent(event, true)) } finally { event.recycle() }
+            }
+            touch(MotionEvent.ACTION_DOWN)
+            try {
+                SystemClock.sleep(700)
+                instrumentation.waitForIdleSync()
+                assertNotNull(awaitNode("現像結果（表示用）"))
+                assertNull("ruler heading must not reveal the underlying RAW comparison", find("RAW基準表示（合成）"))
+            } finally { touch(MotionEvent.ACTION_UP) }
             fun lastAction(label: String): AccessibilityNodeInfo {
                 val matches = mutableListOf<AccessibilityNodeInfo>()
                 fun walk(node: AccessibilityNodeInfo?) {

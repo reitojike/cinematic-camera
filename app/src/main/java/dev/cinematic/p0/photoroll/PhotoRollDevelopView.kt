@@ -1,6 +1,8 @@
 package dev.cinematic.p0.photoroll
 
 import android.graphics.Bitmap
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -110,7 +112,8 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                 Column(Modifier.align(Alignment.TopCenter).fillMaxWidth().background(CaptureDesign.Ink.copy(alpha = .9f))) {
                     statusOverlay()
                 }
-                Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(CaptureDesign.Ink.copy(alpha = .9f))) {
+                Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(CaptureDesign.Ink.copy(alpha = .9f))
+                    .pointerInput(Unit) { detectTapGestures(onTap = {}) }) {
                     if (updating) Text(if (preview != null) "更新中 · 直前の表示です" else
                         if (phase == PhotoRollPhase.CHECKING) "原本を確認中…" else stage?.label ?: "DNGを処理中…",
                         Modifier.padding(8.dp).semantics { liveRegion = LiveRegionMode.Polite },
