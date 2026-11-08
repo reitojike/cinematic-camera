@@ -33,7 +33,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
-// Lazy visible cells only; at most two standard-provider thumbnail requests across screen recreation.
+// 可視セルだけ読み込み、画面再生成をまたいでもサムネイル取得は最大2件にする。
 private val thumbnailSlots = Semaphore(2)
 
 @Composable
@@ -73,7 +73,7 @@ private fun CameraRollThumbnail(item: PhotoRollItem, foreground: Boolean) {
     DisposableEffect(signal) { onDispose { signal.cancel() } }
     LaunchedEffect(signal) {
         if (!foreground || Build.VERSION.SDK_INT < 29) return@LaunchedEffect
-        bitmap = loadCameraRollThumbnail(resolver, Uri.parse(item.uri), signal)
+        bitmap = loadCameraRollThumbnail(resolver, Uri.parse(item.uri), item.kind, signal)
         finished = true
     }
     Box(Modifier.fillMaxWidth().aspectRatio(1f).background(CaptureDesign.Panel),
@@ -94,12 +94,15 @@ private fun CameraRollThumbnail(item: PhotoRollItem, foreground: Boolean) {
     }
 }
 
-private suspend fun loadCameraRollThumbnail(resolver: ContentResolver, uri: Uri, signal: CancellationSignal): Bitmap? =
+private suspend fun loadCameraRollThumbnail(resolver: ContentResolver, uri: Uri, kind: CameraRollKind, signal: CancellationSignal): Bitmap? =
     withContext(Dispatchers.IO) {
         thumbnailSlots.withPermit {
             try {
                 signal.throwIfCanceled()
-                if (Build.VERSION.SDK_INT >= 29) resolver.loadThumbnail(uri, Size(256, 256), signal) else null
+                val image = if (Build.VERSION.SDK_INT >= 29) resolver.loadThumbnail(uri, Size(256, 256), signal) else null
+                if (kind == CameraRollKind.DNG && image != null)
+                    correctRollDngThumbnail(image, signal) { resolver.openFileDescriptor(uri, "r", signal) }
+                else image
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { null }
             catch (_: OutOfMemoryError) { null }
