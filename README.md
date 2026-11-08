@@ -1,12 +1,12 @@
 # Cinematic Camera
 
 ライブパフォーマンスの静止画/動画を最優先に、風景・ポートレートでも映画的な色と構図を楽しむAndroidアプリを目指します。
-現在の実装はCameraX 1.6.2のRAW/manual基盤と、STILL/CINE・動画/音声の成立性を調べるP0.5 probeです。
+CameraX の撮影基盤に加え、カメラロール、手動DNG現像・編集・JPEG保存を実装しています。現在の契約と未採用の範囲は [Living Spec](specs/README.md) を参照してください。
 アプリ名・packageは仮称です。リポジトリは`reitojike/cinematic-camera`（公開前検査後に承認を得てpublic化）。
 
 [製品方針](specs/002-live-capture/spec.md)と[検証・開発計画](specs/002-live-capture/plan.md)を参照してください。
 P0 → P0.5ライブ技術検証 → P1 Stage Clear → P2写真/動画ルック統合 → P3非破壊crop/出力/共有/製品UIの順です。
-Stage Dramatic / Cinema T&O、custom編集やLUT入出力は後続です。ルック・編集UIはまだ実装していません。
+上記は初期の段階構成です。現行仕様・未確認範囲は [Living Spec](specs/README.md)、現在の改修計画と検証証拠は Issue / PR に置きます。
 
 ## Build
 
@@ -23,7 +23,9 @@ SDKをAndroid Studioで選ぶか、`ANDROID_HOME` / gitignore対象の`local.pro
 
 APK: `app/build/outputs/apk/debug/app-debug.apk`。P0の実機手順・採否判断は[docs/P0_REPORT.md](docs/P0_REPORT.md)を参照してください。
 
-## 実機での操作
+## P0 / P0.5 時点の操作・検証記録
+
+以下は初期検証時の操作と制約の記録です。現行画面の操作説明ではありません。API下限、露出操作、ロール・現像の対応などは [Living Spec](specs/README.md) を優先します。
 
 許可 → Camera ID選択 → STILLまたはCINEを選びます。STILLはJPEG / RAW / RAW+JPEG → AUTOまたはISO/露光時間(ms)をApply → Capture。
 CINEは実対応のquality/range/fps候補と音声を選んでRecord → Stop recording。音声ありのRecord時だけマイク権限を要求します。
