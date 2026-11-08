@@ -30,3 +30,5 @@
 - [設定の詳細](../039-settings-design/spec.md)、[診断の詳細](../040-diagnostics-design/spec.md)、[共通表示](../046-design-commonization/spec.md)、[最低対応](../050-minsdk33/spec.md)。
 - 実行手順は [MANAGED_DEVICES](../../docs/MANAGED_DEVICES.md)、[OPERATIONS](../../docs/OPERATIONS.md)、現行CIを参照する。
 - 画面の現行色・書体・寸法の実装は CaptureDesign を参照する。PNGの被写体・数値・ログは実機の状態の根拠にしない。
+
+- 統合診断には、合成1024pxのFoundation・Orton・Characterを独立に直列/2並列比較する明示入口を含む。raw-bit一致と時間を記録し、通常経路には接続しない。開くだけで実行せず、離脱時は取消し、worker終了までbusyを保持する。実写真の全プレビュー・操作遅延の検証とは区別する。専用テストも `previewParallelProbe=true` に限定する。

@@ -22,6 +22,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity android:name=".raw.PreviewParallelDiagnosticActivity" android:exported="false" />
         <activity android:name=".raw.GpuDiagnosticActivity" android:exported="false" />
         <activity android:name=".rawdiagnostic.RawDiagnosticActivity" android:exported="false" />
         <service android:name=".photoroll.ForegroundExportService" android:exported="false" android:foregroundServiceType="dataSync|mediaProcessing" />
