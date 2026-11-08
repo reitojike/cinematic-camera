@@ -42,6 +42,10 @@ class DevelopViewAndroidTest {
         val mode = mutableStateOf(PhotoRollPreviewMode.MANUAL_TRIAL)
         var saves = 0
         var retries = 0
+        fun root(): AccessibilityNodeInfo? {
+            diagnostic.automation.clearCache()
+            return diagnostic.fixtureRoot() ?: diagnostic.automation.rootInActiveWindow?.takeIf { it.packageName == context.packageName }
+        }
         fun find(description: String): AccessibilityNodeInfo? {
             fun walk(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
                 if (node == null) return null
@@ -49,7 +53,7 @@ class DevelopViewAndroidTest {
                 for (i in 0 until node.childCount) walk(node.getChild(i))?.let { return it }
                 return null
             }
-            return walk(diagnostic.fixtureRoot() ?: diagnostic.automation.rootInActiveWindow?.takeIf { it.packageName == context.packageName })
+            return walk(root())
         }
         fun actionNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo {
             var current = node
@@ -64,7 +68,7 @@ class DevelopViewAndroidTest {
                 for (i in 0 until node.childCount) if (visit(node.getChild(i))) return true
                 return false
             }
-            visit(diagnostic.fixtureRoot())
+            visit(root())
             SystemClock.sleep(180) // Let the accessibility scroll animation reach its viewport.
             instrumentation.waitForIdleSync()
         }
@@ -82,6 +86,12 @@ class DevelopViewAndroidTest {
                 SystemClock.sleep(50)
             } while (SystemClock.uptimeMillis() < deadline)
             diagnostic.failure(description)
+            fun record(node: AccessibilityNodeInfo?) {
+                if (node == null) return
+                android.util.Log.e("DevelopFixtureTree", "text=${node.text} desc=${node.contentDescription} visible=${node.isVisibleToUser} enabled=${node.isEnabled}")
+                for (i in 0 until node.childCount) record(node.getChild(i))
+            }
+            record(root())
             error("Missing $description (expected enabled=$enabled, observed=${find(description)?.let(::actionNode)?.isEnabled})")
         }
         fun capture(name: String) {
@@ -124,7 +134,7 @@ class DevelopViewAndroidTest {
                     for (i in 0 until node.childCount) walk(node.getChild(i))?.let { return it }
                     return null
                 }
-                return requireNotNull(walk(diagnostic.fixtureRoot())) { "Missing key $label" }
+                return requireNotNull(walk(root())) { "Missing key $label" }
             }
             // Compose exposes selected Button nodes as checked; Tab nodes use isSelected.
             fun keySelected(label: String): Boolean = keyNode(label).let { it.isSelected || (it.isCheckable && it.isChecked) }
@@ -135,7 +145,7 @@ class DevelopViewAndroidTest {
                     (0 until node.childCount).joinToString("") { dump(node.getChild(it), depth + 1) }
             }
             File(context.getExternalFilesDir(null), "design-accessibility.txt")
-                .writeText(dump(diagnostic.fixtureRoot()))
+                .writeText(dump(root()))
             assertTrue(keySelected("STRENGTH"))
             assertFalse(keySelected("色温度"))
             val rulerBounds = Rect().also { awaitNode("RESET").getBoundsInScreen(it) }
@@ -148,7 +158,7 @@ class DevelopViewAndroidTest {
                     if (node.text?.toString() == label) matches += actionNode(node)
                     for (i in 0 until node.childCount) walk(node.getChild(i))
                 }
-                walk(diagnostic.fixtureRoot())
+                walk(root())
                 return matches.last()
             }
             repeat(2) {

@@ -591,7 +591,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                 PhotoRollDevelopView(
                     name = listing.items.firstOrNull { it.uri == selectedUri }?.name ?: "DNG（名前未取得）",
                     mode = renderer.mode, state = trialEditor, readState = { trialEditor }, phase = selection.phase,
-                    statusOverlay = { ForegroundSaveNotice(jpegSave, foreground) },
+                    statusOverlay = { ForegroundSaveNotice(jpegSave, foreground, activeOnly = true) },
                     stage = renderStage, message = notice ?: if (draftShown) "操作中は最大256pxの近似表示です。離すと最大1024pxで再計算します" else selection.message, preview = preview, comparison = comparison,
                     comparisonLabel = comparisonLabel, foreground = foreground && !editSavePending, savePhase = saved?.phase, savePending = savePending || editSavePending,
                     saveEnabled = foreground && !editSavePending && trialEditor.session == null && selection.phase == PhotoRollPhase.DISPLAYED && !savePending && owner != null &&
@@ -640,6 +640,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                                 }
                             }
                     }) {
+                    ForegroundSaveNotice(jpegSave, foreground)
                     if (recipeRecoveryNeeded) TextButton(enabled = foreground && !editSavePending, onClick = {
                         recipeLoaded = false; recipeRecoveryNeeded = false; skipDurableRecipe = true
                         savedOriginalIdentity = null; savedProcessingContract = null

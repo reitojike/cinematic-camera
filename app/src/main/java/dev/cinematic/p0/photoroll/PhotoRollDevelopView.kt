@@ -55,7 +55,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
     save: () -> Unit, begin: () -> Unit, back: () -> Unit, retry: () -> Unit,
     change: (PhotoEditInputToken, PhotoEditParameter, Double) -> Unit, reset: (PhotoEditInputToken) -> Unit,
     apply: (PhotoEditInputToken) -> Unit, cancel: (PhotoEditInputToken) -> Unit, close: (PhotoEditInputToken) -> Unit,
-    modifier: Modifier = Modifier, statusOverlay: @Composable () -> Unit = {}, info: @Composable () -> Unit) {
+    modifier: Modifier = Modifier, statusOverlay: @Composable () -> Unit = {}, fillImageWidth: Boolean = false, info: @Composable () -> Unit) {
     var information by remember { mutableStateOf(false) }
     var parameter by remember { mutableStateOf(PhotoEditParameter.STRENGTH) }
     var comparing by remember(preview, comparison, foreground) { mutableStateOf(false) }
@@ -102,7 +102,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                 if (preview != null && phase != PhotoRollPhase.BLOCKED) PhotoRollComparisonImage(preview,
                     comparison.takeIf { compareEnabled }, foreground, "現像結果（表示用）", comparisonLabel,
                     Modifier.fillMaxSize(), comparing && compareEnabled, { comparing = it }, unapplied || updating,
-                    fillImageWidth = true)
+                    fillImageWidth = fillImageWidth, stableCaption = true)
                 else if (phase == PhotoRollPhase.BLOCKED) Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(message ?: "現像を開始・完了できません", color = CaptureDesign.Failed, style = CaptureDesign.Explanation)
                     TextButton(onClick = retry, enabled = foreground, shape = RectangleShape) { Text("原本を確認して再試行") }
@@ -176,6 +176,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
         }
     }
     if (information) AlertDialog(onDismissRequest = { information = false },
+        containerColor = CaptureDesign.Ink, titleContentColor = CaptureDesign.Text, textContentColor = CaptureDesign.Muted,
         title = { Text("原本情報と試験品質の注意") },
         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(name, style = CaptureDesign.Explanation)
