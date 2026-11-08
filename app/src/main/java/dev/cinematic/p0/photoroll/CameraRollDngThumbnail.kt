@@ -1,81 +1,55 @@
 package dev.cinematic.p0.photoroll
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.Matrix
-import android.media.ExifInterface
 import android.os.CancellationSignal
 import android.os.ParcelFileDescriptor
+import androidx.exifinterface.media.ExifInterface
 
-/** 元画像の画素を縮小してから向きを一度だけ適用する。providerの補正済みBitmapには使わない。 */
-internal fun decodeRollDngThumbnail(
-    signal: CancellationSignal,
-    openRead: () -> ParcelFileDescriptor?,
-): Bitmap? {
-    signal.throwIfCanceled()
-    val fileSize = openRead()?.use { it.statSize } ?: return null
-    if (fileSize !in 1..(64L * 1024 * 1024)) return null
-    signal.throwIfCanceled()
-    val orientation = openRead()?.use {
-        ExifInterface(it.fileDescriptor).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
-    } ?: return null
-    signal.throwIfCanceled()
-    // 補正不要のDNGはproviderのキャッシュをそのまま使う。
-    if (orientation !in 2..8) return null
-    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    openRead()?.use { BitmapFactory.decodeFileDescriptor(it.fileDescriptor, null, bounds); Unit } ?: return null
-    val sample = rollDngThumbnailSample(bounds.outWidth, bounds.outHeight, bounds.outMimeType) ?: return null
-    signal.throwIfCanceled()
-    var owned: Bitmap? = openRead()?.use {
-        BitmapFactory.decodeFileDescriptor(it.fileDescriptor, null, BitmapFactory.Options().apply {
-            inSampleSize = sample
-            inPreferredConfig = Bitmap.Config.ARGB_8888
-        })
-    } ?: return null
-    try {
-        signal.throwIfCanceled()
-        val decoded = requireNotNull(owned)
-        val edge = maxOf(decoded.width, decoded.height)
-        if (edge > 256) {
-            val smaller = Bitmap.createScaledBitmap(decoded, maxOf(1L, decoded.width.toLong() * 256 / edge).toInt(),
-                maxOf(1L, decoded.height.toLong() * 256 / edge).toInt(), true)
-            if (smaller !== decoded) decoded.recycle()
-            owned = smaller
-        }
-        val source = requireNotNull(owned)
-        val oriented = orientRollThumbnail(source, orientation)
-        if (oriented !== source) source.recycle()
-        owned = oriented
-        signal.throwIfCanceled()
-        return oriented.also { owned = null }
-    } finally { owned?.recycle() }
-}
+internal data class RollDngOrientation(val orientation: Int, val width: Int, val height: Int)
 
-/** BitmapFactoryはEXIFの向きを画素へ適用しないため、原本から読んだ画素にだけ使用する。 */
-internal fun orientRollThumbnail(source: Bitmap, orientation: Int): Bitmap {
-    val matrix = Matrix()
-    when (orientation) {
-        ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.setScale(-1f, 1f)
-        ExifInterface.ORIENTATION_ROTATE_180 -> matrix.setRotate(180f)
-        ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.setScale(1f, -1f)
-        ExifInterface.ORIENTATION_TRANSPOSE -> { matrix.setRotate(90f); matrix.postScale(-1f, 1f) }
-        ExifInterface.ORIENTATION_ROTATE_90 -> matrix.setRotate(90f)
-        ExifInterface.ORIENTATION_TRANSVERSE -> { matrix.setRotate(270f); matrix.postScale(-1f, 1f) }
-        ExifInterface.ORIENTATION_ROTATE_270 -> matrix.setRotate(270f)
-        else -> return source
+/** RAWは展開せず、既存provider画像へ追加回転してよい限定条件だけを読む。 */
+internal fun readRollDngOrientation(signal: CancellationSignal, openRead: () -> ParcelFileDescriptor?): RollDngOrientation? {
+    signal.throwIfCanceled()
+    return openRead()?.use {
+        if (it.statSize !in 1..(64L * 1024 * 1024)) return@use null
+        signal.throwIfCanceled()
+        val exif = ExifInterface(it.fileDescriptor)
+        signal.throwIfCanceled()
+        RollDngOrientation(exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, 0),
+            exif.getAttributeInt(ExifInterface.TAG_IMAGE_WIDTH, 0),
+            exif.getAttributeInt(ExifInterface.TAG_IMAGE_LENGTH, 0))
     }
-    return Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, false)
 }
 
+/** 元も返却像も横長の90/270度だけ。回転済み・元縦長・正方形・crop不一致は推測しない。 */
+internal fun rollThumbnailRotation(meta: RollDngOrientation?, width: Int, height: Int): Int {
+    if (meta == null || meta.orientation !in listOf(6, 8) ||
+        meta.width <= meta.height || meta.height <= 0 || width <= height || height <= 0) return 0
+    // 縮小時の端数2pxまで。明確な縦横比変更やcropは補正対象外。
+    val expectedHeight = width.toDouble() * meta.height / meta.width
+    if (width - height <= 4 || width - expectedHeight <= 4 ||
+        kotlin.math.abs(height - expectedHeight) > 2.0) return 0
+    return if (meta.orientation == 6) 90 else 270
+}
 
-
-
-
-/** RAWの内部作業領域を無制限に増やさない。JPEG previewはcodecが選んだ寸法を用いる。 */
-internal fun rollDngThumbnailSample(width: Int, height: Int, mime: String?): Int? {
-    if (width <= 0 || height <= 0) return null
-    if (mime != "image/jpeg" && width.toLong() * height > 16_000_000L) return null
-    var sample = 1
-    while (maxOf(width, height) / sample > 256) sample *= 2
-    return sample
+/** sourceの所有権を受け取り、成功時だけ返す。追加decodeなし、追加Bitmapは縮小像1枚のみ。 */
+internal fun correctRollDngThumbnail(source: Bitmap, signal: CancellationSignal,
+    openRead: () -> ParcelFileDescriptor?): Bitmap {
+    var owned: Bitmap? = source
+    try {
+        val meta = try { readRollDngOrientation(signal, openRead) }
+        catch (_: java.io.IOException) { signal.throwIfCanceled(); null }
+        catch (_: SecurityException) { signal.throwIfCanceled(); null }
+        val rotation = rollThumbnailRotation(meta, source.width, source.height)
+        signal.throwIfCanceled()
+        if (rotation != 0) {
+            val rotated = Bitmap.createBitmap(source, 0, 0, source.width, source.height,
+                Matrix().apply { setRotate(rotation.toFloat()) }, false)
+            if (rotated !== source) source.recycle()
+            owned = rotated
+        }
+        signal.throwIfCanceled()
+        return requireNotNull(owned).also { owned = null }
+    } finally { owned?.recycle() }
 }

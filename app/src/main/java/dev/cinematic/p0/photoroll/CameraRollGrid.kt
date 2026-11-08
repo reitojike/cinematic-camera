@@ -99,12 +99,10 @@ private suspend fun loadCameraRollThumbnail(resolver: ContentResolver, uri: Uri,
         thumbnailSlots.withPermit {
             try {
                 signal.throwIfCanceled()
-                if (kind == CameraRollKind.DNG) {
-                    decodeRollDngThumbnail(signal) { resolver.openFileDescriptor(uri, "r", signal) }
-                        ?.let { return@withPermit it }
-                }
-                signal.throwIfCanceled()
-                if (Build.VERSION.SDK_INT >= 29) resolver.loadThumbnail(uri, Size(256, 256), signal) else null
+                val image = if (Build.VERSION.SDK_INT >= 29) resolver.loadThumbnail(uri, Size(256, 256), signal) else null
+                if (kind == CameraRollKind.DNG && image != null)
+                    correctRollDngThumbnail(image, signal) { resolver.openFileDescriptor(uri, "r", signal) }
+                else image
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { null }
             catch (_: OutOfMemoryError) { null }

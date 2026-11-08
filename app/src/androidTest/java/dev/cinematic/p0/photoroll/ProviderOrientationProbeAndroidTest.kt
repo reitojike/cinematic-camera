@@ -38,6 +38,13 @@ class ProviderOrientationProbeAndroidTest {
                 image = resolver.loadThumbnail(uri, Size(256, 256), signal)
                 println("PROVIDER_ORIENTATION embedded=$embedded orientation=$observed width=${image.width} height=${image.height}")
                 assertTrue(image.width > 0 && image.height > 0)
+                val providerImage = image
+                image = correctRollDngThumbnail(providerImage, signal) { resolver.openFileDescriptor(uri, "r", signal) }
+                if (orientation in listOf(6, 8)) {
+                    assertTrue("最終表示は縦長", image.height > image.width)
+                    if (embedded) assertSame("回転済みproviderを二重回転しない", providerImage, image)
+                    else assertTrue("未回転像だけ置換", providerImage.isRecycled)
+                } else assertSame("180度は対象外", providerImage, image)
                 val after = resolver.openInputStream(uri)!!.use { it.readBytes() }
                 assertArrayEquals(MessageDigest.getInstance("SHA-256").digest(data), MessageDigest.getInstance("SHA-256").digest(after))
             } finally {
