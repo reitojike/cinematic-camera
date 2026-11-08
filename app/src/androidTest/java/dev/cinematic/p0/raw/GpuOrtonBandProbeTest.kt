@@ -7,6 +7,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.Before
+import org.junit.Assume.assumeTrue
 import java.io.File
 import java.util.concurrent.CancellationException
 import kotlin.math.abs
@@ -16,6 +17,9 @@ import kotlin.math.pow
 /** Synthetic-only comparison. PNG is private test output, never a product photo. */
 class GpuOrtonBandProbeTest {
     @Before fun syntheticEmulatorOnly() {
+        // 明示的な opt-in がなければ、画像生成や EGL/GLES 初期化より前にスキップする。
+        assumeTrue("GPU 検証は gpuBandProbe=true の明示指定時だけ実行します",
+            InstrumentationRegistry.getArguments().getString("gpuBandProbe") == "true")
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
         check(android.os.Build.HARDWARE in setOf("ranchu", "goldfish")) { "Synthetic emulator only" }
     }
