@@ -29,13 +29,22 @@ def verify(path: Path, diagnostic: bool) -> None:
     assert not root.findall("uses-feature")
     assert not any(app.findall(tag) for tag in ("provider", "receiver", "activity-alias"))
     activities = app.findall("activity")
-    assert len(activities) == 1
-    assert activities[0].get(A + "name") == "dev.cinematic.p0.raw.GpuDiagnosticActivity"
+    assert {n.get(A + "name") for n in activities} == {
+        "dev.cinematic.p0.raw.DiagnosticHubActivity",
+        "dev.cinematic.p0.raw.GpuDiagnosticActivity",
+        "dev.cinematic.p0.rawdiagnostic.RawDiagnosticActivity",
+        "dev.cinematic.p0.photoroll.PhotoRollActivity",
+    }
+    for activity in activities:
+        assert activity.get(A + "exported") == ("true" if activity.get(A + "name").endswith(".DiagnosticHubActivity") else "false")
     services = app.findall("service")
-    assert len(services) == 1
-    assert services[0].get(A + "name") == "dev.cinematic.p0.raw.GpuDiagnosticService"
-    assert services[0].get(A + "exported") == "false"
-    assert set(services[0].get(A + "foregroundServiceType").split("|")) == {"dataSync", "mediaProcessing"}
+    assert {n.get(A + "name") for n in services} == {
+        "dev.cinematic.p0.raw.GpuDiagnosticService",
+        "dev.cinematic.p0.photoroll.ForegroundExportService",
+    }
+    for service in services:
+        assert service.get(A + "exported") == "false"
+        assert set(service.get(A + "foregroundServiceType").split("|")) == {"dataSync", "mediaProcessing"}
 
 
 if __name__ == "__main__":

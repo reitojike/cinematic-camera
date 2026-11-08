@@ -56,7 +56,7 @@ android {
         }
     }
     buildTypes {
-        if (original24Probe) {
+    if (original24Probe) {
             create("original24Probe") {
                 initWith(getByName("debug"))
                 applicationIdSuffix = ".original24probe"
@@ -90,7 +90,7 @@ android {
     if (gpuDiagnostic) {
         if (providers.gradleProperty("cinematicGpuDiagnosticTests").orNull == "true") {
             testBuildType = "gpuDiagnostic"
-            sourceSets.getByName("androidTest").java.srcDir("src/gpuDiagnosticTest/java")
+            sourceSets.getByName("androidTest").kotlin.srcDir("src/gpuDiagnosticTest/java")
             sourceSets.getByName("androidTest").manifest.srcFile("src/gpuDiagnosticTest/AndroidManifest.xml")
         }
         buildTypes.create("gpuDiagnostic") {
@@ -104,6 +104,7 @@ android {
             matchingFallbacks += "release"
         }
     }
+    if (gpuDiagnostic) sourceSets.getByName("gpuDiagnostic").kotlin.srcDir("src/rawDiagnostic/java")
     if (original24Probe) {
         testBuildType = "original24Probe"
         sourceSets.getByName("androidTest").manifest.srcFile("src/original24ProbeTest/AndroidManifest.xml")

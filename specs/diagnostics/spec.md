@@ -23,7 +23,7 @@
 - 合成試験、エミュレーター、実機GPU、個人写真の比較は異なる証拠であり、代替しない。エミュレーター時間は実機の速度保証ではない。
 - [GPU 帯比較基盤](../051-gpu-band-probe/spec.md) は製品未採用。専用引数 gpuBandProbe=true の明示時だけ合成エミュレーター試験を実行し、通常 CI・合成 UI では起動しない。製品接続は #212 の実機 GPU と実写での再判定を条件とする。
 
-- [GPU合成診断](../../docs/GPU_DIAGNOSTIC.md) は製品未接続の独立 `gpuDiagnostic` アプリ。`cinematicGpuDiagnostic=true` の明示ビルドと画面からの明示起動だけで動く。合成専用で写真権限・製品Activity・製品保存サービスを持たない。専用instrumentationも `gpuPixelProbe=true` と `isolated=true` がなければGPUを初期化しない。
+- [GPU合成診断](../../docs/GPU_DIAGNOSTIC.md) は製品未接続の独立 `gpuDiagnostic` アプリ。`cinematicGpuDiagnostic=true` の明示ビルドと画面からの明示起動だけで動く。GPU部分は合成専用。統合入口には既存RAW保存比較とCPUプレビューを含むが、GPUを製品処理へ接続しない。写真一覧権限は持たず、CPU側の入力はFilesで明示的に選ぶ。専用instrumentationも `gpuPixelProbe=true` と `isolated=true` がなければGPUを初期化しない。
 - GPU合成診断の1024pxは全LookのCPU差、12MPはぼかし/Orton単体の負荷を測る。12MP単体や背景FGS試験の成功を、全保存出力・製品保存復旧の採用条件の達成に読み替えない。
 ## 詳細契約と手順
 

@@ -1,6 +1,6 @@
 # GPU 合成診断（製品未採用）
 
-この診断は #237 の実機判断材料を用意する独立アプリです。写真を読み込まず、合成データだけを生成します。撮影、現像、保存の製品入口には接続しません。CPU の golden は変更しません。
+この診断は #237 の実機判断材料を用意する独立アプリです。1つの入口から GPU 合成診断、既存の保存4候補比較、CPU プレビュー確認を選べます。GPU は合成データだけを使い、製品の描画・保存処理には接続しません。CPU の golden は変更しません。
 
 ## ビルドと通常試験からの隔離
 
@@ -10,13 +10,13 @@
 .\gradlew.bat :app:assembleGpuDiagnostic -PcinematicGpuDiagnostic=true --no-daemon
 ```
 
-applicationId は `dev.cinematic.p0.gpudiagnostic` です。既存の一時デバッグ署名を使い、署名鍵の新規作成や配布先の変更はしません。`profileable` な非 debuggable 版で、製品の起動Activity、保存サービス、写真・カメラ・音声権限を除外します。
+applicationId は `dev.cinematic.p0.gpudiagnostic` です。既存の一時デバッグ署名を使い、署名鍵の新規作成や配布先の変更はしません。`profileable` な非 debuggable 版で、撮影Activityと写真一覧・カメラ・音声の権限を除外します。CPUプレビューには既存PhotoRollActivityと保存サービスを含めますが、入力はFilesで明示的に選択する方式です。GPU側からそれらを呼び出しません。
 
 合成 instrumentation はさらに `cinematicGpuDiagnosticTests=true` を指定してコンパイルします。専用テストでも `gpuPixelProbe=true` がなければ EGL 初期化前にスキップします。`isolated=true` も必要です。実機を使用するときは、その回のユーザー許可と接続を確認してから行います。
 
 ## 入口と結果
 
-独立アプリの起動だけでは処理しません。ボタンを押したときだけ Foreground Service で次を実行します。
+独立アプリの起動だけでは処理しません。入口の「GPU合成診断」から、各実行ボタンを押したときだけ Foreground Service で次を実行します。保存比較とCPUプレビューは別の画面で、同時に負荷試験を動かさないでください。
 
 - 小型の正しさ確認: 257px の HDR・暗部合成入力、強度 0.25 / 0.5 / 1.0。
 - 1024px 全Look比較: CPU 経路と、Glow の最小半径 bloom だけの GPU ぼかし、および Orton GPU 合成を含む経路を比較。
@@ -39,7 +39,7 @@ applicationId は `dev.cinematic.p0.gpudiagnostic` です。既存の一時デ�
 
 API 35以降は `mediaProcessing`、API 33–34は `dataSync` の Foreground Service を使います。通知を出したあと専用スレッドで EGL の所有権を保持します。ホームへ戻る・画面消灯と、前面に残す場合を区別して記録します。
 
-「取り消す」は協調取消で、帯とGPU処理の区切りで観測します。終了時にGPU資源とメモリ採取スレッドを解放します。プロセス終了後に処理を自動再開しません。写真・一時JPEG・MediaStoreへの書き込みはありません。背景診断の成功は、製品保存の中断・復旧・撮影との両立の合格を意味しません。
+「取り消す」は協調取消で、帯とGPU処理の区切りで観測します。終了時にGPU資源とメモリ採取スレッドを解放します。プロセス終了後に処理を自動再開しません。GPU合成診断では写真・一時JPEG・MediaStoreへの書き込みはありません。CPUプレビューからの保存操作は従来の製品保存経路であり、GPU診断と区別します。背景診断の成功は、製品保存の中断・復旧・撮影との両立の合格を意味しません。
 
 ## 次の判断
 
