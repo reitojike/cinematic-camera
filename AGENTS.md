@@ -1,36 +1,29 @@
 # リポジトリの案内
 
-このファイルは現在の判断材料への入口です。仕様や運用規則はここへ複製せず、対応する文書を参照します。
-think-canvasの適用可能な方針を本プロジェクトへ合わせ、製品固有の規則や過去のIssueは移植しません。
+このファイルは現在の判断材料への入口です。仕様や手順を重複させず、対応する正本を更新します。
 
-- 開発タスクは原則Issue起点とします。既存Issueとの重複を確認し、目的/背景/範囲/対象外/AC/検証・停止条件を
-  Issueへ定め、branch/PRを関連付けます。着手後にIssueを整備した場合も時系列を偽りません。
-  変更目的と作業の完了境界は依頼内容とIssue/PRで確認します。古いbranchを現行要件の根拠にしません。
-- 要件の根拠は合意したP0ブリーフと[ライブ撮影の製品方針](specs/002-live-capture/spec.md)です。
-  [Constitution](.specify/memory/constitution.md)が原則を、[P0 spec](specs/001-p0-camera-probe/spec.md)が既存基盤の
-  振る舞い、planが設計、tasksがAC対応の完了状態を扱います。P0残件は[Issue #4](https://github.com/reitojike/cinematic-camera/issues/4)へ集約します。
-  Draft PR中の成果物は、mergeされるまで現行ブリーフやmainの契約を暗黙に置き換えません。
-- [Spec Kit導入・利用](docs/SPEC_KIT.md)を参照し、機能別にspecify → clarify（必要時）→ plan →
-  checklist（必要時）→ tasks → analyze → implement → convergeを進めます。標準の生成skillsを直接改変せず、
-  必要なカスタマイズはreview可能なpreset/overrideへ限定します。
-- Android標準API、Jetpack、lifecycle・権限の標準動作を優先します。標準から外れる理由・代案・範囲は
-  対応するspec/planへ記録します。CameraXは指定された安定版1.6.2を維持します。
-- [P0_REPORT](docs/P0_REPORT.md)が実機AC・停止条件・結果を、[BUILD_VALIDATION](docs/BUILD_VALIDATION.md)が
-  機械的検証の証拠を扱います。指定/受付/実測、保存/DNG有効性を区別し、実機証拠なしで合格にしません。
-- 日々の作業状況・確認のやり取りはIssue等で管理します。specは確定した仕様・受入条件、tasksはAC対応の完了状態、
-  P0_REPORTは最終検証結果・制約・採否根拠に限定し、時系列の進捗ログをリポジトリ内の文書へ積み上げません。
-- エミュレーター自動検証は[共通Gradle Managed Device](docs/MANAGED_DEVICES.md)を使い、タスク別の手動AVDを新規作成しません。
-- PR前は変更一覧と秘密除外を確認し、`./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug --no-daemon`
-  と`git diff --check`を変更に応じて実行します。Windowsでは`./gradlew`を`.\gradlew.bat`に置き換えます。
-  実際の[Android CI](.github/workflows/android.yml)を合否の根拠にし、未実行・環境失敗は明示します。
-- [branch/配布運用](docs/OPERATIONS.md)に従い、初回main初期化後は作業branchとDraft PRを使います。
-  最終headの必須CI、canonical `@codex review`、独立レビューの明示的OK、未解決会話0件をmergeの条件とします。
-  自己レビューを独立承認に数えず、merge許可がなければ停止します。APPROVE代行、admin merge、
-  チェック免除、保護回避は行いません。実際の設定状態は[REPOSITORY_STATUS](docs/REPOSITORY_STATUS.md)を確認します。
-- [公開前検査](docs/PUBLICATION_REVIEW.md)に従い、秘密・認証情報・署名秘密・個人情報・個人用絶対パス・
-  非公開サービス情報・会話ログ・写真実体をGit/ZIPへ入れません。サンプルには実ユーザー名や端末固有識別子を使いません。
-- 実機撮影、固定署名秘密の新規生成や継続利用設定、他projectの鍵の流用を無断で行いません。
-  AC3/4が非対応なら根拠を残し、独自回避やCamera2全面移行は勝手に進めません。
-- LibRaw/NDK、GPU/LUT、動画、SNS、21:9保存、バックエンド、製品UIはP0の対象外です。文書は原則日本語で書きます。
-- 後続の範囲・順序は[ライブ検証計画](specs/002-live-capture/plan.md)で確認します。Stage Clearを最優先とし、
-  原本保持・写真/動画の入力差を守ります。新計画の存在だけで未依頼の実装・素材撮影・公開・Releaseを開始しません。
+## 仕様と変更記録
+
+- 開発は原則 Issue 起点です。重複を確認し、目的・背景・範囲・対象外・完了条件・検証と停止条件を Issue に定め、作業 branch / PR を関連付けます。途中で Issue を作った場合は経緯を偽りません。
+- 現在の製品契約は [Living Spec](specs/README.md)、横断制約は [Constitution](.specify/memory/constitution.md) を正本とします。改修ごとに番号付き spec / plan / tasks 一式を積み上げず、既存の機能仕様を更新します。
+- 改修内容・計画・差分・実装タスク・進捗・検証証拠・レビューや採否の判断は Issue / PR に残します。長期的に必要な技術設計は docs、再実行する運用手順は docs の手順書に残します。
+- 番号付きの既存資料は移行中の参照資料です。集約済み範囲は Living Spec が優先し、未集約の詳細はそこから参照します。古い Draft / 承認待ち / tasks の状態を現在の進捗とみなしません。根拠を移す前に削除しません。
+- Draft PR の仕様は提案であり、マージまで main の契約を置き換えません。検証用・既定オフ・未採用の経路を製品採用済みとは書きません。
+- [Spec Kit の運用](docs/SPEC_KIT.md) に従い、必要な specify / clarify / plan / tasks / analyze / implement / converge を使います。成果物を作ること自体を目的にせず、生成物を自動的に現行仕様の正本にしません。標準生成 skills は直接改変しません。
+- 文書は原則日本語です。モック画像の寸法や例の数値を実測と扱いません。
+
+## 実装と検証
+
+- Android 標準 API、Jetpack、lifecycle・権限の標準実装を優先します。標準から外れる必要が実測された場合は理由・代案・範囲を技術設計に残します。CameraX 管理の CameraDevice / session を直接操作しません。合意した CameraX 1.6.2 の固定は、依存更新候補があるだけでは変更しません。
+- 要求・受付・センサー反映、保存完了・DNG妥当性を区別します。静的検証・合成試験・エミュレーターを実機の速度・画質・操作感の合格に読み替えません。未確認は未確認と明記します。
+- 原本保持・写真と動画の入力差・少数の完成したルックを重視し、Stage Clear を優先します。新しい案の存在だけで未依頼の実装・実機撮影・公開・Release を始めません。
+- 変更に応じて `./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug --no-daemon` と `git diff --check` を実行します。Windows は `.\gradlew.bat` を使います。必須検証の正本は [Android CI](.github/workflows/android.yml) であり、文書のみの変更でもサーバー側の必須 CI を免除しません。ローカル未実行・環境不成立は明記します。
+- 共有端末の利用は [MANAGED_DEVICES](docs/MANAGED_DEVICES.md) に従います。実機確認待ちだけで独立した限定作業を止めませんが、重大な欠陥・失敗・権限判断・範囲拡大では停止して報告します。
+
+## PR・公開・安全性
+
+- [OPERATIONS](docs/OPERATIONS.md) に従い、作業 branch と Draft PR を使います。最終 head の必須 CI、canonical `@codex review`、独立レビューの明示的 OK、未解決会話0件と、適用範囲のマージ許可が条件です。
+- 作者の自己レビューを独立承認に数えません。formal APPROVE の代行、admin merge、チェック免除、保護回避はしません。[REPOSITORY_STATUS](docs/REPOSITORY_STATUS.md) と実際の設定を確認します。
+- [PUBLICATION_REVIEW](docs/PUBLICATION_REVIEW.md) に従い、秘密・認証情報・署名秘密・個人情報・個人用絶対パス・非公開サービス先・会話ログ・写真本体を Git / ZIP に入れません。
+- 実機撮影、固定署名秘密の新規生成・継続利用設定、他プロジェクトの鍵の流用を無断で行いません。DNG原本は非破壊で扱います。
+- P0 の調査範囲・実測は [P0_REPORT](docs/P0_REPORT.md) と [Issue #4](https://github.com/reitojike/cinematic-camera/issues/4) の歴史的文脈です。当時の対象外一覧を後続で実装済みの RAW / NDK / UI 等の禁止へ読み替えません。
