@@ -27,7 +27,7 @@ import androidx.compose.ui.unit.dp
 
 /** Optional notification permission is separate from the save request and cannot restart it. */
 @Composable
-internal fun ForegroundSaveNotice(owner: PhotoRollJpegSaveOwner?, foreground: Boolean) {
+internal fun ForegroundSaveNotice(owner: PhotoRollJpegSaveOwner?, foreground: Boolean, activeOnly: Boolean = false) {
     if (Build.VERSION.SDK_INT < 29) return
     val epoch by ForegroundExports.changes.collectAsState()
     val active = remember(epoch) { ForegroundExports.gate.active() }
@@ -38,6 +38,7 @@ internal fun ForegroundSaveNotice(owner: PhotoRollJpegSaveOwner?, foreground: Bo
         Build.VERSION.SDK_INT < 33 || context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
     }
     if (owner?.supportsForegroundSave != true && active == null) return
+    if (activeOnly && active == null) return
     Column(Modifier.fillMaxWidth().heightIn(max = 144.dp).verticalScroll(rememberScrollState()).padding(8.dp)) {
         Text(when {
             active?.held == true -> "保存処理の終了を確認できないため停止中です。次の保存は開始しません。"

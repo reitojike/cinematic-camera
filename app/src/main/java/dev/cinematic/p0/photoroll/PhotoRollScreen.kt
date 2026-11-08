@@ -133,7 +133,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         savedExposureEv = next.requestedValues.brightness ?: 0.0
         if (changesRequest) {
             cancellationOwner.cancel()
-            preview = null; comparison = null; comparisonLabel = null
+            // Keep the same photo visible while its new exact result is pending.
             jpegSave = null; saveSnapshot = null; explicitRetry = false
             selection = selection.pause()
         }
@@ -314,9 +314,10 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
       lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
         draftAdmission.invalidate()
         draftShown = false
-        preview = null
-        comparison = null
-        comparisonLabel = null
+        if (!retainDevelopPreview(preview != null, selectedUri, selection.ticket?.source,
+                currentForeground)) {
+            preview = null; comparison = null; comparisonLabel = null
+        }
         jpegSave = null
         saveSnapshot = null
         savePending = false
@@ -482,7 +483,10 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                     pendingPreview = null
                     timing?.finish("STATE_ADOPTED")
                 }
-                is PhotoRollRenderResult.Unavailable -> selection = selection.finish(ticket, false, result.reason)
+                is PhotoRollRenderResult.Unavailable -> {
+                    preview = null; comparison = null; comparisonLabel = null
+                    selection = selection.finish(ticket, false, result.reason)
+                }
             }
         } catch (cancelled: CancellationException) { timing?.finish("CANCELLED"); throw cancelled }
         catch (failure: Exception) {
@@ -503,7 +507,10 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                 is SecurityException -> "原本の読み取り権限がありません。Filesから選び直してください"
                 else -> "原本を読み取れないか、現像できませんでした。Filesから選び直してください"
             }
-            selection = selection.finish(ticket, false, message)
+            if (selection.accepts(ticket) && trialEditor.accepts(strengthTicket)) {
+                preview = null; comparison = null; comparisonLabel = null
+                selection = selection.finish(ticket, false, message)
+            }
         } finally {
             timing?.finish(if (shouldStop()) "CANCELLED" else "NOT_ADOPTED")
             pendingPreview?.recycleDisplayPixels()
@@ -515,8 +522,8 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
     Surface(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().safeDrawingPadding()) {
             // Process save status survives selection/lifecycle reloads; cancel must not wait for preview IO.
-            ForegroundSaveNotice(jpegSave, foreground)
             if (selectedUri == null) {
+                ForegroundSaveNotice(jpegSave, foreground)
                 CameraRollBrowser(listing, access, kindFilter, folderKey, loading, viewerPending, notice, renderer.mode,
                     foreground && !viewerPending && !permissionPending,
                     foreground && !loading && !viewerPending && !permissionPending,
@@ -584,6 +591,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                 PhotoRollDevelopView(
                     name = listing.items.firstOrNull { it.uri == selectedUri }?.name ?: "DNG（名前未取得）",
                     mode = renderer.mode, state = trialEditor, readState = { trialEditor }, phase = selection.phase,
+                    statusOverlay = { ForegroundSaveNotice(jpegSave, foreground, activeOnly = true) },
                     stage = renderStage, message = notice ?: if (draftShown) "操作中は最大256pxの近似表示です。離すと最大1024pxで再計算します" else selection.message, preview = preview, comparison = comparison,
                     comparisonLabel = comparisonLabel, foreground = foreground && !editSavePending, savePhase = saved?.phase, savePending = savePending || editSavePending,
                     saveEnabled = foreground && !editSavePending && trialEditor.session == null && selection.phase == PhotoRollPhase.DISPLAYED && !savePending && owner != null &&
@@ -632,6 +640,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                                 }
                             }
                     }) {
+                    ForegroundSaveNotice(jpegSave, foreground)
                     if (recipeRecoveryNeeded) TextButton(enabled = foreground && !editSavePending, onClick = {
                         recipeLoaded = false; recipeRecoveryNeeded = false; skipDurableRecipe = true
                         savedOriginalIdentity = null; savedProcessingContract = null
