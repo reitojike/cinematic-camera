@@ -13,7 +13,7 @@ def verify(path: Path, diagnostic: bool) -> None:
     if not diagnostic:
         assert app.find("profileable") is None, path
         for node in app:
-            assert "GpuDiagnostic" not in node.get(A + "name", ""), path
+            assert not any(name in node.get(A + "name", "") for name in ("GpuDiagnostic", "DiagnosticHub", "PreviewParallelDiagnostic")), path
         return
     assert root.get("package") == "dev.cinematic.p0.gpudiagnostic"
     assert app.get(A + "debuggable", "false") == "false"
@@ -32,6 +32,7 @@ def verify(path: Path, diagnostic: bool) -> None:
     assert {n.get(A + "name") for n in activities} == {
         "dev.cinematic.p0.raw.DiagnosticHubActivity",
         "dev.cinematic.p0.raw.GpuDiagnosticActivity",
+        "dev.cinematic.p0.raw.PreviewParallelDiagnosticActivity",
         "dev.cinematic.p0.rawdiagnostic.RawDiagnosticActivity",
         "dev.cinematic.p0.photoroll.PhotoRollActivity",
     }
