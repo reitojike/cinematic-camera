@@ -57,7 +57,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
     save: () -> Unit, begin: () -> Unit, back: () -> Unit, retry: () -> Unit,
     change: (PhotoEditInputToken, PhotoEditParameter, Double) -> Unit, reset: (PhotoEditInputToken) -> Unit,
     apply: (PhotoEditInputToken) -> Unit, cancel: (PhotoEditInputToken) -> Unit, close: (PhotoEditInputToken) -> Unit,
-    modifier: Modifier = Modifier, statusOverlay: @Composable () -> Unit = {}, fillImageWidth: Boolean = false, info: @Composable () -> Unit) {
+    modifier: Modifier = Modifier, statusOverlay: @Composable () -> Unit = {}, fillImageWidth: Boolean = false, viewportModifier: Modifier = Modifier, info: @Composable () -> Unit) {
     var information by remember { mutableStateOf(false) }
     var parameter by remember { mutableStateOf(PhotoEditParameter.STRENGTH) }
     var comparing by remember(preview, comparison, foreground) { mutableStateOf(false) }
@@ -99,7 +99,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                     modifier = Modifier.semantics { contentDescription = "原本情報と試験品質の注意" }) { Text("ⓘ") }
             }
             Box((if (compact) Modifier.fillMaxWidth().height(260.dp) else Modifier.fillMaxWidth().weight(1f))
-                .semantics { contentDescription = "現像画像の表示領域" }, contentAlignment = Alignment.Center) {
+                .then(viewportModifier).semantics { contentDescription = "現像画像の表示領域" }, contentAlignment = Alignment.Center) {
                 val updating = phase in setOf(PhotoRollPhase.CHECKING, PhotoRollPhase.RENDERING, PhotoRollPhase.PAUSED)
                 if (preview != null && phase != PhotoRollPhase.BLOCKED) PhotoRollComparisonImage(preview,
                     comparison.takeIf { compareEnabled }, foreground, "現像結果（表示用）", comparisonLabel,

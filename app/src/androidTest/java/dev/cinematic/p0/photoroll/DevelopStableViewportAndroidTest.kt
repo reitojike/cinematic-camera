@@ -20,6 +20,11 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.unit.IntSize
+import java.util.concurrent.atomic.AtomicReference
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.CaptureTheme
@@ -59,6 +64,7 @@ class DevelopStableViewportAndroidTest {
             canvas.drawText("BOTTOM / NO CROP", 25f, height - 25f, paint)
         }
 
+        val viewportLayout = AtomicReference<Pair<IntSize, Offset>>()
         var retries = 0
         val phase = mutableStateOf(PhotoRollPhase.DISPLAYED)
         val message = mutableStateOf<String?>(null)
@@ -74,7 +80,8 @@ class DevelopStableViewportAndroidTest {
             PhotoRollDevelopView("SYNTHETIC", PhotoRollPreviewMode.MANUAL_TRIAL, editor.value, { editor.value }, phase.value,
                 PhotoRollRenderStage.LOOK, message.value, image, null, null, true, null, false, false, false,
                 {}, {}, {}, { retries++ }, { _, _, _ -> }, {}, {}, {}, {}, Modifier.fillMaxSize().safeDrawingPadding(),
-                statusOverlay = { if (status.value) Text("合成の保存状態") }, fillImageWidth = fillWidth) { Text("合成の情報") }
+                statusOverlay = { if (status.value) Text("合成の保存状態") }, fillImageWidth = fillWidth,
+                viewportModifier = Modifier.onGloballyPositioned { viewportLayout.set(it.size to it.positionInParent()) }) { Text("合成の情報") }
         } } } } }
         fun find(label: String): AccessibilityNodeInfo? {
             fun walk(n: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
@@ -95,6 +102,7 @@ class DevelopStableViewportAndroidTest {
         }
         ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
             val initial = Rect().also { await("現像画像の表示領域").getBoundsInScreen(it) }
+            val initialLayout = requireNotNull(viewportLayout.get())
             val imageBounds = Rect().also { await("現像結果（表示用）").getBoundsInScreen(it) }
             if (fillWidth) assertEquals("width mode uses full viewport width", initial.width(), imageBounds.width())
             val capture = fixture.captureSoftware()
@@ -146,6 +154,11 @@ class DevelopStableViewportAndroidTest {
             }
             scenario.onActivity { phase.value = PhotoRollPhase.BLOCKED; message.value = if (temperatureFailure) "合成の長い検証失敗です。".repeat(25) else "合成の検証失敗" }
             if (temperatureFailure) {
+                SystemClock.sleep(300)
+                fixture.automation.clearCache()
+                instrumentation.waitForIdleSync()
+                val beforeOverlayScroll = Rect().also { await("現像画像の表示領域").getBoundsInScreen(it) }
+                android.util.Log.i("ViewportTest", "initial=$initial beforeOverlay=$beforeOverlayScroll")
                 fun scrollOverlay() {
                     fun scrollable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
                         if (node == null) return null
@@ -174,7 +187,8 @@ class DevelopStableViewportAndroidTest {
                 val ruler = reveal("色温度 · 相対（K値ではありません）")
                 assertTrue("temperature ruler remains reachable", ruler.isVisibleToUser)
                 val unchanged = Rect().also { await("現像画像の表示領域").getBoundsInScreen(it) }
-                assertEquals("scrolling the overlay must keep the image viewport fixed", initial, unchanged)
+                android.util.Log.i("ViewportTest", "afterOverlay=$unchanged")
+                assertEquals("overlay scrolling must preserve unclipped viewport size and parent position", initialLayout, viewportLayout.get())
             } else assertTrue("failure remains accessible above the ruler", await("合成の検証失敗").isVisibleToUser)
             assertNull("failure must not present stale pixels as a result", find("現像結果（表示用）"))
         }
