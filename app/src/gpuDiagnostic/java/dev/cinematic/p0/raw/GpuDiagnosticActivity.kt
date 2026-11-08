@@ -156,7 +156,6 @@ class GpuDiagnosticService : Service() {
             checkpoint()
             val input = LinearSrgbImage(width, height, FloatArray(width * height * 3) { i -> sample((i/3)%width,(i/3)/width,width,height,i%3,dark) })
             val base = R7Base.render(input, FloatPlane(width,height,FloatArray(width*height)),0.0)
-            val skin = StageClearGlow.skinWeight(base)
             val faces = FaceMask(width,height,FloatArray(width*height))
             for (strength in listOf(.25,.5,1.0)) {
                 checkpoint()
@@ -168,6 +167,8 @@ class GpuDiagnosticService : Service() {
                 }
                 fun gpuRun():Pair<LinearSrgbImage,Long> {
                 val beforeGpu = System.nanoTime()
+                // CPU全Lookと同じ範囲で肌fieldの準備も計測する。
+                val skin = StageClearGlow.skinWeight(base)
                 val glow = GpuDiagnosticGlow.render(base,strength,skin)
                 val blurNs=GpuProbeImages.lastWallNs.get() ?: 0L
                 var ortonNs=0L; var ortonPreparationNs=0L
