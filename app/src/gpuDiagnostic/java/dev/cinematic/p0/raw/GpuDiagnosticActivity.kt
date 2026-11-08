@@ -44,7 +44,7 @@ class GpuDiagnosticActivity : Activity() {
 
 /** 製品保存と同じAPI別FGS種別だが、保存・復旧の試験ではない。 */
 class GpuDiagnosticService : Service() {
-    private var worker: Thread? = null
+    @Volatile private var worker: Thread? = null
     private var reverse = false
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
