@@ -16,44 +16,36 @@ specify init --here --force --non-interactive --integration codex --integration-
 作業branchのreview可能なbaselineを確保してから実行した。日常作業ごとにinitを再実行するものではない。
 初回取得後のhelp/initは取得済みCLIと同梱assetを使い、証明書検証の回避は行っていない。
 
-## 採用した運用
+## 現在の運用：Living Spec と変更記録を分ける
 
-think-canvasと同じく、Constitutionと機能ごとのspec / plan / tasks、Codex向けの
-`.agents/skills/speckit-*`を使う。標準skills・テンプレート・PowerShell scripts・workflowを
-公式CLIから生成し、生成skillsの本文は改変していない。上流のMITライセンスは`.specify/LICENSE`に保持した。
+現在の製品契約の入口は [specs/README](../specs/README.md) です。機能の振る舞いが変わる場合は既存の機能仕様を更新します。
+変更目的・改修計画・差分・実装タスク・進捗・検証証拠は Issue / PR に残します。
+長期的な技術設計と再実行する運用手順だけを対応する docs に残し、改修ごとの作業記録一式は恒久的な正本にしません。
 
-今回の機能は[001-p0-camera-probe](../specs/001-p0-camera-probe/spec.md)。合意済みP0ブリーフを
-specへ整理し、planに採用APIと最小設計、tasksに実装と実機残件を分けて記録した。
-P0のtasksは実装/機械的検証と、受入条件の資料・実機確認を区別する。日々の進捗はIssue等で扱う。
-後続方針は[002-live-capture](../specs/002-live-capture/spec.md)のspec/planで定義し、実装taskは限定作業ごとに作る。
-Constitutionは共有保存の1.1.0からライブ品質・原本保持を追加した1.2.0へ更新。CLIの版1.2.5とは別である。
+### 標準手順の使い方
 
-現在のfeatureのローカルpointerは標準どおり`.specify/feature.json`に置くが、machine-local stateとして
-Gitでは追跡しない。別checkoutでは対象featureを明示できる。
+- Constitution と関連 Living Spec、既存実装を確認してから Issue に範囲・対象外・完了条件・停止条件を定めます。
+- specify / clarify / plan / checklist / tasks / analyze / implement / converge は、その作業に必要なものを使います。
+  小さい変更のために重複する文書を機械的に追加しません。利用しない手順がある場合は、その理由を Issue / PR に簡潔に記録します。
+- 標準 skill が spec / plan / tasks を必要とする場合は、未追跡の作業用 feature ディレクトリなどで一時的に扱えます。
+  実際に使うパスを `SPECIFY_FEATURE_DIRECTORY` で明示し、各コマンドの前提を満たします。実行していない手順を実行済みと書きません。
+- 機能の現行契約は対象の Living Spec へ反映し、一時成果物の差分・検証・完了状態は Issue / PR へ移します。
+  長期的に必要な情報の取りこぼしがないことを確認するまで一時資料を削除しません。
+- 生成された `.agents/skills/speckit-*`、標準テンプレート、scripts をこの運用のために直接改変しません。
+  独自の同期フレームワーク・大量の索引・常駐処理・権限追加は導入しません。
+- PRの仕様変更はマージまで提案です。mainに検証基盤が入ることと、製品の既定経路に採用されることも別です。
 
-```powershell
-$env:SPECIFY_FEATURE_DIRECTORY = 'specs/001-p0-camera-probe'
-```
+### 既存資料の移行
 
-Codexの会話で`$speckit-specify`、`$speckit-plan`、`$speckit-tasks`などを順に使う。
-今回も標準template resolver、setup-plan、setup-tasksを実行し、文書品質とspec/plan/tasksの整合を確認した。
-機械的検証は通常のAndroid CIに任せ、P0の実機計測が完了するまでconvergedとは扱わない。
+旧番号付き spec / plan / tasks は [Issue #231](https://github.com/reitojike/cinematic-camera/issues/231) で棚卸しします。
+現在の契約、技術設計、再実行手順、過去のタスク状態を分類し、参照先を更新してから不要な重複を整理します。
+旧 `Draft` や承認待ちが残っていても、その表示だけで現在の実装状態を判定しません。未マージの提案も現行へ混ぜません。
+P0導入時の記録は歴史的資料であり、後続のRAW現像・UI等が未着手であるという現在の宣言ではありません。
 
-## P0に合わせて省いたもの
+### 検証と完了
 
-- 実装済みP0をSpec Kitのために作り直さず、実装前にこれら文書が存在したとも主張しない。
-- 要件上の追加の曖昧さがないため、新しいclarify質問や別の要件checklistを増やさない。
-- researchとデータ構造はplanへ統合、quickstartはREADME / P0_REPORTを参照する。外部APIがないためcontractsを増やさない。
-- Git拡張・GitHub拡張・外部catalog/preset・追加の実行workflowを導入しない。branch/PRは既存の運用を使う。
-- Codex runtime event handlersは無効。新たな常駐処理・MCP接続・認証・継続アクセスを設定しない。
-- think-canvas固有のPRD/モック、Canvas/Room/Ink、古いIssue、GMD/quarantineや実機合格記録は移植しない。
-
-## 検証とauthority
-
-P0の定義はspec、実測の状態は[レポート](P0_REPORT.md)、repo/配布実績は[設定実績](REPOSITORY_STATUS.md)を参照する。
-このDraft PRのSpec Kit文書はmerge前の整理であり、mainの契約を暗黙に変更しない。
-後続P1〜P4は未着手。インストールとカメラ操作にはユーザー報告があるが、実機ACは未完了で、
-P1のGo/No-Goは未判定のまま。
+変更に応じた静的確認・テストを実行し、仕様と実装の不一致を報告します。文書だけの変更でも必須CI・レビュー・マージ条件は維持します。
+実機未確認の項目を、convergeやCI成功だけで合格へ変えません。完了証拠と残る実機確認は Issue / PR に残します。
 
 公式資料: [Installation](https://github.github.com/spec-kit/installation.html)、
 [Existing projects](https://github.github.com/spec-kit/guides/existing-projects.html)、
