@@ -90,30 +90,36 @@ internal object R7Base {
         }
     }
 
-    internal fun foundation(input: LinearSrgbImage, roi: FloatPlane, ev: Double): LinearSrgbImage {
+    internal fun foundation(input: LinearSrgbImage, roi: FloatPlane, ev: Double, execution: PreviewPixelExecution? = null): LinearSrgbImage {
+        execution?.checkpoint()
         val gain = 2.0.pow(ev + R7BaseV1.BRIGHTNESS_EV + R7BaseV1.FOUNDATION_EV)
         require(gain.isFinite() && gain > 0) { "Exposure gain must be finite and positive" }
-        val values = DoubleArray(3)
         val tint = doubleArrayOf(R7BaseV1.YELLOW_RED, R7BaseV1.YELLOW_GREEN, R7BaseV1.YELLOW_BLUE)
-        return pixels(input) { p, out ->
-            val y = luma(input, p).toDouble()
-            val local = roi[p] * unit(y / .025)
-            val exposed = y * gain / (1 + (gain - 1) * y)
-            val power = 1 + (R7BaseV1.CONTRAST - 1) * (1 - .75 * local)
-            val raised = unit(exposed).pow(power)
-            val lower = unit(1 - exposed).pow(power) * (.18 / .82).pow(power - 1)
-            val target = raised / max(raised + lower, 1e-8)
-            // r7_final forces the common global RGB tint to unity.
-            repeat(3) { values[it] = input[p * 3 + it] * target / max(y, 1e-8) }
-            // Preserve the PC's luma renormalization even with the unity tint.
-            val norm = target / max(dot(values), 1e-8)
-            repeat(3) { values[it] *= norm }
-            val yellow = unit(3 * (min(values[0], values[1]) - values[2]) / max(target, 1e-8))
-            repeat(3) { values[it] *= 1 + (tint[it] - 1) * local * yellow }
-            val yellowNorm = target / max(dot(values), 1e-8)
-            val saturation = R7BaseV1.SATURATION * (1 - local) + R7BaseV1.SKIN_SATURATION * local
-            repeat(3) { out[p * 3 + it] = (target + (values[it] * yellowNorm - target) * saturation).toFloat() }
+        val out = FloatArray(input.pixelCount * 3)
+        previewPixelRanges(input.pixelCount, execution) { start, end ->
+            val values = DoubleArray(3)
+            for (p in start until end) {
+                previewPixelCheckpoint(p, execution)
+                val y = luma(input, p).toDouble()
+                val local = roi[p] * unit(y / .025)
+                val exposed = y * gain / (1 + (gain - 1) * y)
+                val power = 1 + (R7BaseV1.CONTRAST - 1) * (1 - .75 * local)
+                val raised = unit(exposed).pow(power)
+                val lower = unit(1 - exposed).pow(power) * (.18 / .82).pow(power - 1)
+                val target = raised / max(raised + lower, 1e-8)
+                // r7_final forces the common global RGB tint to unity.
+                repeat(3) { values[it] = input[p * 3 + it] * target / max(y, 1e-8) }
+                // Preserve the PC's luma renormalization even with the unity tint.
+                val norm = target / max(dot(values), 1e-8)
+                repeat(3) { values[it] *= norm }
+                val yellow = unit(3 * (min(values[0], values[1]) - values[2]) / max(target, 1e-8))
+                repeat(3) { values[it] *= 1 + (tint[it] - 1) * local * yellow }
+                val yellowNorm = target / max(dot(values), 1e-8)
+                val saturation = R7BaseV1.SATURATION * (1 - local) + R7BaseV1.SKIN_SATURATION * local
+                repeat(3) { out[p * 3 + it] = (target + (values[it] * yellowNorm - target) * saturation).toFloat() }
+            }
         }
+        return LinearSrgbImage.takeOwnership(input.width, input.height, out).also { execution?.checkpoint() }
     }
 
     internal fun vibrance(input: LinearSrgbImage): LinearSrgbImage = labLayer(input) { lab ->
