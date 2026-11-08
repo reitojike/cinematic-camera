@@ -109,7 +109,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                 Column(Modifier.align(Alignment.TopCenter).fillMaxWidth().background(CaptureDesign.Ink.copy(alpha = .9f))) {
                     statusOverlay()
                 }
-                Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(CaptureDesign.Ink.copy(alpha = .9f))
+                Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().verticalScroll(rememberScrollState()).background(CaptureDesign.Ink.copy(alpha = .9f))
                     .pointerInput(Unit) { detectTapGestures(onTap = {}) }) {
                     if (phase == PhotoRollPhase.BLOCKED) {
                         Text(message ?: "現像を開始・完了できません", Modifier.padding(8.dp),

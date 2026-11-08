@@ -40,7 +40,8 @@ class DevelopStableViewportAndroidTest {
     @Test fun landscapeWidthComparison() = verifyViewport(false, true, false)
     @Test fun tallPortraitFitComparison() = verifyViewport(false, false, true, true)
     @Test fun tallPortraitWidthComparison() = verifyViewport(false, true, true, true)
-    private fun verifyViewport(compact: Boolean, fillWidth: Boolean = true, portrait: Boolean = true, tall: Boolean = false) {
+    @Test fun compactTemperatureFailureKeepsRetryAndRulerReachable() = verifyViewport(true, false, true, false, true)
+    private fun verifyViewport(compact: Boolean, fillWidth: Boolean = true, portrait: Boolean = true, tall: Boolean = false, temperatureFailure: Boolean = false) {
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val image = Bitmap.createBitmap(if (portrait) 600 else 900, if (tall) 1200 else if (portrait) 800 else 600, Bitmap.Config.ARGB_8888).apply {
@@ -58,6 +59,7 @@ class DevelopStableViewportAndroidTest {
             canvas.drawText("BOTTOM / NO CROP", 25f, height - 25f, paint)
         }
 
+        var retries = 0
         val phase = mutableStateOf(PhotoRollPhase.DISPLAYED)
         val message = mutableStateOf<String?>(null)
         val status = mutableStateOf(false)
@@ -71,7 +73,7 @@ class DevelopStableViewportAndroidTest {
             CaptureTheme { Surface { Box(if (compact) Modifier.height(360.dp) else Modifier.fillMaxSize()) {
             PhotoRollDevelopView("SYNTHETIC", PhotoRollPreviewMode.MANUAL_TRIAL, editor.value, { editor.value }, phase.value,
                 PhotoRollRenderStage.LOOK, message.value, image, null, null, true, null, false, false, false,
-                {}, {}, {}, {}, { _, _, _ -> }, {}, {}, {}, {}, Modifier.fillMaxSize().safeDrawingPadding(),
+                {}, {}, {}, { retries++ }, { _, _, _ -> }, {}, {}, {}, {}, Modifier.fillMaxSize().safeDrawingPadding(),
                 statusOverlay = { if (status.value) Text("合成の保存状態") }, fillImageWidth = fillWidth) { Text("合成の情報") }
         } } } } }
         fun find(label: String): AccessibilityNodeInfo? {
@@ -136,8 +138,44 @@ class DevelopStableViewportAndroidTest {
             val scrolled = Rect().also { await("現像画像の表示領域").getBoundsInScreen(it) }
             assertEquals("image scrolling must not move the viewport", initial, scrolled)
             }
-            scenario.onActivity { phase.value = PhotoRollPhase.BLOCKED; message.value = "合成の検証失敗" }
-            assertTrue("failure remains accessible above the ruler", await("合成の検証失敗").isVisibleToUser)
+            if (temperatureFailure) {
+                var temperature = await("色温度")
+                while (!temperature.isClickable) temperature = requireNotNull(temperature.parent)
+                assertTrue(temperature.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+                instrumentation.waitForIdleSync()
+            }
+            scenario.onActivity { phase.value = PhotoRollPhase.BLOCKED; message.value = if (temperatureFailure) "合成の長い検証失敗です。".repeat(25) else "合成の検証失敗" }
+            if (temperatureFailure) {
+                fun scrollOverlay() {
+                    fun scrollable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+                        if (node == null) return null
+                        if (node.isScrollable) return node
+                        for (i in 0 until node.childCount) scrollable(node.getChild(i))?.let { return it }
+                        return null
+                    }
+                    val node = requireNotNull(scrollable(await("現像画像の表示領域")))
+                    assertTrue(node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD))
+                    SystemClock.sleep(250)
+                    fixture.automation.clearCache()
+                    instrumentation.waitForIdleSync()
+                }
+                fun reveal(label: String): AccessibilityNodeInfo {
+                    repeat(16) {
+                        find(label)?.takeIf { it.isVisibleToUser }?.let { return it }
+                        scrollOverlay()
+                    }
+                    error("overlay did not reveal $label")
+                }
+                var retry = reveal("原本を確認して再試行")
+                while (!retry.isClickable) retry = requireNotNull(retry.parent)
+                assertTrue(retry.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+                instrumentation.waitForIdleSync()
+                assertEquals(1, retries)
+                val ruler = reveal("色温度 · 相対（K値ではありません）")
+                assertTrue("temperature ruler remains reachable", ruler.isVisibleToUser)
+                val unchanged = Rect().also { await("現像画像の表示領域").getBoundsInScreen(it) }
+                assertEquals("scrolling the overlay must keep the image viewport fixed", initial, unchanged)
+            } else assertTrue("failure remains accessible above the ruler", await("合成の検証失敗").isVisibleToUser)
             assertNull("failure must not present stale pixels as a result", find("現像結果（表示用）"))
         }
         image.recycle()
