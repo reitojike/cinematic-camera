@@ -122,9 +122,13 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                     }
                     if (phase == PhotoRollPhase.PAUSED) TextButton(onClick = retry, enabled = foreground,
                         shape = RectangleShape) { Text("原本を確認して再試行") }
+                    if (session != null) key(parameter) {
+                        Box(Modifier.fillMaxWidth().semantics { contentDescription = "現像調整パネル" }) {
+                            TrialStrengthEditorPane(state, readState, parameter, foreground, phase, change, reset, apply, close)
+                        }
+                    }
                 }
             }
-            if (session != null) key(parameter) { TrialStrengthEditorPane(state, readState, parameter, foreground, phase, change, reset, apply, close) }
             Row(Modifier.fillMaxWidth().heightIn(min = 72.dp)) {
                 PhotoEditParameter.entries.forEach { key ->
                     val supported = mode in setOf(PhotoRollPreviewMode.MANUAL_TRIAL, PhotoRollPreviewMode.STAGE_CLEAR, PhotoRollPreviewMode.PRIVATE_TRIAL) && (key == PhotoEditParameter.STRENGTH || adjustments)

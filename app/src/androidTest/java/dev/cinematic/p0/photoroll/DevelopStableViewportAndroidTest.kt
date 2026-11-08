@@ -63,12 +63,13 @@ class DevelopStableViewportAndroidTest {
         val status = mutableStateOf(false)
         val bound = requireNotNull(TrialStrengthEditor.empty(PhotoAdjustmentPolicy.defaults).bind(
             SharedOriginalReference("content://fixture/sizing", OriginalFingerprint(100, "a".repeat(64)), OriginalGrant.USER_SELECTED)))
-        val editor = bound.shown(bound.ticket, bound.requestedValues).begin(.01, true)
+        val shown = bound.shown(bound.ticket, bound.requestedValues)
+        val editor = mutableStateOf(shown.begin(.01, true))
         fixture.content = {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density, if (compact) 1.8f else 1f)) {
             CaptureTheme { Surface { Box(if (compact) Modifier.height(360.dp) else Modifier.fillMaxSize()) {
-            PhotoRollDevelopView("SYNTHETIC", PhotoRollPreviewMode.MANUAL_TRIAL, editor, { editor }, phase.value,
+            PhotoRollDevelopView("SYNTHETIC", PhotoRollPreviewMode.MANUAL_TRIAL, editor.value, { editor.value }, phase.value,
                 PhotoRollRenderStage.LOOK, message.value, image, null, null, true, null, false, false, false,
                 {}, {}, {}, {}, { _, _, _ -> }, {}, {}, {}, {}, Modifier.fillMaxSize().safeDrawingPadding(),
                 statusOverlay = { if (status.value) Text("合成の保存状態") }, fillImageWidth = fillWidth) { Text("合成の情報") }
@@ -104,12 +105,26 @@ class DevelopStableViewportAndroidTest {
                     capture.compress(Bitmap.CompressFormat.PNG, 100, it)
                 }
             } finally { capture.recycle() }
+            scenario.onActivity { editor.value = shown }
+            instrumentation.waitForIdleSync()
+            val closedBounds = Rect().also { await("現像画像の表示領域").getBoundsInScreen(it) }
+            assertEquals("closing the ruler must not move or resize the image viewport", initial, closedBounds)
+            scenario.onActivity { editor.value = shown.begin(.01, true) }
+            instrumentation.waitForIdleSync()
+            val reopenedBounds = Rect().also { await("現像画像の表示領域").getBoundsInScreen(it) }
+            assertEquals("opening the ruler must not move or resize the image viewport", initial, reopenedBounds)
+            val panelBounds = Rect().also { await("現像調整パネル").getBoundsInScreen(it) }
+            assertEquals("ruler overlays the bottom of the image viewport", initial.bottom, panelBounds.bottom)
             for (next in listOf(PhotoRollPhase.DISPLAYED, PhotoRollPhase.CHECKING, PhotoRollPhase.RENDERING, PhotoRollPhase.DISPLAYED)) {
                 scenario.onActivity { phase.value = next; message.value = "合成の長い通知です。".repeat(15); status.value = true }
                 val updated = Rect().also { await("現像画像の表示領域").getBoundsInScreen(it) }
                 assertEquals("transient state must not move viewport", initial, updated)
                 assertNotNull(await("現像結果（表示用）"))
-                if (next != PhotoRollPhase.DISPLAYED) assertNotNull(await("更新中 · 直前の表示です"))
+                if (next != PhotoRollPhase.DISPLAYED) {
+                    val notice = Rect().also { await("更新中 · 直前の表示です").getBoundsInScreen(it) }
+                    val panel = Rect().also { await("現像調整パネル").getBoundsInScreen(it) }
+                    assertTrue("progress is visible above the ruler", notice.height() > 0 && notice.bottom <= panel.top)
+                }
             }
             if (fillWidth && portrait && (compact || tall)) {
             var scrollNode = await("現像結果（表示用）")
