@@ -69,23 +69,27 @@ class GpuDiagnosticService : Service() {
             .setContentTitle("GPU合成診断を実行中").setContentText("製品の写真や保存先には触れません").build()
         val type = if (Build.VERSION.SDK_INT >= 35) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING else ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
         startForeground(237, notification, type)
-        } catch (failure: Exception) {
+        } catch (failure: Throwable) {
             cancellation = null; busy.set(false)
+            stopForeground(STOP_FOREGROUND_REMOVE)
             log("FGS開始失敗 type=${failure.javaClass.simpleName}")
             stopSelfResult(latestStartId)
             return START_NOT_STICKY
         }
+        try {
         val nextWorker = Thread({
             val sampling = AtomicBoolean(true)
             var managedMax = 0L; var nativeMax = 0L
-            val sampler = if (observeMemory) Thread({
+            var sampler:Thread? = null
+            try {
+            sampler = if (observeMemory) Thread({
                 while (sampling.get()) {
                     managedMax = maxOf(managedMax, Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory())
                     nativeMax = maxOf(nativeMax, Debug.getNativeHeapAllocatedSize())
                     try { Thread.sleep(100) } catch (_: InterruptedException) { break }
                 }
-            }, "gpu-probe-memory").apply { start() } else null
-            try {
+            }, "gpu-probe-memory") else null
+                sampler?.start()
                 environment("start")
                 when (mode) {
                     "blur12" -> runBlur12()
@@ -96,23 +100,40 @@ class GpuDiagnosticService : Service() {
             } catch (_: CancellationException) { log("取消 mode=$mode") }
             catch (failure: Throwable) { log("失敗 mode=$mode type=${failure.javaClass.simpleName}") }
             finally {
-                environment("end")
-                sampling.set(false); sampler?.interrupt(); sampler?.join()
-                if (observeMemory) log("観測最大 managedBytes=$managedMax nativeBytes=$nativeMax intervalMs=100 PSSは別計測")
-                val owner = Thread.currentThread()
-                if (cancellation === stop) cancellation = null
-                busy.set(false)
-                main.post {
-                    if (worker === owner) {
-                        worker = null
-                        stopForeground(STOP_FOREGROUND_REMOVE)
-                        stopSelfResult(latestStartId)
+                try {
+                    try { environment("end") }
+                    finally {
+                        sampling.set(false)
+                        val observedSampler=sampler
+                        observedSampler?.interrupt()
+                        var interrupted=false
+                        while(observedSampler?.isAlive == true) {
+                            try { observedSampler.join() } catch(_:InterruptedException) { interrupted=true }
+                        }
+                        if(interrupted)Thread.currentThread().interrupt()
+                        if (observeMemory) log("観測最大 managedBytes=$managedMax nativeBytes=$nativeMax intervalMs=100 PSSは別計測")
+                    }
+                } finally {
+                    val owner=Thread.currentThread()
+                    if(cancellation === stop)cancellation=null
+                    busy.set(false)
+                    main.post {
+                        if(worker === owner) {
+                            worker=null
+                            stopForeground(STOP_FOREGROUND_REMOVE)
+                            stopSelfResult(latestStartId)
+                        }
                     }
                 }
             }
         }, "gpu-probe-owner")
         worker = nextWorker
         nextWorker.start()
+        } catch(failure:Throwable) {
+            stop.set(true); worker=null; cancellation=null; busy.set(false)
+            stopForeground(STOP_FOREGROUND_REMOVE); stopSelfResult(latestStartId)
+            log("診断スレッド開始失敗 type=${failure.javaClass.simpleName}")
+        }
         return START_NOT_STICKY
     }
     override fun onDestroy() { stop.set(true); super.onDestroy() }
