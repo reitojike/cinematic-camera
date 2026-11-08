@@ -12,7 +12,7 @@
 
 applicationId は `dev.cinematic.p0.gpudiagnostic` です。既存の一時デバッグ署名を使い、署名鍵の新規作成や配布先の変更はしません。`profileable` な非 debuggable 版で、撮影Activityと写真一覧・カメラ・音声の権限を除外します。CPUプレビューには既存PhotoRollActivityと保存サービスを含めますが、入力はFilesで明示的に選択する方式です。GPU側からそれらを呼び出しません。
 
-合成 instrumentation はさらに `cinematicGpuDiagnosticTests=true` を指定してコンパイルします。専用テストでも `gpuPixelProbe=true` がなければ EGL 初期化前にスキップします。`isolated=true` も必要です。実機を使用するときは、その回のユーザー許可と接続を確認してから行います。
+合成 instrumentation はさらに `cinematicGpuDiagnosticTests=true` を指定してコンパイルします。専用テストでも `gpuPixelProbe=true` がなければ EGL 初期化前にスキップします。`isolated=true` も必要です。1024px・12MP入口の完走試験は別クラス `GpuDiagnosticLoadTest` で、さらに `gpuPixelLoadProbe=true` を明示します。これは時間の採否ではなく、各入口の完走だけを確認します。実機を使用するときは、その回のユーザー許可と接続を確認してから行います。
 
 ## 入口と結果
 
