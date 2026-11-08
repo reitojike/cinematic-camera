@@ -1,8 +1,12 @@
-# Tasks
-- [x] T001 Inspect existing implementation/trials and create Issue #223.
-- [x] T002 Define US1, scope and overload compatibility.
-- [x] T003 Implement RawPreviewTiming and orchestration boundary hooks.
-- [x] T004 Add synthetic identity, cancellation and timer accounting tests.
-- [x] T005 Run lint/unit/build and diff/publication checks.
-- [ ] T006 Draft PR, required CI, canonical and independent review.
-- [ ] T007 Converge with real-device limitations explicit.
+# タスク
+
+- [x] T001 既存の実装と試行済み一覧を確認し、Issue #223を起票する。
+- [x] T002 US1、対象範囲、既存オーバーロードとの互換性を定義する。
+- [x] T003 RawPreviewTimingと呼び出し境界の計測を実装する。
+- [x] T004 合成データの一致、取消、計測時間の集計のテストを追加する。
+- [x] T005 lint・単体テスト・ビルド、差分と公開前の確認を行う。
+- [x] T006 Draft PRを作成し、必須CI、canonicalレビュー、独立レビューを完了する（#224）。
+- [x] T007 実機が未確認であることを明記して実装を確定する（#224でマージ済み）。
+
+## 残る確認範囲
+実機の工程別時間と操作から表示までの遅延は、今回の実装完了には含めない。セッションの後片付け失敗の分類はコードレビューで確認しており、セッションへの障害注入テストは未実施。
