@@ -5,7 +5,8 @@ plugins {
 
 val original24Probe = providers.gradleProperty("cinematicOriginal24Probe").orNull == "true"
 val rawDiagnostic = providers.gradleProperty("cinematicRawDiagnostic").orNull == "true"
-require(!(original24Probe && rawDiagnostic)) { "Choose one diagnostic build type" }
+val gpuDiagnostic = providers.gradleProperty("cinematicGpuDiagnostic").orNull == "true"
+require(listOf(original24Probe, rawDiagnostic, gpuDiagnostic).count { it } <= 1) { "Choose one diagnostic build type" }
 // A variant-specific false positive must never suppress a normal or aggregate lint invocation.
 val diagnosticLintTasks = setOf("lintRawDiagnostic", "testRawDiagnosticUnitTest", "assembleRawDiagnostic", "processReleaseMainManifest")
 val requestedTaskNames = gradle.startParameter.taskNames.map { it.substringAfterLast(':') }
@@ -18,7 +19,7 @@ require(cinematicSigningMode in setOf("ephemeral_debug", "stable_internal")) {
     "CINEMATIC_SIGNING_MODE must be ephemeral_debug or stable_internal"
 }
 val stableInternalSigning = cinematicSigningMode == "stable_internal"
-require(!rawDiagnostic || !stableInternalSigning) { "RAW diagnostics use ephemeral_debug signing only" }
+require(!(rawDiagnostic || gpuDiagnostic) || !stableInternalSigning) { "RAW diagnostics use ephemeral_debug signing only" }
 fun requiredSigningInput(name: String): String = providers.environmentVariable(name).orNull
     ?.takeIf { it.isNotBlank() } ?: throw GradleException("Stable internal signing requires environment input: $name")
 if (stableInternalSigning) {
@@ -83,6 +84,24 @@ android {
             signingConfig = signingConfigs.getByName("debug")
             matchingFallbacks += "release"
             externalNativeBuild { cmake { arguments += "-DCMAKE_BUILD_TYPE=RelWithDebInfo" } }
+        }
+    }
+    // GPU 診断は明示指定だけで作る独立アプリ。通常 CI と製品の source set には含めない。
+    if (gpuDiagnostic) {
+        if (providers.gradleProperty("cinematicGpuDiagnosticTests").orNull == "true") {
+            testBuildType = "gpuDiagnostic"
+            sourceSets.getByName("androidTest").java.srcDir("src/gpuDiagnosticTest/java")
+            sourceSets.getByName("androidTest").manifest.srcFile("src/gpuDiagnosticTest/AndroidManifest.xml")
+        }
+        buildTypes.create("gpuDiagnostic") {
+            initWith(buildTypes.getByName("release"))
+            applicationIdSuffix = ".gpudiagnostic"
+            isDebuggable = false
+            isJniDebuggable = false
+            isMinifyEnabled = false
+            isShrinkResources = false
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += "release"
         }
     }
     if (original24Probe) {

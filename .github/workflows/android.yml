@@ -43,6 +43,8 @@ jobs:
         run: ./gradlew :app:lintRawDiagnostic :app:testRawDiagnosticUnitTest :app:assembleRawDiagnostic :app:processReleaseMainManifest -PcinematicRawDiagnostic=true -Pandroid.onlyEnableUnitTestForTheTestedBuildType=false --no-daemon
       - name: Compile synthetic RAW diagnostic instrumentation
         run: ./gradlew :app:assembleRawDiagnosticAndroidTest -PcinematicRawDiagnostic=true -PcinematicRawDiagnosticTests=true --no-daemon
+      - name: GPU合成診断をコンパイル（GPU試験は実行しない）
+        run: ./gradlew :app:assembleGpuDiagnostic :app:assembleGpuDiagnosticAndroidTest -PcinematicGpuDiagnostic=true -PcinematicGpuDiagnosticTests=true --no-daemon
       - name: Verify RAW diagnostic optimization recipe
         shell: bash
         run: |
