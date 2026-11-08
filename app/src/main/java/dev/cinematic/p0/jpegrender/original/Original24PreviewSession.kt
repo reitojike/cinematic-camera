@@ -5,6 +5,9 @@ import android.graphics.ColorSpace
 import android.os.CancellationSignal
 import android.os.Looper
 import android.os.ParcelFileDescriptor
+import dev.cinematic.p0.raw.FloatPlane
+import dev.cinematic.p0.raw.StageClearDecisions
+import dev.cinematic.p0.raw.original.OriginalRaster
 import dev.cinematic.p0.raw.FaceMask
 import dev.cinematic.p0.raw.LinearSrgbImage
 import dev.cinematic.p0.raw.PhotoAdjustments
@@ -35,7 +38,8 @@ import org.json.JSONObject
 /** One caller-admitted IO session, never a queue/slot, saved image or face-protected completion.
  * The first render decodes an immutable, fingerprint-bound private snapshot to row-readable RGB16,
  * reduces it, closes all owners and deletes both files before retaining <=1024 AS_SHOT input.
- * Only that input, one R7 base and its reduced Glow fields survive calls. Returned software sRGB Bitmaps belong to callers.
+ * Retains that input/base/Glow plus one <=256 input/base/Glow and immutable exact decisions.
+ * Returned software sRGB Bitmaps belong to callers.
  * Source/capture/lifecycle invalidation and resource/memory admission belong to the existing factory.
  * A failed or stopped session never silently acquires a fresh decode attempt. */
 internal class Original24PreviewSession(
@@ -57,6 +61,15 @@ internal class Original24PreviewSession(
     internal var previewExternalEv: Double? = null
         private set
     private var previewGlow: PreparedStageClearGlow? = null
+    internal var previewDecisions: StageClearDecisions? = null
+        private set
+    private var meteredBaseEv: Double? = null
+    private var draftInput: LinearSrgbImage? = null
+    private var draftBase: LinearSrgbImage? = null
+    private var draftAdjustments: PhotoAdjustments? = null
+    private var draftGlow: PreparedStageClearGlow? = null
+    internal val draftFieldBytes get() = draftGlow?.retainedFieldBytes ?: 0
+    internal val hasDraftDecisions get() = previewDecisions != null && meteredBaseEv != null && !closed && !failed && !stopped
     internal val previewFieldBytes get() = previewGlow?.retainedFieldBytes ?: 0
     internal var previewFieldBuilds = 0
         private set
@@ -80,10 +93,18 @@ internal class Original24PreviewSession(
     fun requestStop() { stopped = true; signal.cancel() }
 
     fun render(strength: Double, adjustments: PhotoAdjustments = PhotoAdjustments.NONE,
-        shouldStop: () -> Boolean = { false }): Bitmap = exclusive {
+        shouldStop: () -> Boolean = { false }): Bitmap = requireNotNull(renderInternal(strength, adjustments, false, shouldStop))
+
+    /** No decode, new judgement or save generation. Missing exact decisions retain the UI's prior image. */
+    fun renderDraft(strength: Double, adjustments: PhotoAdjustments = PhotoAdjustments.NONE,
+        shouldStop: () -> Boolean = { false }): Bitmap? = renderInternal(strength, adjustments, true, shouldStop)
+
+    private fun renderInternal(strength: Double, adjustments: PhotoAdjustments, draft: Boolean,
+        shouldStop: () -> Boolean): Bitmap? = exclusive {
         check(Looper.myLooper() != Looper.getMainLooper()) { "Original preview requires existing IO owner" }
         require(strength.isFinite() && strength in 0.0..1.0)
         check(!closed && !failed && !stopped) { "Original preview session is unavailable" }
+        if (draft && !hasDraftDecisions) return@exclusive null
         val stop = { stopped || signal.isCanceled || shouldStop() }
         var result: Bitmap? = null
         var failure: Throwable? = null
@@ -91,9 +112,21 @@ internal class Original24PreviewSession(
             originalCheckpoint(stop)
             resourceAdmission() // Cached Look renders also need the fixed original-trial resource gate.
             verifyOriginal(stop)
-            val input = asShot ?: loadInput(stop).also { asShot = it }
+            val input = if (draft) draftInput ?: reduceDraftInput(requireNotNull(asShot), stop).also { draftInput = it }
+                else asShot ?: loadInput(stop).also { asShot = it }
             resourceAdmission()
-            val foundation = if (base != null && baseAdjustments == adjustments) requireNotNull(base) else {
+            val foundation = if (draft) {
+                if (draftBase == null || draftAdjustments != adjustments) {
+                    draftBase = null; draftGlow = null; draftAdjustments = null
+                    val warmed = adjustments.applyWarmth(input, stop)
+                    // Exact foundation uses emptyList() ellipses, so this is the same zero ROI,
+                    // without recomputing automatic exposure on the coarse image.
+                    draftBase = R7Base.render(warmed, FloatPlane(input.width, input.height, FloatArray(input.pixelCount)),
+                        requireNotNull(meteredBaseEv) + adjustments.exposureEv, stop)
+                    draftAdjustments = adjustments
+                }
+                requireNotNull(draftBase)
+            } else if (base != null && baseAdjustments == adjustments) requireNotNull(base) else {
                 // Drop the old base before allocating a replacement; warmth and EV both invalidate it.
                 base = null; baseAdjustments = null; previewExternalEv = null; previewGlow = null
                 original24PreviewFoundation(input, adjustments, stop).also {
@@ -102,19 +135,27 @@ internal class Original24PreviewSession(
                 }.image
             }
             val noProtection = FaceMask(foundation.width, foundation.height, FloatArray(foundation.pixelCount))
-            val glow = previewGlow ?: PreparedStageClearGlow.prepare(foundation) {
+            val glow = (if (draft) draftGlow else previewGlow) ?: PreparedStageClearGlow.prepare(foundation) {
                 originalCheckpoint(stop)
-            }.also { previewGlow = it; previewFieldBuilds++ }
-            val image = glow.render(noProtection, strength) { originalCheckpoint(stop) }.image
+            }.also { if (draft) draftGlow = it else { previewGlow = it; previewFieldBuilds++ } }
+            val rendered = if (draft) glow.render(noProtection, strength, decisions = requireNotNull(previewDecisions)) {
+                originalCheckpoint(stop)
+            } else glow.render(noProtection, strength) { originalCheckpoint(stop) }
+            val image = rendered.image
             originalCheckpoint(stop)
             resourceAdmission()
             result = bitmap(image, stop)
             verifyOriginal(stop)
             releaseTransient()
             originalCheckpoint(stop)
+            if (!draft) {
+                previewDecisions = requireNotNull(rendered.decisions)
+                meteredBaseEv = requireNotNull(previewExternalEv) - adjustments.exposureEv
+                draftBase = null; draftGlow = null; draftAdjustments = null
+            }
             requireNotNull(result)
         } catch (error: Throwable) {
-            failed = true; asShot = null; base = null; baseAdjustments = null; previewExternalEv = null; previewGlow = null
+            failed = true; clearInputs()
             failure = error
             result?.recycle()
             if (error is OutOfMemoryError) throw IOException("Original preview memory unavailable", error)
@@ -122,7 +163,7 @@ internal class Original24PreviewSession(
         } finally {
             try { releaseTransient() }
             catch (cleanup: Throwable) {
-                failed = true; asShot = null; base = null; baseAdjustments = null; previewExternalEv = null; previewGlow = null
+                failed = true; clearInputs()
                 result?.recycle()
                 val primary = failure
                 if (primary == null) throw cleanup
@@ -136,11 +177,13 @@ internal class Original24PreviewSession(
      * separate software sRGB Bitmap, never the returned After or a saved/completed image.
      * Bitmap allocation/conversion OOM alone is optional; source/close/cancel checks remain fatal. */
     fun comparisonBitmap(createBitmap: (LinearSrgbImage, () -> Boolean) -> Bitmap = ::bitmap,
-        shouldStop: () -> Boolean = { false }): Bitmap? = exclusive {
+        maxEdge: Int = 1024, shouldStop: () -> Boolean = { false }): Bitmap? = exclusive {
         check(Looper.myLooper() != Looper.getMainLooper()) { "Original preview requires existing IO owner" }
         check(!closed && !failed && !stopped) { "Original preview session is unavailable" }
-        val input = checkNotNull(asShot) { "Original preview input has not been acquired" }
+        require(maxEdge == 1024 || maxEdge == 256)
         val stop = { stopped || signal.isCanceled || shouldStop() }
+        val exact = checkNotNull(asShot) { "Original preview input has not been acquired" }
+        val input = if (maxEdge == 256) checkNotNull(draftInput) { "Draft input has not been acquired" } else exact
         var result: Bitmap? = null
         var failure: Throwable? = null
         try {
@@ -155,7 +198,7 @@ internal class Original24PreviewSession(
             originalCheckpoint(stop)
             result
         } catch (error: Throwable) {
-            failed = true; asShot = null; base = null; baseAdjustments = null; previewExternalEv = null; previewGlow = null
+            failed = true; clearInputs()
             failure = error
             result?.recycle()
             if (error is OutOfMemoryError) throw IOException("Original comparison memory unavailable", error)
@@ -163,7 +206,7 @@ internal class Original24PreviewSession(
         } finally {
             try { releaseTransient() }
             catch (cleanup: Throwable) {
-                failed = true; asShot = null; base = null; baseAdjustments = null; previewExternalEv = null; previewGlow = null
+                failed = true; clearInputs()
                 result?.recycle()
                 val primary = failure
                 if (primary == null) throw cleanup
@@ -279,10 +322,16 @@ internal class Original24PreviewSession(
         failure?.let { throw it }
     }
 
+    private fun clearInputs() {
+        asShot = null; base = null; baseAdjustments = null; previewExternalEv = null; previewGlow = null
+        previewDecisions = null; meteredBaseEv = null
+        draftInput = null; draftBase = null; draftAdjustments = null; draftGlow = null
+    }
+
     override fun close() {
         requestStop()
         exclusive {
-            closed = true; asShot = null; base = null; baseAdjustments = null; previewExternalEv = null; previewGlow = null
+            closed = true; clearInputs()
             releaseTransient()
         }
     }
@@ -303,4 +352,25 @@ internal fun original24PreviewFoundation(input: LinearSrgbImage, adjustments: Ph
     val warmed = adjustments.applyWarmth(input, stop)
     val externalEv = diagnostic.exposure.externalBaseEv + adjustments.exposureEv
     return Original24PreviewFoundation(R7Base.render(warmed, diagnostic.foundationSkinRoi, externalEv, stop), externalEv)
+}
+
+/** Preview-only BOX reduction reuses the existing reducer, without changing any processing kernel. */
+internal fun reduceDraftInput(input: LinearSrgbImage, stop: () -> Boolean): LinearSrgbImage {
+    val scale = min(1.0, 256.0 / max(input.width, input.height))
+    val width = floor(input.width * scale).toInt().coerceAtLeast(1)
+    val height = floor(input.height * scale).toInt().coerceAtLeast(1)
+    if (width == input.width && height == input.height) return input
+    val rows = object : OriginalRaster {
+        override val width = input.width
+        override val height = input.height
+        override fun rows(stop: () -> Boolean, consume: (Int, FloatArray) -> Unit) {
+            val row = FloatArray(input.width * 3)
+            repeat(input.height) { y ->
+                originalCheckpoint(stop)
+                for (x in row.indices) row[x] = input[y * row.size + x]
+                consume(y, row)
+            }
+        }
+    }
+    return OriginalFields.reduce(rows, width, height, 3, stop) { rgb, output -> rgb.copyInto(output) }.reducedRgb()
 }

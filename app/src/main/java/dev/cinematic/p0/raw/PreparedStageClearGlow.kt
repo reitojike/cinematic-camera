@@ -13,7 +13,15 @@ internal class PreparedStageClearGlow private constructor(
     // Counts retained field payload; excludes base (already session-owned), objects and ephemeral row maps.
     val retainedFieldBytes = skin.bytes + halo.bytes + bloom.sumOf { channels -> channels.sumOf { it.bytes } }
 
-    fun render(faces: FaceMask, strength: Double, checkpoint: () -> Unit): StageClearProtections.Result {
+    fun render(faces: FaceMask, strength: Double, checkpoint: () -> Unit): StageClearProtections.Result =
+        render(faces, strength, null, checkpoint)
+
+    fun render(
+        faces: FaceMask,
+        strength: Double,
+        decisions: StageClearDecisions?,
+        checkpoint: () -> Unit,
+    ): StageClearProtections.Result {
         require(strength.isFinite() && strength in 0.0..1.0)
         faces.requireAligned(base)
         checkpoint()
@@ -27,14 +35,7 @@ internal class PreparedStageClearGlow private constructor(
         val originalSkin = FloatPlane.takeOwnership(base.width, base.height, skinValues)
         val glowed = if (strength == 0.0) base else glow(strength, originalSkin, checkpoint)
         checkpoint()
-        return StageClearProtections.finish(glowed, faces) { input ->
-            checkpoint()
-            val mist = StageClearMist.render(input, originalSkin, strength)
-            checkpoint()
-            val orton = StageClearOrton.render(mist, originalSkin)
-            checkpoint()
-            StageClearCharacter.render(orton, strength).also { checkpoint() }
-        }.also { checkpoint() }
+        return StageClearLook.renderFromGlowed(glowed, originalSkin, faces, strength, decisions, checkpoint)
     }
 
     private fun glow(strength: Double, skin: FloatPlane, checkpoint: () -> Unit): LinearSrgbImage {

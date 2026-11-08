@@ -88,6 +88,9 @@ internal class TrialStrengthEditor private constructor(
     fun shown(ticket: TrialStrengthTicket, values: PhotoEditValues): TrialStrengthEditor =
         if (accepts(ticket) && original != null && values == requestedValues) copy(displayedValues = values) else this
 
+    /** Approximate pixels cannot confirm committed settings or enable Close/Save. */
+    fun showingDraft(): TrialStrengthEditor = copy(displayedValues = null)
+
     fun accepts(ticket: TrialStrengthTicket) = ticket == this.ticket
 
     private fun nextRevision(): Long { check(revision < Long.MAX_VALUE); return revision + 1 }
