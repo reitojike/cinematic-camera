@@ -294,6 +294,81 @@ class Original24PreviewSessionInstrumentationTest {
         }
     }
 
+    @Test fun draftReusesExactDecisionsAndReleaseMatchesFreshExactPixels() = fixture(width = 1088, height = 80) { input, root, source ->
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val geometry = preflight(input)
+        var reads = 0
+        fun session(name: String) = Original24PreviewSession(source, File(root, name),
+            { Original24Resources.requireAvailable(context) }, geometry) { reads++; input.inputStream() }
+        val retained = session("retained")
+        try {
+            assertNull(retained.renderDraft(.8, PhotoAdjustments(35.0, .4)))
+            assertEquals(0, reads) // A missing exact decision never decodes or meters a coarse image.
+            retained.render(.5).also { assertEquals(1024, it.width); it.recycle() }
+            for ((index, edits) in listOf(PhotoAdjustments(35.0, .4), PhotoAdjustments(-20.0, -.6), PhotoAdjustments.NONE).withIndex()) {
+                val decisions = requireNotNull(retained.previewDecisions)
+                val exactEv = retained.previewExternalEv
+                val strength = listOf(.8, .2, .5)[index]
+                repeat(3) { tick ->
+                    val beforeReads = reads
+                    val draft = requireNotNull(retained.renderDraft(strength, edits.copy(exposureEv = edits.exposureEv + tick * .1)))
+                    try {
+                        assertEquals(256, draft.width)
+                        assertTrue(draft.height <= 256)
+                        assertSame(decisions, retained.previewDecisions)
+                        assertEquals(exactEv, retained.previewExternalEv)
+                        assertEquals(2, reads - beforeReads) // Source fences only, never another decode.
+                        val before = requireNotNull(retained.comparisonBitmap(maxEdge = 256))
+                        try { assertNotSame(draft, before); assertEquals(draft.width, before.width); assertEquals(draft.height, before.height) }
+                        finally { before.recycle() }
+                    } finally { draft.recycle() }
+                }
+                assertTrue(retained.draftFieldBytes > 0)
+                val actual = retained.render(strength, edits)
+                try {
+                    assertEquals(1024, actual.width)
+                    assertNotSame(decisions, retained.previewDecisions)
+                    assertEquals(0, retained.draftFieldBytes)
+                    val cold = session("cold-$index")
+                    try {
+                        val expected = cold.render(strength, edits)
+                        try { assertArrayEquals(pixels(expected), pixels(actual)) }
+                        finally { expected.recycle() }
+                    } finally { cold.close() }
+                } finally { actual.recycle() }
+                assertFalse(retained.hasUnreleasedResources)
+            }
+            DngContentVerifier.verify(source.fingerprint, { input.inputStream() })
+        } finally { retained.close() }
+        assertNull(retained.previewDecisions)
+        assertEquals(0, retained.previewFieldBytes)
+        assertEquals(0, retained.draftFieldBytes)
+        assertFalse(retained.hasUnreleasedResources)
+    }
+
+    @Test fun draftSourceFailureAndCancellationClearAllPhotoScopedDecisions() {
+        for (mutate in listOf(false, true)) fixture { input, root, source ->
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            val session = Original24PreviewSession(source, File(root, "preview"),
+                { Original24Resources.requireAvailable(context) }, preflight(input)) { input.inputStream() }
+            try {
+                session.render(.5).recycle()
+                requireNotNull(session.renderDraft(.7)).recycle()
+                if (mutate) {
+                    input.writeBytes(input.readBytes().also { it[it.lastIndex] = (it.last().toInt() xor 1).toByte() })
+                    assertThrows(IOException::class.java) { session.renderDraft(.8) }
+                } else assertThrows(java.util.concurrent.CancellationException::class.java) {
+                    session.renderDraft(.8, shouldStop = { true })
+                }
+                assertNull(session.previewDecisions)
+                assertEquals(0, session.previewFieldBytes)
+                assertEquals(0, session.draftFieldBytes)
+                assertFalse(session.hasUnreleasedResources)
+            } finally { session.close() }
+            assertThrows(IllegalStateException::class.java) { session.renderDraft(.5) }
+        }
+    }
+
     private fun preflight(input: File) = ParcelFileDescriptor.open(input, ParcelFileDescriptor.MODE_READ_ONLY).use {
         Original24Preflight.inspect(it.fd, CancellationSignal())
     }

@@ -36,6 +36,35 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
             repository.check(uri, fromFiles, stop, maxSourceBytes, readers)
         }
 
+    override fun renderDraft(request: PhotoRollRenderRequest, cancellation: CancellationSignal): PhotoRollRenderResult.Preview? {
+        require(request.mode == mode && request.lookVersion == "stage-clear-v1" && request.maxEdge == 256)
+        cancellation.throwIfCanceled()
+        if (AutoDevelopPolicy.blockers(resources().developConditions(rendererAvailable = true)).isNotEmpty()) return null
+        val future = AndroidManualOriginalTrialSaves.renderDraftPreview(app, request.original.reference,
+            request.strength, resources().developConditions(rendererAvailable = true), request.adjustments) { cancellation.isCanceled }
+        val abandoned = AtomicBoolean(false)
+        cancellation.setOnCancelListener { AndroidManualOriginalTrialSaves.invalidatePreviews() }
+        future.whenComplete { delivery, _ -> if (abandoned.get() || cancellation.isCanceled) delivery?.close() }
+        try {
+            val delivery = awaitTrialPreview(future, cancellation, awaitCancelledOwner = true) ?: return null
+            delivery.use {
+                cancellation.throwIfCanceled()
+                val bitmap = it.claimBitmap()
+                var before: android.graphics.Bitmap? = null
+                try {
+                    before = it.claimComparisonBitmap()
+                    cancellation.throwIfCanceled()
+                    return PhotoRollRenderResult.Preview(bitmap, mode, comparisonBitmap = before,
+                        comparisonDescription = before?.let { "撮影時WBのRAW基準表示（R7・ルック・手動調整なし、暫定色）" })
+                } catch (error: Throwable) { bitmap.recycle(); before?.recycle(); throw error }
+            }
+        } finally {
+            abandoned.set(true)
+            try { future.getNow(null)?.close() } catch (_: Exception) { }
+            cancellation.setOnCancelListener(null)
+        }
+    }
+
     override fun render(request: PhotoRollRenderRequest, cancellation: CancellationSignal): PhotoRollRenderResult {
         require(request.mode == mode && request.lookVersion == "stage-clear-v1" &&
             request.strength.isFinite() && request.strength in 0.0..1.0 && request.maxEdge == maxEdge)
@@ -45,7 +74,7 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
         val key = PhotoRollPreviewKey(request.original.reference, request.strength, request.adjustments,
             request.lookVersion, request.maxEdge, request.mode)
         val cacheTicket = previewCache?.begin(key, request.explicitRetry)
-        val retained = cacheTicket?.let { previewCache?.copy(it) }
+        val retained = if (request.refreshDecisions) null else cacheTicket?.let { previewCache?.copy(it) }
         if (retained != null) {
             var adopted = false
             try {

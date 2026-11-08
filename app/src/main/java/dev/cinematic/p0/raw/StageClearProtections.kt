@@ -6,7 +6,11 @@ import kotlin.math.*
 internal object StageClearProtections {
     private val luma = StageClearV1.LUMA
 
-    data class Result(val image: LinearSrgbImage, val faceCutFactor: Double)
+    data class Result(
+        val image: LinearSrgbImage,
+        val faceCutFactor: Double,
+        val decisions: StageClearDecisions? = null,
+    )
 
     /**
      * Supply the pure stages 2..5 closure, retaining strength and the original base's skin weight.
@@ -17,8 +21,17 @@ internal object StageClearProtections {
         glowed: LinearSrgbImage,
         faces: FaceMask,
         layerBeforeCap: (LinearSrgbImage) -> LinearSrgbImage,
+    ): Result = finish(glowed, faces, null, layerBeforeCap)
+
+    fun finish(
+        glowed: LinearSrgbImage,
+        faces: FaceMask,
+        faceCutFactorOverride: Double?,
+        layerBeforeCap: (LinearSrgbImage) -> LinearSrgbImage,
     ): Result {
         faces.requireAligned(glowed)
+        require(faceCutFactorOverride == null ||
+            faceCutFactorOverride.isFinite() && faceCutFactorOverride > 0.0 && faceCutFactorOverride <= 1.0)
         fun layer(input: LinearSrgbImage): LinearSrgbImage {
             val output = layerBeforeCap(input)
             require(output.width == glowed.width && output.height == glowed.height) {
@@ -27,7 +40,7 @@ internal object StageClearProtections {
             return skinChromaCap(output, faces)
         }
         val first = layer(glowed)
-        val factor = faceCut(first, faces)
+        val factor = faceCutFactorOverride ?: faceCut(first, faces)
         val layered = if (factor < 1.0) layer(glowed.scaled(factor)) else first
         return Result(shoulder(layered), factor)
     }

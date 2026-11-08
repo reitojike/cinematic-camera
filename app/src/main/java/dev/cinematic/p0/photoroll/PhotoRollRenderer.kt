@@ -22,6 +22,8 @@ internal data class PhotoRollRenderRequest(
     val maxEdge: Int = 1024,
     val mode: PhotoRollPreviewMode = PhotoRollPreviewMode.STAGE_CLEAR,
     val explicitRetry: Boolean = false,
+    /** An edit release must refresh exact decisions even if display pixels were retained. */
+    val refreshDecisions: Boolean = false,
     /** Diagnostic serial admission keeps the permit until an abandoned queue future finishes. */
     val awaitCancelledOwner: Boolean = false,
     val onStage: (PhotoRollRenderStage) -> Unit = {},
@@ -76,6 +78,8 @@ internal fun PhotoRollRenderResult.Preview.recycleDisplayPixels() {
 internal interface PhotoRollRenderer {
     /** Discard only optional in-memory input reuse. Never release an in-flight native/IO owner here. */
     fun discardTransientInputs() {}
+    /** Optional display-only approximation. Null means keep the previous image, not re-meter at 256px. */
+    fun renderDraft(request: PhotoRollRenderRequest, cancellation: CancellationSignal): PhotoRollRenderResult.Preview? = null
     val mode: PhotoRollPreviewMode get() = PhotoRollPreviewMode.STAGE_CLEAR
     val maxSourceBytes: Long get() = PhotoRollRepository.MAX_SOURCE_BYTES
     val maxEdge: Int get() = 1024
