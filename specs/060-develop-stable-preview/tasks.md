@@ -6,9 +6,9 @@
 - [x] T004 [US2] PhotoRollDevelopView.kt の状態・通知・情報をoverlay/dialogへ移す
 - [x] T005 [US3] PhotoRollComparisonImage.kt に幅基準・縦スクロール表示を追加
 - [x] T006 [US1] 合成UIで処理中表示・旧要求・失敗・保存不可を確認
-- [ ] T007 [US2] 合成UIで通知・情報・状態変更時のviewport固定と読み上げを確認
-- [ ] T008 [US3] 合成UIで縦横・大文字・比較の描画と入力回帰を確認
-- [ ] T009 lint/unit/assemble・差分検査、Draft PR・CI・canonical/独立レビュー
+- [x] T007 [US2] 合成UIで通知・情報・状態変更時のviewport固定と読み上げを確認
+- [x] T008 [US3] 合成UIで縦横・大文字・比較の描画と入力回帰を確認
+- [x] T009 lint/unit/assemble・差分検査、Draft PR・CI・canonical/独立レビュー
 
 依存: T001→T002→T003〜T005→T006〜T008→T009。同じファイルを扱うため実装を直列にし、レビューとCIは並行可能。実機確認とマージ承認は未完了である。
 
