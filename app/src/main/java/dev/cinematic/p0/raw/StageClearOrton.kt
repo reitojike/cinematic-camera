@@ -9,16 +9,17 @@ internal object StageClearOrton {
     private val luma = StageClearV1.LUMA
 
     /** Consume stage 2's paired amount: never recompute auto-strength from its output. */
-    fun render(mist: StageClearMist.Result, skinWeight: FloatPlane): LinearSrgbImage {
+    fun render(mist: StageClearMist.Result, skinWeight: FloatPlane, execution: PreviewPixelExecution? = null): LinearSrgbImage {
+        execution?.checkpoint()
         val amount = mist.lightAddingStrength
         require(amount.isFinite() && amount in 0.0..1.0) { "Light-adding strength must be within 0..1" }
         validateSkin(mist.image, skinWeight)
         if (amount == 0.0) return mist.image
-        val orton = applyOrton(mist.image, skinWeight)
+        val orton = applyOrton(mist.image, skinWeight, execution)
         val output = FloatArray(mist.image.pixelCount * 3) { i ->
             mist.image[i] + amount.toFloat() * (orton[i] - mist.image[i])
         }
-        return LinearSrgbImage.takeOwnership(mist.image.width, mist.image.height, output)
+        return LinearSrgbImage.takeOwnership(mist.image.width, mist.image.height, output).also { execution?.checkpoint() }
     }
 
     internal fun orton(image: LinearSrgbImage, skinWeight: FloatPlane): LinearSrgbImage {
@@ -26,27 +27,30 @@ internal object StageClearOrton {
         return applyOrton(image, skinWeight)
     }
 
-    private fun applyOrton(image: LinearSrgbImage, skinWeight: FloatPlane): LinearSrgbImage {
+    private fun applyOrton(image: LinearSrgbImage, skinWeight: FloatPlane, execution: PreviewPixelExecution? = null): LinearSrgbImage {
         // The encoded/bright/soft arrays are no longer needed by chroma protection.
-        val candidate = mixOrton(image)
+        val candidate = mixOrton(image, execution)
         val output = FloatArray(image.pixelCount * 3)
-        val before = FloatArray(3)
-        val after = FloatArray(3)
-        repeat(image.pixelCount) { p ->
-            StageClearColor.toLab(image, p * 3, before)
-            StageClearColor.toLab(candidate, p * 3, after)
-            val c0 = hypot(before[1], before[2])
-            val c1 = hypot(after[1], after[2])
-            val keep = skinWeight[p]
-            val scale = (1f - keep) + keep * min(1f, c0 / max(c1, StageClearOrtonV1.CHROMA_FLOOR.toFloat()))
-            after[1] *= scale
-            after[2] *= scale
-            StageClearColor.toRgb(after, output, p * 3)
+        previewPixelRanges(image.pixelCount, execution) { start, end ->
+            val before = FloatArray(3)
+            val after = FloatArray(3)
+            for (p in start until end) {
+                previewPixelCheckpoint(p, execution)
+                StageClearColor.toLab(image, p * 3, before)
+                StageClearColor.toLab(candidate, p * 3, after)
+                val c0 = hypot(before[1], before[2])
+                val c1 = hypot(after[1], after[2])
+                val keep = skinWeight[p]
+                val scale = (1f - keep) + keep * min(1f, c0 / max(c1, StageClearOrtonV1.CHROMA_FLOOR.toFloat()))
+                after[1] *= scale
+                after[2] *= scale
+                StageClearColor.toRgb(after, output, p * 3)
+            }
         }
         return LinearSrgbImage.takeOwnership(image.width, image.height, output)
     }
 
-    private fun mixOrton(image: LinearSrgbImage): LinearSrgbImage {
+    private fun mixOrton(image: LinearSrgbImage, execution: PreviewPixelExecution?): LinearSrgbImage {
         val encoded = FloatArray(image.pixelCount * 3) { StageClearColor.linearToUnit(image[it]) }
         val bright = FloatArray(encoded.size) { i ->
             val inverse = 1f - encoded[i]
@@ -54,17 +58,20 @@ internal object StageClearOrton {
         }
         val soft = StageClearBlur.rgb(LinearSrgbImage.takeOwnership(image.width, image.height, bright), StageClearOrtonV1.RADIUS)
         val mixed = FloatArray(encoded.size)
-        repeat(image.pixelCount) { p ->
-            val i = p * 3
-            val y = encoded[i] * luma[0] + encoded[i + 1] * luma[1] + encoded[i + 2] * luma[2]
-            val fade = highlightFade(y)
-            repeat(3) { c ->
-                val j = i + c
-                val display = encoded[j] + StageClearOrtonV1.AMOUNT.toFloat() * fade *
-                    (bright[j] * soft[j].coerceIn(0f, 1f) - encoded[j])
-                val value = StageClearColor.unitToLinear(display)
-                // PC restores >1 per channel BEFORE OKLab skin protection, with no final clamp.
-                mixed[j] = if (image[j] > 1f) max(image[j], value) else value
+        previewPixelRanges(image.pixelCount, execution) { start, end ->
+            for (p in start until end) {
+                previewPixelCheckpoint(p, execution)
+                val i = p * 3
+                val y = encoded[i] * luma[0] + encoded[i + 1] * luma[1] + encoded[i + 2] * luma[2]
+                val fade = highlightFade(y)
+                repeat(3) { c ->
+                    val j = i + c
+                    val display = encoded[j] + StageClearOrtonV1.AMOUNT.toFloat() * fade *
+                        (bright[j] * soft[j].coerceIn(0f, 1f) - encoded[j])
+                    val value = StageClearColor.unitToLinear(display)
+                    // PC restores >1 per channel BEFORE OKLab skin protection, with no final clamp.
+                    mixed[j] = if (image[j] > 1f) max(image[j], value) else value
+                }
             }
         }
         return LinearSrgbImage.takeOwnership(image.width, image.height, mixed)

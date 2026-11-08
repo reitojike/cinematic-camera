@@ -15,10 +15,19 @@ internal object StageClearMist {
         glowed: LinearSrgbImage,
         skinWeight: FloatPlane,
         strength: Double = StageClearV1.DEFAULT_STRENGTH,
+    ): Result = render(glowed, skinWeight, strength, null)
+
+    fun render(
+        glowed: LinearSrgbImage,
+        skinWeight: FloatPlane,
+        strength: Double,
+        autoStrengthOverride: Double?,
     ): Result {
         require(strength.isFinite() && strength in 0.0..1.0) { "Strength must be within 0..1" }
         validateSkin(glowed, skinWeight)
-        val amount = autoStrength(glowed) * strength
+        require(autoStrengthOverride == null ||
+            autoStrengthOverride.isFinite() && autoStrengthOverride in 0.0..1.0)
+        val amount = (autoStrengthOverride ?: autoStrength(glowed)) * strength
         if (strength == 0.0) return Result(glowed, amount)
         val mist = applyMist(glowed, skinWeight)
         val mixed = FloatArray(glowed.pixelCount * 3) { i ->

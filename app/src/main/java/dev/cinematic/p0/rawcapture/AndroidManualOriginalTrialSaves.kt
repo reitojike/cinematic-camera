@@ -63,6 +63,19 @@ internal object AndroidManualOriginalTrialSaves {
         }
     }
 
+    /** Drafts borrow only an existing exact session. They never allocate a durable save request. */
+    fun renderDraftPreview(context: Context, source: SharedOriginalReference, strength: Double,
+        conditions: AutoDevelopConditions, adjustments: PhotoAdjustments,
+        shouldStop: () -> Boolean): CompletableFuture<ManualOriginalDraftPreview?> {
+        val app = context.applicationContext
+        return AndroidAutoDevelopQueue.get(app).manualOriginalIo {
+            if (shouldStop()) throw java.util.concurrent.CancellationException("Draft preview stopped")
+            val authority = authorities[app.noBackupFilesDir.canonicalPath to source]
+            if (authority == null || previewAuthority !== authority) null
+            else authority.renderDraftPreview(strength, adjustments, conditions, shouldStop)
+        }
+    }
+
     fun prepare(context: Context, source: SharedOriginalReference, strength: Double,
         conditions: AutoDevelopConditions, adjustments: PhotoAdjustments = PhotoAdjustments.NONE,
         shouldStop: () -> Boolean = { false }): CompletableFuture<ManualOriginalTrialHandle> {
@@ -162,6 +175,33 @@ internal object AndroidManualOriginalTrialSaves {
             } finally {
                 activePreview = null
                 if (!delivered) { bitmap?.recycle(); comparison?.recycle(); previewSession?.close(); previewSession = null }
+                if (previewSession?.hasUnreleasedResources != true) {
+                    DevelopExecution.completeAfterResourcesClosed(slot); previewSlot = null
+                }
+            }
+        }
+
+        fun renderDraftPreview(strength: Double, adjustments: PhotoAdjustments,
+            conditions: AutoDevelopConditions, stop: () -> Boolean): ManualOriginalDraftPreview? {
+            if (previewSlot != null || sessionEpoch != previewEpoch.get()) discardPreview()
+            val session = previewSession?.takeIf { it.hasDraftDecisions } ?: return null
+            val request = currentRequest ?: return null
+            val slot = DevelopExecution.tryStartObserved(conditions) ?: throw IOException("Draft preview admission blocked")
+            previewSlot = slot
+            var delivered = false
+            var bitmap: Bitmap? = null
+            var comparison: Bitmap? = null
+            val stopped = { stop() || DevelopExecution.shouldStop(slot) || currentRequest != request || sessionEpoch != previewEpoch.get() }
+            try {
+                activePreview = session
+                DevelopExecution.registerStop(slot, session::requestStop)
+                bitmap = session.renderDraft(strength, adjustments, stopped) ?: return null
+                comparison = session.comparisonBitmap(maxEdge = 256, shouldStop = stopped)
+                if (stopped()) throw java.util.concurrent.CancellationException("Draft preview stopped")
+                return ManualOriginalDraftPreview(requireNotNull(bitmap), comparison).also { delivered = true }
+            } finally {
+                activePreview = null
+                if (!delivered) { bitmap?.recycle(); comparison?.recycle(); session.close(); previewSession = null }
                 if (previewSession?.hasUnreleasedResources != true) {
                     DevelopExecution.completeAfterResourcesClosed(slot); previewSlot = null
                 }
@@ -322,6 +362,13 @@ internal object AndroidManualOriginalTrialSaves {
             }
         }
         fun requestStop() { slot?.let(DevelopExecution::requestStop) }
+    }
+
+    /** Display-only draft delivery, deliberately without a save handle or committed settings. */
+    internal class ManualOriginalDraftPreview(private var after: Bitmap?, private var before: Bitmap?) : Closeable {
+        @Synchronized fun claimBitmap(): Bitmap = requireNotNull(after).also { after = null }
+        @Synchronized fun claimComparisonBitmap(): Bitmap? = before?.also { before = null }
+        @Synchronized override fun close() { after?.recycle(); after = null; before?.recycle(); before = null }
     }
 
     /** UI claims this one independent software bitmap, or closes an abandoned delivery. */
