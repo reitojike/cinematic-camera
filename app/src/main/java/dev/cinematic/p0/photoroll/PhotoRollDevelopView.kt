@@ -105,15 +105,17 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                     comparison.takeIf { compareEnabled }, foreground, "現像結果（表示用）", comparisonLabel,
                     Modifier.fillMaxSize(), comparing && compareEnabled, { comparing = it }, unapplied || updating,
                     fillImageWidth = fillImageWidth, stableCaption = true)
-                else if (phase == PhotoRollPhase.BLOCKED) Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(message ?: "現像を開始・完了できません", color = CaptureDesign.Failed, style = CaptureDesign.Explanation)
-                    TextButton(onClick = retry, enabled = foreground, shape = RectangleShape) { Text("原本を確認して再試行") }
-                } else Text(if (updating) "画像を準備中…" else "原本の確認待ち", color = CaptureDesign.Muted)
+                else if (phase != PhotoRollPhase.BLOCKED) Text(if (updating) "画像を準備中…" else "原本の確認待ち", color = CaptureDesign.Muted)
                 Column(Modifier.align(Alignment.TopCenter).fillMaxWidth().background(CaptureDesign.Ink.copy(alpha = .9f))) {
                     statusOverlay()
                 }
                 Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(CaptureDesign.Ink.copy(alpha = .9f))
                     .pointerInput(Unit) { detectTapGestures(onTap = {}) }) {
+                    if (phase == PhotoRollPhase.BLOCKED) {
+                        Text(message ?: "現像を開始・完了できません", Modifier.padding(8.dp),
+                            color = CaptureDesign.Failed, style = CaptureDesign.Explanation)
+                        TextButton(onClick = retry, enabled = foreground, shape = RectangleShape) { Text("原本を確認して再試行") }
+                    }
                     if (updating) Text(if (preview != null) "更新中 · 直前の表示です" else
                         if (phase == PhotoRollPhase.CHECKING) "原本を確認中…" else stage?.label ?: "DNGを処理中…",
                         Modifier.padding(8.dp).semantics { liveRegion = LiveRegionMode.Polite },

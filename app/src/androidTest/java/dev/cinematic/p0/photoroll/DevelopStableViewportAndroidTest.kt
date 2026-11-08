@@ -121,7 +121,9 @@ class DevelopStableViewportAndroidTest {
                 assertEquals("transient state must not move viewport", initial, updated)
                 assertNotNull(await("現像結果（表示用）"))
                 if (next != PhotoRollPhase.DISPLAYED) {
-                    val notice = Rect().also { await("更新中 · 直前の表示です").getBoundsInScreen(it) }
+                    val noticeNode = await("更新中 · 直前の表示です")
+                    assertTrue("progress remains accessible", noticeNode.isVisibleToUser)
+                    val notice = Rect().also { noticeNode.getBoundsInScreen(it) }
                     val panel = Rect().also { await("現像調整パネル").getBoundsInScreen(it) }
                     assertTrue("progress is visible above the ruler", notice.height() > 0 && notice.bottom <= panel.top)
                 }
@@ -135,7 +137,7 @@ class DevelopStableViewportAndroidTest {
             assertEquals("image scrolling must not move the viewport", initial, scrolled)
             }
             scenario.onActivity { phase.value = PhotoRollPhase.BLOCKED; message.value = "合成の検証失敗" }
-            await("合成の検証失敗")
+            assertTrue("failure remains accessible above the ruler", await("合成の検証失敗").isVisibleToUser)
             assertNull("failure must not present stale pixels as a result", find("現像結果（表示用）"))
         }
         image.recycle()
