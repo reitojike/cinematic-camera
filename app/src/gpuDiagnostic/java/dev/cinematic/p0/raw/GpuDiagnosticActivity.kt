@@ -83,13 +83,13 @@ class GpuDiagnosticService : Service() {
             var managedMax = 0L; var nativeMax = 0L
             var sampler:Thread? = null
             try {
-            sampler = if (observeMemory) Thread({
-                while (sampling.get()) {
-                    managedMax = maxOf(managedMax, Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory())
-                    nativeMax = maxOf(nativeMax, Debug.getNativeHeapAllocatedSize())
-                    try { Thread.sleep(100) } catch (_: InterruptedException) { break }
-                }
-            }, "gpu-probe-memory") else null
+                sampler = if (observeMemory) Thread({
+                    while (sampling.get()) {
+                        managedMax = maxOf(managedMax, Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory())
+                        nativeMax = maxOf(nativeMax, Debug.getNativeHeapAllocatedSize())
+                        try { Thread.sleep(100) } catch (_: InterruptedException) { break }
+                    }
+                }, "gpu-probe-memory") else null
                 sampler?.start()
                 environment("start")
                 when (mode) {
@@ -160,26 +160,26 @@ class GpuDiagnosticService : Service() {
             for (strength in listOf(.25,.5,1.0)) {
                 checkpoint()
                 fun cpuRun():Pair<LinearSrgbImage,Long> {
-                val beforeCpu = System.nanoTime()
-                val cpu = StageClearLook.renderFromBase(base,faces,strength).image
-                val cpuNs = System.nanoTime()-beforeCpu
+                    val beforeCpu = System.nanoTime()
+                    val cpu = StageClearLook.renderFromBase(base,faces,strength).image
+                    val cpuNs = System.nanoTime()-beforeCpu
                     return cpu to cpuNs
                 }
                 fun gpuRun():Pair<LinearSrgbImage,Long> {
-                val beforeGpu = System.nanoTime()
-                // CPU全Lookと同じ範囲で肌fieldの準備も計測する。
-                val skin = StageClearGlow.skinWeight(base)
-                val glow = GpuDiagnosticGlow.render(base,strength,skin)
-                val blurNs=GpuProbeImages.lastWallNs.get() ?: 0L
-                var ortonNs=0L; var ortonPreparationNs=0L
-                val gpu = StageClearProtections.finish(glow,faces) {
-                    val mist = StageClearMist.render(it,skin,strength)
-                    val observation=GpuDiagnosticOrton.render(mist,skin,64) { stop.get() }
-                    ortonNs+=observation.gpuWallNs;ortonPreparationNs+=observation.cpuPrepareNs
-                    StageClearCharacter.render(observation.output,strength)
-                }.image
-                val gpuNs = System.nanoTime()-beforeGpu
-                log("対象GPU2工程 blurNs=$blurNs ortonNs=$ortonNs sumNs=${blurNs+ortonNs} ortonCpuPreparationNs=$ortonPreparationNs EGL初期化と転送同期readback込み")
+                    val beforeGpu = System.nanoTime()
+                    // CPU全Lookと同じ範囲で肌fieldの準備も計測する。
+                    val skin = StageClearGlow.skinWeight(base)
+                    val glow = GpuDiagnosticGlow.render(base,strength,skin)
+                    val blurNs=GpuProbeImages.lastWallNs.get() ?: 0L
+                    var ortonNs=0L; var ortonPreparationNs=0L
+                    val gpu = StageClearProtections.finish(glow,faces) {
+                        val mist = StageClearMist.render(it,skin,strength)
+                        val observation=GpuDiagnosticOrton.render(mist,skin,64) { stop.get() }
+                        ortonNs+=observation.gpuWallNs;ortonPreparationNs+=observation.cpuPrepareNs
+                        StageClearCharacter.render(observation.output,strength)
+                    }.image
+                    val gpuNs = System.nanoTime()-beforeGpu
+                    log("対象GPU2工程 blurNs=$blurNs ortonNs=$ortonNs sumNs=${blurNs+ortonNs} ortonCpuPreparationNs=$ortonPreparationNs EGL初期化と転送同期readback込み")
                     return gpu to gpuNs
                 }
                 val records=if(reverse){val g=gpuRun();cpuRun() to g}else{val c=cpuRun();c to gpuRun()}
