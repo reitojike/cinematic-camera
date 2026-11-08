@@ -1,7 +1,0 @@
-# 合成確認手順
-
-合成Bitmapを使用し、通知なし→長い通知→保存通知→処理中表示でviewportの座標と寸法が不変なことを確認する。同じ写真の再計算では前の画像を表示し、別写真・失敗・背景では保持しない。保存可否の契約を変えない。
-
-製品既定は全体Fitを維持する。比較用引数fillImageWidthを切り替え、4:3縦画像、横画像、縦長画像の2案を同じ画面条件で撮る。Fitでは全体を収める。幅いっぱい案では縦横比を維持し、収まらない高さは画像領域内でスクロールする。採用は本人が選ぶまで決めない。
-
-DevelopStableViewportAndroidTest、DevelopViewAndroidTest、PhotoRollDragPreviewAndroidTest、PhotoRollComparisonGestureAndroidTestを共有ATDで実行する。スクリーンショットはViewのソフトウェア描画であり、実機の表示合成やGPU経路の証拠ではない。lintDebug/testDebugUnitTest/assembleDebugとgit diff --checkを実行する。実機の操作感は未検証として扱う。
