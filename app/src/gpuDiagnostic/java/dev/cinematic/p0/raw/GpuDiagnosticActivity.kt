@@ -58,6 +58,7 @@ class GpuDiagnosticService : Service() {
             return START_NOT_STICKY
         }
         if (!busy.compareAndSet(false,true)) { stopSelfResult(startId); return START_NOT_STICKY }
+        lastOutcome = "running"
         cancellation = stop
         val observeMemory=intent?.getBooleanExtra("observeMemory",false) ?: false
         reverse=intent?.getBooleanExtra("reverse",false) ?: false
@@ -70,7 +71,7 @@ class GpuDiagnosticService : Service() {
         val type = if (Build.VERSION.SDK_INT >= 35) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROCESSING else ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
         startForeground(237, notification, type)
         } catch (failure: Throwable) {
-            cancellation = null; busy.set(false)
+            lastOutcome = "failed"; cancellation = null; busy.set(false)
             stopForeground(STOP_FOREGROUND_REMOVE)
             log("FGS開始失敗 type=${failure.javaClass.simpleName}")
             stopSelfResult(latestStartId)
@@ -96,9 +97,10 @@ class GpuDiagnosticService : Service() {
                     "orton12" -> runOrton12()
                     else -> compare(if (mode == "small") 257 else 1024)
                 }
+                lastOutcome = "completed"
                 log("完了 mode=$mode")
-            } catch (_: CancellationException) { log("取消 mode=$mode") }
-            catch (failure: Throwable) { log("失敗 mode=$mode type=${failure.javaClass.simpleName}") }
+            } catch (_: CancellationException) { lastOutcome = "cancelled"; log("取消 mode=$mode") }
+            catch (failure: Throwable) { lastOutcome = "failed"; log("失敗 mode=$mode type=${failure.javaClass.simpleName}") }
             finally {
                 try {
                     try { environment("end") }
@@ -130,7 +132,7 @@ class GpuDiagnosticService : Service() {
         worker = nextWorker
         nextWorker.start()
         } catch(failure:Throwable) {
-            stop.set(true); worker=null; cancellation=null; busy.set(false)
+            lastOutcome = "failed"; stop.set(true); worker=null; cancellation=null; busy.set(false)
             stopForeground(STOP_FOREGROUND_REMOVE); stopSelfResult(latestStartId)
             log("診断スレッド開始失敗 type=${failure.javaClass.simpleName}")
         }
@@ -246,6 +248,8 @@ class GpuDiagnosticService : Service() {
     companion object {
         private val busy=AtomicBoolean(false)
         @Volatile private var cancellation:AtomicBoolean?=null
+        @Volatile internal var lastOutcome: String = "idle"
+            private set
         internal fun active()=busy.get()
         fun cancel(){cancellation?.set(true)}
         fun cancelled()=cancellation?.get()==true
