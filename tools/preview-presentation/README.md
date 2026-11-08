@@ -101,3 +101,29 @@ UNRESOLVEDがある通常の集計は終了code 0だが、計測の合格では�
 CLI仕様の参照:
 - https://github.com/google/perfetto/blob/v57.2/src/trace_processor/shell/query_subcommand.cc
 - https://github.com/google/perfetto/blob/v57.2/src/trace_processor/shell/query.cc
+
+## 合成RAWの機能試験
+
+`PreviewRawGestureFixtureAndroidTest` は合成DNGを実際の `PhotoRollScreen` →
+`ManualTrialPhotoRollRenderer` → `Original24PreviewSession` に通す機能試験です。
+`original24probe` の新規instrumentation processで、このclassだけを実行します。
+`isolated=true` と `previewRawGestureProbe=true` の明示指定が必要です。
+通常CI・通常の合成UIテストではskipされます。
+
+専用ContentProvider以外の共有メディアへはアクセスせず、queueの初期化はActivityより先に
+試験専用contextで行います。既存process ownerがあれば置き換えず拒否します。
+sourceのfingerprintと共有書込0を確認します。終了時は新規openを停止し、queueと追跡中FDの
+正常解放を待ちます。強制close・source削除は行わず、試験専用privateデータを保持します。
+FDのvalid判定は全非同期処理や複製FDの終了証明ではありません。
+
+この試験はdebug相当です。リソース条件も合成fixture用に固定しているため、
+端末の性能・発熱・メモリ上限の採否には使いません。DRAFT/EXACTの計算完了を確認しても
+実提示時刻は `NOT_MEASURED` です。release/profileable対象と実FrameTimelineの検証は別に必要です。
+
+### 現在のfixture起動制約
+
+`original24probe` は既存の隔離manifestで全Activityを削除しているため、
+現fixtureの `ActivityScenario.launch(PhotoRollActivity)` は起動できません。
+コンパイル可能であることは実行可能・試験成功を意味しません。
+既存probeの隔離を緩めず、専用のrelease/profileable UI診断hostを接続してから再試験します。
+この未完成fixtureを次の統合診断の必須依存にはしません。
