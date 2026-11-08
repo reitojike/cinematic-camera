@@ -16,6 +16,21 @@ class GpuDiagnosticProbeTest {
         assumeTrue(InstrumentationRegistry.getArguments().getString("gpuPixelProbe") == "true")
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
     }
+    @Test fun integratedEntrypointsDoNotStartGpu() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        for (target in listOf(DiagnosticHubActivity::class.java, GpuDiagnosticActivity::class.java,
+            dev.cinematic.p0.rawdiagnostic.RawDiagnosticActivity::class.java,
+            dev.cinematic.p0.photoroll.PhotoRollActivity::class.java)) {
+            val activity = instrumentation.startActivitySync(android.content.Intent(context, target)
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+            try {
+                instrumentation.waitForIdleSync()
+                assertFalse("入口の表示だけではGPUを開始しない", GpuDiagnosticService.active())
+                assertFalse("RAW診断も選択なしでは開始しない", dev.cinematic.p0.rawdiagnostic.RawDiagnosticActivity.activeOrHeld())
+            } finally { instrumentation.runOnMainSync { activity.finish() }; instrumentation.waitForIdleSync() }
+        }
+    }
     @Test fun repeatedStartsCancelAndStopService() {
         val instrumentation=InstrumentationRegistry.getInstrumentation()
         val context=instrumentation.targetContext
