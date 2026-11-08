@@ -1,0 +1,14 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission tools:node="removeAll" />
+    <uses-feature tools:node="removeAll" />
+    <permission tools:node="removeAll" />
+    <application android:label="Preview Synthetic Diagnostic" tools:replace="android:label">
+        <profileable android:shell="true" />
+        <activity android:name=".MainActivity" tools:node="remove" />
+        <activity android:name=".photoroll.PhotoRollActivity" tools:node="remove" />
+        <activity android:name=".photoroll.PreviewPresentationActivity" android:exported="false" />
+        <service tools:node="removeAll" />
+        <provider tools:node="removeAll" />
+        <receiver tools:node="removeAll" />
+    </application>
+</manifest>

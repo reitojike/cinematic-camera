@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.os.Bundle
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.Composable
 import androidx.test.platform.app.InstrumentationRegistry
@@ -13,10 +14,10 @@ import org.junit.rules.TestWatcher
 import org.junit.runner.Description
 
 /** Reinstalls synthetic content after every host creation, including configuration changes. */
-class SyntheticFixtureRule : TestWatcher(), Application.ActivityLifecycleCallbacks {
+class SyntheticFixtureRule(private val hostClassName: String = PhotoRollActivity::class.java.name) : TestWatcher(), Application.ActivityLifecycleCallbacks {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     var content: (@Composable () -> Unit)? = null
-    private var host: PhotoRollActivity? = null
+    private var host: ComponentActivity? = null
     val automation get() = instrumentation.uiAutomation
     override fun starting(description: Description) {
         (instrumentation.targetContext.applicationContext as Application).registerActivityLifecycleCallbacks(this)
@@ -28,7 +29,7 @@ class SyntheticFixtureRule : TestWatcher(), Application.ActivityLifecycleCallbac
     }
     // Post-created runs after the Activity's own onCreate/setContent, not before it.
     override fun onActivityPostCreated(activity: Activity, state: Bundle?) {
-        if (activity is PhotoRollActivity) {
+        if (activity is ComponentActivity && activity.javaClass.name == hostClassName) {
             host = activity
             content?.let { fixture -> activity.setContent { fixture() } }
         }

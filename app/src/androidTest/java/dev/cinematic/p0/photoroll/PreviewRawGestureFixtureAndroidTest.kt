@@ -47,17 +47,16 @@ import dev.cinematic.p0.rawcapture.AndroidManualOriginalTrialSaves
 import dev.cinematic.p0.rawcapture.DngContentVerifier
 import org.junit.Assume.assumeTrue
 
-/** 未完成fixture。original24probeにはActivityがなく、専用UI診断hostの接続が必要。
- * 合成DNGを製品の画面・実rendererへ接続する。debug時間は性能判定に使わない。 */
+/** 合成DNGを製品の画面・実rendererへ接続する専用機能試験。実提示時刻の合格証明ではない。 */
 class PreviewRawGestureFixtureAndroidTest {
-    @get:Rule val fixture = SyntheticFixtureRule()
+    @get:Rule val fixture = SyntheticFixtureRule("dev.cinematic.p0.photoroll.PreviewPresentationActivity")
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
 
     @Test fun dragAndReleaseReachRealSyntheticRawPreview() {
         val args = InstrumentationRegistry.getArguments()
         val target = instrumentation.targetContext
         assumeTrue(args.getString("previewRawGestureProbe") == "true" && args.getString("isolated") == "true")
-        assumeTrue(target.packageName == "dev.cinematic.p0.original24probe")
+        assumeTrue(target.packageName == "dev.cinematic.p0.previewdiagnostic")
         // 単独の新規instrumentation processで実行。共有メディアにはアクセスしない。
         val provider = SyntheticProvider(target)
         val resolver = ContentResolver.wrap(provider)
@@ -98,7 +97,7 @@ class PreviewRawGestureFixtureAndroidTest {
             }
         }
         try {
-            ActivityScenario.launch(PhotoRollActivity::class.java).use {
+            ActivityScenario.launch<androidx.activity.ComponentActivity>(android.content.Intent().setClassName(target.packageName, "dev.cinematic.p0.photoroll.PreviewPresentationActivity")).use {
                 click(FIRST_NAME)
                 await { exactCount.get() == 1 }
                 click("STRENGTH")
@@ -141,10 +140,14 @@ class PreviewRawGestureFixtureAndroidTest {
         return requireNotNull(found)
     }
     private fun click(label: String) {
-        var found = node(label)
-        while (!found.isClickable) found = found.parent ?: error("Not clickable")
-        assertTrue(found.isEnabled)
-        assertTrue(found.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+        var enabled: AccessibilityNodeInfo? = null
+        await {
+            var found = findNode(label)
+            while (found != null && !found.isClickable) found = found.parent
+            enabled = found
+            found?.isEnabled == true
+        }
+        assertTrue(requireNotNull(enabled).performAction(AccessibilityNodeInfo.ACTION_CLICK))
         instrumentation.waitForIdleSync()
     }
     private fun await(condition: () -> Boolean) {

@@ -106,7 +106,7 @@ CLI仕様の参照:
 
 `PreviewRawGestureFixtureAndroidTest` は合成DNGを実際の `PhotoRollScreen` →
 `ManualTrialPhotoRollRenderer` → `Original24PreviewSession` に通す機能試験です。
-`original24probe` の新規instrumentation processで、このclassだけを実行します。
+`previewDiagnostic` の新規instrumentation processで、このclassだけを実行します。
 `isolated=true` と `previewRawGestureProbe=true` の明示指定が必要です。
 通常CI・通常の合成UIテストではskipされます。
 
@@ -116,14 +116,32 @@ sourceのfingerprintと共有書込0を確認します。終了時は新規open�
 正常解放を待ちます。強制close・source削除は行わず、試験専用privateデータを保持します。
 FDのvalid判定は全非同期処理や複製FDの終了証明ではありません。
 
-この試験はdebug相当です。リソース条件も合成fixture用に固定しているため、
+専用hostはrelease継承・non-debuggable・profileableです。リソース条件は合成fixture用に固定しているため、
 端末の性能・発熱・メモリ上限の採否には使いません。DRAFT/EXACTの計算完了を確認しても
-実提示時刻は `NOT_MEASURED` です。release/profileable対象と実FrameTimelineの検証は別に必要です。
+実提示時刻は `NOT_MEASURED` です。実FrameTimelineの検証と端末での性能条件の確認は別に必要です。
 
-### 現在のfixture起動制約
+### 専用hostの隔離
 
-`original24probe` は既存の隔離manifestで全Activityを削除しているため、
-現fixtureの `ActivityScenario.launch(PhotoRollActivity)` は起動できません。
-コンパイル可能であることは実行可能・試験成功を意味しません。
-既存probeの隔離を緩めず、専用のrelease/profileable UI診断hostを接続してから再試験します。
-この未完成fixtureを次の統合診断の必須依存にはしません。
+`original24probe` は既存の隔離manifestで全Activityを削除しているため、UI試験には使いません。
+その隔離は変更せず、`cinematicPreviewDiagnostic=true` でだけ作成する独立build typeを使います。
+`cinematicPreviewDiagnosticTests=true` を併せたときだけ対象instrumentationを接続します。
+両Gradleプロパティに加え、上記のrunner引数2つも必要です。
+他の診断variantとの同時指定は禁止します。製品・統合診断Hub・通常CIには接続しません。
+
+専用manifestは非公開の `PreviewPresentationActivity` だけを置き、製品Activity、権限、service、provider、
+receiverを除きます。launcherはありません。署名は既存debug設定を再利用し、新しい署名鍵は作りません。
+この未完成の自動化を次の統合診断の必須依存にはしません。
+
+専用hostは製品Activityのcamera監視を開始しません。合成fixtureは実際のPhotoRollScreenとrendererを使いますが、リソース条件・Activity外側の運用は製品と異なります。
+
+### 合成fixtureの実行
+
+共有GMD枠を予約し、起動中のemulatorがないことを確認してから、専用variantの単一classを実行します。
+環境変数と枠は `docs/MANAGED_DEVICES.md` に従います。以下は機能確認で、性能計測ではありません。
+
+```text
+./gradlew :app:pixel9aapi37atdPreviewDiagnosticAndroidTest -PcinematicPreviewDiagnostic=true -PcinematicPreviewDiagnosticTests=true -Pandroid.testInstrumentationRunnerArguments.class=dev.cinematic.p0.photoroll.PreviewRawGestureFixtureAndroidTest -Pandroid.testInstrumentationRunnerArguments.isolated=true -Pandroid.testInstrumentationRunnerArguments.previewRawGestureProbe=true --rerun --no-daemon --max-workers=1
+```
+
+マージ済みmanifestを `python -B tools/preview-presentation/verify_manifest.py <manifest>` で検査します。
+ATDの描画はソフトウェアであり、この試験の成功でFrameTimelineや実表示50msは検証済みになりません。
