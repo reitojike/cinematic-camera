@@ -70,9 +70,9 @@ source/tree・APK hash・既存署名証明書hash・manifest・最適化条件�
 - **真のプロセスpeakの数値上限は、現APKでは合否判定できない**。managed/nativeは100ms目標の個別観測最大、PSSは前後だけである。2つの個別最大を同時peakとして足さず、PSS開始/終了をPSS peakにしない。上限未満という安全合格にはしない。768MiBはdecode/save時のsystem空きメモリadmissionで、アプリpeak上限・確保予約・必要量の実測ではない。
 - 暫定の増加budgetはmanaged/nativeを別々に、観測最大B ≤ A + max(Aの10%, 32MiB)と提案する。行並列化で大きな増加がないかを検出する比較用の設計値で、32MiBは理論上限ではない。超過は採用保留、範囲内でも真peakの合格にしない。AB各1回では順序/GC差を分離できない。sampleCount>0、quiescent=true、failed=false、failedSamples=0、両max非nullを測定成立条件とし、maxGap>300ms（100ms目標の3倍）ならこの比較も未判定とする。300msも短いpeak捕捉の保証ではない。
 - この回で出せるのは、A/Bの観測最大・PSS前後・sample数/実間隔/maxGap/収集費用・欠測と、OOM/lowMemory/異常終了の有無。本人用報告に数値上限を決める根拠がまだないことを明記し、**真のpeak上限が実機開始の必須条件なら、追加の計測設計が必要なので保存試験は保留**する。「観測値の収集に限定して実行し、製品安全採用は保留」とするかは許可前に確認する。測定後に都合のよい上限を後付けしない。
-- 取消許容時間の今回提案は、USER_BUTTON受付からrender退出2秒以内、owner解放とharness静止3秒以内。既存合意でも測定済み性能でもなく、待たせないための評価budgetである。Glow/Mist両方で対象工程が成立し、renderOutcome=CANCELLED、4区間がすべて非nullかつrender≤scope=owners≤harness、`resourcesQuiescent=true`、`ownerClosed`、`noCompletedResult`、`outputAbsentAtAttemptScopeExit`、private入力削除、harnessCloseFailed=falseを満たして初めて今回の取消観測の合格候補とする。
-- 2秒/3秒を超えれば、あとで正常に解放されても取消時間は未達で採用保留。強制終了して合格にせず、自然な協調取消/回収を確認し次の試行を始めない。未解放/null/HOLD、クラッシュ、取り逃し/離脱先行、押さず完走は時間の合格にしない。3秒は強制解放を許すtimeoutではない。
-- sampler/IO owner/並列ownerが静止し、GPU/保存FGS等の別負荷が動いていないことも確認する。harness時刻は最終report書込/UI表示を含まないので、report確定/Hub idleまで別に待つ。メモリが開始値へ瞬時に戻らないだけでリークとはしない一方、プロセス生存だけでowner解放を推定しない。自動2境界は機能合否であり、手動2秒/3秒の代用にはしない。
+- 取消許容時間の今回提案は、USER_BUTTON受付からrender退出2秒以内、owner解放とharness静止5秒以内。既存合意でも測定済み性能でもなく、待たせないための評価budgetである。Glow/Mist両方で対象工程が成立し、renderOutcome=CANCELLED、4区間がすべて非nullかつrender≤scope=owners≤harness、`resourcesQuiescent=true`、`ownerClosed`、`noCompletedResult`、`outputAbsentAtAttemptScopeExit`、private入力削除、harnessCloseFailed=falseを満たして初めて今回の取消観測の合格候補とする。
+- 2秒/5秒を超えれば、あとで正常に解放されても取消時間は未達で採用保留。強制終了して合格にせず、自然な協調取消/回収を確認し次の試行を始めない。未解放/null/HOLD、クラッシュ、取り逃し/離脱先行、押さず完走は時間の合格にしない。5秒は強制解放を許すtimeoutではない。
+- sampler/IO owner/並列ownerが静止し、GPU/保存FGS等の別負荷が動いていないことも確認する。harness時刻は最終report書込/UI表示を含まないので、report確定/Hub idleまで別に待つ。メモリが開始値へ瞬時に戻らないだけでリークとはしない一方、プロセス生存だけでowner解放を推定しない。自動2境界は機能合否であり、手動2秒/5秒の代用にはしない。
 
 ### GPU内訳の採取内容（実行順は上表）
 
