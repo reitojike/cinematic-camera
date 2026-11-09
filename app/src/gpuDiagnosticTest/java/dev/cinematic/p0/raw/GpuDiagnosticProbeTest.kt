@@ -97,18 +97,85 @@ class GpuDiagnosticProbeTest {
         for(dark in listOf(false,true)) {
             val base=LinearSrgbImage(w,h,FloatArray(w*h*3){i->val x=((i/3)%w).toFloat()/(w-1);if(dark)x*x*.018f else if(i%3==0)x*1.6f-.02f else .3f})
             val skin=StageClearGlow.skinWeight(base);val faces=FaceMask(w,h,FloatArray(w*h))
-            for(strength in listOf(.25,.5,1.0)) {
-                val cpu=StageClearLook.renderFromBase(base,faces,strength).image
-                val glow=GpuDiagnosticGlow.render(base,strength,skin)
-                val gpu=StageClearProtections.finish(glow,faces){
-                    StageClearCharacter.render(GpuDiagnosticOrton.render(StageClearMist.render(it,skin,strength),skin).output,strength)
+            val strengths=listOf(.25,.5,1.0,.25)
+            fun render(session:GpuDiagnosticSession,strength:Double):LinearSrgbImage {
+                val glow=GpuDiagnosticGlow.render(session,base,strength,skin)
+                return StageClearProtections.finish(glow,faces){
+                    StageClearCharacter.render(GpuDiagnosticOrton.render(session,StageClearMist.render(it,skin,strength),skin).output,strength)
                 }.image
-                var max=0;var changed=0
-                for(p in 0 until w*h){var d=0;repeat(3){c->d=maxOf(d,abs(q(cpu[p*3+c])-q(gpu[p*3+c])))};max=maxOf(max,d);if(d>0)changed++}
-                android.util.Log.i("GpuDiagnostic","test dark=$dark strength=$strength max8=$max changed=$changed pixels=${w*h}")
-                assertTrue("全Lookの許容差2段",max<=2)
+            }
+            // 毎回EGL/programを作り直す経路との同一GPU上のfloat完全一致（許容誤差0）。
+            val fresh=strengths.map { strength -> GpuDiagnosticSession().use { render(it,strength).copyPixels() } }
+            GpuDiagnosticSession().use { session ->
+                for((index,strength) in strengths.withIndex()) {
+                    val cpu=StageClearLook.renderFromBase(base,faces,strength).image
+                    val gpu=render(session,strength)
+                    assertArrayEquals("fresh/reused GPU output",fresh[index],gpu.copyPixels(),0f)
+                    var max=0;var changed=0
+                    for(p in 0 until w*h){var d=0;repeat(3){c->d=maxOf(d,abs(q(cpu[p*3+c])-q(gpu[p*3+c])))};max=maxOf(max,d);if(d>0)changed++}
+                    android.util.Log.i("GpuDiagnostic","test dark=$dark strength=$strength max8=$max changed=$changed pixels=${w*h}")
+                    assertTrue("全Lookの許容差2段",max<=2)
+                }
             }
         }
+    }
+    @Test fun sessionReusesProgramsAndRejectsWrongThreadAndClosedUse() {
+        val session=GpuDiagnosticSession()
+        val context=android.opengl.EGL14.eglGetCurrentContext()
+        val blur=session.blurProgram; val orton=session.ortonProgram
+        fun draw(): FloatArray {
+            val output=FloatArray(65*49*4)
+            GpuBlurProbe.run(session,65,49,.006,8,source={_,rows->FloatArray(65*rows*4){.2f}},
+                consume={top,frame->frame.rgba.copyInto(output,top*65*4)})
+            return output
+        }
+        try {
+            assertTrue(session.preparationNs>0)
+            val first=draw()
+            repeat(3){
+                assertArrayEquals(first,draw(),0f)
+                assertEquals(context,android.opengl.EGL14.eglGetCurrentContext())
+                assertEquals(blur,session.blurProgram);assertEquals(orton,session.ortonProgram)
+            }
+            val failure=java.util.concurrent.atomic.AtomicReference<Throwable>()
+            for (operation in listOf<() -> Unit>({ draw() }, { session.close() })) {
+                failure.set(null)
+                val other=Thread { try { operation() } catch(error:Throwable){failure.set(error)} }
+                other.start();other.join()
+                assertTrue(failure.get() is IllegalStateException)
+                session.requireCurrent()
+            }
+        }finally{session.close()}
+        session.close()
+        assertEquals(android.opengl.EGL14.EGL_NO_CONTEXT,android.opengl.EGL14.eglGetCurrentContext())
+        try { draw();fail("closed session must reject use") }catch(_:IllegalStateException){}
+        GpuDiagnosticSession().use { it.requireCurrent() }
+    }
+
+    @Test fun consumerFailureAndCancellationReleaseReusableSession() {
+        for(cancel in listOf(false,true)){
+            var checks=0
+            try{
+                GpuDiagnosticSession().use { session ->
+                    GpuBlurProbe.run(session,65,49,.006,8,source={_,rows->FloatArray(65*rows*4){.2f}},
+                        consume={_,_->error("synthetic consumer failure")},cancelled={cancel && ++checks>4})
+                }
+                fail("expected failure")
+            }catch(_:CancellationException){assertTrue(cancel)}
+            catch(_:IllegalStateException){assertFalse(cancel)}
+            assertEquals(android.opengl.EGL14.EGL_NO_CONTEXT,android.opengl.EGL14.eglGetCurrentContext())
+            GpuDiagnosticSession().use { it.requireCurrent() }
+        }
+    }
+    @Test fun unboundContextIsRejectedAndCanBeReleased() {
+        GpuDiagnosticSession().use { session ->
+            val display=android.opengl.EGL14.eglGetCurrentDisplay()
+            assertTrue(android.opengl.EGL14.eglMakeCurrent(display,android.opengl.EGL14.EGL_NO_SURFACE,
+                android.opengl.EGL14.EGL_NO_SURFACE,android.opengl.EGL14.EGL_NO_CONTEXT))
+            try { session.requireCurrent();fail("unbound session must not recreate itself") }
+            catch(_:IllegalStateException){}
+        }
+        GpuDiagnosticSession().use { it.requireCurrent() }
     }
     private fun q(value:Float):Int {val x=value.coerceIn(0f,1f).toDouble();return ((if(x<=.0031308)x*12.92 else 1.055*x.pow(1/2.4)-.055)*255).roundToInt()}
 }

@@ -1,7 +1,5 @@
 package dev.cinematic.p0.raw
 
-import android.opengl.EGL14
-import android.opengl.EGLExt
 import android.opengl.GLES30
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -9,14 +7,15 @@ import java.util.concurrent.CancellationException
 
 /** Test-only: no product call site. Full-image CPU blur, bounded GPU composition. */
 internal object GpuDiagnosticOrton {
-    data class Observation(val output: LinearSrgbImage, val transferBytes: Long, val textureBytes: Long, val gpuWallNs: Long = 0, val cpuPrepareNs: Long = 0)
+    data class Observation(val output: LinearSrgbImage, val transferBytes: Long, val textureBytes: Long, val gpuWallNs: Long = 0, val cpuPrepareNs: Long = 0,
+        val uploadNs: Long = 0, val drawNs: Long = 0, val readbackNs: Long = 0)
 
-    fun render(mist: StageClearMist.Result, skin: FloatPlane, bandHeight: Int = 64,
-               stop: () -> Boolean = { false }): Observation {
+    fun render(session: GpuDiagnosticSession, mist: StageClearMist.Result, skin: FloatPlane,
+               bandHeight: Int = 64, stop: () -> Boolean = { false }): Observation {
         val image = mist.image
         require(bandHeight in 1..256)
         require(skin.width == image.width && skin.height == image.height)
-        fun checkpoint() { if (stop()) throw CancellationException("GPU probe cancelled") }
+        fun checkpoint() { session.requireCurrent(); if (stop()) throw CancellationException("GPU probe cancelled") }
         checkpoint()
         if (mist.lightAddingStrength == 0.0) return Observation(image, 0, 0)
         val preparationStarted = System.nanoTime()
@@ -27,45 +26,25 @@ internal object GpuDiagnosticOrton {
         val soft = StageClearBlur.rgb(LinearSrgbImage.takeOwnership(image.width, image.height, bright), StageClearOrtonV1.RADIUS)
         val preparationNs = System.nanoTime() - preparationStarted
         val started = System.nanoTime()
-        val result = prepared(image, soft, skin, mist.lightAddingStrength, bandHeight, stop)
+        val result = prepared(session, image, soft, skin, mist.lightAddingStrength, bandHeight, stop)
         return result.copy(gpuWallNs = System.nanoTime() - started, cpuPrepareNs = preparationNs)
     }
 
     /** 12MPでは呼び出し側が小さい帯を生成し、全原寸配列を保持しない。 */
-    fun prepared(image: LinearSrgbImage, soft: LinearSrgbImage, skin: FloatPlane, amount: Double,
-                 bandHeight: Int = 64, stop: () -> Boolean = { false }): Observation {
+    fun prepared(session: GpuDiagnosticSession, image: LinearSrgbImage, soft: LinearSrgbImage,
+                 skin: FloatPlane, amount: Double, bandHeight: Int = 64,
+                 stop: () -> Boolean = { false }): Observation {
         val gpuStarted = System.nanoTime()
         require(bandHeight in 1..256 && amount.isFinite() && amount in 0.0..1.0)
         require(soft.width == image.width && soft.height == image.height)
         require(skin.width == image.width && skin.height == image.height)
-        fun checkpoint() { if (stop()) throw CancellationException("GPU診断を取り消しました") }
+        fun checkpoint() { session.requireCurrent(); if (stop()) throw CancellationException("GPU診断を取り消しました") }
         checkpoint()
-        check(EGL14.eglGetCurrentContext() == EGL14.EGL_NO_CONTEXT) { "Probe requires an unbound owner thread" }
-        val display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
-        check(display != EGL14.EGL_NO_DISPLAY)
-        val version = IntArray(2)
-        check(EGL14.eglInitialize(display, version, 0, version, 1))
-        var context = EGL14.EGL_NO_CONTEXT
-        var surface = EGL14.EGL_NO_SURFACE
         val textures = IntArray(3)
         val framebuffer = IntArray(1)
-        var program = 0
+        val program = session.ortonProgram
+        var uploadNs=0L; var drawNs=0L; var readbackNs=0L
         try {
-            val configs = arrayOfNulls<android.opengl.EGLConfig>(1)
-            val count = IntArray(1)
-            check(EGL14.eglChooseConfig(display, intArrayOf(EGL14.EGL_SURFACE_TYPE, EGL14.EGL_PBUFFER_BIT,
-                EGL14.EGL_RENDERABLE_TYPE, EGLExt.EGL_OPENGL_ES3_BIT_KHR, EGL14.EGL_NONE), 0, configs, 0, 1, count, 0) && count[0] > 0)
-            val config = checkNotNull(configs[0])
-            context = EGL14.eglCreateContext(display, config, EGL14.EGL_NO_CONTEXT,
-                intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE), 0)
-            check(context != EGL14.EGL_NO_CONTEXT)
-            surface = EGL14.eglCreatePbufferSurface(display, config,
-                intArrayOf(EGL14.EGL_WIDTH, 1, EGL14.EGL_HEIGHT, 1, EGL14.EGL_NONE), 0)
-            check(surface != EGL14.EGL_NO_SURFACE)
-            check(EGL14.eglMakeCurrent(display, surface, surface, context))
-            check(GLES30.glGetString(GLES30.GL_EXTENSIONS).orEmpty().contains("GL_EXT_color_buffer_float")) { "Float render target unavailable" }
-            android.util.Log.i("GpuBandProbe", "renderer=${GLES30.glGetString(GLES30.GL_RENDERER)} version=${GLES30.glGetString(GLES30.GL_VERSION)}")
-            program = createProgram()
             GLES30.glUseProgram(program)
             GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "source"), 0)
             GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "softField"), 1)
@@ -85,6 +64,7 @@ internal object GpuDiagnosticOrton {
             while (firstRow < image.height) {
                 checkpoint()
                 val rows = minOf(h, image.height - firstRow)
+                val beforeUpload = System.nanoTime()
                 source.clear(); field.clear(); readback.clear()
                 repeat(image.width * rows) { local ->
                     val pixel = firstRow * image.width + local
@@ -102,13 +82,18 @@ internal object GpuDiagnosticOrton {
                     GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGBA32F, image.width, rows, 0,
                         GLES30.GL_RGBA, GLES30.GL_FLOAT, when (index) { 0 -> source; 1 -> field; else -> null })
                 }
+                GLES30.glFinish()
+                uploadNs += System.nanoTime() - beforeUpload
                 GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0, GLES30.GL_TEXTURE_2D, textures[2], 0)
                 check(GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER) == GLES30.GL_FRAMEBUFFER_COMPLETE)
                 checkpoint()
                 GLES30.glViewport(0, 0, image.width, rows)
+                val beforeDraw = System.nanoTime()
                 GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
                 GLES30.glFinish()
+                drawNs += System.nanoTime() - beforeDraw
                 checkpoint()
+                val beforeRead = System.nanoTime()
                 GLES30.glReadPixels(0, 0, image.width, rows, GLES30.GL_RGBA, GLES30.GL_FLOAT, readback)
                 check(GLES30.glGetError() == GLES30.GL_NO_ERROR) { "GPU probe draw/readback failed" }
                 checkpoint()
@@ -118,24 +103,18 @@ internal object GpuDiagnosticOrton {
                     repeat(3) { c -> output[offset + c] = readback.get().also { require(it.isFinite()) } }
                     readback.get()
                 }
+                readbackNs += System.nanoTime() - beforeRead
                 firstRow += rows
             }
-            return Observation(LinearSrgbImage.takeOwnership(image.width, image.height, output), byteCount.toLong() * 3, byteCount.toLong() * 3, System.nanoTime() - gpuStarted)
+            return Observation(LinearSrgbImage.takeOwnership(image.width, image.height, output), byteCount.toLong() * 3, byteCount.toLong() * 3, System.nanoTime() - gpuStarted,
+                uploadNs=uploadNs, drawNs=drawNs, readbackNs=readbackNs)
         } finally {
-            if (context != EGL14.EGL_NO_CONTEXT && EGL14.eglGetCurrentContext() == context) {
-                GLES30.glDeleteTextures(3, textures, 0)
-                GLES30.glDeleteFramebuffers(1, framebuffer, 0)
-                if (program != 0) GLES30.glDeleteProgram(program)
-                EGL14.eglMakeCurrent(display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT)
-            }
-            if (surface != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(display, surface)
-            if (context != EGL14.EGL_NO_CONTEXT) EGL14.eglDestroyContext(display, context)
-            EGL14.eglTerminate(display)
-            EGL14.eglReleaseThread()
+            GLES30.glDeleteTextures(3, textures, 0)
+            GLES30.glDeleteFramebuffers(1, framebuffer, 0)
         }
     }
 
-    private fun createProgram(): Int {
+    internal fun createProgram(): Int {
         val vertex = shader(GLES30.GL_VERTEX_SHADER, """#version 300 es
             void main(){ vec2 p=vec2(float((gl_VertexID << 1) & 2),float(gl_VertexID & 2)); gl_Position=vec4(p*2.0-1.0,0.0,1.0); }
         """)

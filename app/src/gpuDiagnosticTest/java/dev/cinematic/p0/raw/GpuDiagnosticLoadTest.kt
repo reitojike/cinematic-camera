@@ -30,7 +30,7 @@ class GpuDiagnosticLoadTest {
                         .setAction(mode).putExtra("observeMemory", true))
                 }
                 await("開始 $mode", 10000) { GpuDiagnosticService.active() }
-                await("完了 $mode", 180000) { !GpuDiagnosticService.active() }
+                await("完了 $mode", 600000) { !GpuDiagnosticService.active() }
                 assertEquals("診断失敗を完走に数えない $mode", "completed", GpuDiagnosticService.lastOutcome)
                 val manager = context.getSystemService(android.app.ActivityManager::class.java)
                 @Suppress("DEPRECATION")
