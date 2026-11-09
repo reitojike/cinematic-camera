@@ -23,13 +23,7 @@ internal object StageClearBlur {
     fun rgb(input: LinearSrgbImage, radiusFraction: Double): LinearSrgbImage {
         // Validate before allocating any channel buffers.
         reducedSize(input.width, input.height, radiusFraction)
-        val pixels = FloatArray(input.pixelCount * 3)
-        repeat(3) { channel ->
-            val values = FloatArray(input.pixelCount) { input[it * 3 + channel] }
-            val blurred = plane(FloatPlane.takeOwnership(input.width, input.height, values), radiusFraction)
-            repeat(input.pixelCount) { pixels[it * 3 + channel] = blurred[it] }
-        }
-        return LinearSrgbImage.takeOwnership(input.width, input.height, pixels)
+        return input.mapChannels { plane(it, radiusFraction) }
     }
 
     internal fun reducedSize(width: Int, height: Int, radiusFraction: Double): Pair<Int, Int> {
