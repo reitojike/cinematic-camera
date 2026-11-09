@@ -8,29 +8,31 @@ internal object PreviewFloatSelection {
         var right = values.lastIndex
         while (left < right) {
             checkpoint()
-            // Median-of-three, then three-way partition so equal-valued images finish in one pass.
+            // Median-of-three with inward scans preserves the useful order of smooth gradients.
             val mid = left + (right - left) / 2
             if (values[left].compareTo(values[mid]) > 0) swap(values, left, mid)
             if (values[mid].compareTo(values[right]) > 0) swap(values, mid, right)
             if (values[left].compareTo(values[mid]) > 0) swap(values, left, mid)
             val pivot = values[mid]
             var lower = left
-            var current = left
             var upper = right
             var examined = 0
-            while (current <= upper) {
+            while (lower <= upper) {
                 if (examined++ and 1023 == 0) checkpoint()
                 // Float.compareTo has the same -0.0 < +0.0 ordering as FloatArray.sort.
-                val order = values[current].compareTo(pivot)
-                when {
-                    order < 0 -> { swap(values, lower++, current++) }
-                    order > 0 -> { swap(values, current, upper--) }
-                    else -> current++
+                while (lower <= upper && values[lower].compareTo(pivot) < 0) {
+                    lower++
+                    if (examined++ and 1023 == 0) checkpoint()
                 }
+                while (lower <= upper && values[upper].compareTo(pivot) > 0) {
+                    upper--
+                    if (examined++ and 1023 == 0) checkpoint()
+                }
+                if (lower <= upper) swap(values, lower++, upper--)
             }
             when {
-                rank < lower -> right = lower - 1
-                rank > upper -> left = upper + 1
+                rank <= upper -> right = upper
+                rank >= lower -> left = lower
                 else -> { checkpoint(); return values[rank] }
             }
         }

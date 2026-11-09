@@ -74,8 +74,7 @@ class PreviewFloatSelectionTest {
     @Test fun previewMeteringMatchesSortedFloat32InterpolationAndEvRawBits() {
         val random = Random(997)
         // These central sample counts exercise integral ranks and both float32 interpolation branches.
-        for (width in 2..35) {
-            val height = 8
+        for (width in 2..35) for (height in listOf(2, 8, 202)) {
             for (mode in 0..3) {
                 val rgb = FloatArray(width * height * 3) {
                     when (mode) { 0 -> 0f; 1 -> -0f; 2 -> .2f; else -> random.nextFloat() * 8f - .1f }
