@@ -32,14 +32,14 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
 
     override fun checkOriginal(repository: PhotoRollRepository, uri: Uri, fromFiles: Boolean,
         cancellation: CancellationSignal): PhotoRollOriginal =
-        PhotoRollOriginalChecks.run(resources, cancellation) { readers, stop ->
+        PhotoRollOriginalChecks.run(resources, cancellation, preview = true) { readers, stop ->
             repository.check(uri, fromFiles, stop, maxSourceBytes, readers)
         }
 
     override fun renderDraft(request: PhotoRollRenderRequest, cancellation: CancellationSignal): PhotoRollRenderResult.Preview? {
         require(request.mode == mode && request.lookVersion == "stage-clear-v1" && request.maxEdge == 256)
         cancellation.throwIfCanceled()
-        if (AutoDevelopPolicy.blockers(resources().developConditions(rendererAvailable = true)).isNotEmpty()) return null
+        if (AutoDevelopPolicy.previewBlockers(resources().developConditions(rendererAvailable = true)).isNotEmpty()) return null
         val future = AndroidManualOriginalTrialSaves.renderDraftPreview(app, request.original.reference,
             request.strength, resources().developConditions(rendererAvailable = true), request.adjustments, request.diagnosticWorkers) { cancellation.isCanceled }
         val abandoned = AtomicBoolean(false)
@@ -69,8 +69,9 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
         require(request.mode == mode && request.lookVersion == "stage-clear-v1" &&
             request.strength.isFinite() && request.strength in 0.0..1.0 && request.maxEdge == maxEdge)
         cancellation.throwIfCanceled()
-        if (AutoDevelopPolicy.blockers(resources().developConditions(rendererAvailable = true)).isNotEmpty())
-            return PhotoRollRenderResult.Unavailable("撮影状態、空き容量、メモリまたは温度を確認し、撮影を終えてから再試行してください")
+        photoRollAdmissionFailure(resources().developConditions(rendererAvailable = true), preview = true)?.let {
+            return PhotoRollRenderResult.Unavailable(it)
+        }
         val key = PhotoRollPreviewKey(request.original.reference, request.strength, request.adjustments,
             request.lookVersion, request.maxEdge, request.mode)
         // Diagnostic comparisons must execute, never return a retained display-only bitmap.
@@ -143,7 +144,8 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
                 }
             }
         } catch (failure: OutOfMemoryError) {
-            return PhotoRollRenderResult.Unavailable("試験プレビューのメモリが不足しました。撮影を閉じて再試行してください")
+            discardTransientInputs()
+            return PhotoRollRenderResult.Unavailable("表示用のメモリが不足しました。原本は変更していません。状態を確認して再試行してください")
         } catch (_: java.util.concurrent.CancellationException) {
             cancellation.throwIfCanceled()
             return PhotoRollRenderResult.Unavailable("試験処理を中断しました。撮影状態と原本を確認して再試行してください")

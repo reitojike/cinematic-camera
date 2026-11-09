@@ -10,6 +10,8 @@ internal data class AutoDevelopConditions(
     val storageAllowed: Boolean? = null,
     val rendererAvailable: Boolean? = null,
     val memoryBudgetConfirmed: Boolean? = null,
+    // Separate OS-pressure observation for preview work. Full decode still has its own gate.
+    val previewMemoryAvailable: Boolean? = null,
 )
 
 internal enum class AutoDevelopBlocker {
@@ -18,6 +20,10 @@ internal enum class AutoDevelopBlocker {
 
 /** Admission only. This does not measure resources, run a renderer, or publish images. */
 internal object AutoDevelopPolicy {
+    fun previewConditions(conditions: AutoDevelopConditions) =
+        conditions.copy(memoryBudgetConfirmed = conditions.previewMemoryAvailable)
+
+    fun previewBlockers(conditions: AutoDevelopConditions) = blockers(previewConditions(conditions))
     fun blockers(conditions: AutoDevelopConditions): Set<AutoDevelopBlocker> = buildSet {
         if (conditions.foreground != true) add(AutoDevelopBlocker.FOREGROUND)
         if (conditions.cameraSessionInUse != false) add(AutoDevelopBlocker.CAMERA_SESSION)

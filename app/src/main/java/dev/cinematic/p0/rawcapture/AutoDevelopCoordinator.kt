@@ -17,7 +17,7 @@ internal class AutoDevelopCoordinator {
     }
 
     private class Active(val attempt: Attempt, val observed: Boolean = false, var stopRequested: Boolean = false,
-        val foregroundExport: Boolean = false)
+        val foregroundExport: Boolean = false, val preview: Boolean = false)
 
     private var conditions = AutoDevelopConditions()
     private var conditionsObserved = false
@@ -35,7 +35,9 @@ internal class AutoDevelopCoordinator {
         // replace that observer's current resource facts with an incomplete UI snapshot.
         if (current?.foregroundExport == true) return
         val common = if (current?.observed == true) value.copy(rendererAvailable = true) else value
-        if (AutoDevelopPolicy.blockers(common).isNotEmpty()) current?.stopRequested = true
+        val blockers = if (current?.preview == true) AutoDevelopPolicy.previewBlockers(common)
+            else AutoDevelopPolicy.blockers(common)
+        if (blockers.isNotEmpty()) current?.stopRequested = true
     }
 
     /** Never waits for the admitted worker to stop or close its resources. */
@@ -66,10 +68,17 @@ internal class AutoDevelopCoordinator {
 
     /** Interactive caller supplies fresh observations including its own renderer capability.
      * The caller must keep checking observations and cancellation while it owns resources. */
-    @Synchronized fun tryStartObserved(observations: AutoDevelopConditions): Attempt? {
-        if (active != null || pendingExport != null || captures.isNotEmpty() || AutoDevelopPolicy.blockers(observations).isNotEmpty() ||
-            (conditionsObserved && AutoDevelopPolicy.blockers(conditions.copy(rendererAvailable = true)).isNotEmpty())) return null
-        return Attempt().also { active = Active(it, observed = true) }
+    @Synchronized fun tryStartObserved(observations: AutoDevelopConditions): Attempt? = startObserved(observations, preview = false)
+
+    /** Preview ownership is distinct from save admission, not a second slot or executor. */
+    @Synchronized fun tryStartPreviewObserved(observations: AutoDevelopConditions): Attempt? = startObserved(observations, preview = true)
+
+    private fun startObserved(observations: AutoDevelopConditions, preview: Boolean): Attempt? {
+        fun blocked(value: AutoDevelopConditions) = if (preview) AutoDevelopPolicy.previewBlockers(value).isNotEmpty()
+            else AutoDevelopPolicy.blockers(value).isNotEmpty()
+        if (active != null || pendingExport != null || captures.isNotEmpty() || blocked(observations) ||
+            (conditionsObserved && blocked(conditions.copy(rendererAvailable = true)))) return null
+        return Attempt().also { active = Active(it, observed = true, preview = preview) }
     }
 
     /** Only an explicit foreground save may acquire this one slot. No background admission.

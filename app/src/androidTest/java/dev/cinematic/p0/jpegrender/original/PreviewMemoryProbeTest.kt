@@ -61,9 +61,9 @@ class PreviewMemoryProbeTest {
         val phases = JSONArray()
         var metrics: OriginalProbeMetrics? = null
         var gate = 0
-        val session = Original24PreviewSession(source, File(root, "session"), {
-            metrics?.stage("admission-${++gate}-before")
-            Original24Resources.requireAvailable(context)
+        val session = Original24PreviewSession(source, File(root, "session"), { stage ->
+            metrics?.stage("admission-${++gate}-$stage-before")
+            Original24Resources.requireAvailable(context, stage)
         }, geometry) { input.inputStream() }
         var after: Bitmap? = null
         var before: Bitmap? = null

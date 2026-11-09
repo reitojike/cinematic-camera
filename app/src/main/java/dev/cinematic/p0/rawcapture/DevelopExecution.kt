@@ -13,13 +13,15 @@ internal object DevelopExecution {
     fun updateConditions(observations: AutoDevelopConditions) {
         if (AutoDevelopPolicy.blockers(observations).isNotEmpty()) {
             PrivateTrialReuseRegistry.invalidateAll()
-            if (android.os.Build.VERSION.SDK_INT >= 29) AndroidManualOriginalTrialSaves.invalidatePreviews()
         }
+        if (AutoDevelopPolicy.previewBlockers(observations).isNotEmpty() && android.os.Build.VERSION.SDK_INT >= 29)
+            AndroidManualOriginalTrialSaves.invalidatePreviews()
         val owner = queue
         if (owner == null) coordinator.updateConditions(observations) else owner.updateConditions(observations)
         manualStop.stopIfRequested(coordinator)
     }
     fun tryStartObserved(observations: AutoDevelopConditions) = coordinator.tryStartObserved(observations)
+    fun tryStartPreviewObserved(observations: AutoDevelopConditions) = coordinator.tryStartPreviewObserved(observations)
     fun reserveForegroundExport(owner: Any, observations: AutoDevelopConditions) = coordinator.reserveForegroundExport(owner, observations)
     fun tryStartForegroundExport(request: AutoDevelopCoordinator.ForegroundExportRequest, owner: Any,
         observations: AutoDevelopConditions) = coordinator.tryStartForegroundExport(request, owner, observations)

@@ -44,15 +44,16 @@ internal object PhotoRollOriginalChecks {
     private fun release(token: AutoDevelopCoordinator.Attempt, reader: PhotoRollReadResources) {
         if (reader.finished && reader.closeRetained() && owners.remove(token, reader)) DevelopExecution.completeAfterResourcesClosed(token)
     }
-    fun <T> run(resources: () -> PhotoRollResources, cancellation: CancellationSignal,
+    fun <T> run(resources: () -> PhotoRollResources, cancellation: CancellationSignal, preview: Boolean = false,
         read: (PhotoRollReadResources, () -> Boolean) -> T): T {
         owners.forEach { (token, reader) -> release(token, reader) }
         var admitted: AutoDevelopCoordinator.Attempt? = null
         while (admitted == null) {
             cancellation.throwIfCanceled()
             val conditions = resources().developConditions(rendererAvailable = true)
-            photoRollAdmissionFailure(conditions)?.let { throw PhotoRollSourceFailure(it) }
-            admitted = DevelopExecution.tryStartObserved(conditions)
+            photoRollAdmissionFailure(conditions, preview)?.let { throw PhotoRollSourceFailure(it) }
+            admitted = if (preview) DevelopExecution.tryStartPreviewObserved(conditions)
+                else DevelopExecution.tryStartObserved(conditions)
             if (admitted == null) {
                 if (owners.values.any { it.finished }) throw PhotoRollSourceFailure("前の原本読み取りの解放を確認できません。原本を確認して再試行してください")
                 Thread.sleep(100)
