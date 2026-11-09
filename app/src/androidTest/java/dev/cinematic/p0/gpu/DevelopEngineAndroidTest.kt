@@ -133,6 +133,51 @@ class DevelopEngineAndroidTest {
         }
     }
 
+    @Test fun detachedProbeCannotOverwriteTheNewAttachment() {
+        isolated()
+        val firstEntered = CountDownLatch(1)
+        val releaseFirst = CountDownLatch(1)
+        val firstExited = CountDownLatch(1)
+        val calls = java.util.concurrent.atomic.AtomicInteger()
+        lateinit var view: DevelopEngineSettingView
+        lateinit var panel: LinearLayout
+        val freshReason = "合成: 再接続後は非対応"
+        ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
+            try {
+                scenario.onActivity { activity ->
+                    view = DevelopEngineSettingView(activity, DevelopEngineSetting({ "CPU" }, {}, true)) {
+                        if (calls.incrementAndGet() == 1) {
+                            firstEntered.countDown()
+                            try {
+                                check(releaseFirst.await(10, TimeUnit.SECONDS))
+                                GpuAvailability.Available
+                            } finally { firstExited.countDown() }
+                        } else GpuAvailability.Unavailable(freshReason)
+                    }
+                    panel = LinearLayout(activity).apply { addView(view) }
+                    activity.setContentView(panel)
+                }
+                assertTrue(firstEntered.await(5, TimeUnit.SECONDS))
+                scenario.onActivity {
+                    panel.removeView(view)
+                    panel.addView(view)
+                }
+                awaitUi { descendants(view).filterIsInstance<TextView>().any { it.text.contains(freshReason) } }
+                releaseFirst.countDown()
+                assertTrue(firstExited.await(5, TimeUnit.SECONDS))
+                // Give any incorrectly retained continuation a chance to update the UI.
+                repeat(10) {
+                    SystemClock.sleep(25)
+                    instrumentation.waitForIdleSync()
+                    scenario.onActivity {
+                        assertTrue(descendants(view).filterIsInstance<TextView>().any { it.text.contains(freshReason) })
+                        assertFalse(descendants(view).filterIsInstance<Button>().single { it.text == "GPU" }.isEnabled)
+                    }
+                }
+                assertEquals(2, calls.get())
+            } finally { releaseFirst.countDown() }
+        }
+    }
     @Test fun contextLossShowsFailureAndRetryRecoversWithoutChangingEngine() {
         isolated()
         var value = "GPU"
