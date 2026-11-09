@@ -101,11 +101,18 @@ class PreviewRawGestureFixtureAndroidTest {
                 CaptureTheme { PhotoRollScreen(repository, renderer, true) {} }
             }
         }
+        if (parallelProbe) instrumentation.runOnMainSync {
+            assertEquals(PhotoRollCameraSnapshot(), AndroidPhotoRollCameraObservations.snapshot())
+        }
         try {
             ActivityScenario.launch<androidx.activity.ComponentActivity>(android.content.Intent().setClassName(target.packageName, hostClassName)).use {
                 click(FIRST_NAME)
                 await { exactCount.get() == 1 }
                 if (parallelProbe) {
+                    instrumentation.runOnMainSync {
+                        assertEquals(PhotoRollCameraSnapshot(false, false, false, false),
+                            AndroidPhotoRollCameraObservations.snapshot())
+                    }
                     val initial = exactRequests.last()
                     assertEquals(1, initial.diagnosticWorkers)
                     val beforeSwitch = exactCount.get()
@@ -117,7 +124,11 @@ class PreviewRawGestureFixtureAndroidTest {
                     assertEquals(initial.adjustments, enabled.adjustments)
                 }
                 click("STRENGTH")
-                if (parallelProbe) assertFalse("Cannot switch while an adjustment is open", node(PARALLEL_SWITCH).isEnabled)
+                if (parallelProbe) {
+                    // Accessibility click returns before the next Compose frame updates semantics.
+                    await { findNode("STRENGTH", true) != null && findNode(PARALLEL_SWITCH)?.isEnabled == false }
+                    assertFalse("Cannot switch while an adjustment is open", node(PARALLEL_SWITCH).isEnabled)
+                }
                 val beforeDrag = exactCount.get()
                 val bounds = Rect().also { node("STRENGTH", true).getBoundsInScreen(it) }
                 val records = PreviewGestureDriver(instrumentation.uiAutomation).drag(2,
@@ -145,6 +156,10 @@ class PreviewRawGestureFixtureAndroidTest {
                 assertEquals("No shared writes", 0, provider.writes.get())
                 provider.verifyUnchanged()
                 println("Synthetic RAW gesture: exact=${exactCount.get()} draft=${draftCount.get()} presentation=NOT_MEASURED")
+            }
+            if (parallelProbe) instrumentation.runOnMainSync {
+                assertEquals("Diagnostic Activity must release its camera observation",
+                    PhotoRollCameraSnapshot(), AndroidPhotoRollCameraObservations.snapshot())
             }
         } finally {
             // 新しいsource readを先に拒否する。queue barrierだけでは画面側verify IOを待てない。

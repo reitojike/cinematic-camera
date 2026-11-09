@@ -82,6 +82,7 @@ Original24PreviewSessionは縮小AS_SHOT入力、調整値に対応するR7 base
 ## 統合診断版の実編集で1/2並列を比較する
 
 `cinematicGpuDiagnostic=true` の統合診断だけで `BuildConfig.EDITOR_PREVIEW_DIAGNOSTIC=true` とする。通常debug/release、rawDiagnostic、previewDiagnosticはfalseで、編集UI・sessionの両入口で境界を確認する。
+統合診断は撮影Activity/権限を持たないため、編集Activityの生存中だけアプリ内撮影処理なしの観測所有者を登録し、破棄時に解放する。他の所有者のtrue/未確認や、端末カメラ利用可否・温度・メモリ・ストレージ・foregroundの判定は緩和しない。
 
 1. Hubの「CPUプレビューの確認（Filesから選択）」から入力を明示選択し、初回1024px表示を待つ。
 2. 画像上の「診断: 候補3工程の2並列」を確認する。初期値OFFは既存製品と同じ直列処理。ONは既存Foundation・Orton・Characterの画素演算だけを2 workerに渡す。残りの工程まで並列化した意味ではない。
