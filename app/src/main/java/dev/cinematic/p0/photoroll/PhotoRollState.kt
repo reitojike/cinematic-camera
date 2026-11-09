@@ -39,6 +39,11 @@ internal data class PhotoRollResources(
         thermalAllowed = thermalStatus?.takeIf { it in 0..6 }?.let { it < 3 },
         storageAllowed = privateStorageAllowed,
         rendererAvailable = rendererAvailable,
+        previewMemoryAvailable = when {
+            lowMemory == true || availableBytes?.let { it <= 0L } == true -> false
+            lowMemory == false && availableBytes != null -> true
+            else -> null
+        },
         memoryBudgetConfirmed = when {
             lowMemory == true || availableBytes?.let { it < JPEG_REQUIRED_AVAILABLE_BYTES } == true -> false
             lowMemory == false && availableBytes != null -> true
