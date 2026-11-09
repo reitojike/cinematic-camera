@@ -1,7 +1,7 @@
 package dev.cinematic.p0.raw
 
 /** Row-major RGB float32, linear sRGB primaries / D65. No implicit clipping or transfer. */
-internal class LinearSrgbImage private constructor(val width: Int, val height: Int, pixels: FloatArray, owned: Boolean) {
+internal class LinearSrgbImage private constructor(val width: Int, val height: Int, pixels: FloatArray, owned: Boolean, checkFinite: Boolean = true) {
     constructor(width: Int, height: Int, pixels: FloatArray) : this(width, height, pixels, false)
     private val data: FloatArray
 
@@ -9,7 +9,7 @@ internal class LinearSrgbImage private constructor(val width: Int, val height: I
         require(width > 0 && height > 0 && width.toLong() * height * 3 == pixels.size.toLong()) {
             "RGB dimensions must match a nonempty packed image"
         }
-        require(pixels.all { it.isFinite() }) { "RGB values must be finite" }
+        require(!checkFinite || pixels.all { it.isFinite() }) { "RGB values must be finite" }
         data = if (owned) pixels else pixels.copyOf()
     }
 
@@ -18,6 +18,19 @@ internal class LinearSrgbImage private constructor(val width: Int, val height: I
     fun copyPixels(): FloatArray = data.copyOf()
     internal fun scaled(factor: Double): LinearSrgbImage =
         takeOwnership(width, height, FloatArray(data.size) { (data[it] * factor).toFloat() })
+
+    /** Split and rejoin immutable finite planes without rechecking copied values.
+     * The transform still validates any newly computed values through FloatPlane.
+     * Consume one channel at a time, keeping the existing RGB blur's peak storage. */
+    internal fun mapChannels(transform: (FloatPlane) -> FloatPlane): LinearSrgbImage {
+        val pixels = FloatArray(data.size)
+        repeat(3) { channel ->
+            val plane = transform(FloatPlane.fromChannel(this, channel))
+            require(plane.width == width && plane.height == height) { "RGB channels must stay aligned" }
+            repeat(pixelCount) { pixels[it * 3 + channel] = plane[it] }
+        }
+        return LinearSrgbImage(width, height, pixels, true, false)
+    }
 
     companion object {
         /** Only for a kernel's fresh, exclusively owned result. Never write to pixels after transfer.
