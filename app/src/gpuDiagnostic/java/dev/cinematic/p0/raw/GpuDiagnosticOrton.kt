@@ -10,11 +10,6 @@ internal object GpuDiagnosticOrton {
     data class Observation(val output: LinearSrgbImage, val transferBytes: Long, val textureBytes: Long, val gpuWallNs: Long = 0, val cpuPrepareNs: Long = 0,
         val uploadNs: Long = 0, val drawNs: Long = 0, val readbackNs: Long = 0)
 
-    fun render(mist: StageClearMist.Result, skin: FloatPlane, bandHeight: Int = 64,
-               stop: () -> Boolean = { false }): Observation {
-        return GpuDiagnosticSession(stop).use { render(it, mist, skin, bandHeight, stop) }
-    }
-
     fun render(session: GpuDiagnosticSession, mist: StageClearMist.Result, skin: FloatPlane,
                bandHeight: Int = 64, stop: () -> Boolean = { false }): Observation {
         val image = mist.image
@@ -36,13 +31,6 @@ internal object GpuDiagnosticOrton {
     }
 
     /** 12MPでは呼び出し側が小さい帯を生成し、全原寸配列を保持しない。 */
-    fun prepared(image: LinearSrgbImage, soft: LinearSrgbImage, skin: FloatPlane, amount: Double,
-                 bandHeight: Int = 64, stop: () -> Boolean = { false }): Observation {
-        val started = System.nanoTime()
-        val result = GpuDiagnosticSession(stop).use { prepared(it, image, soft, skin, amount, bandHeight, stop) }
-        return result.copy(gpuWallNs = System.nanoTime() - started)
-    }
-
     fun prepared(session: GpuDiagnosticSession, image: LinearSrgbImage, soft: LinearSrgbImage,
                  skin: FloatPlane, amount: Double, bandHeight: Int = 64,
                  stop: () -> Boolean = { false }): Observation {

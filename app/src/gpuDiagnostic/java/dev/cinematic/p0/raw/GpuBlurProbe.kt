@@ -31,7 +31,7 @@ internal object GpuBlurProbe {
         val (smallW, smallH) = StageClearBlur.reducedSize(width, height, radius)
         // 横優先の既存経路だけ。縦優先になる特殊な寸法は別途検証する。
         require(height - smallH <= 2 * (width - smallW)) { "縦優先の縮小はこの診断の対象外です" }
-        fun checkpoint() { if (cancelled()) throw CancellationException("GPU診断を取り消しました") }
+        fun checkpoint() { session.requireCurrent(); if (cancelled()) throw CancellationException("GPU診断を取り消しました") }
         checkpoint()
         val observation = Passes(session, cancelled).let { gpu ->
             val reducedHorizontal = FloatArray(Math.multiplyExact(Math.multiplyExact(smallW, height), 4))

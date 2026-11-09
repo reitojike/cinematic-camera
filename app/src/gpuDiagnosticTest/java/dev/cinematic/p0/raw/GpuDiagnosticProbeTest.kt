@@ -104,7 +104,7 @@ class GpuDiagnosticProbeTest {
                     StageClearCharacter.render(GpuDiagnosticOrton.render(session,StageClearMist.render(it,skin,strength),skin).output,strength)
                 }.image
             }
-            // 毎回EGL/programを作り直す経路との同一GPU上のbit完全一致。
+            // 毎回EGL/programを作り直す経路との同一GPU上のfloat完全一致（許容誤差0）。
             val fresh=strengths.map { strength -> GpuDiagnosticSession().use { render(it,strength).copyPixels() } }
             GpuDiagnosticSession().use { session ->
                 for((index,strength) in strengths.withIndex()) {
@@ -138,10 +138,13 @@ class GpuDiagnosticProbeTest {
                 assertEquals(blur,session.blurProgram);assertEquals(orton,session.ortonProgram)
             }
             val failure=java.util.concurrent.atomic.AtomicReference<Throwable>()
-            val other=Thread { try { session.close() } catch(error:Throwable){failure.set(error)} }
-            other.start();other.join()
-            assertTrue(failure.get() is IllegalStateException)
-            session.requireCurrent()
+            for (operation in listOf<() -> Unit>({ draw() }, { session.close() })) {
+                failure.set(null)
+                val other=Thread { try { operation() } catch(error:Throwable){failure.set(error)} }
+                other.start();other.join()
+                assertTrue(failure.get() is IllegalStateException)
+                session.requireCurrent()
+            }
         }finally{session.close()}
         session.close()
         assertEquals(android.opengl.EGL14.EGL_NO_CONTEXT,android.opengl.EGL14.eglGetCurrentContext())
@@ -163,6 +166,16 @@ class GpuDiagnosticProbeTest {
             assertEquals(android.opengl.EGL14.EGL_NO_CONTEXT,android.opengl.EGL14.eglGetCurrentContext())
             GpuDiagnosticSession().use { it.requireCurrent() }
         }
+    }
+    @Test fun unboundContextIsRejectedAndCanBeReleased() {
+        GpuDiagnosticSession().use { session ->
+            val display=android.opengl.EGL14.eglGetCurrentDisplay()
+            assertTrue(android.opengl.EGL14.eglMakeCurrent(display,android.opengl.EGL14.EGL_NO_SURFACE,
+                android.opengl.EGL14.EGL_NO_SURFACE,android.opengl.EGL14.EGL_NO_CONTEXT))
+            try { session.requireCurrent();fail("unbound session must not recreate itself") }
+            catch(_:IllegalStateException){}
+        }
+        GpuDiagnosticSession().use { it.requireCurrent() }
     }
     private fun q(value:Float):Int {val x=value.coerceIn(0f,1f).toDouble();return ((if(x<=.0031308)x*12.92 else 1.055*x.pow(1/2.4)-.055)*255).roundToInt()}
 }
