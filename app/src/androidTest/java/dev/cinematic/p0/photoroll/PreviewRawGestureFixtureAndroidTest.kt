@@ -49,14 +49,17 @@ import org.junit.Assume.assumeTrue
 
 /** 合成DNGを製品の画面・実rendererへ接続する専用機能試験。実提示時刻の合格証明ではない。 */
 class PreviewRawGestureFixtureAndroidTest {
-    @get:Rule val fixture = SyntheticFixtureRule("dev.cinematic.p0.photoroll.PreviewPresentationActivity")
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
+    @get:Rule val fixture = SyntheticFixtureRule(hostClassName)
+    private val parallelProbe get() = instrumentation.targetContext.packageName == "dev.cinematic.p0.gpudiagnostic"
+    private val hostClassName get() = if (parallelProbe) PhotoRollActivity::class.java.name
+        else "dev.cinematic.p0.photoroll.PreviewPresentationActivity"
 
     @Test fun dragAndReleaseReachRealSyntheticRawPreview() {
         val args = InstrumentationRegistry.getArguments()
         val target = instrumentation.targetContext
-        assumeTrue(args.getString("previewRawGestureProbe") == "true" && args.getString("isolated") == "true")
-        assumeTrue(target.packageName == "dev.cinematic.p0.previewdiagnostic")
+        assumeTrue(args.getString(if (parallelProbe) "previewParallelProbe" else "previewRawGestureProbe") == "true" && args.getString("isolated") == "true")
+        assumeTrue(parallelProbe || target.packageName == "dev.cinematic.p0.previewdiagnostic")
         // 単独の新規instrumentation processで実行。共有メディアにはアクセスしない。
         val provider = SyntheticProvider(target)
         val resolver = ContentResolver.wrap(provider)
@@ -78,11 +81,13 @@ class PreviewRawGestureFixtureAndroidTest {
         val actual = ManualTrialPhotoRollRenderer(app, resources = { ready })
         val exactCount = AtomicInteger()
         val draftCount = AtomicInteger()
+        val exactRequests = CopyOnWriteArrayList<PhotoRollRenderRequest>()
+        val draftRequests = CopyOnWriteArrayList<PhotoRollRenderRequest>()
         val renderer = object : PhotoRollRenderer by actual {
             override fun render(request: PhotoRollRenderRequest, cancellation: CancellationSignal): PhotoRollRenderResult =
-                actual.render(request, cancellation).also { if (it is PhotoRollRenderResult.Preview) exactCount.incrementAndGet() }
+                actual.render(request, cancellation).also { if (it is PhotoRollRenderResult.Preview) { exactRequests += request; exactCount.incrementAndGet() } }
             override fun renderDraft(request: PhotoRollRenderRequest, cancellation: CancellationSignal): PhotoRollRenderResult.Preview? =
-                actual.renderDraft(request, cancellation).also { if (it != null) draftCount.incrementAndGet() }
+                actual.renderDraft(request, cancellation).also { if (it != null) { draftRequests += request; draftCount.incrementAndGet() } }
         }
         val repository = PhotoRollRepository(resolver, target.packageName)
         fixture.content = {
@@ -97,19 +102,46 @@ class PreviewRawGestureFixtureAndroidTest {
             }
         }
         try {
-            ActivityScenario.launch<androidx.activity.ComponentActivity>(android.content.Intent().setClassName(target.packageName, "dev.cinematic.p0.photoroll.PreviewPresentationActivity")).use {
+            ActivityScenario.launch<androidx.activity.ComponentActivity>(android.content.Intent().setClassName(target.packageName, hostClassName)).use {
                 click(FIRST_NAME)
                 await { exactCount.get() == 1 }
+                if (parallelProbe) {
+                    val initial = exactRequests.last()
+                    assertEquals(1, initial.diagnosticWorkers)
+                    val beforeSwitch = exactCount.get()
+                    click(PARALLEL_SWITCH)
+                    await { exactCount.get() > beforeSwitch }
+                    val enabled = exactRequests.last()
+                    assertEquals(2, enabled.diagnosticWorkers)
+                    assertEquals(initial.strength, enabled.strength, 0.0)
+                    assertEquals(initial.adjustments, enabled.adjustments)
+                }
                 click("STRENGTH")
+                if (parallelProbe) assertFalse("Cannot switch while an adjustment is open", node(PARALLEL_SWITCH).isEnabled)
+                val beforeDrag = exactCount.get()
                 val bounds = Rect().also { node("STRENGTH", true).getBoundsInScreen(it) }
                 val records = PreviewGestureDriver(instrumentation.uiAutomation).drag(2,
                     bounds.exactCenterX(), bounds.exactCenterY(), -bounds.width() * .25f,
                     steps = 60, intervalMs = 32)
                 assertEquals(62, records.size)
-                await { exactCount.get() >= 2 }
+                await { exactCount.get() > beforeDrag }
                 // 計算完了と画面提示は別。ここで50msや提示完了を合格にしない。
                 assertTrue("Actual exact RAW renderer completed", exactCount.get() >= 2)
                 assertTrue("Actual draft RAW renderer completed", draftCount.get() > 0)
+                if (parallelProbe) {
+                    assertTrue("Release must use candidate execution", exactRequests.drop(1).all { it.diagnosticWorkers == 2 })
+                    assertTrue("Draft must use candidate execution", draftRequests.isNotEmpty() && draftRequests.all { it.diagnosticWorkers == 2 })
+                    click("目盛りを閉じる")
+                    val released = exactRequests.last()
+                    val beforeSwitch = exactCount.get()
+                    click(PARALLEL_SWITCH)
+                    await { exactCount.get() > beforeSwitch }
+                    val disabled = exactRequests.last()
+                    assertEquals(1, disabled.diagnosticWorkers)
+                    assertEquals(released.strength, disabled.strength, 0.0)
+                    assertEquals(released.adjustments, disabled.adjustments)
+                    println("Synthetic editor switch: OFF=1 ON=2 draft=2 release=2 OFF=1 presentation=NOT_MEASURED")
+                }
                 assertEquals("No shared writes", 0, provider.writes.get())
                 provider.verifyUnchanged()
                 println("Synthetic RAW gesture: exact=${exactCount.get()} draft=${draftCount.get()} presentation=NOT_MEASURED")
@@ -220,5 +252,8 @@ class PreviewRawGestureFixtureAndroidTest {
         }
     }
 
-    private companion object { const val FIRST_NAME = "Synthetic gesture.dng" }
+    private companion object {
+        const val FIRST_NAME = "Synthetic gesture.dng"
+        const val PARALLEL_SWITCH = "診断プレビュー2並列"
+    }
 }

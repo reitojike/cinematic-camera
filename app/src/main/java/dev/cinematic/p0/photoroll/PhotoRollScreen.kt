@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -72,6 +73,10 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
     var savedWarmth by rememberSaveable { mutableDoubleStateOf(0.0) }
     var savedExposureEv by rememberSaveable { mutableDoubleStateOf(0.0) }
     val manualTrial = renderer.mode == PhotoRollPreviewMode.MANUAL_TRIAL
+    val diagnostic = dev.cinematic.p0.BuildConfig.EDITOR_PREVIEW_DIAGNOSTIC && manualTrial
+    var parallelPreview by remember { mutableStateOf(false) }
+    val diagnosticWorkers = if (diagnostic) { if (parallelPreview) 2 else 1 } else null
+    val currentDiagnosticWorkers by rememberUpdatedState(diagnosticWorkers)
     var trialEditor by remember { mutableStateOf(TrialStrengthEditor.empty(
         if (manualTrial) PhotoEditValues(savedStrength, savedWarmth, savedExposureEv) else PhotoEditValues(savedStrength))) }
     var listing by remember { mutableStateOf(PhotoRollListing(emptyList())) }
@@ -263,6 +268,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         if (!manualTrial) return@LaunchedEffect
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             for (draft in draftRequests) {
+                val workers = currentDiagnosticWorkers
                 if (!draftAdmission.canStart(draft, trialEditor, selectedUri)) continue
                 val cancellation = CancellationSignal()
                 draftCancellationOwner.begin(cancellation)
@@ -277,7 +283,8 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                             if (!admitted) return@run null
                             val original = PhotoRollOriginal(Uri.parse(draft.source.uri), draft.source.fingerprint, draft.source.grant)
                             val request = PhotoRollRenderRequest(original, strength = draft.values.strength,
-                                adjustments = PhotoAdjustmentPolicy.adjustments(draft.values), mode = renderer.mode, maxEdge = 256)
+                                adjustments = PhotoAdjustmentPolicy.adjustments(draft.values), mode = renderer.mode, maxEdge = 256,
+                                diagnosticWorkers = workers)
                             renderer.renderDraft(request, cancellation)?.also { rendered ->
                                 pending = rendered
                                 val after = rendered.bitmap
@@ -337,6 +344,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         val skipRecipeThisRequest = skipDurableRecipe
         val previousIdentity = savedOriginalIdentity
         val previousContract = savedProcessingContract
+        val workersThisRequest = diagnosticWorkers
         val retryThisRequest = explicitRetry
         explicitRetry = false
         if (source == null) {
@@ -380,8 +388,11 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         val presentation = dev.cinematic.p0.diagnostics.PreviewPresentationTrace.start(strengthTicket, exact = true)
         val requestScope = this
         val serialPreview = manualTrial && android.util.Log.isLoggable("PreviewSerial", android.util.Log.DEBUG)
-        val timing = if (android.util.Log.isLoggable("PreviewTiming", android.util.Log.DEBUG))
-            PreviewTiming(strengthTicket.revision, previewOperation, sink = { android.util.Log.d("PreviewTiming", "serial=$serialPreview draftGate=$manualTrial $it") }) else null
+        val timing = if (diagnostic || android.util.Log.isLoggable("PreviewTiming", android.util.Log.DEBUG))
+            PreviewTiming(strengthTicket.revision, previewOperation, sink = {
+                if (diagnostic) android.util.Log.i("PreviewTiming", "workers=$workersThisRequest serial=$serialPreview draftGate=$manualTrial $it")
+                else android.util.Log.d("PreviewTiming", "serial=$serialPreview draftGate=$manualTrial $it")
+            }) else null
         // WithContext may discard a completed result when Main resumes into cancellation.
         // Until the current ticket adopts it, this request still owns its display copies.
         var pendingPreview: PhotoRollRenderResult.Preview? = null
@@ -419,7 +430,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                     }
                     val adjustments = if (manualTrial) PhotoAdjustmentPolicy.adjustments(strengthTicket.values) else PhotoAdjustments()
                     val request = PhotoRollRenderRequest(original, strength = strengthTicket.strength, adjustments = adjustments,
-                        mode = renderer.mode, maxEdge = renderer.maxEdge,
+                        mode = renderer.mode, maxEdge = renderer.maxEdge, diagnosticWorkers = workersThisRequest,
                         explicitRetry = retryThisRequest, refreshDecisions = manualTrial && trialEditor.session != null,
                         awaitCancelledOwner = manualTrial || serialPreview, onStage = { stage -> timing?.enter(stage.name); requestScope.launch(Dispatchers.Main) {
                             if (selection.accepts(ticket) && trialEditor.accepts(strengthTicket)) renderStage = stage
@@ -603,7 +614,27 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                 PhotoRollDevelopView(
                     name = listing.items.firstOrNull { it.uri == selectedUri }?.name ?: "DNG（名前未取得）",
                     mode = renderer.mode, state = trialEditor, readState = { trialEditor }, phase = selection.phase,
-                    statusOverlay = { ForegroundSaveNotice(jpegSave, foreground, activeOnly = true) },
+                    statusOverlay = {
+                        ForegroundSaveNotice(jpegSave, foreground, activeOnly = true)
+                        if (diagnostic) {
+                            val canSwitch = foreground && !editSavePending && !savePending &&
+                                trialEditor.session == null && selection.phase == PhotoRollPhase.DISPLAYED &&
+                                saved?.phase !in setOf(PhotoRollSavePhase.SAVING, PhotoRollSavePhase.HOLD, PhotoRollSavePhase.UNCONFIRMED)
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("診断: 候補3工程の2並列 ${if (parallelPreview) "ON" else "OFF"}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                                Switch(checked = parallelPreview, enabled = canSwitch, onCheckedChange = { enabled ->
+                                    if (canSwitch) {
+                                        stopDraft(); cancellationOwner.cancel()
+                                        parallelPreview = enabled
+                                        jpegSave = null; saveSnapshot = null; selection = selection.pause()
+                                        previewOperation = PreviewOperation.OPEN
+                                        retry++
+                                    }
+                                }, modifier = Modifier.semantics { contentDescription = "診断プレビュー2並列" })
+                            }
+                            Text("切替は調整を閉じてから。256px計算ログ有効・50ms提示判定ではありません", Modifier.padding(horizontal = 8.dp), style = MaterialTheme.typography.labelSmall)
+                        }
+                    },
                     stage = renderStage, message = notice ?: if (draftShown) "操作中は最大256pxの近似表示です。離すと最大1024pxで再計算します" else selection.message, preview = preview, comparison = comparison,
                     comparisonLabel = comparisonLabel, foreground = foreground && !editSavePending, savePhase = saved?.phase, savePending = savePending || editSavePending,
                     saveEnabled = foreground && !editSavePending && trialEditor.session == null && selection.phase == PhotoRollPhase.DISPLAYED && !savePending && owner != null &&
