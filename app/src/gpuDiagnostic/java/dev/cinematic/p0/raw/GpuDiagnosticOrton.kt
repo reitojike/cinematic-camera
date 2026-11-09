@@ -8,7 +8,8 @@ import java.util.concurrent.CancellationException
 /** Test-only: no product call site. Full-image CPU blur, bounded GPU composition. */
 internal object GpuDiagnosticOrton {
     data class Observation(val output: LinearSrgbImage, val transferBytes: Long, val textureBytes: Long, val gpuWallNs: Long = 0, val cpuPrepareNs: Long = 0,
-        val uploadNs: Long = 0, val drawNs: Long = 0, val readbackNs: Long = 0)
+        val uploadNs: Long = 0, val drawNs: Long = 0, val readbackNs: Long = 0,
+        val detail: GpuWorkTiming.Snapshot? = null)
 
     fun render(session: GpuDiagnosticSession, mist: StageClearMist.Result, skin: FloatPlane,
                bandHeight: Int = 64, stop: () -> Boolean = { false }): Observation {
@@ -35,44 +36,53 @@ internal object GpuDiagnosticOrton {
                  skin: FloatPlane, amount: Double, bandHeight: Int = 64,
                  stop: () -> Boolean = { false }): Observation {
         val gpuStarted = System.nanoTime()
+        val timing = if (session.detailedTiming) GpuWorkTiming() else null
+        timing?.count(GpuWorkTiming.Count.CALLS)
         require(bandHeight in 1..256 && amount.isFinite() && amount in 0.0..1.0)
         require(soft.width == image.width && soft.height == image.height)
         require(skin.width == image.width && skin.height == image.height)
         fun checkpoint() { session.requireCurrent(); if (stop()) throw CancellationException("GPU診断を取り消しました") }
         checkpoint()
-        val textures = IntArray(3)
-        val framebuffer = IntArray(1)
+        val textures = timing.allocate(12) { IntArray(3) }
+        val framebuffer = timing.allocate(4) { IntArray(1) }
         val program = session.ortonProgram
         var uploadNs=0L; var drawNs=0L; var readbackNs=0L
+        val h = minOf(bandHeight, image.height)
+        val byteCount = Math.multiplyExact(Math.multiplyExact(image.width, h), 16)
+        val imageOutput: LinearSrgbImage
         try {
-            GLES30.glUseProgram(program)
-            GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "source"), 0)
-            GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "softField"), 1)
-            GLES30.glUniform1f(GLES30.glGetUniformLocation(program, "amount"), amount.toFloat())
-            GLES30.glGenTextures(3, textures, 0)
-            GLES30.glGenFramebuffers(1, framebuffer, 0)
-            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, framebuffer[0])
-            GLES30.glDisable(GLES30.GL_DITHER)
-            GLES30.glDisable(GLES30.GL_BLEND)
-            val h = minOf(bandHeight, image.height)
-            val byteCount = Math.multiplyExact(Math.multiplyExact(image.width, h), 16)
-            val source = ByteBuffer.allocateDirect(byteCount).order(ByteOrder.nativeOrder()).asFloatBuffer()
-            val field = ByteBuffer.allocateDirect(byteCount).order(ByteOrder.nativeOrder()).asFloatBuffer()
-            val readback = ByteBuffer.allocateDirect(byteCount).order(ByteOrder.nativeOrder()).asFloatBuffer()
-            val output = FloatArray(image.pixelCount * 3)
+            timing.measure(GpuWorkTiming.Phase.GPU_ALLOCATE) {
+                GLES30.glUseProgram(program)
+                GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "source"), 0)
+                GLES30.glUniform1i(GLES30.glGetUniformLocation(program, "softField"), 1)
+                GLES30.glUniform1f(GLES30.glGetUniformLocation(program, "amount"), amount.toFloat())
+                GLES30.glGenTextures(3, textures, 0)
+                GLES30.glGenFramebuffers(1, framebuffer, 0)
+                GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, framebuffer[0])
+                GLES30.glDisable(GLES30.GL_DITHER)
+                GLES30.glDisable(GLES30.GL_BLEND)
+            }
+            fun buffer() = timing.allocate(byteCount.toLong()) {
+                ByteBuffer.allocateDirect(byteCount).order(ByteOrder.nativeOrder()).asFloatBuffer()
+            }
+            val source = buffer(); val field = buffer(); val readback = buffer()
+            val output = timing.allocate(image.pixelCount.toLong() * 12) { FloatArray(image.pixelCount * 3) }
             var firstRow = 0
             while (firstRow < image.height) {
                 checkpoint()
                 val rows = minOf(h, image.height - firstRow)
+                timing?.count(GpuWorkTiming.Count.PASSES)
                 val beforeUpload = System.nanoTime()
-                source.clear(); field.clear(); readback.clear()
-                repeat(image.width * rows) { local ->
-                    val pixel = firstRow * image.width + local
-                    repeat(3) { c -> source.put(image[pixel * 3 + c]); field.put(soft[pixel * 3 + c]) }
-                    source.put(skin[pixel]); field.put(1f)
+                timing.measure(GpuWorkTiming.Phase.CPU_PACK) {
+                    source.clear(); field.clear(); readback.clear()
+                    repeat(image.width * rows) { local ->
+                        val pixel = firstRow * image.width + local
+                        repeat(3) { c -> source.put(image[pixel * 3 + c]); field.put(soft[pixel * 3 + c]) }
+                        source.put(skin[pixel]); field.put(1f)
+                    }
+                    source.flip(); field.flip()
                 }
-                source.flip(); field.flip()
-                repeat(3) { index ->
+                fun texture(index: Int, data: java.nio.Buffer?) {
                     GLES30.glActiveTexture(GLES30.GL_TEXTURE0 + index)
                     GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textures[index])
                     GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_MIN_FILTER, GLES30.GL_NEAREST)
@@ -80,38 +90,76 @@ internal object GpuDiagnosticOrton {
                     GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_S, GLES30.GL_CLAMP_TO_EDGE)
                     GLES30.glTexParameteri(GLES30.GL_TEXTURE_2D, GLES30.GL_TEXTURE_WRAP_T, GLES30.GL_CLAMP_TO_EDGE)
                     GLES30.glTexImage2D(GLES30.GL_TEXTURE_2D, 0, GLES30.GL_RGBA32F, image.width, rows, 0,
-                        GLES30.GL_RGBA, GLES30.GL_FLOAT, when (index) { 0 -> source; 1 -> field; else -> null })
+                        GLES30.GL_RGBA, GLES30.GL_FLOAT, data)
                 }
-                GLES30.glFinish()
+                if (timing == null) {
+                    repeat(3) { texture(it, when (it) { 0 -> source; 1 -> field; else -> null }) }
+                    GLES30.glFinish()
+                } else {
+                    // Separate storage request from transfer. This is a different diagnostic workload.
+                    timing.measure(GpuWorkTiming.Phase.GPU_ALLOCATE) {
+                        repeat(3) { texture(it, null) }
+                        GLES30.glFinish()
+                    }
+                    timing.measure(GpuWorkTiming.Phase.UPLOAD) {
+                        repeat(2) { index ->
+                            GLES30.glActiveTexture(GLES30.GL_TEXTURE0 + index)
+                            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, textures[index])
+                            GLES30.glTexSubImage2D(GLES30.GL_TEXTURE_2D, 0, 0, 0, image.width, rows,
+                                GLES30.GL_RGBA, GLES30.GL_FLOAT, if (index == 0) source else field)
+                        }
+                        GLES30.glFinish()
+                    }
+                    timing.count(GpuWorkTiming.Count.TEXTURE_ALLOCATIONS, 3)
+                    timing.count(GpuWorkTiming.Count.TEXTURE_BYTES, image.width.toLong() * rows * 48)
+                    timing.count(GpuWorkTiming.Count.UPLOAD_BYTES, image.width.toLong() * rows * 32)
+                }
                 uploadNs += System.nanoTime() - beforeUpload
                 GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0, GLES30.GL_TEXTURE_2D, textures[2], 0)
                 check(GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER) == GLES30.GL_FRAMEBUFFER_COMPLETE)
                 checkpoint()
                 GLES30.glViewport(0, 0, image.width, rows)
                 val beforeDraw = System.nanoTime()
-                GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
-                GLES30.glFinish()
+                timing.measure(GpuWorkTiming.Phase.DRAW) {
+                    GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
+                    GLES30.glFinish()
+                }
                 drawNs += System.nanoTime() - beforeDraw
                 checkpoint()
                 val beforeRead = System.nanoTime()
-                GLES30.glReadPixels(0, 0, image.width, rows, GLES30.GL_RGBA, GLES30.GL_FLOAT, readback)
+                timing.measure(GpuWorkTiming.Phase.READBACK) {
+                    GLES30.glReadPixels(0, 0, image.width, rows, GLES30.GL_RGBA, GLES30.GL_FLOAT, readback)
+                }
+                timing?.count(GpuWorkTiming.Count.READBACK_BYTES, image.width.toLong() * rows * 16)
                 check(GLES30.glGetError() == GLES30.GL_NO_ERROR) { "GPU probe draw/readback failed" }
                 checkpoint()
-                readback.rewind()
-                repeat(image.width * rows) { local ->
-                    val offset = (firstRow * image.width + local) * 3
-                    repeat(3) { c -> output[offset + c] = readback.get().also { require(it.isFinite()) } }
-                    readback.get()
+                timing.measure(GpuWorkTiming.Phase.CPU_UNPACK) {
+                    readback.rewind()
+                    repeat(image.width * rows) { local ->
+                        val offset = (firstRow * image.width + local) * 3
+                        repeat(3) { c -> output[offset + c] = readback.get().also { require(it.isFinite()) } }
+                        readback.get()
+                    }
                 }
                 readbackNs += System.nanoTime() - beforeRead
                 firstRow += rows
             }
-            return Observation(LinearSrgbImage.takeOwnership(image.width, image.height, output), byteCount.toLong() * 3, byteCount.toLong() * 3, System.nanoTime() - gpuStarted,
-                uploadNs=uploadNs, drawNs=drawNs, readbackNs=readbackNs)
+            imageOutput = timing.measure(GpuWorkTiming.Phase.CPU_VALIDATE) {
+                LinearSrgbImage.takeOwnership(image.width, image.height, output)
+            }
         } finally {
-            GLES30.glDeleteTextures(3, textures, 0)
-            GLES30.glDeleteFramebuffers(1, framebuffer, 0)
+            timing.measure(GpuWorkTiming.Phase.RELEASE) {
+                GLES30.glDeleteTextures(3, textures, 0)
+                GLES30.glDeleteFramebuffers(1, framebuffer, 0)
+            }
         }
+        val elapsedNs = System.nanoTime() - gpuStarted
+        val detail = timing?.snapshot(elapsedNs)
+        return Observation(imageOutput, byteCount.toLong() * 3, byteCount.toLong() * 3, elapsedNs,
+            uploadNs = detail?.intervals?.get(GpuWorkTiming.Phase.UPLOAD.ordinal) ?: uploadNs,
+            drawNs = detail?.intervals?.get(GpuWorkTiming.Phase.DRAW.ordinal) ?: drawNs,
+            readbackNs = detail?.intervals?.get(GpuWorkTiming.Phase.READBACK.ordinal) ?: readbackNs,
+            detail = detail)
     }
 
     internal fun createProgram(): Int {

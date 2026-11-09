@@ -30,7 +30,7 @@ applicationId は `dev.cinematic.p0.gpudiagnostic` です。既存の一時デ�
 - `GPU準備`: `preparationNs` はEGL初期化、pbuffer/context生成、2つのshaderのcompile/link、初期GL状態と同期まで。入力生成/R7/顔fieldは含まない。遅延実装されるdriver処理が最初のdrawに残る可能性があるので、準備を除いても `phase=first` は反復判定から外す。
 - `GPU初回`: `firstTwoStagesIncludingPreparationNs` は準備と最初のぼかし＋Orton合成の実測区間の和、`firstLookIncludingPreparationNs` は準備と最初の全Look区間の和。CPU基準を間に実行するため連続したストップウォッチ時間ではない。12MPは `firstIncludingPreparationNs`。session解放と画面表示は含めない。
 - `対象GPU2工程`: `session`、`phase=first/reused`、`iteration`、`width`、`dark`、`strength`、実際の `reverse` を記録する。`blurNs` + `ortonNs` = `sumNs` が30ms用。`ortonCpuPreparationNs`（bright変換とCPUぼかし）を足していない。`全Look` の `gpuNs` にはこれと肌field、残りCPU工程も入り、GPUコマンドだけの時間ではない。
-- `uploadNs`: CPUのdirect bufferへの詰め替え、texture割当/転送、`glFinish`まで。blurのsource生成・補間係数作成はこの内訳ではなく `sumNs` の残差に入る。`drawNs`: draw発行から直後の `glFinish` まで。`readbackNs`: `glReadPixels`とCPU配列への読戻しまで。Ortonは有限値検査も含む。残りの割当、準備、FBO設定、CPU変換/検査、一時texture/FBO削除は全体時間に入り、3内訳の和とは一致しない。
+- 従来モード `timingMode=baseline-v1` の `uploadNs`: CPUのdirect bufferへの詰め替え、texture割当/転送、`glFinish`まで。blurのsource生成・補間係数作成はこの内訳ではなく `sumNs` の残差に入る。`drawNs`: draw発行から直後の `glFinish` まで。`readbackNs`: `glReadPixels`とCPU配列への読戻しまで。Ortonは有限値検査も含む。残りの割当、準備、FBO設定、CPU変換/検査、一時texture/FBO削除は全体時間に入り、3内訳の和とは一致しない。
 - これらは同期区切りを置いたCPU wall clockで、GPU timestamp queryでも純粋なDMA/演算時間でもない。同期によって本来の転送/計算の重なりを止め、driver/CPU待ちや帯域の影響を含む。非同期pipelineや入力をGPUに保持した場合の時間をこの結果から確定しない。
 - 再利用対象はEGL/context/shaderだけ。入力/出力・係数textureとFBOは各pass/呼出しで作り直し、すべての帯をupload/readbackする。GPUに入力画像を保持する設計は未実装であり、この内訳を後の設計判断材料にする。
 
@@ -40,9 +40,56 @@ applicationId は `dev.cinematic.p0.gpudiagnostic` です。既存の一時デ�
 
 標準APIの参照: [EGL14](https://developer.android.com/reference/android/opengl/EGL14)、[GLES30](https://developer.android.com/reference/android/opengl/GLES30)、[glFinish](https://registry.khronos.org/OpenGL-Refpages/es3.0/html/glFinish.xhtml)、[glReadPixels](https://registry.khronos.org/OpenGL-Refpages/es3.0/html/glReadPixels.xhtml)。
 
+## 割当・転送を分ける詳細診断（#259）
+
+「内訳を分離」は既定 OFF。OFF は `timingMode=baseline-v1` として従来の API 順序で測る。
+ON は `timingMode=split-allocation-v1` となり、texture を `glTexImage2D(null)` で確保して同期した後、
+`glTexSubImage2D` で入力を転送する。ぼかしは共有 CPU buffer を詰め替える転送ごとに同期する。
+追加同期と driver の確保経路が変わるため、**詳細モードの時間を従来の時間や30ms判定に混ぜない**。
+これは最適化候補ではなく、未分類の負担を切り分ける別の診断である。両モードの画素一致を合成試験する。
+
+`GPU内訳` は `stage=blur/orton/blur12/orton12`、session、first/reused、iteration、比較順を持つ。
+小型/1024pxは入力と強度も記録する。各行の `totalNs` は当該工程の既存 wall 区間で、以下の非重複区間と
+`otherNs` の和になる。Orton の複数呼出しは加算し、CPU の基準処理や帯の合成入力作成を挟む経過時間とは区別する。
+`GPU計測` 行の mode・timingMode・observeMemory と照合し、メモリ観測 ON の時間を速度比較へ混ぜない。
+
+| ログ | 実測する範囲 |
+|---|---|
+| `cpuAllocateNs` | 診断コードで明示した FloatArray / IntArray / direct ByteBuffer の確保。ゼロ初期化や呼出し内の待ちを含む |
+| `cpuPackNs` | 係数の書込み、CPU 配列から direct buffer への詰め替え。Orton は RGB/肌field から RGBA への変換 |
+| `cpuUnpackNs` | direct buffer から配列への取出し、帯のコピー、呼出元の consume。Orton の要素ごとの有限検査も含む |
+| `cpuInputPrepareNs` | ぼかしの source callback と補間係数の生成。callback/標準係数生成内部の確保も含み、純粋な演算時間ではない |
+| `cpuValidateNs` | 出力全体の有限検査と image wrapper の検査。wrapper 内部の小さな object 確保は区別しない |
+| `gpuAllocateNs` | GL object/texture の作成・初期設定、texture storage 要求と直後の `glFinish`。driver の遅延確保が以後に残る可能性がある |
+| `uploadNs` | `glTexSubImage2D` の発行と `glFinish`。CPU buffer 詰め替えは除く |
+| `drawNs` | draw の発行と直後の `glFinish`。GPU timestamp ではなく CPU/driver 待ちを含む |
+| `readbackNs` | `glReadPixels`。CPU 配列へのコピーは除く。同期済みでも driver/転送の負担を含む |
+| `releaseNs` | texture/FBO の削除 API。driver の遅延解放や GC 完了を保証する時間ではない |
+| `otherNs` | FBO 接続/検査、uniform/viewport 設定、取消確認、集計・計時器の負担など、上記に分類していない wall 時間 |
+
+`calls` は実際のぼかし/Orton 関数呼出し数、`passes` は実際の resize/Orton 帯数。
+`uploadedBytes` と `readbackBytes` は API に渡す論理上の float32 RGBA bytes の累計で、物理 bus の traffic 量ではない。
+`textureAllocations` / `textureAllocatedBytes` は storage 要求の回数/累計 bytes。
+`explicitCpuAllocations` / `explicitCpuAllocatedBytes` は明示的に計時した配列と direct buffer の要求回数/累計 bytes で、
+callback・係数生成内部・小 object・driver の確保、GC、RSS/PSS/peak は含めない。累計確保量を同時保持量と呼ばない。
+
+1 回の API 呼出し、1 帯、1 画像を同じ単位にしない。現行固定入力では 1024×769 の Orton は通常 1 呼出し/13 帯、
+12MP は 256 行ずつ 12 呼出し/計47帯で、ぼかしも28 passと96 passで異なる。実行時は必ずログの件数を正とする。
+1024px と 12MP の2点だけから約150msの固定費、GPUの限界、GPU常駐入力の速度を確定しない。
+
+次回の許可済み実機確認では同じ build・入力・強度・比較順・熱条件の baseline と詳細モードを別走行にする。
+初回を除く条件別の全体時間/各内訳/件数/bytesを並べ、中央値は各 raw 行から求める。中央値同士の差を残差としない。
+最初に両モードの画素一致と資源回収を確認し、失敗時は採取値を採否へ使わない。詳細診断だけが遅い場合は
+計時・追加同期による変化も候補に残す。入力常駐、buffer/texture 再利用等の最適化をこの Issue で実装しない。
+内訳がそろうまでは GPU 採否を保留し、実機に触れていない準備段階を速度確認済みとしない。
+
+標準 API: [glTexImage2D](https://registry.khronos.org/OpenGL-Refpages/es3.0/html/glTexImage2D.xhtml)、
+[glTexSubImage2D](https://registry.khronos.org/OpenGL-Refpages/es3.0/html/glTexSubImage2D.xhtml)。
+これらの CPU wall 計時では純粋な GPU 演算・DMA・driver 内部の確保を完全には分離できない。
+
 ## 判定と制約
 
-- 1024pxの対象ぼかし＋Orton GPU合成は、同じsessionの2回目以降（`phase=reused`）の `sumNs` を30msの目安と比較します。転送・同期・readback・その処理内のCPU変換/割当/一時資源回収を含み、EGL/context/shader初期化とsession最終解放は除きます。初回準備込み・CPU側Orton field準備・全Look時間は別記します。異なる入力/強度/順序・メモリ観測ONを混ぜて集計しません。
+- 30msの比較は従来モード `timingMode=baseline-v1` に限る。1024pxの対象ぼかし＋Orton GPU合成は、同じsessionの2回目以降（`phase=reused`）の `sumNs` を30msの目安と比較します。転送・同期・readback・その処理内のCPU変換/割当/一時資源回収を含み、EGL/context/shader初期化とsession最終解放は除きます。初回準備込み・CPU側Orton field準備・全Look時間は別記します。異なる入力/強度/順序・メモリ観測ONを混ぜて集計しません。
 - プレビューは全Lookで最大2段以内。そのうえで実機GPUと実写で目視の再判定が必要です。数値だけでは製品採用しません。
 - 保存採用は現像全経路で最大1段以内が条件です。12MPの単体試験はこの条件を検証しません。DNGデコードからJPEGまでの合格へ読み替えません。
 - 暗部の平坦化カウントは検出補助であり、目視のバンディング判定の代わりではありません。
