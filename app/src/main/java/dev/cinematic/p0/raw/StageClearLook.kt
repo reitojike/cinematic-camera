@@ -46,6 +46,11 @@ internal object StageClearLook {
         glowed: LinearSrgbImage, originalSkin: FloatPlane, faces: FaceMask,
         strength: Double, decisions: StageClearDecisions?, timing: RawPreviewTiming?,
         checkpoint: () -> Unit,
+    ): StageClearProtections.Result = renderFromGlowed(glowed, originalSkin, faces, strength, decisions, timing, null, checkpoint)
+
+    internal fun renderFromGlowed(glowed: LinearSrgbImage, originalSkin: FloatPlane, faces: FaceMask,
+        strength: Double, decisions: StageClearDecisions?, timing: RawPreviewTiming?,
+        execution: PreviewPixelExecution?, checkpoint: () -> Unit,
     ): StageClearProtections.Result {
         var firstAutoStrength: Double? = null
         var faceCutAutoStrength: Double? = null
@@ -62,10 +67,10 @@ internal object StageClearLook {
             val mist = StageClearMist.render(input, originalSkin, strength, autoStrength)
             checkpoint()
             timing?.enter(RawPreviewTiming.Stage.ORTON)
-            val orton = StageClearOrton.render(mist, originalSkin)
+            val orton = StageClearOrton.render(mist, originalSkin, execution)
             checkpoint()
             timing?.enter(RawPreviewTiming.Stage.CHARACTER)
-            StageClearCharacter.render(orton, strength).also {
+            StageClearCharacter.render(orton, strength, execution).also {
                 checkpoint()
                 timing?.enter(RawPreviewTiming.Stage.PROTECTIONS)
             }

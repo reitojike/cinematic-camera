@@ -10,6 +10,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import dev.cinematic.p0.BuildConfig
 import dev.cinematic.p0.CaptureTheme
 import dev.cinematic.p0.rawcapture.DevelopExecution
 
@@ -18,10 +19,17 @@ class PhotoRollActivity : ComponentActivity() {
     private lateinit var resourceObserver: PhotoRollResourceObserver
     private lateinit var renderer: PhotoRollRenderer
     private lateinit var previewCache: PhotoRollPreviewCache
+    private var diagnosticCameraOwner: PhotoRollCameraOwners.Owner? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // 統合診断は撮影Activityとカメラ権限を持たない。通常版の未確認判定は変えない。
+        if (BuildConfig.EDITOR_PREVIEW_DIAGNOSTIC) {
+            diagnosticCameraOwner = AndroidPhotoRollCameraObservations.register {
+                PhotoRollCameraSnapshot(false, false, false, false)
+            }
+        }
         val repository = PhotoRollRepository(contentResolver, packageName)
         previewCache = ViewModelProvider(this)[PhotoRollPreviewCache::class.java]
         resourceObserver = PhotoRollResourceObserver(applicationContext, DevelopExecution::updateConditions)
@@ -47,6 +55,10 @@ class PhotoRollActivity : ComponentActivity() {
         if (::previewCache.isInitialized && level != ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) previewCache.clear()
         if (::renderer.isInitialized) renderer.discardTransientInputs()
         super.onTrimMemory(level)
+    }
+    override fun onDestroy() {
+        diagnosticCameraOwner?.close(); diagnosticCameraOwner = null
+        super.onDestroy()
     }
     override fun onStart() { super.onStart(); resourceObserver.start() }
     override fun onStop() { resourceObserver.stop(); super.onStop() }
