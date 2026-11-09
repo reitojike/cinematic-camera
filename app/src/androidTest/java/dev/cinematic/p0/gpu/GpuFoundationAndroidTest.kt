@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicInteger
 class GpuFoundationAndroidTest {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private fun floats(size: Int) = ByteBuffer.allocateDirect(size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
-    private fun <T> gpu(block: (EglContexts) -> T): T = GlThread().use { thread ->
+    private fun gpu(block: (EglContexts) -> Unit): Unit = GlThread().use { thread ->
         thread.call { EglContexts(thread, instrumentation.context.assets).use { egl ->
             val capabilities = GlCapabilities.inspect(egl)
             Log.i("GpuFoundation", "capabilities=$capabilities")
