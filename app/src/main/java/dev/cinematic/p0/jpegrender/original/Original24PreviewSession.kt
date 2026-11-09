@@ -16,6 +16,7 @@ import dev.cinematic.p0.raw.RawPreviewTiming
 import dev.cinematic.p0.raw.PreviewPixelExecution
 import dev.cinematic.p0.BuildConfig
 import dev.cinematic.p0.raw.R7Base
+import dev.cinematic.p0.raw.R7StageTiming
 import dev.cinematic.p0.raw.R7PreviewInputs
 import dev.cinematic.p0.raw.original.NativeOriginalRaster
 import dev.cinematic.p0.raw.original.OriginalFields
@@ -128,6 +129,7 @@ internal class Original24PreviewSession(
                     else android.util.Log.d("RawPreviewTiming", it)
                 }) } else null
         var execution: PreviewPixelExecution? = null
+        var r7Timing: R7StageTiming? = null
         var result: Bitmap? = null
         var failure: Throwable? = null
         try {
@@ -141,25 +143,34 @@ internal class Original24PreviewSession(
                 else asShot ?: loadInput(stop).also { asShot = it }
             resourceAdmission(Original24MemoryStage.BOUNDED_PREVIEW)
             timing?.enter(RawPreviewTiming.Stage.FOUNDATION)
+            // Only the integrated diagnostic opts into the finer intervals. Normal callers pass null.
+            if (diagnosticWorkers != null) r7Timing = R7StageTiming.optional {
+                R7StageTiming(if (draft) RawPreviewTiming.Kind.DRAFT else RawPreviewTiming.Kind.EXACT,
+                    timingSequence, diagnosticWorkers, sink = { android.util.Log.i("R7StageTiming", it) })
+            }
             val foundation = if (draft) {
                 if (draftBase == null || draftAdjustments != adjustments) {
                     draftBase = null; draftGlow = null; draftAdjustments = null
+                    r7Timing?.enter(R7StageTiming.Stage.WARMTH)
                     val warmed = adjustments.applyWarmth(input, stop)
                     // Exact foundation uses emptyList() ellipses, so this is the same zero ROI,
                     // without recomputing automatic exposure on the coarse image.
-                    draftBase = R7Base.render(warmed, FloatPlane(input.width, input.height, FloatArray(input.pixelCount)),
-                        requireNotNull(meteredBaseEv) + adjustments.exposureEv, execution, stop)
+                    r7Timing?.enter(R7StageTiming.Stage.ROI)
+                    val roi = FloatPlane(input.width, input.height, FloatArray(input.pixelCount))
+                    draftBase = R7Base.render(warmed, roi,
+                        requireNotNull(meteredBaseEv) + adjustments.exposureEv, execution, r7Timing, stop)
                     draftAdjustments = adjustments
                 }
                 requireNotNull(draftBase)
             } else if (base != null && baseAdjustments == adjustments) requireNotNull(base) else {
                 // Drop the old base before allocating a replacement; warmth and EV both invalidate it.
                 base = null; baseAdjustments = null; previewExternalEv = null; previewGlow = null
-                original24PreviewFoundation(input, adjustments, stop, execution).also {
+                original24PreviewFoundation(input, adjustments, stop, execution, r7Timing).also {
                     originalCheckpoint(stop)
                     base = it.image; baseAdjustments = adjustments; previewExternalEv = it.externalEv
                 }.image
             }
+            r7Timing?.finish(R7StageTiming.Outcome.SUCCESS)
             val noProtection = FaceMask(foundation.width, foundation.height, FloatArray(foundation.pixelCount))
             timing?.enter(RawPreviewTiming.Stage.GLOW_PREPARE)
             val glow = (if (draft) draftGlow else previewGlow) ?: PreparedStageClearGlow.prepare(foundation) {
@@ -185,6 +196,7 @@ internal class Original24PreviewSession(
             }
             requireNotNull(result)
         } catch (error: Throwable) {
+            r7Timing?.finish(R7StageTiming.Outcome.FAILED)
             failed = true; clearInputs()
             failure = error
             result?.recycle()
@@ -389,12 +401,13 @@ internal fun original24PreviewFoundation(input: LinearSrgbImage, adjustments: Ph
     stop: () -> Boolean): Original24PreviewFoundation = original24PreviewFoundation(input, adjustments, stop, null)
 
 internal fun original24PreviewFoundation(input: LinearSrgbImage, adjustments: PhotoAdjustments,
-    stop: () -> Boolean, execution: PreviewPixelExecution?): Original24PreviewFoundation {
+    stop: () -> Boolean, execution: PreviewPixelExecution?, timing: R7StageTiming? = null): Original24PreviewFoundation {
     val diagnostic = R7PreviewInputs.prepare(R7PreviewInputs.AsShotInput(input,
-        R7PreviewInputs.Source.LIBRAW_PRELIMINARY_AS_SHOT), emptyList(), stop)
+        R7PreviewInputs.Source.LIBRAW_PRELIMINARY_AS_SHOT), emptyList(), timing, stop)
+    timing?.enter(R7StageTiming.Stage.WARMTH)
     val warmed = adjustments.applyWarmth(input, stop)
     val externalEv = diagnostic.exposure.externalBaseEv + adjustments.exposureEv
-    return Original24PreviewFoundation(R7Base.render(warmed, diagnostic.foundationSkinRoi, externalEv, execution, stop), externalEv)
+    return Original24PreviewFoundation(R7Base.render(warmed, diagnostic.foundationSkinRoi, externalEv, execution, timing, stop), externalEv)
 }
 
 /** Preview-only BOX reduction reuses the existing reducer, without changing any processing kernel. */
