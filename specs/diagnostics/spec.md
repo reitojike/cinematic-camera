@@ -28,6 +28,8 @@
 - GPU合成診断は合成入力ごとに同一owner threadでEGL/contextと2 shaderを一度準備し、初回と再利用後を区分する。30msの目安は1024pxの `phase=reused` の対象2工程 `sumNs` だけに適用し、準備と初回処理を足した時間は別に記録する。upload/同期付きdraw/readbackのCPU wall内訳を分けるが、純粋GPU演算時間・非同期pipeline・GPU常駐入力の性能とは扱わない。通常製品へ接続せず、原本/goldenを変えない。
 - 再利用はcontext/shaderに限り、転送・CPU変換・一時texture/FBO・readbackは処理時間に含む。初回/失敗/取消や別sessionをwarm反復へ混ぜず、文脈喪失時に自動再生成しない。合成試験で毎回作り直す版とのfloat完全一致とCPU許容差、owner/lifetime/回収を確認する。手順と内訳の境界は[GPU診断](../../docs/GPU_DIAGNOSTIC.md#初回と反復の計測境界257)を参照する。
 
+- GPU の割当・転送分離は既定 OFF の詳細診断（`split-allocation-v1`）で行う。CPU 明示確保・変換・入力準備・検査、GL 資源確保・転送・draw・readback・解放と残差を非重複で記録し、実際の呼出し/pass数と論理bytesを併記する。追加の storage 要求・同期があるため、従来モード `baseline-v1` の速度・30ms判定へ混ぜない。CPU wall値を純粋なGPU演算/DMA/物理確保の時間とせず、2サイズの結果だけで固定費やGPU採否を確定しない。詳細と未分離部分は[GPU診断](../../docs/GPU_DIAGNOSTIC.md#割当転送を分ける詳細診断259)を正本とする。
+
 ## プレビュー診断の契約
 
 - PreviewTimingは要求受付からUI状態採用、RawPreviewTimingはEXACT/DRAFT別のセッション計算を記録する。通常版の計測は明示DEBUG時だけで保存経路には接続しない。統合診断版の実編集では両ログをINFOで出し、並列設定とDRAFT/EXACTを識別する。前者の状態採用と後者の計算完了はいずれもOSの提示完了とは別。
