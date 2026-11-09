@@ -20,6 +20,9 @@ internal class GpuTexture private constructor(
         R32I(GLES32.GL_R32I, GLES32.GL_RED_INTEGER, GLES32.GL_INT, 4),
         R32UI(GLES32.GL_R32UI, GLES32.GL_RED_INTEGER, GLES32.GL_UNSIGNED_INT, 4),
     }
+    /** Read-only owners used by fixed-signature analysis helpers; no global GL state. */
+    val context: EglContexts get() { requireOpen(); return egl }
+    val memoryLedger: GpuMemoryLedger get() { requireOpen(); return ledger }
     val byteSize: Long = width.toLong() * height * format.bytesPerPixel
     private var texture = 0
     private var framebuffer = 0
@@ -91,15 +94,13 @@ internal class GpuTexture private constructor(
     override fun close() {
         egl.glThread.requireCurrent()
         if (closed) return
-        try {
-            egl.releaseResource {
-                if (framebuffer != 0) GLES32.glDeleteFramebuffers(1, intArrayOf(framebuffer), 0)
-                if (texture != 0) GLES32.glDeleteTextures(1, intArrayOf(texture), 0)
-            }
-        } finally {
-            texture = 0; framebuffer = 0; closed = true
-            if (reserved) { ledger.release(byteSize); reserved = false }
+        // A foreign current context is a caller error: leave ownership/accounting intact for retry.
+        egl.releaseResource {
+            if (framebuffer != 0) GLES32.glDeleteFramebuffers(1, intArrayOf(framebuffer), 0)
+            if (texture != 0) GLES32.glDeleteTextures(1, intArrayOf(texture), 0)
         }
+        texture = 0; framebuffer = 0; closed = true
+        if (reserved) { ledger.release(byteSize); reserved = false }
     }
     companion object {
         fun create(egl: EglContexts, ledger: GpuMemoryLedger, width: Int, height: Int, format: Format): GpuTexture =

@@ -1,5 +1,6 @@
 package dev.cinematic.p0.gpu
 
+import android.content.res.AssetManager
 import android.opengl.EGL14
 import android.opengl.EGLConfig
 import android.opengl.EGLSurface
@@ -8,7 +9,7 @@ import android.opengl.GLES32
 import android.view.Surface
 
 /** 1個の ES 3.2 context を pbuffer と表示面で共有する。全操作は GlThread 上。 */
-internal class EglContexts(val glThread: GlThread) : AutoCloseable {
+internal class EglContexts(val glThread: GlThread, private val assets: AssetManager? = null) : AutoCloseable {
     private var display = EGL14.EGL_NO_DISPLAY
     private var context = EGL14.EGL_NO_CONTEXT
     private var pbuffer = EGL14.EGL_NO_SURFACE
@@ -17,6 +18,19 @@ internal class EglContexts(val glThread: GlThread) : AutoCloseable {
     private var lost = false
     private lateinit var config: EGLConfig
     private val targets = mutableSetOf<WindowTarget>()
+    private var shaderLibrary: ShaderLibrary? = null
+    private var passGraph: PassGraph? = null
+
+    /** Context-owned resources: callers borrow these and must not close them individually. */
+    fun shaders(): ShaderLibrary {
+        requireCurrent()
+        return shaderLibrary ?: ShaderLibrary(this, checkNotNull(assets) { "Shader assets were not provided" })
+            .also { shaderLibrary = it }
+    }
+    fun passes(): PassGraph {
+        requireCurrent()
+        return passGraph ?: PassGraph(this).also { passGraph = it }
+    }
 
     init {
         glThread.requireCurrent()
@@ -128,6 +142,10 @@ internal class EglContexts(val glThread: GlThread) : AutoCloseable {
         if (closed) return
         var failure: Throwable? = null
         fun cleanup(block: () -> Unit) { try { block() } catch (e: Throwable) { if (failure == null) failure = e else failure!!.addSuppressed(e) } }
+        // Delete context-owned GL names before detaching/destroying the context.
+        if (!lost && context != EGL14.EGL_NO_CONTEXT && pbuffer != EGL14.EGL_NO_SURFACE) cleanup { makeOffscreenCurrent() }
+        cleanup { passGraph?.close() }; passGraph = null
+        cleanup { shaderLibrary?.close() }; shaderLibrary = null
         targets.toList().forEach { cleanup { it.close() } }
         cleanup { eglCheck(EGL14.eglMakeCurrent(display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT), "eglMakeCurrent(release)") }
         if (pbuffer != EGL14.EGL_NO_SURFACE) cleanup { eglCheck(EGL14.eglDestroySurface(display, pbuffer), "eglDestroySurface(pbuffer)") }

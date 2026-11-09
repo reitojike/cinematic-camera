@@ -73,7 +73,10 @@ internal object AndroidAutoDevelopQueue {
             journal(request.captureId, request.generation)
         }, backendFactory = { request -> AndroidAutoDevelopBackend(context, request, catalog) }).also { queue ->
             // First task on the existing IO owner, ahead of manual/private prepare. Failure retains this owner.
-            queue.restore { AutoDevelopInventory(root, { id, generation -> journal(id, generation).read() }).load() }
+            queue.restore {
+                Original24ScratchRecovery.product(context.noBackupFilesDir)
+                AutoDevelopInventory(root, { id, generation -> journal(id, generation).read() }).load()
+            }
                 .whenComplete { _, failure ->
                     if (failure != null) Log.w("CinematicRaw", "AUTO_INVENTORY_HELD type=${failure.javaClass.simpleName}")
                 }

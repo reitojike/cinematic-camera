@@ -12,7 +12,7 @@ class ShaderConstantsTest {
         val actual = ShaderConstants.values
         var count = 0
         for ((obj, prefix) in groups) {
-            val constants = obj.javaClass.declaredFields.filter { Modifier.isStatic(it.modifiers) && Modifier.isFinal(it.modifiers) && it.name != "INSTANCE" }
+            val constants = obj.javaClass.declaredFields.filter { Modifier.isStatic(it.modifiers) && Modifier.isFinal(it.modifiers) && it.name != "INSTANCE" && !it.name.startsWith("$") }
             val arrays = obj.javaClass.declaredMethods.filter { it.name.startsWith("get") && it.parameterCount == 0 && it.returnType.isArray }
             for (field in constants) {
                 field.isAccessible = true

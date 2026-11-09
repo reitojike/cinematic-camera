@@ -284,3 +284,15 @@ vec4 cs_resampleAxis(sampler2D s_input, sampler2D s_weights,
 - `raw/*` と `raw/original/*` のリファレンス計算、既存の gpuDiagnostic、製品の呼び出し元は変更しない。
 - GlThread・EGL・テクスチャ・シェーダー読み込み・パス・読み戻しの実装は #277 PR2。
   PR1 のパッケージだけのファイルは担当者の作業場所を確保するための空の枠である。
+
+### PR2 内部リソースの利用（#277）
+
+固定の公開署名は変更しない。解析関数は `input.context` / `input.memoryLedger` から所有元を取得し、
+`EglContexts(glThread, assets)` に明示注入した assets を使う `context.shaders()` / `context.passes()` を借用する。
+これらは context ごとに再利用され、context 破棄前に解放される。借用側では個別に close しない。
+`ShaderLibrary.fragment/compute` のキャッシュ済み program も library 所有であり、呼出側では close しない。
+能力検査だけの `EglContexts(glThread)` は assets 不要。global / ThreadLocal / 別 context は導入しない。
+
+Orton 準備の encoded / bright は `FragmentPass(output = encoded, additionalOutputs = listOf(bright))` で
+同じ FBO の location 0 / 1 に出す。全出力の寸法・context を一致させ、入力との feedback を禁止する。
+テクスチャの所有権は呼出側に残り、組合せ FBO だけをパスの finally で破棄する。
