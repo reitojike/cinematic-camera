@@ -28,6 +28,32 @@ class PreviewTimingTest {
         assertEquals("operation=STRENGTH revision=7 outcome=STATE_ADOPTED last=ADOPT_STATE totalNs=30 CHECK_ORIGINALNs=10 LOOKNs=15 ADOPT_STATENs=5", output.single())
     }
 
+    @Test fun dispatchGateAndAdoptionAreSeparateExclusiveIntervals() {
+        var now = 0L
+        val lines = mutableListOf<String>()
+        val timing = PreviewTiming(3, clock = { now }, sink = lines::add, initialStage = "IO_DISPATCH")
+        for (stage in listOf("DRAFT_GATE_WAIT", "ADMISSION_WAIT", "CHECK_ORIGINAL", "LOAD_RECIPE",
+            "BIND_DISPATCH", "BIND_STATE", "IO_RETURN", "BUILD_REQUEST", "RENDER", "VERIFY_RESULT",
+            "UI_DISPATCH", "ADOPT_STATE")) { now += 10; timing.enter(stage) }
+        now += 10; timing.finish("STATE_ADOPTED")
+        assertTrue(lines.single().contains("totalNs=130"))
+        for (stage in listOf("IO_DISPATCH", "DRAFT_GATE_WAIT", "CHECK_ORIGINAL", "UI_DISPATCH", "ADOPT_STATE"))
+            assertTrue(lines.single().contains("${stage}Ns=10"))
+    }
+
+    @Test fun diagnosticFailureCannotEscapeOrReplaceCleanup() {
+        assertNull(PreviewTiming.optional { throw OutOfMemoryError("allocation") })
+        var calls = 0
+        val failedClock = PreviewTiming(1, clock = {
+            if (++calls > 1) throw OutOfMemoryError("clock") else 0L
+        }, sink = { error("not reached") })
+        failedClock.enter("DRAFT_GATE_WAIT")
+        failedClock.finish("FAILED")
+        val failedSink = PreviewTiming(2, clock = { 0L }, sink = { throw OutOfMemoryError("sink") })
+        failedSink.finish("STATE_ADOPTED")
+        failedSink.finish("NOT_ADOPTED")
+    }
+
     @Test fun cancellationKeepsLastBoundaryAndAccountsRepeatedStages() {
         var now = 0L
         var result = ""
