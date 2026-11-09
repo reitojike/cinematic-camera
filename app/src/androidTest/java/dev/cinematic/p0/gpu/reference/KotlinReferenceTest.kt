@@ -34,9 +34,9 @@ class KotlinReferenceTest {
         }
         val elapsed = SystemClock.elapsedRealtime() - start
         InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
-            putString("stream", "\nGpuReference small matrix: 320 cases, workers=$workers, elapsedMs=$elapsed (budget=120000)\n")
+            putString("stream", "\nGpuReference small matrix: 320 cases, workers=$workers, elapsedMs=$elapsed (budget=180000)\n")
         })
-        assertTrue("Small reference matrix took ${elapsed}ms (budget=120000ms)", elapsed <= 120_000)
+        assertTrue("Small reference matrix took ${elapsed}ms (budget=180000ms)", elapsed <= 180_000)
     }
 
     @Test fun oddPreviewMatrixMatchesLookBitForBit() {

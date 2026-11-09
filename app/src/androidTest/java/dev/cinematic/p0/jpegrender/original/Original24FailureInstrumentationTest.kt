@@ -123,8 +123,7 @@ class Original24FailureInstrumentationTest {
         check(Build.HARDWARE in setOf("ranchu", "goldfish") || args.getString("allowPhysical") == "true")
         val f = Fixture(context, trace)
         try { action(f) } finally {
-            // Close only our retained producer. Failed private scratch/output is intentionally kept;
-            // no recursive cleanup can erase the evidence or hide an uncertain resource owner.
+            // Retain failed closes, then remove only known scratch after close acknowledgement.
             f.failClose = false
             f.attempt.close()
             assertFalse(f.attempt.hasUnreleasedResources)
