@@ -9,16 +9,33 @@ import dev.cinematic.p0.raw.FaceMask
 import dev.cinematic.p0.raw.LinearSrgbImage
 import dev.cinematic.p0.raw.PhotoAdjustments
 import dev.cinematic.p0.raw.StageClearLook
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import org.junit.Assert.*
 import org.junit.Test
 
 class KotlinReferenceTest {
     @Test fun completeSmallMatrixMatchesLookBitForBit() {
         val start = SystemClock.elapsedRealtime()
-        for (size in GpuReferenceImages.FAST_SIZES) compareMatrix(size, ADJUSTMENTS, STRENGTHS)
+        val workers = minOf(2, Runtime.getRuntime().availableProcessors())
+        val pool = Executors.newFixedThreadPool(workers)
+        try {
+            for (size in GpuReferenceImages.FAST_SIZES) {
+                val tasks = GpuReferenceImages.Kind.entries.map { kind ->
+                    pool.submit { compareFixture(kind, size, ADJUSTMENTS, STRENGTHS) }
+                }
+                for (task in tasks) {
+                    try { task.get() } catch (failure: ExecutionException) { throw requireNotNull(failure.cause) }
+                }
+            }
+        } finally {
+            pool.shutdownNow()
+            check(pool.awaitTermination(30, TimeUnit.SECONDS)) { "Reference workers did not stop" }
+        }
         val elapsed = SystemClock.elapsedRealtime() - start
         InstrumentationRegistry.getInstrumentation().sendStatus(0, Bundle().apply {
-            putString("stream", "\nGpuReference small matrix: 320 cases, elapsedMs=$elapsed (budget=120000)\n")
+            putString("stream", "\nGpuReference small matrix: 320 cases, workers=$workers, elapsedMs=$elapsed (budget=120000)\n")
         })
         assertTrue("Small reference matrix took ${elapsed}ms (budget=120000ms)", elapsed <= 120_000)
     }
@@ -42,21 +59,40 @@ class KotlinReferenceTest {
         assertArrayEquals(ImageDiff.encodeDisplay(result[Point.SHOULDER]), result.display8)
     }
 
-    private fun compareMatrix(size: GpuReferenceImages.Size, adjustments: List<PhotoAdjustments>, strengths: List<Double>) {
+    @Test fun retainingOnlyShoulderMatchesAllStageCapture() {
+        val size = GpuReferenceImages.FAST_SIZES.first()
         for (kind in GpuReferenceImages.Kind.entries) {
-            val input = GpuReferenceImages.create(kind, size)
-            for (adjustment in adjustments) {
-                val prepared = KotlinReference.prepare(input, adjustment)
-                val faces = FaceMask(size.width, size.height, FloatArray(input.pixelCount))
-                for (strength in strengths) {
-                    val actual = KotlinReference.render(prepared, strength)
-                    val expected = StageClearLook.renderFromBase(prepared.r7Final, faces, strength)
-                    val label = "$kind $size strength=$strength adjustments=$adjustment SHOULDER"
-                    assertBitsEqual(expected.image, actual[Point.SHOULDER], label)
-                    assertEquals(label, 1.0, expected.faceCutFactor, 0.0)
-                    assertEquals(label, expected.decisions!!.mistAutoStrength, actual.mistAutoStrength, 0.0)
-                    assertEquals(label, actual.mistAutoStrength * strength, actual.lightAddingStrength, 0.0)
-                }
+            val prepared = KotlinReference.prepare(GpuReferenceImages.create(kind, size), PhotoAdjustments.NONE)
+            val full = KotlinReference.render(prepared, .5)
+            val compact = KotlinReference.render(prepared, .5, retainIntermediates = false)
+            assertEquals(setOf(Point.SHOULDER), compact.images.keys)
+            assertBitsEqual(full[Point.SHOULDER], compact[Point.SHOULDER], kind.name)
+            assertSame(full.skinWeight, compact.skinWeight)
+            assertEquals(full.mistAutoStrength, compact.mistAutoStrength, 0.0)
+            assertArrayEquals(full.display8, compact.display8)
+        }
+    }
+
+    private fun compareMatrix(size: GpuReferenceImages.Size, adjustments: List<PhotoAdjustments>, strengths: List<Double>) {
+        for (kind in GpuReferenceImages.Kind.entries) compareFixture(kind, size, adjustments, strengths)
+    }
+
+    private fun compareFixture(kind: GpuReferenceImages.Kind, size: GpuReferenceImages.Size,
+        adjustments: List<PhotoAdjustments>, strengths: List<Double>) {
+        val input = GpuReferenceImages.create(kind, size)
+        for (adjustment in adjustments) {
+            if (Thread.currentThread().isInterrupted) throw InterruptedException("Reference matrix stopped")
+            val prepared = KotlinReference.prepare(input, adjustment)
+            val faces = FaceMask(size.width, size.height, FloatArray(input.pixelCount))
+            for (strength in strengths) {
+                if (Thread.currentThread().isInterrupted) throw InterruptedException("Reference matrix stopped")
+                val actual = KotlinReference.render(prepared, strength, retainIntermediates = false)
+                val expected = StageClearLook.renderFromBase(prepared.r7Final, faces, strength)
+                val label = "$kind $size strength=$strength adjustments=$adjustment SHOULDER"
+                assertBitsEqual(expected.image, actual[Point.SHOULDER], label)
+                assertEquals(label, 1.0, expected.faceCutFactor, 0.0)
+                assertEquals(label, expected.decisions!!.mistAutoStrength, actual.mistAutoStrength, 0.0)
+                assertEquals(label, actual.mistAutoStrength * strength, actual.lightAddingStrength, 0.0)
             }
         }
     }

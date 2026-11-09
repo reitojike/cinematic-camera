@@ -18,18 +18,25 @@ internal object KotlinReference {
         val r7Final: LinearSrgbImage get() = r7Stages[5]
         val vibrance: LinearSrgbImage get() = r7Stages[3]
         val crisp: LinearSrgbImage get() = r7Stages[4]
+        // R7 入力は不変。強さに依存しない既存関数の結果だけを共有する。
+        val skinWeight: FloatPlane by lazy { StageClearGlow.skinWeight(r7Final) }
     }
 
     data class Result(
         val prepared: Prepared,
         val images: Map<Point, LinearSrgbImage>,
         val skinWeight: FloatPlane,
-        val display8: IntArray,
         val mistAutoStrength: Double,
         val lightAddingStrength: Double,
     ) {
         /** SKIN_WEIGHT と DISPLAY8 は型の違う専用プロパティから取得する。 */
-        operator fun get(point: Point): LinearSrgbImage = requireNotNull(images[point]) { "$point is not RGB float" }
+        operator fun get(point: Point): LinearSrgbImage = requireNotNull(images[point]) { "$point is not retained RGB float" }
+
+        // SHOULDER のビット一致だけを調べる行列では、未使用の表示変換を行わない。
+        val display8: IntArray by lazy {
+            val shoulder = get(Point.SHOULDER)
+            TrialDisplayPixels.encode(shoulder, max(shoulder.width, shoulder.height)) { false }
+        }
     }
 
     /** AS_SHOT の解析は warmth / 調整EV より前。プレビュー契約 (長辺 <=1024) を保つ。 */
@@ -44,24 +51,29 @@ internal object KotlinReference {
 
     fun render(input: LinearSrgbImage, params: GpuRenderParams): Result = render(prepare(input, params.adjustments), params.strength)
 
-    /** 強さの行列試験では prepare を共有できる。各ルックの計算は共有・近似しない。 */
-    fun render(prepared: Prepared, strength: Double): Result {
-        val base = prepared.r7Final
-        val skin = StageClearGlow.skinWeight(base)
-        val glow = StageClearGlow.render(base, strength, skin)
-        val auto = StageClearMist.autoStrength(glow)
-        val mist = StageClearMist.render(glow, skin, strength)
-        val orton = StageClearOrton.render(mist, skin)
-        val character = StageClearCharacter.render(orton, strength)
+    /** 既定では全工程を保持。一致行列は保持を抑え、CPU 見本と中間画像を同時に積まない。 */
+    fun render(prepared: Prepared, strength: Double, retainIntermediates: Boolean = true): Result {
+        val images = linkedMapOf<Point, LinearSrgbImage>()
+        fun tap(point: Point, image: LinearSrgbImage): LinearSrgbImage {
+            if (retainIntermediates || point == Point.SHOULDER) images[point] = image
+            return image
+        }
+        tap(Point.INPUT, prepared.input)
+        tap(Point.WARMTH, prepared.warmth)
+        tap(Point.R7_PROFILE, prepared.r7Stages[0])
+        tap(Point.R7_TONE, prepared.r7Stages[1])
+        tap(Point.R7_FOUNDATION, prepared.r7Stages[2])
+        val base = tap(Point.R7_FINAL, prepared.r7Final)
+        val skin = prepared.skinWeight
+        var current = tap(Point.GLOW, StageClearGlow.render(base, strength, skin))
+        val auto = StageClearMist.autoStrength(current)
+        val mist = StageClearMist.render(current, skin, strength)
+        tap(Point.MIST, mist.image)
+        current = tap(Point.ORTON, StageClearOrton.render(mist, skin))
+        current = tap(Point.CHARACTER, StageClearCharacter.render(current, strength))
         val faces = FaceMask(base.width, base.height, FloatArray(base.pixelCount))
-        val cap = StageClearProtections.skinChromaCap(character, faces)
-        val shoulder = StageClearProtections.shoulder(cap)
-        return Result(prepared, linkedMapOf(
-            Point.INPUT to prepared.input, Point.WARMTH to prepared.warmth,
-            Point.R7_PROFILE to prepared.r7Stages[0], Point.R7_TONE to prepared.r7Stages[1],
-            Point.R7_FOUNDATION to prepared.r7Stages[2], Point.R7_FINAL to base,
-            Point.GLOW to glow, Point.MIST to mist.image, Point.ORTON to orton,
-            Point.CHARACTER to character, Point.SKIN_CAP to cap, Point.SHOULDER to shoulder,
-        ), skin, TrialDisplayPixels.encode(shoulder, max(base.width, base.height)) { false }, auto, mist.lightAddingStrength)
+        current = tap(Point.SKIN_CAP, StageClearProtections.skinChromaCap(current, faces))
+        tap(Point.SHOULDER, StageClearProtections.shoulder(current))
+        return Result(prepared, images, skin, auto, mist.lightAddingStrength)
     }
 }
