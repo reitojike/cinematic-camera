@@ -298,7 +298,8 @@ internal object AndroidManualOriginalTrialSaves {
             if (!directory.isDirectory && !directory.mkdirs()) throw IOException("Trial generation directory unavailable")
             // Only this production save opts in; low-level and diagnostic serial baselines stay explicit.
             val engine = Original24Attempt(app, request, io, File(directory, "original-work"),
-                parallelFoundationWorkers = 2).also { attempt = it }
+                parallelFoundationWorkers = 2, parallelGlowWorkers = 2,
+                parallelToneWorkers = 2, parallelMistWorkers = 2).also { attempt = it }
             if (stopped.get() || stop()) engine.requestStop()
             outputCleanupPending = true
             try {
