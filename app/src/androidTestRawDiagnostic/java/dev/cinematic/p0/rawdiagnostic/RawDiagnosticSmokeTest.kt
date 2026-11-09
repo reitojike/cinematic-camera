@@ -218,18 +218,62 @@ class RawDiagnosticSmokeTest {
             }
         } finally { instrumentation.removeMonitor(picker) }
     }
+    @Test fun singleMemoryArmsKeepSamplingAndDoNotClaimCrossArmJpegEquality() {
+        for (arm in 1..2) {
+            val report = JSONObject(RawDiagnosticRunner(context).runSingleMemory(uri(), arm) {})
+            assertEquals("SUCCESS", report.getString("status"))
+            assertTrue(report.getBoolean("complete")) // Only this one attempt, not an A/B safety pass.
+            assertEquals("MEMORY_SINGLE_ARM_NOT_TIMING", report.getString("mode"))
+            assertEquals(if (arm == 1) "A" else "B", report.getString("order"))
+            assertEquals("NOT_AVAILABLE_SINGLE_ARM", report.getString("crossArmJpegComparison"))
+            assertEquals("REQUIRES_MATCHED_CONDITIONS_NOT_AUTOMATIC_PASS", report.getString("memoryComparisonDecision"))
+            assertEquals(if (arm == 1) 1 else 0, report.getInt("measuredSuccessesA"))
+            assertEquals(if (arm == 2) 1 else 0, report.getInt("measuredSuccessesB"))
+            assertTrue(report.getBoolean("selectedOriginalUnchanged"))
+            assertTrue(report.getBoolean("resourcesQuiescent")); assertTrue(report.getBoolean("privateInputRemoved"))
+            val runs = report.getJSONArray("runs"); assertEquals(1, runs.length())
+            val run = runs.getJSONObject(0); assertEquals(arm, run.getInt("arm"))
+            assertProfile(report, run, DiagnosticComparison.SAVE_SAFETY)
+            assertFalse(run.getBoolean("excludedWarmup")); assertFalse(run.has("renderAndCloseNanos"))
+            assertTrue(run.has("memoryBefore")); assertTrue(run.has("memoryAfter"))
+            val sampled = run.getJSONObject("memoryObserved")
+            assertTrue(sampled.getBoolean("quiescent")); assertFalse(sampled.getBoolean("failed"))
+            assertTrue(sampled.getInt("sampleCount") > 0)
+            assertEquals(100_000_000L, sampled.getLong("requestedIntervalNanos"))
+        }
+    }
+    @Test fun singleMemoryUiFreezesSelectedArmAndIgnoresLegacySettings() {
+        val filter = IntentFilter(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); addDataType("*/*") }
+        val picker = instrumentation.addMonitor(filter,
+            Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().setData(uri())), true)
+        try {
+            ActivityScenario.launch(RawDiagnosticActivity::class.java).use { scenario ->
+                for (arm in 1..2) {
+                    val label = if (arm == 1) "A" else "B"
+                    click(scenario, "Save safety: Memory $label (1 attempt)")
+                    val report = JSONObject(awaitStatus(scenario) { it.startsWith("{") && it.contains("MEMORY_SINGLE_ARM_NOT_TIMING") })
+                    assertEquals(label, report.getString("order"))
+                    assertEquals("SAVE_SAFETY", report.getString("comparison"))
+                    assertTrue(report.getBoolean("complete"))
+                }
+                assertEquals(2, picker.hits)
+            }
+        } finally { instrumentation.removeMonitor(picker) }
+    }
     @Test fun manualReceiptAtStageEntryRecordsLatenciesWithoutClaimingBoundarySuccess() {
         // Synthetic receipt at the trace entry, not a physical tap or a worker-in-flight speed measurement.
-        for (target in listOf("GLOW", "MIST")) {
+        for (plan in ManualCancellationPlan.entries) {
+            val target = plan.targetStage.name
             val runner = RawDiagnosticRunner(context)
-            val report = JSONObject(runner.runManualCancellation(uri()) { message ->
+            val report = JSONObject(runner.runManualCancellation(uri(), plan) { message ->
                 if (message.startsWith("Running $target;")) runner.cancelFromUser()
             })
             assertEquals("STOPPED", report.getString("status"))
             assertFalse(report.getBoolean("complete"))
             assertEquals("MANUAL_CANCELLATION_LATENCY_NOT_TIMING", report.getString("mode"))
             assertEquals("SAVE_SAFETY", report.getString("comparison"))
-            assertEquals("B", report.getString("order"))
+            assertEquals(plan.armLabel, report.getString("order"))
+            assertEquals(target, report.getString("intendedCancellationStage"))
             assertEquals("NOT_TIMING", report.getString("performanceDecision"))
             assertTrue(report.getBoolean("resourcesQuiescent"))
             assertTrue(report.getBoolean("privateInputRemoved"))
@@ -246,6 +290,7 @@ class RawDiagnosticSmokeTest {
             assertEquals("OBSERVED_TARGET_STAGE_CANCEL", observed.getString("status"))
             assertEquals("USER_BUTTON", observed.getString("requestOrigin"))
             assertEquals(target, observed.getString("stageAtRequest"))
+            assertTrue(observed.getLong("stageElapsedAtRequestNanos") >= 0)
             assertEquals("CANCELLED", observed.getString("renderOutcome"))
             val render = observed.getLong("requestToRenderExitNanos")
             val scope = observed.getLong("requestToAttemptScopeExitNanos")
@@ -257,7 +302,7 @@ class RawDiagnosticSmokeTest {
         }
     }
     @Test fun manualNoPressAndLifecycleCancellationRemainDistinct() {
-        val completed = JSONObject(RawDiagnosticRunner(context).runManualCancellation(uri()) {})
+        val completed = JSONObject(RawDiagnosticRunner(context).runManualCancellation(uri(), ManualCancellationPlan.B_GLOW) {})
         assertEquals("FINISHED_WITHOUT_CANCELLATION", completed.getString("status"))
         assertFalse(completed.getBoolean("complete"))
         val noPress = completed.getJSONObject("cancellationObservation")
@@ -265,7 +310,7 @@ class RawDiagnosticSmokeTest {
         assertEquals("SUCCESS", noPress.getString("renderOutcome"))
         assertTrue(noPress.isNull("requestToRenderExitNanos"))
         val runner = RawDiagnosticRunner(context)
-        val background = JSONObject(runner.runManualCancellation(uri()) { message ->
+        val background = JSONObject(runner.runManualCancellation(uri(), ManualCancellationPlan.B_GLOW) { message ->
             if (message.startsWith("Running GLOW;")) runner.cancel()
         })
         assertEquals("STOPPED", background.getString("status"))
@@ -278,12 +323,14 @@ class RawDiagnosticSmokeTest {
             Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().setData(uri(true))), true)
         try {
             ActivityScenario.launch(RawDiagnosticActivity::class.java).use { scenario ->
-                click(scenario, "Save safety: Manual Cancel latency (B)")
+                click(scenario, ManualCancellationPlan.A_MIST.label)
                 awaitStatus(scenario) { it.startsWith("Preparing") }
                 click(scenario, "Cancel")
                 val report = JSONObject(awaitStatus(scenario) { it.startsWith("{") })
                 assertEquals("MANUAL_CANCELLATION_LATENCY_NOT_TIMING", report.getString("mode"))
                 assertEquals("STOPPED", report.getString("status"))
+                assertEquals("A", report.getString("order"))
+                assertEquals("MIST", report.getString("intendedCancellationStage"))
                 val observed = report.getJSONObject("cancellationObservation")
                 assertEquals("USER_BUTTON", observed.getString("requestOrigin"))
                 assertEquals("OUTSIDE_GLOW_MIST", observed.getString("status"))

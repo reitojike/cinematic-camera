@@ -128,4 +128,48 @@ class DiagnosticCancellationLatencyTest {
             assertEquals("MIST", t.observation().stageAtRequest)
         } finally { release.countDown(); executor.shutdownNow(); assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS)) }
     }
+    @Test fun explicitPlansCoverBothArmsAndBothTargetsWithSaveSafetyProfiles() {
+        assertEquals(4, ManualCancellationPlan.entries.size)
+        for (plan in ManualCancellationPlan.entries) {
+            val profile = DiagnosticComparison.SAVE_SAFETY.profile(plan.arm)
+            assertEquals(2, profile.foundation)
+            assertEquals(plan.arm, profile.glow); assertEquals(plan.arm, profile.mist)
+            assertEquals(plan.arm, profile.tone); assertFalse(profile.fuseColor)
+            assertTrue(plan.targetStage in listOf(OriginalStage.GLOW, OriginalStage.MIST))
+        }
+    }
+    @Test fun elapsedPositionIsFrozenAtFirstReceiptAndMismatchCannotPass() {
+        val t = tracker(); t.renderStarted()
+        now = 20; t.stageStarted(OriginalStage.MIST)
+        now = 100; t.request(DiagnosticCancellationLatency.Origin.USER_BUTTON)
+        now = 120; t.stageFinished(OriginalStage.MIST)
+        now = 130; t.request(DiagnosticCancellationLatency.Origin.USER_BUTTON)
+        finish(t)
+        assertEquals(80L, t.observation().stageElapsedAtRequestNanos)
+        assertEquals("MISSED_INTENDED_STAGE", t.observation(OriginalStage.GLOW).status)
+        assertEquals("OBSERVED_TARGET_STAGE_CANCEL", t.observation(OriginalStage.MIST).status)
+    }
+    @Test fun heldResourcesTakePrecedenceOverWrongTarget() {
+        val t = tracker(); requestInStage(t); finish(t, owners = false)
+        assertEquals("HOLD_NOT_QUIESCENT", t.observation(OriginalStage.MIST).status)
+    }
+    @Test fun outsideStageAndMissingRequestHaveNoInventedPosition() {
+        val t = tracker(); t.renderStarted(); now = 20; t.stageStarted(OriginalStage.GLOW)
+        now = 40; t.stageFinished(OriginalStage.GLOW)
+        now = 60; t.request(DiagnosticCancellationLatency.Origin.USER_BUTTON); finish(t)
+        assertNull(t.observation().stageElapsedAtRequestNanos)
+        assertNull(tracker().observation().stageElapsedAtRequestNanos)
+    }
+    @Test fun nextStageUsesItsOwnStartAndUnknownClockIntervalStaysNull() {
+        val t = tracker(); t.renderStarted(); now = 10; t.stageStarted(OriginalStage.GLOW)
+        now = 20; t.stageFinished(OriginalStage.GLOW)
+        now = 30; t.stageStarted(OriginalStage.MIST)
+        now = 50; t.request(DiagnosticCancellationLatency.Origin.USER_BUTTON); finish(t)
+        assertEquals(20L, t.observation().stageElapsedAtRequestNanos)
+        val backwards = tracker(); backwards.renderStarted(); now = 100
+        backwards.stageStarted(OriginalStage.GLOW); now = 90
+        backwards.request(DiagnosticCancellationLatency.Origin.USER_BUTTON)
+        assertNull(backwards.observation().stageElapsedAtRequestNanos)
+    }
+
 }
