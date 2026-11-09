@@ -65,7 +65,8 @@ class Original24ManualSaveInstrumentationTest {
             }, null, null))
             val fingerprint = DngContentVerifier.identify(sourceBytes, { requireNotNull(resolver.openInputStream(sourceUri)) })
             val source = SharedOriginalReference(sourceUri.toString(), fingerprint, OriginalGrant.APP_OWNED)
-            val allowed = AutoDevelopConditions(true, false, false, false, true, true, true, true)
+            val allowed = AutoDevelopConditions(true, false, false, false, true, true, true, true,
+                previewMemoryAvailable = true)
             val edits = PhotoAdjustments(20.0, .3)
             DevelopExecution.updateConditions(allowed)
             val pendingFirst = PreviewFutureOwner(AndroidManualOriginalTrialSaves.renderPreview(app, source, .45, allowed, edits))

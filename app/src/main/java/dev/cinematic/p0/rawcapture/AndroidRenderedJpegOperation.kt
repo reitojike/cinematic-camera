@@ -56,6 +56,11 @@ internal class RenderedJpegFiles(private val root: File, private val captureId: 
             }
         }
     }
+    /** Failed producer output only. Never remove a sealed publication/recovery input. */
+    @Synchronized fun discardFailedOutput() {
+        if (writerOpen || sealed) throw IOException("Rendered output cleanup is not authorized")
+        Files.deleteIfExists(checkedOutput().toPath())
+    }
     @Synchronized fun sealCompleted() {
         if (writerOpen || writerFailed) throw IOException("Rendered writer has not successfully completed")
         val file = checkedOutput()
@@ -84,6 +89,7 @@ internal class AndroidRenderedJpegOperation private constructor(context: Context
     private var publisherOwner: RecoverablePhotoPublisher? = null
     fun createOutput(): OutputStream = files.createOutput()
     fun openOutputRead(): InputStream = files.openRead()
+    fun discardFailedOutput() = files.discardFailedOutput()
 
     companion object {
         // Do not evict a live operation: failed closes and AtomicFile ownership survive every retry.
