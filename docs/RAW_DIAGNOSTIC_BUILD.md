@@ -147,7 +147,7 @@ RAW4の合成検証結果と枠解放は[Issue #78](https://github.com/reitojike
 
 速度採否で残ったGlow / Mist / R7 toneの2並列だけを `SAVE_SAFETY` として分離する。
 Aは3工程とも1、Bは3工程とも2。**色融合は両方OFF**。Foundation2 / Orton4 / Character2は固定。
-通常保存caller `AndroidManualOriginalTrialSaves.Backend.render` がFoundation2を明示する条件に合わせる。
+通常保存caller `AndroidManualOriginalTrialSaves.Backend.render` もFoundation2 / Orton4 / Character2を共通とし、保存3候補の採用後はGlow2 / Mist2 / tone2を明示する。A/Bは過去と同じ比較構成を保ち、診断profileから製品の設定を切り替えない。
 下位APIの既定1や旧RAW4 Bの色融合ONを変更しない。製品既定・画素式・原本・共有保存は変更しない。
 
 画面上部の専用ボタンを使い、下のlegacy controlsと分離する。
