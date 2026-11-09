@@ -299,8 +299,8 @@ internal class RawDiagnosticRunner(private val context: Context) {
             var inputRemoved = false
             var outputsRemoved = false
             val cleanup = harnessIo.finish(attemptQuiescent && samplerQuiescent) {
-                inputRemoved = source?.let { !it.exists() || it.delete() } ?: true
-                outputsRemoved = outputs.map { !it.exists() || it.delete() }.all { it }
+                inputRemoved = source?.let { try { Files.deleteIfExists(it.toPath()); true } catch (_: IOException) { false } } ?: true
+                outputsRemoved = outputs.map { try { Files.deleteIfExists(it.toPath()); true } catch (_: IOException) { false } }.all { it }
                 inputRemoved && outputsRemoved
             }
             cleanupHeld = !cleanup.quiescent || !cleanup.sourceRemoved || cleanup.closeFailed
