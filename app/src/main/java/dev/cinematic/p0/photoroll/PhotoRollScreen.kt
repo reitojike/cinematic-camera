@@ -295,7 +295,9 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                                     before?.let { it === after || it.isRecycled || it.config == Bitmap.Config.HARDWARE ||
                                         it.colorSpace?.isSrgb != true || it.width != after.width || it.height != after.height } == true)
                                     throw PhotoRollSourceFailure("操作中の表示用画像を確認できません")
-                                renderer.verifyPreviewOriginal(repository, original, cancellation) { cancellation.isCanceled }
+                                // Drafts borrow only retained, fingerprint-bound pixels. Exact release
+                                // verifies the original; lifecycle/selection tickets still reject stale work.
+                                cancellation.throwIfCanceled()
                             }
                         }
                     }

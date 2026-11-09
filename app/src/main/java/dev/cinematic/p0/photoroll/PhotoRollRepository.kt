@@ -1,5 +1,6 @@
 package dev.cinematic.p0.photoroll
 
+import dev.cinematic.p0.rawcapture.PreviewOriginalCheckTiming
 import android.content.ContentResolver
 import android.content.ContentUris
 import android.content.Intent
@@ -136,19 +137,26 @@ internal class PhotoRollRepository(private val resolver: ContentResolver, privat
     fun verifyPreview(original: PhotoRollOriginal, shouldStop: () -> Boolean,
         io: DngIoResources? = null, readers: PhotoRollReadResources? = null) {
         val expected = original.previewObservation
-        if (expected == null) {
-            DngContentVerifier.verify(original.fingerprint, { openRead(original.uri, io, readers) }, shouldStop)
-            return
+        val route = when {
+            expected == null -> PreviewOriginalCheckTiming.Route.SHA_NO_OBSERVATION
+            expected.modified == null -> PreviewOriginalCheckTiming.Route.SHA_NO_MODIFIED
+            else -> PreviewOriginalCheckTiming.Route.METADATA
         }
-        expected.requireMatches(observe(original.uri, expected.fromFiles, shouldStop,
-            MAX_SOURCE_BYTES, readers, io))
-        // A successful metadata query alone does not establish that content read permission remains.
-        // Open read-only and close without consuming bytes. Failed closes stay with the caller's owner.
-        if (expected.modified == null) {
-            // Providers may legitimately omit mtime. Keep the conservative compatibility path.
-            DngContentVerifier.verify(original.fingerprint, { openRead(original.uri, io, readers) }, shouldStop)
-        } else openRead(original.uri, io, readers).use { checkpoint(shouldStop) }
-        checkpoint(shouldStop)
+        PreviewOriginalCheckTiming.measure(route) {
+            if (expected == null) {
+                DngContentVerifier.verify(original.fingerprint, { openRead(original.uri, io, readers) }, shouldStop)
+                return@measure
+            }
+            expected.requireMatches(observe(original.uri, expected.fromFiles, shouldStop,
+                MAX_SOURCE_BYTES, readers, io))
+            // A successful metadata query alone does not establish that content read permission remains.
+            // Open read-only and close without consuming bytes. Failed closes stay with the caller's owner.
+            if (expected.modified == null) {
+                // Providers may legitimately omit mtime. Keep the conservative compatibility path.
+                DngContentVerifier.verify(original.fingerprint, { openRead(original.uri, io, readers) }, shouldStop)
+            } else openRead(original.uri, io, readers).use { checkpoint(shouldStop) }
+            checkpoint(shouldStop)
+        }
     }
 
     private fun openRead(uri: Uri, io: DngIoResources? = null, readers: PhotoRollReadResources? = null): java.io.InputStream {
