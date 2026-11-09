@@ -67,7 +67,24 @@ class ImageDiffTest {
         ImageDiff.assertScalarWithin(.25, .75, .5, "mist")
         assertThrows(AssertionError::class.java) { ImageDiff.assertScalarWithin(.25, .75, .49, "mist") }
         assertThrows(AssertionError::class.java) { ImageDiff.assertScalarWithin(.25, Double.NaN, 1.0, "mist") }
-        assertEquals(Math.ulp(1f).toDouble(), GpuTolerances.localToneQuantile(1f), 0.0)
+    }
+
+    @Test fun localToneQuantileUsesAbsoluteReferenceTolerance() {
+        val limit = 1e-4
+        for (reference in floatArrayOf(-Float.MAX_VALUE, -16f, -.25f, -0f, 0f, 1f, 16f, Float.MAX_VALUE)) {
+            assertEquals(limit, GpuTolerances.localToneQuantile(reference), 0.0)
+        }
+        for (actual in doubleArrayOf(-limit, limit)) {
+            ImageDiff.assertScalarWithin(0.0, actual, GpuTolerances.localToneQuantile(0f), "R7 p50/p92")
+        }
+        for (actual in doubleArrayOf(-Math.nextUp(limit), Math.nextUp(limit))) {
+            assertThrows(AssertionError::class.java) {
+                ImageDiff.assertScalarWithin(0.0, actual, GpuTolerances.localToneQuantile(0f), "R7 p50/p92")
+            }
+        }
+        for (reference in floatArrayOf(Float.NaN, Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY)) {
+            assertThrows(IllegalArgumentException::class.java) { GpuTolerances.localToneQuantile(reference) }
+        }
     }
 
     @Test fun rejectsMismatchedGeometryAndIgnoresAlpha() {
