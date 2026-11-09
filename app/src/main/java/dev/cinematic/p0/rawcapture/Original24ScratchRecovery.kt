@@ -53,7 +53,7 @@ internal object Original24ScratchRecovery {
                     else -> throw IOException("Unexpected diagnostic file")
                 }
             }
-            entries.filter { it.isDirectory }.forEach { attempt ->
+            entries.filter { it.name.startsWith("attempt-") }.forEach { attempt ->
                 children(attempt).forEach {
                     if (it.name != "scratch" && it.name != "result.jpg") throw IOException("Unexpected diagnostic attempt file")
                 }
