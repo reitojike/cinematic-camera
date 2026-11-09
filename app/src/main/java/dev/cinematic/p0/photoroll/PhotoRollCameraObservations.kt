@@ -8,7 +8,9 @@ internal data class PhotoRollCameraSnapshot(
     val captureInProgress: Boolean? = null,
 )
 
-/** Read on the camera/UI thread. Each old owner keeps its own late-finalize/unknown state. */
+/** Process-local work, read on the camera/UI thread. CameraProbe registers before starting work.
+ * No owners means no app camera work, including when Android restores only PhotoRollActivity.
+ * Hardware availability is observed separately; failed/unknown owners remain fail-closed. */
 internal class PhotoRollCameraOwners {
     private val readers = linkedMapOf<Owner, () -> PhotoRollCameraSnapshot>()
 
@@ -34,7 +36,7 @@ internal class PhotoRollCameraOwners {
         val values = readers.values.toList().map { read -> try { read() } catch (_: Exception) { PhotoRollCameraSnapshot() } }
         fun combine(axis: (PhotoRollCameraSnapshot) -> Boolean?): Boolean? = when {
             values.any { axis(it) == true } -> true
-            values.isEmpty() || values.any { axis(it) == null } -> null
+            values.any { axis(it) == null } -> null
             else -> false
         }
         return PhotoRollCameraSnapshot(combine { it.recordingOrFinalizing }, combine { it.rebindInProgress },

@@ -6,7 +6,39 @@ import org.junit.Test
 class PhotoRollCameraOwnersTest {
     private val idle = PhotoRollCameraSnapshot(false, false, false, false)
 
-    @Test fun noCameraOwnerIsUnknown() { assertEquals(PhotoRollCameraSnapshot(), PhotoRollCameraOwners().snapshot()) }
+    @Test fun restoredEditorBeforeCameraActivityHasNoProcessCaptureWork() { assertEquals(idle, PhotoRollCameraOwners().snapshot()) }
+
+
+    @Test fun lastFinishedCameraOwnerCanCloseBeforeEditorReturns() {
+        val owners = PhotoRollCameraOwners()
+        val camera = owners.register { idle }
+        camera.close()
+        assertEquals(idle, owners.snapshot())
+    }
+
+    @Test fun lastUnconfirmedCameraOwnerDoesNotBecomeAnEmptyRegistry() {
+        val owners = PhotoRollCameraOwners()
+        val camera = owners.register { idle }
+        camera.holdUnknown()
+        assertEquals(PhotoRollCameraSnapshot(), owners.snapshot())
+        camera.close() // Only positive completion can remove the retained unknown owner.
+        assertEquals(idle, owners.snapshot())
+    }
+
+    @Test fun lastCaptureLeaseMustFinishBeforeOwnerFreeEditorCanContinue() {
+        val owners = PhotoRollCameraOwners()
+        val camera = owners.register { idle }
+        var callbacksFinished = false
+        var writersClosed = false
+        owners.holdCaptureUntil { callbacksFinished && writersClosed }
+        camera.close()
+        assertEquals(true, owners.snapshot().captureInProgress)
+        callbacksFinished = true
+        assertEquals(true, owners.snapshot().captureInProgress)
+        writersClosed = true
+        assertEquals(idle, owners.snapshot())
+        assertEquals(idle, owners.snapshot())
+    }
 
     @Test fun observationReadsCurrentStateRatherThanLaunchState() {
         val owners = PhotoRollCameraOwners()

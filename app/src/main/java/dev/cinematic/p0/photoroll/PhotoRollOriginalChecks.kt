@@ -3,7 +3,6 @@ package dev.cinematic.p0.photoroll
 import android.os.CancellationSignal
 import android.os.OperationCanceledException
 import dev.cinematic.p0.rawcapture.AutoDevelopCoordinator
-import dev.cinematic.p0.rawcapture.AutoDevelopPolicy
 import dev.cinematic.p0.rawcapture.DevelopExecution
 import java.io.Closeable
 import java.io.FilterInputStream
@@ -52,7 +51,7 @@ internal object PhotoRollOriginalChecks {
         while (admitted == null) {
             cancellation.throwIfCanceled()
             val conditions = resources().developConditions(rendererAvailable = true)
-            if (AutoDevelopPolicy.blockers(conditions).isNotEmpty()) throw PhotoRollSourceFailure("撮影・端末状態を確認できません。撮影を終了して再試行してください")
+            photoRollAdmissionFailure(conditions)?.let { throw PhotoRollSourceFailure(it) }
             admitted = DevelopExecution.tryStartObserved(conditions)
             if (admitted == null) {
                 if (owners.values.any { it.finished }) throw PhotoRollSourceFailure("前の原本読み取りの解放を確認できません。原本を確認して再試行してください")

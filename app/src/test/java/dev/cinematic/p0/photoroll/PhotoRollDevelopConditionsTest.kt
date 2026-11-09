@@ -14,6 +14,15 @@ class PhotoRollDevelopConditionsTest {
         assertEquals(setOf(AutoDevelopBlocker.RENDERER), AutoDevelopPolicy.blockers(idle.developConditions(false)))
     }
 
+    @Test fun ownerFreeEditorStillNeedsPositiveHardwareAvailability() {
+        val restored = idle.copy(camera = PhotoRollCameraOwners().snapshot())
+        assertTrue(AutoDevelopPolicy.blockers(restored.developConditions(true)).isEmpty())
+        for (hardware in listOf(false, null)) {
+            assertEquals(setOf(AutoDevelopBlocker.CAMERA_SESSION),
+                AutoDevelopPolicy.blockers(restored.copy(camerasIdle = hardware).developConditions(true)))
+        }
+    }
+
     @Test fun hardwareIdleDoesNotEraseFinalizeOrPendingCameraAcquisition() {
         assertTrue(AutoDevelopBlocker.RECORDING_OR_FINALIZING in AutoDevelopPolicy.blockers(
             idle.copy(camera = idle.camera.copy(recordingOrFinalizing = true)).developConditions(true)))
@@ -23,7 +32,7 @@ class PhotoRollDevelopConditionsTest {
             idle.copy(camera = idle.camera.copy(captureInProgress = true)).developConditions(true)))
     }
 
-    @Test fun missingProcessObservationOrBackgroundOrStorageDoesNotStart() {
+    @Test fun unknownProcessObservationOrBackgroundOrStorageDoesNotStart() {
         val missing = idle.copy(camera = PhotoRollCameraSnapshot()).developConditions(true)
         assertNull(missing.cameraSessionInUse)
         assertNull(missing.recordingOrFinalizing)
