@@ -1,0 +1,8 @@
+#version 320 es
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp isampler2D;
+
+layout(rgba32f, binding = 0) writeonly uniform highp image2D u_destination;
+#include "common/reduce_axis.glsl"
