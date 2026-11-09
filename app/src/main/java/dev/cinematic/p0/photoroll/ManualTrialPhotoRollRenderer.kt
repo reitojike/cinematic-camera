@@ -65,9 +65,13 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
         }
     }
 
-    override fun verifyPreviewOriginal(repository: PhotoRollRepository, original: PhotoRollOriginal, shouldStop: () -> Boolean) {
+    override fun verifyPreviewOriginal(repository: PhotoRollRepository, original: PhotoRollOriginal,
+        cancellation: CancellationSignal, shouldStop: () -> Boolean) {
         val checked = checked(original)
-        repository.verifyPreview(checked.original, { shouldStop() || checked.epoch != originalEpoch.get() })
+        PhotoRollOriginalChecks.run(resources, cancellation) { readers, stop ->
+            repository.verifyPreview(checked.original,
+                { shouldStop() || stop() || checked.epoch != originalEpoch.get() }, readers = readers)
+        }
     }
 
     override fun renderDraft(request: PhotoRollRenderRequest, cancellation: CancellationSignal): PhotoRollRenderResult.Preview? {

@@ -89,7 +89,8 @@ internal interface PhotoRollRenderer {
     val maxEdge: Int get() = 1024
     fun checkOriginal(repository: PhotoRollRepository, uri: Uri, fromFiles: Boolean, cancellation: CancellationSignal) =
         repository.check(uri, fromFiles, { cancellation.isCanceled }, maxSourceBytes)
-    fun verifyPreviewOriginal(repository: PhotoRollRepository, original: PhotoRollOriginal, shouldStop: () -> Boolean) =
+    fun verifyPreviewOriginal(repository: PhotoRollRepository, original: PhotoRollOriginal,
+        cancellation: CancellationSignal, shouldStop: () -> Boolean) =
         repository.verify(original, shouldStop)
     fun render(request: PhotoRollRenderRequest, cancellation: CancellationSignal): PhotoRollRenderResult
 }

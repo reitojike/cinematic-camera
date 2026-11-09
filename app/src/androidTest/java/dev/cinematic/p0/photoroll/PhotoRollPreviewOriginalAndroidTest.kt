@@ -19,6 +19,7 @@ import dev.cinematic.p0.rawcapture.DngIoResources
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
+import java.io.IOException
 
 /** Local wrapped provider only, synthetic identity bytes, no real MediaStore row or photo access. */
 class PhotoRollPreviewOriginalAndroidTest {
@@ -90,6 +91,18 @@ class PhotoRollPreviewOriginalAndroidTest {
         assertEquals(opens, provider.opens)
     }
 
+    @Test fun displayPostcheckReadersRetainFailedCursorCloseUntilRetry() = fixture { provider, repository ->
+        val original = repository.check(media, false, { false })
+        val readers = PhotoRollReadResources()
+        provider.failCursorClose = true
+        assertThrows(IOException::class.java) { repository.verifyPreview(original, { false }, readers = readers) }
+        assertFalse(readers.closeRetained())
+        provider.failCursorClose = false
+        assertTrue(readers.closeRetained())
+        repository.verifyPreview(original, { false }, readers = readers)
+        assertTrue(readers.closeRetained())
+    }
+
     private class SyntheticProvider(context: Context) : ContentProvider(), AutoCloseable {
         val file = File.createTempFile("preview-check-synthetic-", ".bin", context.cacheDir).apply { writeText("abc") }
         var modified: Long? = 100
@@ -100,6 +113,7 @@ class PhotoRollPreviewOriginalAndroidTest {
         var owner: String = context.packageName
         var readable = true
         var changeTimeWhenOpened = false
+        var failCursorClose = false
         var opens = 0
         var writes = 0
         init { attachInfo(context, ProviderInfo().apply { authority = "media"; exported = false }) }
@@ -109,7 +123,12 @@ class PhotoRollPreviewOriginalAndroidTest {
             selectionArgs: Array<out String>?, sortOrder: String?): Cursor {
             val columns = requireNotNull(projection).filterNot { omitTime &&
                 it in listOf(MediaStore.MediaColumns.DATE_MODIFIED, DocumentsContract.Document.COLUMN_LAST_MODIFIED) }.toTypedArray()
-            return MatrixCursor(columns).also { cursor ->
+            return object : MatrixCursor(columns) {
+                override fun close() {
+                    if (failCursorClose) throw IOException("Synthetic cursor close failure")
+                    super.close()
+                }
+            }.also { cursor ->
                 if (exists) cursor.addRow(Array<Any?>(columns.size) { index -> when (columns[index]) {
                     OpenableColumns.DISPLAY_NAME -> "Synthetic.dng"
                     OpenableColumns.SIZE -> file.length()

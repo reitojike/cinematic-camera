@@ -33,7 +33,7 @@ class PreviewCacheEquivalenceAndroidTest {
             Original24Preflight.inspect(it.fd, CancellationSignal())
         }
         fun session(name: String) = Original24PreviewSession(source, File(root, name),
-            { Original24Resources.requireAvailable(context) }, geometry, { input.inputStream() })
+            { Original24Resources.requireAvailable(context) }, geometry, openOriginal = { input.inputStream() })
         val retained = session("retained")
         var succeeded = false
         try {
