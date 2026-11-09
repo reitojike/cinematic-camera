@@ -51,6 +51,8 @@ internal class Original24PreviewSession(
     private val scratchDirectory: File,
     private val resourceAdmission: (Original24MemoryStage) -> Unit,
     private val expectedGeometry: Original24PreflightGeometry,
+    /** Optional provider-metadata fence supplied by the checked photo selection. Saves never use it. */
+    private val checkPreviewSource: ((DngIoResources, () -> Boolean) -> Unit)? = null,
     private val openOriginal: () -> InputStream,
 ) : AutoCloseable {
     private val active = AtomicBoolean(false)
@@ -135,7 +137,7 @@ internal class Original24PreviewSession(
             originalCheckpoint(stop)
             resourceAdmission(Original24MemoryStage.BOUNDED_PREVIEW) // Reduced work checks current OS pressure, not the original-decode allowance.
             timing?.enter(RawPreviewTiming.Stage.VERIFY_BEFORE)
-            verifyOriginal(stop)
+            verifyPreviewOriginal(stop)
             timing?.enter(RawPreviewTiming.Stage.INPUT)
             val input = if (draft) draftInput ?: reduceDraftInput(requireNotNull(asShot), stop).also { draftInput = it }
                 else asShot ?: loadInput(stop).also { asShot = it }
@@ -183,7 +185,7 @@ internal class Original24PreviewSession(
             timing?.enter(RawPreviewTiming.Stage.BITMAP)
             result = bitmap(image, stop)
             timing?.enter(RawPreviewTiming.Stage.VERIFY_AFTER)
-            verifyOriginal(stop)
+            verifyPreviewOriginal(stop)
             timing?.enter(RawPreviewTiming.Stage.CLEANUP)
             releaseTransient()
             originalCheckpoint(stop)
@@ -235,11 +237,11 @@ internal class Original24PreviewSession(
         try {
             originalCheckpoint(stop)
             resourceAdmission(Original24MemoryStage.BOUNDED_PREVIEW)
-            verifyOriginal(stop)
+            verifyPreviewOriginal(stop)
             resourceAdmission(Original24MemoryStage.BOUNDED_PREVIEW)
             try { result = createBitmap(input, stop) }
             catch (_: OutOfMemoryError) { result = null } // bitmap() recycles any partially created Bitmap.
-            verifyOriginal(stop)
+            verifyPreviewOriginal(stop)
             releaseTransient()
             originalCheckpoint(stop)
             result
@@ -334,6 +336,10 @@ internal class Original24PreviewSession(
             .roundToInt().coerceIn(0, 255)
     }
     private fun io() = resources ?: DngIoResources().also { resources = it }
+    private fun verifyPreviewOriginal(stop: () -> Boolean) {
+        val check = checkPreviewSource
+        if (check == null) verifyOriginal(stop) else check(io(), stop)
+    }
     private fun verifyOriginal(stop: () -> Boolean) = DngContentVerifier.verify(source.fingerprint,
         { io().input(openOriginal()) }, stop)
 

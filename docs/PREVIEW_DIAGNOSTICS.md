@@ -107,8 +107,8 @@ R7全体は単一RGB→RGB表では表現できない。全体の統計を固定
 
 - 同一sessionの`kind=EXACT/DRAFT sequence workers`で`RawPreviewTiming`と対応する。sequenceはsession内だけの番号。
   EXACTとDRAFT、worker数、coldと再計算と保持済み結果を混ぜない。写真・入力URI・調整値・統計値は記録しない。
-- `totalNs`はFOUNDATIONに入った後の計測器作成からR7 baseを取り出すまで。RawPreviewTimingのFOUNDATIONより狭く、
-  計測器の作成・最終ログ出力、後続の保護mask生成などは外側に残る。両者を足してはいけない。
+- `totalNs`はFOUNDATIONに入った後の最初の時計取得からR7 baseを取り出すまで。RawPreviewTimingのFOUNDATIONより狭く、
+  最初の時計取得前・最終ログ出力、後続の保護mask生成などは外側に残る。計測器内の配列確保はSETUPに含む。両者を足してはいけない。
 - 表の区間は単調時計`System.nanoTime`で非重複に測り、再訪した同名区間は加算する。区間合計が`totalNs`。
   `Ns / 1_000_000.0`でmsへ変換する。画素ループ内に時計やログを置かず、境界・既存checkpoint・配列割当/検査の費用を含む。
   単一kernelのCPU時間ではなく経過時間であり、GC・OS scheduling・2 workerの終了待ちも含み得る。
