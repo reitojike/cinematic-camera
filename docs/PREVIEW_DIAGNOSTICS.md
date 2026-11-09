@@ -38,7 +38,7 @@
 1. PreviewTiming と RawPreviewTiming のログタグの現在値を控える。
 2. `adb -s <対象デバイス> shell setprop log.tag.PreviewTiming DEBUG` で計測を有効にする。必要に応じて RawPreviewTiming のタグもDEBUGにして出力を取得する。
 3. `adb -s <対象デバイス> logcat -s PreviewTiming:D RawPreviewTiming:D` で対象タグだけを取得する。既存の個人情報を含み得る全logcatを公開しない。
-4. 初回表示・強さ・色温度・明るさを分け、慣らしと採用回数を記録する。初期比較の手順は各操作で慣らし1回＋3回、計16操作。実施ごとの順序・回数・冷却条件・録画有無は確認用Issueに確定して記録する。
+4. 初回表示・強さ・色温度・明るさを分け、慣らしと採用回数を記録する。統合診断の順序・回数・冷却・録画条件は [当日手順](RAW4_DEVICE_CHECKLIST.md) に従い、実施版と結果を確認用Issueに記録する。初回OPENや切替再計算をwarm調整へ混ぜない。
 5. 終了後は変更したタグを開始前の値に戻す。未設定だった場合は空値へ戻し、明示的に無効化する場合はINFOとする。
 
 画面録画は別の観測であり計算時間から操作→表示時間を推測しない。保存の速度試験とは条件を分けて冷却し、録画の負荷も記録する。
@@ -82,7 +82,7 @@ Original24PreviewSessionは縮小AS_SHOT入力、調整値に対応するR7 base
 ## 統合診断版の実編集で1/2並列を比較する
 
 `cinematicGpuDiagnostic=true` の統合診断だけで `BuildConfig.EDITOR_PREVIEW_DIAGNOSTIC=true` とする。通常debug/release、rawDiagnostic、previewDiagnosticはfalseで、編集UI・sessionの両入口で境界を確認する。
-統合診断は撮影Activity/権限を持たないため、編集Activityの生存中だけアプリ内撮影処理なしの観測所有者を登録し、破棄時に解放する。他の所有者のtrue/未確認や、端末カメラ利用可否・温度・メモリ・ストレージ・foregroundの判定は緩和しない。
+統合診断は撮影Activity/権限を持たないが、診断用の仮の撮影所有者は登録しない。通常版と同じく、main threadで正常に観測できた空registryをアプリ内撮影処理なしと扱う。未確認owner・読取失敗/timeout、未終了callback/writer/finalize、撮影優先予約と端末カメラ利用可否・温度・メモリ・ストレージ・foregroundの判定は維持する。詳細は [編集再開の契約](../specs/develop/spec.md#再開時の撮影資源状態) を参照する。
 
 1. Hubの「CPUプレビューの確認（Filesから選択）」から入力を明示選択し、初回1024px表示を待つ。
 2. 画像上の「診断: 候補3工程の2並列」を確認する。初期値OFFは既存製品と同じ直列処理。ONは既存Foundation・Orton・Characterの画素演算だけを2 workerに渡す。残りの工程まで並列化した意味ではない。
