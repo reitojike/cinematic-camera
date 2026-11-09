@@ -48,6 +48,7 @@ internal object AndroidManualOriginalTrialSaves {
     fun renderPreview(context: Context, source: SharedOriginalReference, strength: Double,
         conditions: AutoDevelopConditions, adjustments: PhotoAdjustments = PhotoAdjustments.NONE,
         diagnosticWorkers: Int? = null,
+        checkPreviewSource: ((DngIoResources, () -> Boolean) -> Unit)? = null,
         shouldStop: () -> Boolean = { false }): CompletableFuture<ManualOriginalTrialPreview> {
         require(diagnosticWorkers == null || (dev.cinematic.p0.BuildConfig.EDITOR_PREVIEW_DIAGNOSTIC && diagnosticWorkers in 1..2))
         val app = context.applicationContext
@@ -61,7 +62,7 @@ internal object AndroidManualOriginalTrialSaves {
                 previewAuthority?.discardPreview()
                 previewAuthority = authority
             }
-            authority.renderPreview(handle, conditions, diagnosticWorkers, shouldStop)
+            authority.renderPreview(handle, conditions, diagnosticWorkers, checkPreviewSource, shouldStop)
         }
     }
 
@@ -145,7 +146,8 @@ internal object AndroidManualOriginalTrialSaves {
         }
 
         fun renderPreview(handle: ManualOriginalTrialHandle, conditions: AutoDevelopConditions,
-            diagnosticWorkers: Int?, stop: () -> Boolean): ManualOriginalTrialPreview {
+            diagnosticWorkers: Int?, checkPreviewSource: ((DngIoResources, () -> Boolean) -> Unit)?,
+            stop: () -> Boolean): ManualOriginalTrialPreview {
             if (previewSlot != null || sessionEpoch != previewEpoch.get()) discardPreview()
             val slot = DevelopExecution.tryStartPreviewObserved(conditions) ?: throw IOException("Trial preview admission blocked")
             previewSlot = slot
@@ -158,7 +160,7 @@ internal object AndroidManualOriginalTrialSaves {
                     if (Files.isSymbolicLink(parent.toPath()) || parent.canonicalFile != parent ||
                         (!parent.isDirectory && !parent.mkdirs())) throw IOException("Trial preview directory unavailable")
                     Original24PreviewSession(source, File(parent, UUID.randomUUID().toString()),
-                        { stage -> Original24Resources.requireAvailable(app, stage) }, handle.geometry, ::readOriginal).also {
+                        { stage -> Original24Resources.requireAvailable(app, stage) }, handle.geometry, checkPreviewSource, ::readOriginal).also {
                         previewSession = it; sessionEpoch = previewEpoch.get()
                     }
                 }

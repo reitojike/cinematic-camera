@@ -369,6 +369,52 @@ class Original24PreviewSessionInstrumentationTest {
         }
     }
 
+    @Test fun metadataFencesAvoidWarmSourceReadsAndKeepPixelsAndStrongColdBoundary() = fixture { input, root, source ->
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val geometry = preflight(input)
+        var sourceReads = 0
+        var metadataChecks = 0
+        var metadataChanged = false
+        val session = Original24PreviewSession(source, File(root, "light"),
+            { Original24Resources.requireAvailable(context) }, geometry,
+            checkPreviewSource = { _, stop ->
+                if (stop()) throw dev.cinematic.p0.rawcapture.DngVerificationStopped()
+                metadataChecks++
+                if (metadataChanged) throw dev.cinematic.p0.rawcapture.DngContentChanged()
+            }) { sourceReads++; input.inputStream() }
+        val bitmaps = mutableListOf<Bitmap>()
+        try {
+            val first = session.render(.5).also { bitmaps += it }
+            assertEquals(2, sourceReads) // Verified snapshot copy and post-decode original SHA remain.
+            val initialReads = sourceReads
+            val warm = session.render(.5).also { bitmaps += it }
+            assertArrayEquals(pixels(first), pixels(warm))
+            requireNotNull(session.renderDraft(.7)).also { bitmaps += it }
+            requireNotNull(session.comparisonBitmap(maxEdge = 256)).also { bitmaps += it }
+            assertEquals(initialReads, sourceReads)
+            assertEquals(8, metadataChecks)
+            val originalBytes = input.readBytes()
+            input.writeBytes(originalBytes.also { it[it.lastIndex] = (it.last().toInt() xor 1).toByte() })
+            // Deliberately unchanged metadata cannot detect this. The old decoded pixels stay bound
+            // to the frozen fingerprint, while a strong boundary must reject the replacement.
+            val retained = session.render(.5).also { bitmaps += it }
+            assertArrayEquals(pixels(first), pixels(retained))
+            assertThrows(dev.cinematic.p0.rawcapture.DngContentChanged::class.java) {
+                DngContentVerifier.verify(source.fingerprint, { input.inputStream() })
+            }
+            val cold = Original24PreviewSession(source, File(root, "changed-cold"),
+                { Original24Resources.requireAvailable(context) }, geometry,
+                checkPreviewSource = { _, _ -> }) { input.inputStream() }
+            try { assertThrows(dev.cinematic.p0.rawcapture.DngContentChanged::class.java) { cold.render(.5) } }
+            finally { cold.close() }
+            metadataChanged = true
+            assertThrows(dev.cinematic.p0.rawcapture.DngContentChanged::class.java) { session.renderDraft(.6) }
+            assertNull(session.previewDecisions)
+            assertFalse(session.hasUnreleasedResources)
+            assertThrows(IllegalStateException::class.java) { session.render(.5) }
+        } finally { session.close(); bitmaps.forEach { it.recycle() } }
+    }
+
     private fun preflight(input: File) = ParcelFileDescriptor.open(input, ParcelFileDescriptor.MODE_READ_ONLY).use {
         Original24Preflight.inspect(it.fd, CancellationSignal())
     }
