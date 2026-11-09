@@ -34,7 +34,7 @@
 
 - PreviewTimingは要求受付からUI状態採用、RawPreviewTimingはEXACT/DRAFT別のセッション計算を記録する。通常版の計測は明示DEBUG時だけで保存経路には接続しない。統合診断版の実編集では両ログをINFOで出し、並列設定とDRAFT/EXACTを識別する。前者の状態採用と後者の計算完了はいずれもOSの提示完了とは別。
 - 原本・URI・素材名・編集値・個人識別子は含めず、非重複の区間合計・取消/失敗を記録する。RawPreviewTimingの任意出力の失敗は現像結果や後片付けを変えない。
-- Draft提案（#267）: 統合診断のCPU編集だけで、R7StageTimingをFOUNDATION内の非重複区間として記録する。測光/ROI/色温度とR7本体を分け、localToneの画素計算・BOX/BICUBIC・分位統計を区別する。通常preview・保存は計測器を生成しない。保持済み/未訪問を0msの実測とせず、外側FOUNDATIONと二重集計しない。時計/ログ障害は出力や取消を変えず、実機未計測と合成検証を分離する。詳細は[プレビュー診断](../../docs/PREVIEW_DIAGNOSTICS.md#r7工程を分ける診断計測issue-267draft提案)を参照する。
+- 診断計測（#267）: 統合診断のCPU編集だけで、R7StageTimingをFOUNDATION内の非重複区間として記録する。測光/ROI/色温度とR7本体を分け、localToneの画素計算・BOX/BICUBIC・分位統計を区別する。通常preview・保存は計測器を生成しない。保持済み/未訪問を0msの実測とせず、外側FOUNDATIONと二重集計しない。時計/ログ障害は出力や取消を変えず、実機未計測と合成検証を分離する。詳細は[プレビュー診断](../../docs/PREVIEW_DIAGNOSTICS.md#r7工程を分ける診断計測issue-267)を参照する。
 - PreviewSerialはMANUAL_TRIALの診断専用で既定オフ。通常のdraft/exact排他と混同しない。詳細設計と明示有効化・停止手順は [プレビュー診断](../../docs/PREVIEW_DIAGNOSTICS.md) を参照する。
 
 ## 詳細契約と手順
