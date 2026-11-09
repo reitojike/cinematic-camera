@@ -31,10 +31,12 @@ class GpuDiagnosticActivity : Activity() {
         panel.addView(memory)
         val reverse=CheckBox(this).apply { text="比較順を逆にする" }
         panel.addView(reverse)
+        val detailed = CheckBox(this).apply { text = "内訳を分離（割当・同期条件が異なる別試験）" }
+        panel.addView(detailed)
         for ((label, mode) in listOf("小型の正しさ確認" to "small", "1024px 全Look比較" to "preview", "12MP ぼかし単体" to "blur12", "12MP Orton単体" to "orton12")) {
             panel.addView(Button(this).apply {
                 text = label
-                setOnClickListener { startForegroundService(Intent(this@GpuDiagnosticActivity, GpuDiagnosticService::class.java).setAction(mode).putExtra("observeMemory",memory.isChecked).putExtra("reverse",reverse.isChecked)) }
+                setOnClickListener { startForegroundService(Intent(this@GpuDiagnosticActivity, GpuDiagnosticService::class.java).setAction(mode).putExtra("observeMemory",memory.isChecked).putExtra("reverse",reverse.isChecked).putExtra("detailedTiming",detailed.isChecked)) }
             })
         }
         panel.addView(Button(this).apply { text = "取り消す"; setOnClickListener { GpuDiagnosticService.cancel() } })
@@ -49,6 +51,8 @@ class GpuDiagnosticService : Service() {
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
     private var latestStartId = 0
     private var reverse = false
+    private var detailedTiming = false
+    private val timingMode get() = if (detailedTiming) "split-allocation-v1" else "baseline-v1"
     private var runId = 0L
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -63,6 +67,7 @@ class GpuDiagnosticService : Service() {
         cancellation = stop
         val observeMemory=intent?.getBooleanExtra("observeMemory",false) ?: false
         reverse=intent?.getBooleanExtra("reverse",false) ?: false
+        detailedTiming=intent?.getBooleanExtra("detailedTiming",false) ?: false
         stop.set(false)
         runId = System.nanoTime()
         try {
@@ -94,6 +99,7 @@ class GpuDiagnosticService : Service() {
                 }, "gpu-probe-memory") else null
                 sampler?.start()
                 environment("start")
+                log("GPU計測 session=$runId mode=$mode timingMode=$timingMode observeMemory=$observeMemory reverse=$reverse")
                 when (mode) {
                     "blur12" -> runBlur12()
                     "orton12" -> runOrton12()
@@ -159,9 +165,9 @@ class GpuDiagnosticService : Service() {
             val input = LinearSrgbImage(width, height, FloatArray(width * height * 3) { i -> sample((i/3)%width,(i/3)/width,width,height,i%3,dark) })
             val base = R7Base.render(input, FloatPlane(width,height,FloatArray(width*height)),0.0)
             val faces = FaceMask(width,height,FloatArray(width*height))
-            GpuDiagnosticSession { stop.get() }.use { session ->
+            GpuDiagnosticSession(detailedTiming = detailedTiming) { stop.get() }.use { session ->
                 val sessionId = "$runId-$dark"
-                log("GPU準備 session=$sessionId width=$width preparationNs=${session.preparationNs} renderer=${session.renderer}")
+                log("GPU準備 timingMode=$timingMode session=$sessionId width=$width preparationNs=${session.preparationNs} renderer=${session.renderer}")
                 // 写真ごとの初回1回と、各強度でABBA（逆ならBAAB）の再利用4回。
                 val strengths = listOf(.25) + listOf(.25,.5,1.0).flatMap { value -> List(4) { value } }
                 for ((iteration, strength) in strengths.withIndex()) {
@@ -182,18 +188,22 @@ class GpuDiagnosticService : Service() {
                         val blurNs=checkNotNull(GpuProbeImages.lastWallNs.get())
                         val blurTimes=checkNotNull(GpuProbeImages.lastTimes.get())
                         var ortonNs=0L; var ortonPreparationNs=0L
+                        var ortonDetail: GpuWorkTiming.Snapshot? = null
                         var uploadNs=blurTimes.uploadNs; var drawNs=blurTimes.drawNs; var readbackNs=blurTimes.readbackNs
                         val gpu = StageClearProtections.finish(glow,faces) {
                             val mist = StageClearMist.render(it,skin,strength)
                             val observation=GpuDiagnosticOrton.render(session,mist,skin,64) { stop.get() }
                             ortonNs+=observation.gpuWallNs;ortonPreparationNs+=observation.cpuPrepareNs
+                            observation.detail?.let { ortonDetail = ortonDetail?.plus(it) ?: it }
                             uploadNs+=observation.uploadNs;drawNs+=observation.drawNs;readbackNs+=observation.readbackNs
                             StageClearCharacter.render(observation.output,strength)
                         }.image
                         val gpuNs = System.nanoTime()-beforeGpu
                         val twoStagesNs = blurNs + ortonNs
-                        log("対象GPU2工程 session=$sessionId phase=$phase iteration=$iteration reverse=$comparisonReversed width=$width dark=$dark strength=$strength blurNs=$blurNs ortonNs=$ortonNs sumNs=$twoStagesNs uploadNs=$uploadNs drawNs=$drawNs readbackNs=$readbackNs ortonCpuPreparationNs=$ortonPreparationNs preparationExcluded=true transferSyncReadbackIncluded=true")
-                        if (iteration == 0) log("GPU初回 session=$sessionId preparationNs=${session.preparationNs} firstTwoStagesIncludingPreparationNs=${session.preparationNs+twoStagesNs} firstLookIncludingPreparationNs=${session.preparationNs+gpuNs} teardownExcluded=true")
+                        log("対象GPU2工程 timingMode=$timingMode session=$sessionId phase=$phase iteration=$iteration reverse=$comparisonReversed width=$width dark=$dark strength=$strength blurNs=$blurNs ortonNs=$ortonNs sumNs=$twoStagesNs uploadNs=$uploadNs drawNs=$drawNs readbackNs=$readbackNs ortonCpuPreparationNs=$ortonPreparationNs preparationExcluded=true transferSyncReadbackIncluded=true")
+                        blurTimes.detail?.let { log("GPU内訳 stage=blur session=$sessionId phase=$phase iteration=$iteration width=$width dark=$dark strength=$strength reverse=$comparisonReversed ${it.fields()}") }
+                        ortonDetail?.let { log("GPU内訳 stage=orton session=$sessionId phase=$phase iteration=$iteration width=$width dark=$dark strength=$strength reverse=$comparisonReversed ${it.copy(totalNs = ortonNs).fields()}") }
+                        if (iteration == 0) log("GPU初回 timingMode=$timingMode session=$sessionId preparationNs=${session.preparationNs} firstTwoStagesIncludingPreparationNs=${session.preparationNs+twoStagesNs} firstLookIncludingPreparationNs=${session.preparationNs+gpuNs} teardownExcluded=true")
                         return gpu to gpuNs
                     }
                     val records=if(comparisonReversed){val g=gpuRun();cpuRun() to g}else{val c=cpuRun();c to gpuRun()}
@@ -205,7 +215,7 @@ class GpuDiagnosticService : Service() {
                         max = maxOf(max,delta); if(delta>0) changed++
                         if (dark && p%width>0 && quantize(cpu[p*3])!=quantize(cpu[(p-1)*3]) && quantize(gpu[p*3])==quantize(gpu[(p-1)*3])) flatEdges++
                     }
-                    log("全Look session=$sessionId phase=$phase iteration=$iteration reverse=$comparisonReversed width=$width dark=$dark strength=$strength cpuNs=$cpuNs gpuNs=$gpuNs max8=$max changed=$changed pixels=${cpu.pixelCount} newFlatEdges=$flatEdges")
+                    log("全Look timingMode=$timingMode session=$sessionId phase=$phase iteration=$iteration reverse=$comparisonReversed width=$width dark=$dark strength=$strength cpuNs=$cpuNs gpuNs=$gpuNs max8=$max changed=$changed pixels=${cpu.pixelCount} newFlatEdges=$flatEdges")
                     check(max<=2) { "プレビュー許容差を超えました" }
                 }
             }
@@ -214,8 +224,8 @@ class GpuDiagnosticService : Service() {
     private fun runBlur12() {
         val width=4000; val height=3000
         val source:(Int,Int)->FloatArray={top,rows->FloatArray(width*rows*4){i->if(i%4==3)1f else sample((i/4)%width,top+(i/4)/width,width,height,i%4,false)}}
-        GpuDiagnosticSession { stop.get() }.use { session ->
-            log("GPU準備 session=$runId mode=blur12 preparationNs=${session.preparationNs} renderer=${session.renderer}")
+        GpuDiagnosticSession(detailedTiming = detailedTiming) { stop.get() }.use { session ->
+            log("GPU準備 timingMode=$timingMode session=$runId mode=blur12 preparationNs=${session.preparationNs} renderer=${session.renderer}")
             repeat(4) { iteration ->
                 checkpoint()
                 val phase=if(iteration==0) "first" else "reused"
@@ -226,19 +236,21 @@ class GpuDiagnosticService : Service() {
                     consume={_,frame->for(i in frame.rgba.indices step 4)gpuChecksum+=frame.rgba[i]},cancelled={stop.get()})
                 val records=if(reverse){val g=gpuRun();cpuRun() to g}else{val c=cpuRun();c to gpuRun()}
                 val cpuNs=records.first;val result=records.second
-                if(iteration==0)log("GPU初回 session=$runId mode=blur12 preparationNs=${session.preparationNs} firstIncludingPreparationNs=${session.preparationNs+result.elapsedNs} teardownExcluded=true")
-                log("12MPぼかし単体 session=$runId phase=$phase iteration=$iteration cpuNs=$cpuNs gpuNs=${result.elapsedNs} uploadNs=${result.uploadNs} drawNs=${result.drawNs} readbackNs=${result.readbackNs} passBytes=${result.largestPassBytes} renderer=${result.renderer} finite=${cpuChecksum.isFinite()&&gpuChecksum.isFinite()} reverse=$reverse quality=not_measured・finiteは品質一致を意味しない・全保存経路ではない")
+                if(iteration==0)log("GPU初回 timingMode=$timingMode session=$runId mode=blur12 preparationNs=${session.preparationNs} firstIncludingPreparationNs=${session.preparationNs+result.elapsedNs} teardownExcluded=true")
+                result.detail?.let { log("GPU内訳 stage=blur12 session=$runId phase=$phase iteration=$iteration reverse=$reverse ${it.fields()}") }
+                log("12MPぼかし単体 timingMode=$timingMode session=$runId phase=$phase iteration=$iteration cpuNs=$cpuNs gpuNs=${result.elapsedNs} uploadNs=${result.uploadNs} drawNs=${result.drawNs} readbackNs=${result.readbackNs} passBytes=${result.largestPassBytes} renderer=${result.renderer} finite=${cpuChecksum.isFinite()&&gpuChecksum.isFinite()} reverse=$reverse quality=not_measured・finiteは品質一致を意味しない・全保存経路ではない")
             }
         }
     }
     /** 12MP負荷・一定色の品質試験。全Look/JPEGではなく、同じ文脈で全帯・4回を処理。 */
     private fun runOrton12() {
         val width=4000; val height=3000; val source=floatArrayOf(.2f,.3f,.4f)
-        GpuDiagnosticSession { stop.get() }.use { session ->
-            log("GPU準備 session=$runId mode=orton12 preparationNs=${session.preparationNs} renderer=${session.renderer}")
+        GpuDiagnosticSession(detailedTiming = detailedTiming) { stop.get() }.use { session ->
+            log("GPU準備 timingMode=$timingMode session=$runId mode=orton12 preparationNs=${session.preparationNs} renderer=${session.renderer}")
             repeat(4) { iteration ->
                 val phase=if(iteration==0) "first" else "reused"
                 var totalNs=0L; var cpuTotalNs=0L; var max=0; var changed=0
+                var detail: GpuWorkTiming.Snapshot? = null
                 var uploadNs=0L; var drawNs=0L; var readbackNs=0L
                 for(top in 0 until height step 256){
                     checkpoint()
@@ -252,6 +264,7 @@ class GpuDiagnosticService : Service() {
                         val started=System.nanoTime()
                         val gpu=GpuDiagnosticOrton.prepared(session,image,soft,skin,.5,64){stop.get()}
                         totalNs+=System.nanoTime()-started
+                        gpu.detail?.let { detail = detail?.plus(it) ?: it }
                         uploadNs+=gpu.uploadNs;drawNs+=gpu.drawNs;readbackNs+=gpu.readbackNs
                         return gpu.output
                     }
@@ -269,8 +282,9 @@ class GpuDiagnosticService : Service() {
                     }
                     check(max<=1){"Orton単体の保存候補許容差を超えました"}
                 }
-                if(iteration==0)log("GPU初回 session=$runId mode=orton12 preparationNs=${session.preparationNs} firstIncludingPreparationNs=${session.preparationNs+totalNs} teardownExcluded=true")
-                log("12MPOrton単体 session=$runId phase=$phase iteration=$iteration reverse=$reverse gpuNs=$totalNs uploadNs=$uploadNs drawNs=$drawNs readbackNs=$readbackNs cpuPreparedNs=$cpuTotalNs contexts=1 max8=$max changed=$changed pixels=${width*height} 一定色・全保存経路ではない")
+                if(iteration==0)log("GPU初回 timingMode=$timingMode session=$runId mode=orton12 preparationNs=${session.preparationNs} firstIncludingPreparationNs=${session.preparationNs+totalNs} teardownExcluded=true")
+                detail?.let { log("GPU内訳 stage=orton12 session=$runId phase=$phase iteration=$iteration reverse=$reverse ${it.copy(totalNs = totalNs).fields()}") }
+                log("12MPOrton単体 timingMode=$timingMode session=$runId phase=$phase iteration=$iteration reverse=$reverse gpuNs=$totalNs uploadNs=$uploadNs drawNs=$drawNs readbackNs=$readbackNs cpuPreparedNs=$cpuTotalNs contexts=1 max8=$max changed=$changed pixels=${width*height} 一定色・全保存経路ではない")
             }
         }
     }

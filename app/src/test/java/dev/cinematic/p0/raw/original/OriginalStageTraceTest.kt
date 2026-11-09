@@ -41,4 +41,30 @@ class OriginalStageTraceTest {
         })
         assertEquals(0, failure.suppressed.size)
     }
+    @Test fun startAndFinishBracketTheActionWithoutAddingACancellationCheckpoint() {
+        val events = mutableListOf<String>()
+        val trace = object : OriginalStageTrace {
+            override fun started(stage: OriginalStage) { events.add("start:$stage") }
+            override fun finished(stage: OriginalStage, elapsedNanos: Long, completed: Boolean) {
+                events.add("finish:$stage:$completed")
+            }
+        }
+        originalStage(trace, OriginalStage.GLOW) { events.add("action") }
+        assertEquals(listOf("start:GLOW", "action", "finish:GLOW:true"), events)
+    }
+    @Test fun startObserverFailureStillFinishesAndDoesNotRunTheAction() {
+        val primary = IllegalStateException("synthetic")
+        var called = false
+        var ended = false
+        val trace = object : OriginalStageTrace {
+            override fun started(stage: OriginalStage) { throw primary }
+            override fun finished(stage: OriginalStage, elapsedNanos: Long, completed: Boolean) {
+                assertFalse(completed); ended = true
+            }
+        }
+        assertSame(primary, assertThrows(IllegalStateException::class.java) {
+            originalStage(trace, OriginalStage.MIST) { called = true }
+        })
+        assertFalse(called); assertTrue(ended)
+    }
 }

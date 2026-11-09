@@ -6,7 +6,7 @@ import android.opengl.GLES30
 import java.util.concurrent.CancellationException
 
 /** 合成写真1枚の診断だけで保持。同一owner threadで準備・使用・解放する。 */
-internal class GpuDiagnosticSession(private val cancelled: () -> Boolean = { false }) : AutoCloseable {
+internal class GpuDiagnosticSession(val detailedTiming: Boolean = false, private val cancelled: () -> Boolean = { false }) : AutoCloseable {
     private val owner = Thread.currentThread()
     private var display = EGL14.EGL_NO_DISPLAY
     private var context = EGL14.EGL_NO_CONTEXT

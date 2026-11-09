@@ -218,6 +218,87 @@ class RawDiagnosticSmokeTest {
             }
         } finally { instrumentation.removeMonitor(picker) }
     }
+    @Test fun manualReceiptAtStageEntryRecordsLatenciesWithoutClaimingBoundarySuccess() {
+        // Synthetic receipt at the trace entry, not a physical tap or a worker-in-flight speed measurement.
+        for (target in listOf("GLOW", "MIST")) {
+            val runner = RawDiagnosticRunner(context)
+            val report = JSONObject(runner.runManualCancellation(uri()) { message ->
+                if (message.startsWith("Running $target;")) runner.cancelFromUser()
+            })
+            assertEquals("STOPPED", report.getString("status"))
+            assertFalse(report.getBoolean("complete"))
+            assertEquals("MANUAL_CANCELLATION_LATENCY_NOT_TIMING", report.getString("mode"))
+            assertEquals("SAVE_SAFETY", report.getString("comparison"))
+            assertEquals("B", report.getString("order"))
+            assertEquals("NOT_TIMING", report.getString("performanceDecision"))
+            assertTrue(report.getBoolean("resourcesQuiescent"))
+            assertTrue(report.getBoolean("privateInputRemoved"))
+            val runs = report.getJSONArray("runs")
+            assertEquals(1, runs.length())
+            val run = runs.getJSONObject(0)
+            assertProfile(report, run, DiagnosticComparison.SAVE_SAFETY)
+            assertFalse(run.getBoolean("excludedWarmup"))
+            assertFalse(run.has("renderAndCloseNanos"))
+            assertTrue(run.getBoolean("ownerClosed"))
+            assertTrue(run.getBoolean("noCompletedResult"))
+            assertTrue(run.getBoolean("outputAbsentAtAttemptScopeExit"))
+            val observed = report.getJSONObject("cancellationObservation")
+            assertEquals("OBSERVED_TARGET_STAGE_CANCEL", observed.getString("status"))
+            assertEquals("USER_BUTTON", observed.getString("requestOrigin"))
+            assertEquals(target, observed.getString("stageAtRequest"))
+            assertEquals("CANCELLED", observed.getString("renderOutcome"))
+            val render = observed.getLong("requestToRenderExitNanos")
+            val scope = observed.getLong("requestToAttemptScopeExitNanos")
+            val owners = observed.getLong("requestToOwnersReleasedNanos")
+            val harness = observed.getLong("requestToHarnessQuiescentNanos")
+            assertTrue(render >= 0); assertTrue(scope >= render)
+            assertEquals(scope, owners); assertTrue(harness >= owners)
+            assertFalse(report.has("selectedOriginalUnchanged")) // Interrupted sessions do not claim a final source recheck.
+        }
+    }
+    @Test fun manualNoPressAndLifecycleCancellationRemainDistinct() {
+        val completed = JSONObject(RawDiagnosticRunner(context).runManualCancellation(uri()) {})
+        assertEquals("FINISHED_WITHOUT_CANCELLATION", completed.getString("status"))
+        assertFalse(completed.getBoolean("complete"))
+        val noPress = completed.getJSONObject("cancellationObservation")
+        assertEquals("NO_REQUEST", noPress.getString("status"))
+        assertEquals("SUCCESS", noPress.getString("renderOutcome"))
+        assertTrue(noPress.isNull("requestToRenderExitNanos"))
+        val runner = RawDiagnosticRunner(context)
+        val background = JSONObject(runner.runManualCancellation(uri()) { message ->
+            if (message.startsWith("Running GLOW;")) runner.cancel()
+        })
+        assertEquals("STOPPED", background.getString("status"))
+        assertEquals("NON_USER_REQUEST", background.getJSONObject("cancellationObservation").getString("status"))
+        assertEquals("LIFECYCLE", background.getJSONObject("cancellationObservation").getString("requestOrigin"))
+    }
+    @Test fun manualUiCancelUsesButtonReceiptWhileImportIsStillRunning() {
+        val filter = IntentFilter(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); addDataType("*/*") }
+        val picker = instrumentation.addMonitor(filter,
+            Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().setData(uri(true))), true)
+        try {
+            ActivityScenario.launch(RawDiagnosticActivity::class.java).use { scenario ->
+                click(scenario, "Save safety: Manual Cancel latency (B)")
+                awaitStatus(scenario) { it.startsWith("Preparing") }
+                click(scenario, "Cancel")
+                val report = JSONObject(awaitStatus(scenario) { it.startsWith("{") })
+                assertEquals("MANUAL_CANCELLATION_LATENCY_NOT_TIMING", report.getString("mode"))
+                assertEquals("STOPPED", report.getString("status"))
+                val observed = report.getJSONObject("cancellationObservation")
+                assertEquals("USER_BUTTON", observed.getString("requestOrigin"))
+                assertEquals("OUTSIDE_GLOW_MIST", observed.getString("status"))
+                assertTrue(observed.isNull("requestToRenderExitNanos"))
+                assertTrue(report.getBoolean("resourcesQuiescent"))
+                click(scenario, "Select DNG for 2 cancellation checks")
+                val legacy = JSONObject(awaitStatus(scenario) {
+                    it.startsWith("{") && it.contains("CANCELLATION_BOUNDARIES_NOT_TIMING")
+                })
+                assertEquals("RAW4", legacy.getString("comparison"))
+                assertTrue(legacy.getBoolean("complete"))
+                assertFalse(legacy.has("cancellationObservation"))
+            }
+        } finally { instrumentation.removeMonitor(picker) }
+    }
     private fun views(view: View): List<View> = listOf(view) +
         if (view is ViewGroup) (0 until view.childCount).flatMap { views(view.getChildAt(it)) } else emptyList()
     private fun click(scenario: ActivityScenario<RawDiagnosticActivity>, label: String) {

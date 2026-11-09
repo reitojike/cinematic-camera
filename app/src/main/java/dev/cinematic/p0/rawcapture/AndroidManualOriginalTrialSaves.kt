@@ -147,7 +147,7 @@ internal object AndroidManualOriginalTrialSaves {
         fun renderPreview(handle: ManualOriginalTrialHandle, conditions: AutoDevelopConditions,
             diagnosticWorkers: Int?, stop: () -> Boolean): ManualOriginalTrialPreview {
             if (previewSlot != null || sessionEpoch != previewEpoch.get()) discardPreview()
-            val slot = DevelopExecution.tryStartObserved(conditions) ?: throw IOException("Trial preview admission blocked")
+            val slot = DevelopExecution.tryStartPreviewObserved(conditions) ?: throw IOException("Trial preview admission blocked")
             previewSlot = slot
             var delivered = false
             var bitmap: Bitmap? = null
@@ -158,7 +158,7 @@ internal object AndroidManualOriginalTrialSaves {
                     if (Files.isSymbolicLink(parent.toPath()) || parent.canonicalFile != parent ||
                         (!parent.isDirectory && !parent.mkdirs())) throw IOException("Trial preview directory unavailable")
                     Original24PreviewSession(source, File(parent, UUID.randomUUID().toString()),
-                        { Original24Resources.requireAvailable(app) }, handle.geometry, ::readOriginal).also {
+                        { stage -> Original24Resources.requireAvailable(app, stage) }, handle.geometry, ::readOriginal).also {
                         previewSession = it; sessionEpoch = previewEpoch.get()
                     }
                 }
@@ -189,7 +189,7 @@ internal object AndroidManualOriginalTrialSaves {
             if (previewSlot != null || sessionEpoch != previewEpoch.get()) discardPreview()
             val session = previewSession?.takeIf { it.hasDraftDecisions } ?: return null
             val request = currentRequest ?: return null
-            val slot = DevelopExecution.tryStartObserved(conditions) ?: throw IOException("Draft preview admission blocked")
+            val slot = DevelopExecution.tryStartPreviewObserved(conditions) ?: throw IOException("Draft preview admission blocked")
             previewSlot = slot
             var delivered = false
             var bitmap: Bitmap? = null
@@ -223,7 +223,7 @@ internal object AndroidManualOriginalTrialSaves {
             ?: throw IOException("Shared original unavailable")
 
         private fun inspect(conditions: AutoDevelopConditions, stop: () -> Boolean): Original24PreflightGeometry {
-            val slot = DevelopExecution.tryStartObserved(conditions) ?: throw IOException("Original preflight admission blocked")
+            val slot = DevelopExecution.tryStartPreviewObserved(conditions) ?: throw IOException("Original preflight admission blocked")
             preflightSlot = slot
             val signal = CancellationSignal()
             DevelopExecution.registerStop(slot) { signal.cancel() }

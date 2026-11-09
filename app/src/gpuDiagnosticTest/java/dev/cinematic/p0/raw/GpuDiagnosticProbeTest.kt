@@ -177,5 +177,62 @@ class GpuDiagnosticProbeTest {
         }
         GpuDiagnosticSession().use { it.requireCurrent() }
     }
+    @Test fun detailedAllocationPathMatchesBaselineAndCountsActualCalls() {
+        val width = 65; val height = 49; val band = 16
+        val image = LinearSrgbImage(width, height, FloatArray(width * height * 3) { i ->
+            ((i / 3) % width).toFloat() / (width - 1) * 1.6f - .02f
+        })
+        val soft = StageClearBlur.rgb(image, StageClearOrtonV1.RADIUS)
+        val skin = FloatPlane(width, height, FloatArray(width * height) { .3f })
+        fun run(detailed: Boolean): Pair<FloatArray, FloatArray> = GpuDiagnosticSession(detailed).use { session ->
+            val blur = FloatArray(width * height * 4)
+            val times = GpuBlurProbe.run(session, width, height, .006, band,
+                source = { top, rows -> FloatArray(width * rows * 4) { i ->
+                    if (i % 4 == 3) 1f else image[(top * width + i / 4) * 3 + i % 4]
+                } }, consume = { top, frame -> frame.rgba.copyInto(blur, top * width * 4) })
+            val orton = GpuDiagnosticOrton.prepared(session, image, soft, skin, .5, band)
+            if (detailed) {
+                val b = checkNotNull(times.detail); val o = checkNotNull(orton.detail)
+                val bands = (height + band - 1) / band
+                assertEquals(1L, b.counts[GpuWorkTiming.Count.CALLS.ordinal])
+                assertEquals((2 * bands + 2).toLong(), b.counts[GpuWorkTiming.Count.PASSES.ordinal])
+                assertEquals(1L, o.counts[GpuWorkTiming.Count.CALLS.ordinal])
+                assertEquals(bands.toLong(), o.counts[GpuWorkTiming.Count.PASSES.ordinal])
+                assertEquals(width.toLong() * height * 32, o.counts[GpuWorkTiming.Count.UPLOAD_BYTES.ordinal])
+                assertEquals(width.toLong() * height * 16, o.counts[GpuWorkTiming.Count.READBACK_BYTES.ordinal])
+                for (snapshot in listOf(b, o)) {
+                    assertEquals(snapshot.totalNs, snapshot.intervals.sum() + snapshot.otherNs)
+                    assertTrue(snapshot.intervals[GpuWorkTiming.Phase.GPU_ALLOCATE.ordinal] > 0)
+                    assertTrue(snapshot.intervals[GpuWorkTiming.Phase.CPU_ALLOCATE.ordinal] > 0)
+                }
+            } else { assertNull(times.detail); assertNull(orton.detail) }
+            blur to orton.output.copyPixels()
+        }
+        val baseline = run(false)
+        repeat(2) {
+            val detailed = run(true)
+            assertArrayEquals("Detailed blur preserves pixels", baseline.first, detailed.first, 0f)
+            assertArrayEquals("Detailed Orton preserves pixels", baseline.second, detailed.second, 0f)
+        }
+    }
+
+    @Test fun detailedCancellationAndConsumerFailureReleaseSession() {
+        for (cancel in listOf(false, true)) {
+            var checks = 0
+            try {
+                GpuDiagnosticSession(detailedTiming = true).use { session ->
+                    GpuBlurProbe.run(session, 65, 49, .006, 8,
+                        source = { _, rows -> FloatArray(65 * rows * 4) { .2f } },
+                        consume = { _, _ -> error("synthetic consumer failure") },
+                        cancelled = { cancel && ++checks > 4 })
+                }
+                fail("Expected failure")
+            } catch (_: CancellationException) { assertTrue(cancel) }
+            catch (_: IllegalStateException) { assertFalse(cancel) }
+            assertEquals(android.opengl.EGL14.EGL_NO_CONTEXT, android.opengl.EGL14.eglGetCurrentContext())
+            GpuDiagnosticSession(detailedTiming = true).use { it.requireCurrent() }
+        }
+    }
+
     private fun q(value:Float):Int {val x=value.coerceIn(0f,1f).toDouble();return ((if(x<=.0031308)x*12.92 else 1.055*x.pow(1/2.4)-.055)*255).roundToInt()}
 }

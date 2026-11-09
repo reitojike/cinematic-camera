@@ -25,6 +25,7 @@ class RawDiagnosticActivity : ComponentActivity() {
     private var runner: RawDiagnosticRunner? = null
     private var cancellationMode = false
     private var saveSafetyMode = false
+    private var manualCancellationMode = false
     private val picker = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val uri = result.data?.data
         if (result.resultCode != Activity.RESULT_OK || uri == null) return@registerForActivityResult
@@ -33,6 +34,7 @@ class RawDiagnosticActivity : ComponentActivity() {
             return@registerForActivityResult
         }
         val cancelMode = cancellationMode
+        val manualMode = manualCancellationMode
         val memoryMode = saveSafetyMode || memory.isChecked
         val reverseOrder = !saveSafetyMode && reverse.isChecked
         val selectedComparison = if (saveSafetyMode) DiagnosticComparison.SAVE_SAFETY
@@ -43,7 +45,8 @@ class RawDiagnosticActivity : ComponentActivity() {
             var returned = false
             val report = try {
                 val progress: (String) -> Unit = { message -> runOnUiThread { if (!isDestroyed) status.text = message } }
-                (if (cancelMode) active.runCancellation(uri, if (selectedComparison == DiagnosticComparison.SAVE_SAFETY) selectedComparison else DiagnosticComparison.RAW4, progress)
+                (if (manualMode) active.runManualCancellation(uri, progress)
+                else if (cancelMode) active.runCancellation(uri, if (selectedComparison == DiagnosticComparison.SAVE_SAFETY) selectedComparison else DiagnosticComparison.RAW4, progress)
                 else active.run(uri, memoryMode, reverseOrder, selectedComparison, progress)).also { returned = true }
             } catch (_: Throwable) {
                 "HOLD. Outcome is uncertain. Restart the app manually before another session. Private attempt data may remain."
@@ -55,10 +58,11 @@ class RawDiagnosticActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         cancellationMode = savedInstanceState?.getBoolean("cancellationMode") ?: false
         saveSafetyMode = savedInstanceState?.getBoolean("saveSafetyMode") ?: false
+        manualCancellationMode = savedInstanceState?.getBoolean("manualCancellationMode") ?: false
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 24, 24, 24) }
         layout.addView(TextView(this).apply {
-            text = "Save candidate safety only: Foundation2/Orton4/Character2 fixed. A: Glow1/Mist1/tone1; B: Glow2/Mist2/tone2. Color fusion OFF in both. The next two buttons ignore the legacy controls below. No speed rerun. Select only an authorized DNG; no shared JPEG is saved. Stay here; leaving cancels. Cancellation checks run B twice, after native decode and Foundation, not during parallel workers."
+            text = "Save candidate safety only: Foundation2/Orton4/Character2 fixed. A: Glow1/Mist1/tone1; B: Glow2/Mist2/tone2. Color fusion OFF in both. The safety buttons ignore the legacy controls below. No speed rerun. Select only an authorized DNG; no shared JPEG is saved. Stay here; leaving cancels. Automatic cancellation checks run B twice, after native decode and Foundation, not during parallel workers."
         })
         layout.addView(Button(this).apply {
             text = "Save safety: Memory A/B (2 attempts)"
@@ -67,6 +71,13 @@ class RawDiagnosticActivity : ComponentActivity() {
         layout.addView(Button(this).apply {
             text = "Save safety: 2 cancellation checks"
             setOnClickListener { selectInput(cancel = true, safety = true) }
+        })
+        layout.addView(Button(this).apply {
+            text = "Save safety: Manual Cancel latency (B)"
+            setOnClickListener { selectInput(cancel = false, safety = true, manual = true) }
+        })
+        layout.addView(TextView(this).apply {
+            text = "Manual mode runs B once. Wait for Running GLOW or Running MIST, then press Cancel. Record one session per target stage. Timing starts in the button handler, not at physical touch. Missed stages, lifecycle cancellation, success and held owners are not target-stage cancellation success."
         })
         layout.addView(TextView(this).apply {
             text = "Legacy comparisons below, including RAW4 with color fusion ON in B."
@@ -91,17 +102,18 @@ class RawDiagnosticActivity : ComponentActivity() {
         })
         layout.addView(Button(this).apply {
             text = "Cancel"
-            setOnClickListener { runner?.cancel(); status.text = "Cancellation requested; waiting for resources to close." }
+            setOnClickListener { runner?.cancelFromUser(); status.text = "Cancellation requested; waiting for resources to close." }
         })
         status = TextView(this).apply { text = if (busy.get()) "Previous attempt is closing." else "Ready"; setTextIsSelectable(true) }
         layout.addView(status)
         setContentView(ScrollView(this).apply { addView(layout) })
     }
-    private fun selectInput(cancel: Boolean, safety: Boolean) {
+    private fun selectInput(cancel: Boolean, safety: Boolean, manual: Boolean = false) {
         if (busy.get()) status.text = "An attempt is running or closing. Please wait."
         else {
             cancellationMode = cancel
             saveSafetyMode = safety
+            manualCancellationMode = manual
             picker.launch(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 type = "*/*"; addCategory(Intent.CATEGORY_OPENABLE)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -111,6 +123,7 @@ class RawDiagnosticActivity : ComponentActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean("cancellationMode", cancellationMode)
         outState.putBoolean("saveSafetyMode", saveSafetyMode)
+        outState.putBoolean("manualCancellationMode", manualCancellationMode)
         super.onSaveInstanceState(outState)
     }
     override fun onStop() {

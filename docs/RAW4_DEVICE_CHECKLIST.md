@@ -160,6 +160,27 @@ Foundation・Orton・Character以外まで並列化した意味ではない。�
 - このprofileは速度集計器 `compare_raw4.py` の対象外。旧RAW4の保存済みreportを新profileへ読み替えない。
   実機確認が済んだ後に製品既定へのPRを別途判断し、診断準備だけで製品採用済みとしない。
 
+### Glow/Mist中の手動取消待ち時間（追加観測）
+
+既存2境界では実行中の待ち時間を測れないので、同じ候補Bの単発を別sessionで使う。速度20回は再測定しない。
+
+1. 冷却・owner解放後に `Save safety: Manual Cancel latency (B)` を押し、同じ許可済みDNGを選ぶ。
+   画面下部の工程表示とCancelを見える位置にし、`Running GLOW` を見てCancelを押す。別sessionでMistも1回観測する。
+2. reportのmodeが `MANUAL_CANCELLATION_LATENCY_NOT_TIMING`、comparisonが `SAVE_SAFETY`、orderが `B`、候補worker数/色融合OFFか照合する。
+3. `cancellationObservation.requestOrigin=USER_BUTTON`、`stageAtRequest=GLOW` または `MIST` を確認する。
+   UI受付時刻が起点であり、物理タッチ→OS配送の待ち時間は含まない。工程表示が遅れ、別工程で押した回は別結果として残す。
+4. `renderOutcome` と、受付→render退出、use/close試行退出、owner解放確認、harness静止確認の4区間をそれぞれ記録する。
+   render内部の回収時間も含む。close試行の退出だけでworker静止とせず、owner/harness解放の値がnullなら未確認。
+5. `status=STOPPED`、`complete=false` はこの中断観測では想定どおり。対象工程での観測成立は
+   `cancellationObservation.status=OBSERVED_TARGET_STAGE_CANCEL` と `resourcesQuiescent=true` で区別する。
+   `ownerClosed` / `noCompletedResult` / `outputAbsentAtAttemptScopeExit` / 私有入力削除も確認する。
+   `selectedOriginalUnchanged` は中断後の最終照合未実施のため真に補完しない。
+6. 押さずに完走、取り逃し、開始前/完了後の押下、離脱による取消、失敗、HOLDを混ぜない。未到達はnullのまま。
+   新しい取消位置や10秒以内などの成功閾値は設けず、実測待ち時間と制約を残す。
+
+[各fieldの意味と限界](RAW_DIAGNOSTIC_BUILD.md#手動cancel受付から停止解放までの観測)を参照。
+Glow/Mistの画素worker内部を直接観測した証拠ではない。回収不明・OS警告・低メモリ・異常発熱は停止し、無制限に再試行しない。
+
 ### 参考: 旧RAW4の速度判定手順（今回の再実行対象外）
 
 1. Hubの「保存4候補の比較」でRAW4を選び、Memory/ReverseをOFF。同じ許可済みDNGをFilesで選択する。
@@ -184,6 +205,6 @@ tone/色が両順10%以上ならR7単独比較へ切り分ける。全体/未分
 - 各ブロック終了時に結果件数と回収を確認する。途中で止めた場合は取得数・条件・理由を残し、足りない回を推定しない。変更した診断タグは開始前の値へ戻す。
 - GPUは1024pxの1回で26対、12MPの各1回で4対を処理する。旧版の所要枠を流用せず、新版の初回完了時間と温度から残り枠を見直す。メモリ/PSS/背景と冷却の所要は未実測であり、全項目を同日に終える条件にしない。
 - CPU比較は合成慣らし2＋測定4と実編集30調整、初回/切替/値戻し/復帰確認が加わる。各項目前の温度/充電記録と必要な冷却も見込み、処理時間だけで操作時間を見積もらない。
-- 今回の保存はメモリ2回分と取消2境界の到達/回収、選択/照合/冷却だけ。旧速度計画の20回は所要枠へ加えない。過去の別buildの時間から完了時刻を約束しない。
+- 今回の保存はメモリ2回分と取消2境界、手動取消のGlow/Mist各1回の到達/回収、選択/照合/冷却。旧速度計画の20回は所要枠へ加えない。過去の別buildの時間から完了時刻を約束しない。
 - 実測なしの総所要時間を約束しない。優先順を守り、熱・時間不足なら保存を別日にする。
 - 私有report/録画の保管先を本人が確認し、公開は匿名集計と採否理由だけにする。実機/写真未実施を準備完了へ付け替えない。

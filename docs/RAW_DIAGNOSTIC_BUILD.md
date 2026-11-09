@@ -166,3 +166,38 @@ Aは3工程とも1、Bは3工程とも2。**色融合は両方OFF**。Foundation
 
 当日の手順は [保存安全確認](RAW4_DEVICE_CHECKLIST.md#4-保存候補のメモリと取消だけを確認する) を参照。
 この準備と合成試験は実機メモリ・取消・目視品質や製品Save/FGS復旧の合格ではない。
+
+### 手動Cancel受付から停止・解放までの観測
+
+`Save safety: Manual Cancel latency (B)` は同じ候補Bを1回だけ走らせる。Memory samplerと速度反復は使わない。
+開始後は画面下部の現在工程とCancelを見える位置にし、`Running GLOW` または `Running MIST` を見てCancelを押す。
+次回はGlowとMistで各1 sessionを観測する。工程を取り逃した回を成功へ補完せず、際限なくやり直さない。
+既存2境界の自動取消は維持し、新しい取消checkpoint・行内の取消判定・worker中断方式は追加しない。
+
+開始通知は既存 `OriginalStageTrace` の診断callbackだけ。trace=nullの製品経路は時計/通知を実行しない。
+`stageAtRequest` はUIイベントハンドラーで最初の取消要求を受理した時点の**観測上の工程区間**であり、
+OSの物理タッチ時刻・画面提示時刻・特定workerの画素命令の実行時刻ではない。UIの工程表示は遅れる場合があるのでreportを正とする。
+開始callbackは処理actionの直前、終了callbackはactionの退出後に通知する。工程内のどのblur/行workerにいたかは分解しない。
+
+私有reportは `comparison=SAVE_SAFETY`、`mode=MANUAL_CANCELLATION_LATENCY_NOT_TIMING`、`order=B`。
+`cancellationObservation` は次を区別する（単位ns、System.nanoTimeの差分。絶対時刻は保存しない）。
+
+- `requestOrigin`: `USER_BUTTON` / `LIFECYCLE` / `NONE`。最初の要求を固定し、連打・後続の離脱で開始時刻を書き換えない。
+- `stageAtRequest`: `GLOW` / `MIST` / `OUTSIDE_GLOW_MIST`。最後に完了した工程から実行中工程を推測しない。
+- `requestDuringRender` と `renderOutcome`: `NOT_ENTERED` / `SUCCESS` / `CANCELLED` / `FAILED`。
+- `requestToRenderExitNanos`: renderが返却/例外退出した観測まで。render内部のfinally回収も含み、最終画素演算だけの停止時刻ではない。
+- `requestToAttemptScopeExitNanos`: 既存useスコープのclose試行後まで。close失敗でownerが残っていてもこの退出時刻だけは測れるため、単独で静止成功としない。
+- `requestToOwnersReleasedNanos`: attemptの `hasUnreleasedResources=false` を確認できた場合だけ値を残す。
+  既存worker ownerはexecutorのawaitTermination成功まで保持し、失敗するとpending ownerを残す。worker終了不明を成功へ変えない。
+- `requestToHarnessQuiescentNanos`: sampler/attempt/harness streamの解放と私有入力copy削除を確認できた場合だけ値を残す。
+  reportの最終書込と画面表示は含まない。report返却前の書込失敗なら既存UIのHOLDとなり、成功を表示しない。
+
+未到達・未解放・要求より前に終わった境界は `null` で、0秒や上限内に補完しない。
+`OBSERVED_TARGET_STAGE_CANCEL` はUSER_BUTTON、Glow/Mist区間、renderのCancellationException退出、owner/harness解放が揃った観測。
+`NO_REQUEST` / `NON_USER_REQUEST` / `OUTSIDE_GLOW_MIST` / `RENDER_NOT_CANCELLED` / `HOLD_NOT_QUIESCENT` は別結果のまま残す。
+通常完走は `status=FINISHED_WITHOUT_CANCELLATION`、中断は既存の `status=STOPPED`。どちらも `complete=false`、速度成功件数には数えない。
+中断時は最終の選択原本再照合に到達しないため `selectedOriginalUnchanged=true` を捏造しない。既存2境界の原本照合を代替しない。
+各runの `ownerClosed` / `noCompletedResult` / `outputAbsentAtAttemptScopeExit` と全体のprivate入力削除・resourcesQuiescentも確認する。
+
+この計測は待ち時間の観測準備であり、短時間停止・安全なtimeout・実機合格の保証ではない。
+所有者が残るHOLD、OS警告、異常発熱、低メモリでは追加の回を始めず止める。失敗scratchの私有保持は従来どおり。
