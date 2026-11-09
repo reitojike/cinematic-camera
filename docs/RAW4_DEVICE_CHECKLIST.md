@@ -6,11 +6,11 @@
 
 ## 今回の限定メニュー（#270）
 
-今回の準備対象は、保存3候補のメモリ・取消、GPUの内訳、原本照合軽量化後のプレビュー時間だけである。以下の一般手順にある保存20回、CPU1/2並列AB、GPUのメモリ/PSS/背景試験を自動追加しない。GPU採否は内訳を読むまで保留する。APK配布と実機確認は、準備完了後に本人からその回の許可を得てから行う。
+今回の準備対象は、保存3候補のメモリ・取消、GPUの内訳、原本照合軽量化後のプレビュー時間だけである。以下の一般手順にある保存20回、CPU1/2並列AB、GPUのメモリ/PSS/背景試験を自動追加しない。GPU採否は内訳を読むまで保留する。本人は今回の診断APK配布と限定実機確認を許可済み。追加のA/B取消診断（#273）が最終検証・main取り込み済みになり、新しい固定APKを照合してから始める。許可のない撮影/通常版削除/端末設定変更/写真や私有ログの公開は追加しない。
 
 ### 取り込み・通常版への影響・終了後
 
-固定APK sourceは `33aabf43ae02c0af4d47a19afa23e0a232948c58`、treeは `224abfa3367433490ab28ce462c6f4093537b0b1`。**#268と#269は両方含む**。#262 GPU内訳、#263保存安全/取消、#271 R7内訳も含む。文書PRのcommitをAPK sourceとは呼ばない。
+当日版は#273のA/B取消診断が通常mergeされたclean mainから固定する。**#268と#269は両方含む**。#262 GPU内訳、#263保存安全/取消、#271 R7内訳も含む。以前のsource33aabf43はBのみの手動取消なので今回のA/B判定には使わない。最終source/tree・APK hashは配布記録で確定し、文書commitをAPK sourceとは呼ばない。
 
 `gpuDiagnostic` 1 APK、package `dev.cinematic.p0.gpudiagnostic`。通常版 `dev.cinematic.p0` とは別packageで、通常版のインストール/私有データ/設定を上書きしない。診断2並列/GPUを通常版の設定へ反映しない。ただしCPU/RAM/発熱は端末全体で共有するため「端末へ一切影響しない」とはしない。両アプリを同時に処理させない。撮影/音声権限はなく、CPU編集の共有保存ボタンは押さない。
 
@@ -28,23 +28,23 @@ source/tree・APK hash・既存署名証明書hash・manifest・最適化条件�
 | 1 | GPU1024px baseline→split | 3〜5分 |
 | 2 | GPU12MP blurの両mode/正逆→Ortonの両mode/正逆 | 5〜8分 |
 | 3 | Preview/R7: 強さ→色温度→明るさ、各5調整 | 5〜8分 |
-| 4 | 保存Memory AB各1 | 3〜5分 |
-| 5 | 保存自動取消2境界→手動Glow→手動Mist | 4〜7分 |
-| 各間 | 資源解放確認・記録・冷却 | 合計15〜25分を別枠 |
+| 4 | 既存Memory ABでJPEG一致確認→単発Memory A/BをABBA | 8〜12分 |
+| 5 | 保存自動取消2境界→手動GLOW/MISTの各ABBA | 8〜12分 |
+| 各間 | 資源解放確認・記録・冷却 | 合計20〜30分を別枠 |
 
-全体は**約40〜65分の予定枠**を提案する。新しいsplit同期・工程到達待ち・操作・冷却は未実測なので所要保証ではない。最初の実行時間から残り枠を見直し、本人が30分だけ希望する場合は同じ順で完了ブロックまでに止める。枠を超えたため回数/冷却を削って合格にしない。許可時に今回の終了時刻を決める。
+取消とメモリのA/B条件合わせを追加し、全体は**約50〜80分の計画値**へ見直す。既に確認した40〜65分の枠や本人の終了時刻を無断で延長せず、超える分は未測定として残す。新しいsplit同期・工程到達待ち・操作・冷却は未実測なので所要保証ではない。最初の実行時間から残り枠を見直し、本人が30分だけ希望する場合は同じ順で完了ブロックまでに止める。枠を超えたため回数/冷却を削って合格にしない。許可時に今回の終了時刻を決める。
 
 - 同じPixel 9a・同じ12MP原本bytes・Files provider・向き・開始値/終了値・方向・800ms操作を私有対応表で照合する。前回そのものの充電条件が混在していた場合、再現できない過去値は参考値とし、今回は1状態を固定する。通常版/他の負荷を並走させない。
 - 充電/給電状態、battery status、電池温度、thermal statusを各項目前後に記録する。途中の充電切替は同一比較組に混ぜない。配布許可はADB方式変更・無線debug設定・給電設定変更の許可ではない。
 - 提案する冷却規則は、表の主要ブロック間に最低2分休み、開始時のOS thermal statusがNONE(0)またはLIGHT(1)で同じ比較組は同じstatus、電池温度が当日最初の基準±1℃内かつ30秒間隔2回で安定すること。2分で戻らなければ待つ。5分追加しても戻らない場合は当日残りを延期する。この幅は再現条件の提案であり、安全温度の保証ではない。
-- GPUのmode/正逆を変える前も同じ開始状態へ戻す。保存のABは既存ボタン内の連続2試行のままで、中間に冷却を挿入できない。A/B前後の状態が変わればメモリ比を比較可能としない。自動取消2境界も同じ制約を記す。
+- GPUのmode/正逆を変える前も同じ開始状態へ戻す。メモリの相対比較は#273の単発A/B入口を別開始し、各runの前に冷却/開始条件をそろえる。既存Memory ABは連続2試行で中間冷却できないため、同一sessionのJPEG一致/原本確認用に分け、冷却済み相対比較へ読み替えない。自動取消2境界も内部の中間冷却はできない。
 - MODERATEはAndroid OSのthermal status実値2であり、電池温度34℃などの一律温度閾値ではない。thermal statusと電池温度を別々に記録する。OS statusがMODERATE(2)以上、OS発熱警告/異常発熱、lowMemory/資源gate拒否、OOM、ANR/クラッシュ/予期しないprocess終了、原本/品質不一致、owner/worker/sampler/FGS未回収、busy/HOLDでその回を停止する。CPU/GPUを切り替えて継続せず、保存済みの完了結果だけ保持する。
 - 取消は1回受理させて解放を待つ。設定緩和・強制GC・強制冷却・強制終了で回収成功を作らない。手動force-stop/再起動/削除はこの許可へ自動追加しない。OSが終了させた場合は回収未確認の失敗として残す。
 - GPUはエラー時のみ、回収確認・冷却後に1回再試行できる（同じ入口の初回を含め最大2回）。2回失敗または回収不明なら残りGPUを停止する。初回をwarmへ付け替えない。時間不足/取り逃し/欠測を埋める無制限反復はしない。
 
 ### 計測前に固定する判断表
 
-この表のうち #237 の30ms/画質条件は既存基準、10%の改善幅・冷却幅・取消待ち時間は今回の**事前提案**である。実機の安全保証ではない。本人向け報告で条件と未確定項目を確認し、測定を見てから都合よく閾値を変えない。欠測・条件不一致・取消/失敗は「未判定」、正常な全記録があって閾値外の場合だけ「今回条件では見送り」とする。
+この表は本人が確認した事前目安と追加指示を区別する。#237の30ms/画質は既存基準。previewの40%/10%/5%は見込みの仮説、取消2秒/5秒は参考値で、取消採否はA/B非悪化と回収で判定する。いずれも実機の安全保証ではない。測定を見てから都合よく基準を変えない。欠測・条件不一致・取消/失敗は「未判定」、正常な全記録があって閾値外の場合だけ「今回条件では見送り」とする。
 
 **GPU**
 - #237の更新後基準どおり、baseline・phase=reusedの1024px対象2工程sumを入力/強度/順序別に30msと比べる。転送・同期・readback・呼出内のCPU変換/割当を含み、EGL/shader準備を除く。各条件の中央値と全個別値を残す。全条件の中央値が30ms以内でも、全Look最大2/255以内・本人目視・回収を満たすまで製品採用しない。初回・Orton CPU前処理・全Lookは別記する。
@@ -54,10 +54,11 @@ source/tree・APK hash・既存署名証明書hash・manifest・最適化条件�
 - 12MPは部分工程のCPU比較と件数/bytesの説明に使う。保存全経路の1/255以内・明らかな高速化は今回未判定であり、部分工程だけで保存GPUへ進まない。
 
 **プレビュー**
-- 前回の同じ写真/操作/worker OFF/計測境界の値を本人用の対応表へ記載し、強さ・色温度・明るさとDRAFT/EXACTを分ける。旧新VERIFY_BEFORE/AFTERは**別表**にし、同名の工程速度比を作らない。
-- 見込みは、metadataが既知なら毎回の全文SHA読取を省けること。R7やLookの計算自体は速くしていないので、色温度/明るさのR7残り時間や50ms提示の達成を約束しない。未知mtimeによるSHA fallbackと追加R7計時負担も結果に併記する。#269はwarmの資源判定変更であり演算高速化ではない。
-- 提案するscreeningは、同条件の前回値から各操作/kindの中央値が10%以上短縮なら「改善候補」、±10%未満なら「明確な改善なし」、10%以上悪化なら回帰調査。4操作の個別値・範囲も示し、ばらつき/旧条件不一致なら参考比較に止める。旧版をその場で再インストールしてABを追加しない。
-- 前回の充電状態が混在し同条件標本を確保できない場合、数値を参考として併記しても因果的な改善率・合格を出さない。今回の4回や多数renderから統計的有意差/p95保証を主張しない。
+- 前回の同じ写真/操作/worker OFF/計測境界の値を本人用の対応表へ記載し、強さ・色温度・明るさとDRAFT/EXACTを分ける。旧新VERIFY_BEFORE/AFTERは**別表**にし、同名工程の速度比を作らない。
+- 見込みはDRAFT（ドラッグ中）約40%、EXACTの強さ約10%、色温度/明るさ約5%の短縮という本人の仮説。項目/kindごとの前回対応値をTとし、目安はそれぞれ0.60T/0.90T/0.95T。実測短縮率とこの見込みとの差を示す。全項目へ一律10%を適用せず、見込みを達成保証や採用の自動合格基準にしない。
+- metadataが既知なら毎回の全文SHA読取を省くが、未知mtimeはSHA fallback。R7/Look自体は高速化しておらず、#271の追加計時負担も含む。#269はwarmの資源判定変更であって演算高速化ではない。
+- DRAFTの短縮が見込みを下回った場合は、差が大きいケースを見逃さないため少なくとも一度#268の適用を確認する。配布/導入したAPK hashとsource、診断のManualTrial経路・callback配線、metadataのmtime既知/不明とSHA fallbackの可能性、新版内のVERIFY時間と他工程残時間、操作/入力/充電/熱/保持条件を順に点検する。timingだけから軽量経路かfallbackかを断定しない。観測できない分岐は未確認とし、必要なら別の限定診断へ分ける。
+- 4操作の個別値・範囲・操作均等中央値を示し、ばらつき/旧条件不一致なら参考比較に止める。前回充電混在で同条件標本を確保できなければ因果的な改善率/合格を出さない。統計的有意差/p95保証や50ms OS提示を主張せず、旧版再インストールABを自動追加しない。
 
 **R7: 次の検証先**
 - 同一の成功renderで、S= METER_LUMA + METER_QUANTILE + LOCAL_QUANTILES、E= WARMTH + PROFILE + LOCAL_LOG_LUMA + LOCAL_BOX + LOCAL_BICUBIC + LOCAL_QUANTILES + LOCAL_APPLYを求める。Sは統計値の作成に必要な輝度生成も含む。SとEは重複するため足さない。未訪問は欠測、保持済みbaseを再計算0msとしない。外側RawPreviewTiming totalを分母にし、各renderの比率から操作単位で比較する。
@@ -68,11 +69,13 @@ source/tree・APK hash・既存署名証明書hash・manifest・最適化条件�
 
 **保存: 観測範囲と事前budget**
 - **真のプロセスpeakの数値上限は、現APKでは合否判定できない**。managed/nativeは100ms目標の個別観測最大、PSSは前後だけである。2つの個別最大を同時peakとして足さず、PSS開始/終了をPSS peakにしない。上限未満という安全合格にはしない。768MiBはdecode/save時のsystem空きメモリadmissionで、アプリpeak上限・確保予約・必要量の実測ではない。
-- 暫定の増加budgetはmanaged/nativeを別々に、観測最大B ≤ A + max(Aの10%, 32MiB)と提案する。行並列化で大きな増加がないかを検出する比較用の設計値で、32MiBは理論上限ではない。超過は採用保留、範囲内でも真peakの合格にしない。AB各1回では順序/GC差を分離できない。sampleCount>0、quiescent=true、failed=false、failedSamples=0、両max非nullを測定成立条件とし、maxGap>300ms（100ms目標の3倍）ならこの比較も未判定とする。300msも短いpeak捕捉の保証ではない。
-- この回で出せるのは、A/Bの観測最大・PSS前後・sample数/実間隔/maxGap/収集費用・欠測と、OOM/lowMemory/異常終了の有無。本人用報告に数値上限を決める根拠がまだないことを明記し、**真のpeak上限が実機開始の必須条件なら、追加の計測設計が必要なので保存試験は保留**する。「観測値の収集に限定して実行し、製品安全採用は保留」とするかは許可前に確認する。測定後に都合のよい上限を後付けしない。
-- 取消許容時間の今回提案は、USER_BUTTON受付からrender退出2秒以内、owner解放とharness静止5秒以内。既存合意でも測定済み性能でもなく、待たせないための評価budgetである。Glow/Mist両方で対象工程が成立し、renderOutcome=CANCELLED、4区間がすべて非nullかつrender≤scope=owners≤harness、`resourcesQuiescent=true`、`ownerClosed`、`noCompletedResult`、`outputAbsentAtAttemptScopeExit`、private入力削除、harnessCloseFailed=falseを満たして初めて今回の取消観測の合格候補とする。
-- 2秒/5秒を超えれば、あとで正常に解放されても取消時間は未達で採用保留。強制終了して合格にせず、自然な協調取消/回収を確認し次の試行を始めない。未解放/null/HOLD、クラッシュ、取り逃し/離脱先行、押さず完走は時間の合格にしない。5秒は強制解放を許すtimeoutではない。
-- sampler/IO owner/並列ownerが静止し、GPU/保存FGS等の別負荷が動いていないことも確認する。harness時刻は最終report書込/UI表示を含まないので、report確定/Hub idleまで別に待つ。メモリが開始値へ瞬時に戻らないだけでリークとはしない一方、プロセス生存だけでowner解放を推定しない。自動2境界は機能合否であり、手動2秒/5秒の代用にはしない。
+- 今回の観測増加budgetはmanaged/nativeを別々に、観測最大B ≤ A + max(Aの10%, 32MiB)とする。行並列化で大きな増加がないかを検出する比較用の設計値で、32MiBは理論上限ではない。超過は採用保留、範囲内でも真peakの合格にしない。各arm2回の観測最大のうち大きい値を比較値A/Bとし、単発ABBA（各arm2）の各run値を残して中央値と範囲を比べ、順序/GC/開始メモリが不揃いなら未判定にする。少数反復でもallocator/GC状態の完全同一は保証しない。sampleCount>0、quiescent=true、failed=false、failedSamples=0、両max非nullを測定成立条件とし、maxGap>300ms（100ms目標の3倍）ならこの比較も未判定とする。300msも短いpeak捕捉の保証ではない。
+- この回で出せるのは、A/Bの観測最大・PSS前後・sample数/実間隔/maxGap/収集費用・欠測と、OOM/lowMemory/異常終了の有無。本人用報告に数値上限を決める根拠がまだないことを明記し、今回は許可された観測値の収集に限定し、**真peak安全性の合格や製品採用を確定しない**。絶対上限の厳密判定が必要になれば、追加の計測設計へ分ける。測定後に都合のよい上限を後付けしない。
+- **取消採否はAに比べてBの取消→停止時間と資源解放が悪くならないこと**。参考2秒（render退出）/5秒（owner/harness静止）の超過だけで3候補を落とさない。A自体も目安を超える場合、取消checkpointを増やす改善は別Issueとし、この診断中に位置を変えない。
+- #273の手動A/B入口でGLOW/MISTを分け、各工程A→B→B→Aの4単発（各arm2）、合計8観測を上限とする。A/Bとも入力・設定・狙う工程・押下手順・冷却/充電をそろえ、intendedCancellationStage、実際のstageAtRequest、stageElapsedAtRequestNanosを残す。MISSED_INTENDED_STAGEは取り逃しであり有効対へ入れない。同じ経過nsでも同じ内部worker/行位置の証明ではない。工程表示が初めて対象になったら速やかに1回押し、報告の実stageを正とする。
+- 比較可能な各工程/armで4つの受付起点区間を各runから比較し、個別値・中央値・範囲を示す。比較可能な同工程でBの中央値または観測最大がAを超える、あるいはBだけ回収条件を満たさない場合は採用保留。両方がA以下でも『今回の有効観測では悪化なし』に限る。押下経過/環境が不揃い、結果が揺れる、どちらか欠測/失敗なら非悪化を確定せず未判定。単発対や8回のscreeningで統計的非劣性を主張しない。後付けの許容幅や選別でBがよく見える対だけ残さない。
+- 両構成・両工程の有効観測で、USER_BUTTON・狙った実stage・renderOutcome=CANCELLED、4区間非nullかつrender≤scope=owners≤harness、resourcesQuiescent=true、ownerClosed、noCompletedResult、outputAbsentAtAttemptScopeExit、private入力削除、harnessCloseFailed=falseをすべて確認する。null/HOLD/クラッシュ/取り逃し/離脱先行/未押下完走は合格に補完しない。
+- 参考秒数を超えても強制終了せず、協調取消と回収を確認するまで次を始めない。sampler/IO owner/並列owner静止、別のGPU/保存FGSなしも確認する。harness時刻に最終report書込/UI表示は含まれないため、report確定/Hub idleまで別に待つ。メモリの即時baseline復帰やプロセス生存は解放の代用にしない。自動2境界は別の機能確認である。
 
 ### GPU内訳の採取内容（実行順は上表）
 
@@ -97,7 +100,7 @@ source/tree・APK hash・既存署名証明書hash・manifest・最適化条件�
 
 ### 保存3候補の採取内容
 
-詳細は本書の保存安全確認節と [取消fieldの定義](RAW_DIAGNOSTIC_BUILD.md#手動cancel受付から停止解放までの観測) を正とする。Memory A/B各1回、自動取消BBのdecode後/Foundation後各1回に加え、候補Bの手動CancelをGlow/Mist中に各1session観測する。計6試行、開始ボタンは4回で、速度20回は再実行しない。候補BはGlow2/Mist2/tone2・色融合OFF、Foundation2/Orton4/Character2を維持する。旧RAW4の色融合ON profileで代用しない。
+詳細は本書の保存安全確認節と [取消fieldの定義](RAW_DIAGNOSTIC_BUILD.md#手動cancel受付から停止解放までの観測) を正とする。既存Memory AB2試行はJPEG一致/原本確認に残す。メモリ相対観測は単発A/BをABBAで4試行、自動取消BBのdecode後/Foundation後を2試行、手動CancelはGLOW/MIST各ABBAで8試行とする。保存計16試行（Memory6＋自動取消2＋手動8）、開始は14回で、速度20回は再実行しない。候補BはGlow2/Mist2/tone2・色融合OFF、Foundation2/Orton4/Character2を維持する。旧RAW4の色融合ON profileで代用しない。
 
 手動CancelはUIハンドラー受付を起点に、render退出・use/close試行退出・owner解放確認・harness静止確認を分ける。物理タッチ時刻や個別worker内部の停止時刻ではない。USER_BUTTON、実際のstageAtRequest、renderOutcome、対象取消観測statusとresourcesQuiescentを確認する。STOPPED/complete=falseを速度成功へ補完せず、未到達/未解放はnullのまま残す。中断後の原本最終照合未実施を原本不変確認済みにしない。取り逃し・離脱先行・未押下・正常完走・HOLDを区別し、際限なく再試行しない。
 
@@ -237,16 +240,16 @@ Foundation・Orton・Character以外まで並列化した意味ではない。�
 時間不足ならこのブロックを別日にする。録画・GPU・CPU診断を止め、冷却してから開始する。
 詳細なbuild/所有権は [RAW診断](RAW_DIAGNOSTIC_BUILD.md#保存採用候補の安全確認profile261)。当日APKが新入口を含むsourceか照合する。
 
-### 新しいSAVE_SAFETY: メモリ2回と取消2境界
+### 既存SAVE_SAFETY: JPEG一致用Memory ABと自動取消2境界
 
-1. Hubの「保存4候補の比較」からRAW診断画面を開く。上部の `Save safety` 3ボタンのうち、まずMemoryと自動取消を使う。
+1. Hubの「保存4候補の比較」からRAW診断画面を開く。上部の `Save safety` 専用入口を使い、既存Memory AB、冷却後の単発Memory ABBA、自動取消、手動取消の順で確認する。
    旧RAW4のBは色融合ONのままなので、下のlegacy controlsで代用しない。
 2. `Save safety: Memory A/B (2 attempts)` を1回押し、同じ許可済み12MP DNGを選ぶ。
    AはGlow1 / Mist1 / tone1、BはGlow2 / Mist2 / tone2。両方とも色融合OFF、Foundation2 / Orton4 / Character2固定。
    このボタンはlegacyのMemory / Reverse / 比較選択を無視し、AB各1回のみ。warmupや速度反復を追加しない。
 3. reportで `comparison=SAVE_SAFETY`、`mode=MEMORY_PERIODIC_NOT_TIMING`、`order=AB`、A/B成功各1、
    `complete=true`、`status=SUCCESS`、全JPEG一致、選択原本不変、private入力削除、owner終了を確認する。
-   各runの `fuseR7ColorRows=false` とworker数も照合する。100ms目標のmanaged/nativeは観測最大、PSSは前後だけ。
+   各runの `fuseR7ColorRows=false` とworker数も照合する。この連続ABはJPEG一致/原本の証拠とし、冷却した単発A/Bの代用にしない。100ms目標のmanaged/nativeは観測最大、PSSは前後だけ。
    sample数・実間隔・最大gap・観測費用・欠測・sampler終了を記録し、時間改善や瞬間peak保証に変換しない。
 4. 冷却・資源回収の確認後、`Save safety: 2 cancellation checks` を1回押して同じDNGを選ぶ。
    同じB構成で2試行を自動実行し、native decode完了後とFoundation完了後に各1回取消する。
@@ -263,26 +266,32 @@ Foundation・Orton・Character以外まで並列化した意味ではない。�
 - このprofileは速度集計器 `compare_raw4.py` の対象外。旧RAW4の保存済みreportを新profileへ読み替えない。
   実機確認が済んだ後に製品既定へのPRを別途判断し、診断準備だけで製品採用済みとしない。
 
-### Glow/Mist中の手動取消待ち時間（追加観測）
+### 保存メモリの単発A/B比較（#273）
 
-既存2境界では実行中の待ち時間を測れないので、同じ候補Bの単発を別sessionで使う。速度20回は再測定しない。
+既存Memory ABの同一JPEG一致/原本不変を確認した後、#273の `Save safety: Memory A (1 attempt)` / `Save safety: Memory B (1 attempt)` を使う。A→B→B→Aの4単発を上限にし、同じDNGとAPKを私有対応表で照合する。各runの前にowner解放・冷却・同じ充電/OS thermal・開始メモリを確認する。原本importと採取境界、100ms目標sampler、前後PSSの方法は両armで同じにし、Memory単発と手動取消を同時に行わない。
 
-1. 冷却・owner解放後に `Save safety: Manual Cancel latency (B)` を押し、同じ許可済みDNGを選ぶ。
-   画面下部の工程表示とCancelを見える位置にし、`Running GLOW` を見てCancelを押す。別sessionでMistも1回観測する。
-2. reportのmodeが `MANUAL_CANCELLATION_LATENCY_NOT_TIMING`、comparisonが `SAVE_SAFETY`、orderが `B`、候補worker数/色融合OFFか照合する。
-3. `cancellationObservation.requestOrigin=USER_BUTTON`、`stageAtRequest=GLOW` または `MIST` を確認する。
-   UI受付時刻が起点であり、物理タッチ→OS配送の待ち時間は含まない。工程表示が遅れ、別工程で押した回は別結果として残す。
-4. `renderOutcome` と、受付→render退出、use/close試行退出、owner解放確認、harness静止確認の4区間をそれぞれ記録する。
-   render内部の回収時間も含む。close試行の退出だけでworker静止とせず、owner/harness解放の値がnullなら未確認。
-5. `status=STOPPED`、`complete=false` はこの中断観測では想定どおり。対象工程での観測成立は
-   `cancellationObservation.status=OBSERVED_TARGET_STAGE_CANCEL` と `resourcesQuiescent=true` で区別する。
-   `ownerClosed` / `noCompletedResult` / `outputAbsentAtAttemptScopeExit` / 私有入力削除も確認する。
-   `selectedOriginalUnchanged` は中断後の最終照合未実施のため真に補完しない。
-6. 押さずに完走、取り逃し、開始前/完了後の押下、離脱による取消、失敗、HOLDを混ぜない。未到達はnullのまま。
-   新しい取消位置は追加しない。今回の事前budget案は冒頭の判断表を参照し、実測後に閾値を変更しない。
+- 同じ候補構成差だけであること、`mode=MEMORY_SINGLE_ARM_NOT_TIMING`、`order=A` / `B`、選択arm成功1/他0、`complete=true`、最終原本不変・private入力削除・owner/sampler静止を確認する。単発には構成間JPEG一致の証拠がなく、`crossArmJpegComparison=NOT_AVAILABLE_SINGLE_ARM`、`memoryComparisonDecision=REQUIRES_MATCHED_CONDITIONS_NOT_AUTOMATIC_PASS` を確認する。既存ABの一致を、単発で直接比較した証拠へ読み替えない。
+- managed/nativeごとに、各arm2回の観測最大のうち大きい値をA/Bの比較値とする。全個別値、中央値、範囲、memoryBefore/After・sample数/間隔/maxGap/失敗も残す。前の判定表の増加budgetを適用する。
+- 候補なし/ありで開始メモリや充電/熱条件がずれる、順序で傾向が変わる、採取欠測がある場合は未判定。強制GC・アプリkill・電源/性能設定変更で揃えない。ABI/プロセス/冷間と温間を混ぜず、瞬間peak・PSS peakとしない。
+- 計測器を新設せず、既存の観測最大の限界を維持する。時間の採否や旧速度20回を再開しない。
 
-[各fieldの意味と限界](RAW_DIAGNOSTIC_BUILD.md#手動cancel受付から停止解放までの観測)を参照。
-Glow/Mistの画素worker内部を直接観測した証拠ではない。回収不明・OS警告・低メモリ・異常発熱は停止し、無制限に再試行しない。
+### Glow/Mist中の手動取消A/B比較（#273）
+
+既存自動2境界では実行中の待ち時間を比較できないので、次の4つの明示入口を使う。各ボタンは1session/1候補、入力選択前に候補と狙う工程を固定する。
+
+- `Save safety: Manual Cancel A / GLOW`
+- `Save safety: Manual Cancel B / GLOW`
+- `Save safety: Manual Cancel A / MIST`
+- `Save safety: Manual Cancel B / MIST`
+
+1. GLOWでA→B→B→A、次にMISTでA→B→B→A。各run前に回収・冷却・条件を確認する。毎回同じDNGを選び、戻ったら画面末尾のCancelと現在工程表示が同時に見える位置へ移動する。初めて狙った工程表示が出たら速やかにCancelを1回押す。表示の準備前に狙った工程を過ぎた回は取り逃しとして残す。内部workerの行位置を固定した試験ではない。
+2. modeが手動取消観測、comparison=SAVE_SAFETY、arm/orderとworker数・色融合OFF・intendedCancellationStageを照合する。USER_BUTTON、実際のstageAtRequest、stageElapsedAtRequestNanosを正とし、狙いと異なるMISSED_INTENDED_STAGE、遅れ/取り逃しを有効対へ数えない。
+3. UI受付→render退出・use/close試行退出・owner解放・harness静止の4区間を候補A/B別に記録する。物理タッチ時刻や純粋な最終画素演算停止ではない。条件差を後付けの許容nsで正当化しない。
+4. 判定は冒頭のA/B非悪化と全解放条件を用いる。2秒/5秒は参考として併記し、超過だけでB不採用としない。Aにも同様の待ちがあれば取消位置追加は別課題にする。
+5. STOPPED/complete=falseは想定どおり。対象工程の観測成立とresourcesQuiescent、ownerClosed/noCompletedResult/outputAbsentAtAttemptScopeExit/private入力削除を確認する。harness null/HOLDを0秒/合格にせず、最終report/UI確定まで待つ。中断後の原本最終照合未実施を原本不変確認済みに補完しない。
+6. 押さず完走、取り逃し、離脱先行、例外/回収不明は別結果。8回の上限を超える自動再試行や取消checkpoint変更はしない。不足は未判定で報告する。
+
+[各fieldの意味と限界](RAW_DIAGNOSTIC_BUILD.md#手動cancel受付から停止解放までの観測)を参照。観測成功やreportの出力はA/B採否の自動合格ではない。B-onlyの旧結果をA/B非悪化の証拠へ付け替えない。
 
 ### 参考: 旧RAW4の速度判定手順（今回の再実行対象外）
 
@@ -307,7 +316,7 @@ tone/色が両順10%以上ならR7単独比較へ切り分ける。全体/未分
 
 - 各ブロック終了時に結果件数と回収を確認する。途中で止めた場合は取得数・条件・理由を残し、足りない回を推定しない。変更した診断タグは開始前の値へ戻す。
 - GPUは1024pxの1回で26対、12MPの各1回で4対を処理する。旧版の所要枠を流用せず、新版の初回完了時間と温度から残り枠を見直す。メモリ/PSS/背景と冷却の所要は未実測であり、全項目を同日に終える条件にしない。
-- CPU比較は合成慣らし2＋測定4と実編集30調整、初回/切替/値戻し/復帰確認が加わる。各項目前の温度/充電記録と必要な冷却も見込み、処理時間だけで操作時間を見積もらない。
-- 今回の保存はメモリ2回分と取消2境界、手動取消のGlow/Mist各1回の到達/回収、選択/照合/冷却。旧速度計画の20回は所要枠へ加えない。過去の別buildの時間から完了時刻を約束しない。
+- 一般手順のCPU比較は合成慣らし2＋測定4と実編集30調整だが、今回の統合確認は並列OFFのみ15調整であり、一般のAB試験を追加しない。初回/切替/値戻し/復帰確認、各項目前の温度/充電記録と必要な冷却も見込み、処理時間だけで操作時間を見積もらない。
+- 今回の保存はJPEG一致用Memory AB2回、単発Memory ABBA4回、取消2境界、手動取消のGLOW/MIST各ABBA計8回の到達/回収、選択/照合/冷却。旧速度計画の20回は所要枠へ加えない。過去の別buildの時間から完了時刻を約束しない。
 - 実測なしの総所要時間を約束しない。優先順を守り、熱・時間不足なら保存を別日にする。
 - 私有report/録画の保管先を本人が確認し、公開は匿名集計と採否理由だけにする。実機/写真未実施を準備完了へ付け替えない。

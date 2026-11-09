@@ -53,7 +53,8 @@
 
 ## 保存安全確認の診断profile
 
-- RAW診断の `SAVE_SAFETY` はGlow / Mist / R7 toneの1対2並列を、両armの色融合OFFとFoundation2 / Orton4 / Character2固定で確認する診断専用profile。専用入口でMemory A/B各1回と候補Bの取消2境界を分け、速度反復や製品既定へ接続しない。
-- 旧 `RAW4` のBは色融合ONのまま維持し、既存reportと速度集計の意味を変えない。新profileはreportのcomparisonで区別する。取消はnative decode完了後 / Foundation完了後の境界確認であり、3工程のworker実行中の取消保証ではない。手順・未検証範囲は [RAW診断](../../docs/RAW_DIAGNOSTIC_BUILD.md#保存採用候補の安全確認profile261) を参照する。
+- RAW診断の `SAVE_SAFETY` はGlow / Mist / R7 toneの1対2並列を、両armの色融合OFFとFoundation2 / Orton4 / Character2固定で確認する診断専用profile。連続Memory ABは同一sessionのJPEG一致と原本確認に残し、単発Memory A/Bは冷却・開始条件を照合する別入口とする。単発は構成間JPEG一致を判定せず `crossArmJpegComparison=NOT_AVAILABLE_SINGLE_ARM` を明示する。既存100ms managed/native観測最大と前後PSSは真peakではない。候補Bの取消2境界とは分け、速度反復や製品既定へ接続しない。
+- 旧 `RAW4` のBは色融合ONのまま維持し、既存reportと速度集計の意味を変えない。新profileはreportのcomparisonで区別する。既存の自動取消2境界はnative decode完了後 / Foundation完了後の確認であり、3工程のworker実行中の取消保証ではない。手順・未検証範囲は [RAW診断](../../docs/RAW_DIAGNOSTIC_BUILD.md#保存採用候補の安全確認profile261) を参照する。
 
-- 保存安全profileの手動取消観測は候補B単発の別modeとし、UIのCancel受付→render退出・close試行退出・owner解放・harness静止を区別する。物理タッチ時刻や純粋なworker演算終了時刻を測ったとしない。受付時のGlow/Mist区間、成功/取消/失敗、離脱、未到達/未解放nullを残し、既存取消checkpointは増やさない。手順は [手動取消観測](../../docs/RAW_DIAGNOSTIC_BUILD.md#手動cancel受付から停止解放までの観測) を参照する。
+- 保存安全profileの手動取消観測（#273）はA/Bと狙うGLOW/MISTを開始前に固定する4つの単発入口とし、UIのCancel受付→render退出・close試行退出・owner解放・harness静止を区別する。狙いと実受付stage、stage開始から受付までの経過を残すが、物理タッチ時刻・同じworker進行位置・純粋なworker演算終了時刻を測ったとしない。狙い違い、成功/取消/失敗、離脱、未到達/未解放nullを区別し、既存取消checkpointは増やさない。手順は [手動取消観測](../../docs/RAW_DIAGNOSTIC_BUILD.md#手動cancel受付から停止解放までの観測) を参照する。
+- 保存候補の取消は条件をそろえたAに対するBの停止時間・資源解放の非悪化で判断し、2秒/5秒は参考記録とする。メモリも同じ入力/APK/構成差・サンプル方法・開始条件で比較する。条件差・欠測・回収不明を合格へ補完せず、単発完了や固定のcomparisonDecisionを自動採用判定にしない。反復数・順序・事前budgetと限界は [統合当日手順](../../docs/RAW4_DEVICE_CHECKLIST.md#今回の限定メニュー270) に定める。
