@@ -47,3 +47,8 @@
 - 統合診断版のCPU編集画面では、既定OFF（製品と同じ直列）とON（既存Foundation・Orton・Characterの画素処理を2並列）を明示切替できる。調整パネルを閉じ、確定表示と保存の停止を確認してから切り替え、同じ値で再計算する。設定は編集画面内だけで保持し、プロセス/画面再生成でOFFに戻る。通常版・原寸保存の既定を変えない。
 - 診断設定は各要求の開始時に固定し、切替時に旧要求を失効させる。実行中workerは既存IO所有者が終了待ちしてから解放する。診断では表示Bitmap cacheの返却を避ける一方、縮小入力・Foundation・Glow・判定値の通常のセッション保持は維持する。計測の慣らし・操作種別・順序をそろえて比較する。
 - RawPreviewTimingは各DRAFT/EXACT処理にworkersとmaxEdgeを付ける。最大256pxの各回のセッション時間を取り出せるが、要求前処理・Before生成・OS提示完了を含まない。計算時間から50ms提示合否や実機速度向上を断定しない。
+
+## 保存安全確認の診断profile
+
+- RAW診断の `SAVE_SAFETY` はGlow / Mist / R7 toneの1対2並列を、両armの色融合OFFとFoundation2 / Orton4 / Character2固定で確認する診断専用profile。専用入口でMemory A/B各1回と候補Bの取消2境界を分け、速度反復や製品既定へ接続しない。
+- 旧 `RAW4` のBは色融合ONのまま維持し、既存reportと速度集計の意味を変えない。新profileはreportのcomparisonで区別する。取消はnative decode完了後 / Foundation完了後の境界確認であり、3工程のworker実行中の取消保証ではない。手順・未検証範囲は [RAW診断](../../docs/RAW_DIAGNOSTIC_BUILD.md#保存採用候補の安全確認profile261) を参照する。

@@ -106,6 +106,18 @@ class ComparisonTest(unittest.TestCase):
                 with self.assertRaises(c.InvalidReport):
                     c.compare(a, b, same_input_build_confirmed=True)
 
+    def test_save_safety_cannot_be_reinterpreted_as_legacy_raw4_timing(self):
+        for mode in ("TIMING", "MEMORY_PERIODIC_NOT_TIMING", "CANCELLATION_BOUNDARIES_NOT_TIMING"):
+            a, b = pair()
+            a.update(comparison="SAVE_SAFETY", mode=mode)
+            with self.assertRaises(c.InvalidReport):
+                c.compare(a, b, same_input_build_confirmed=True)
+        a, b = pair()
+        for run in a["runs"]:
+            run["fuseR7ColorRows"] = False
+        with self.assertRaises(c.InvalidReport):
+            c.compare(a, b, same_input_build_confirmed=True)
+
     def test_run_quality_config_failures_include_warmups(self):
         for key, value in dict(sequence=True, arm=2, foundationWorkers=1, glowWorkers=2,
                                toneWorkers=2, mistWorkers=2, fuseR7ColorRows=True,

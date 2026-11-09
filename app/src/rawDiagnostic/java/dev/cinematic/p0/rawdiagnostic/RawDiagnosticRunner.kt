@@ -69,11 +69,16 @@ internal class RawDiagnosticRunner(private val context: Context) {
             (context.getSystemService(Context.POWER_SERVICE) as PowerManager).currentThermalStatus < 2)
     }
 
-    fun run(uri: Uri, observeMemory: Boolean, reverse: Boolean, comparison: DiagnosticComparison, update: (String) -> Unit): String =
-        runSession(uri, observeMemory, reverse, comparison, false, update)
+    fun run(uri: Uri, observeMemory: Boolean, reverse: Boolean, comparison: DiagnosticComparison, update: (String) -> Unit): String {
+        require(comparison != DiagnosticComparison.SAVE_SAFETY || observeMemory)
+        return runSession(uri, observeMemory, reverse, comparison, false, update)
+    }
 
-    fun runCancellation(uri: Uri, update: (String) -> Unit): String =
-        runSession(uri, false, false, DiagnosticComparison.RAW4, true, update)
+    fun runCancellation(uri: Uri, comparison: DiagnosticComparison = DiagnosticComparison.RAW4,
+        update: (String) -> Unit): String {
+        require(comparison == DiagnosticComparison.RAW4 || comparison == DiagnosticComparison.SAVE_SAFETY)
+        return runSession(uri, false, false, comparison, true, update)
+    }
 
     private fun runSession(uri: Uri, observeMemory: Boolean, reverse: Boolean, comparison: DiagnosticComparison,
         cancelProbe: Boolean, update: (String) -> Unit): String {
@@ -90,6 +95,7 @@ internal class RawDiagnosticRunner(private val context: Context) {
             .put("order", if (cancelProbe) "BB" else DiagnosticPlan.order(reverse, observeMemory))
             .put("performanceThresholdPercent", 10).put("performanceDecision", if (cancelProbe || observeMemory) "NOT_TIMING" else "REQUIRES_BOTH_ORDERS")
             .put("runs", runs).put("complete", false)
+        if (cancelProbe) report.put("cancellationScope", "AFTER_NATIVE_DECODE_AND_FOUNDATION_NOT_WORKER_IN_FLIGHT")
         if (observeMemory) report.put("sampling", "managed/native 100ms target; PSS before/after only; observed maxima, not peak guarantees; not comparable timing")
         fun persist() {
             harnessIo.output(reportFile.outputStream()).use { it.write(report.toString(2).toByteArray(Charsets.UTF_8)) }

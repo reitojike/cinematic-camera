@@ -12,6 +12,8 @@ import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.CheckBox
+import android.widget.Spinner
 import android.widget.TextView
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
@@ -41,7 +43,7 @@ class RawDiagnosticSmokeTest {
         assertEquals(0, context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE)
         assertTrue(info.requestedPermissions.isNullOrEmpty())
         assertTrue(context.contentResolver.persistedUriPermissions.isEmpty())
-        val cases = DiagnosticComparison.entries.map { it to false } + (DiagnosticComparison.RAW4 to true)
+        val cases = DiagnosticComparison.timingComparisons.map { it to false } + (DiagnosticComparison.RAW4 to true)
         for ((comparison, reverse) in cases) {
             val existingRoots = context.noBackupFilesDir.listFiles().orEmpty().map { it.name }.toSet()
             val runner = RawDiagnosticRunner(context)
@@ -99,43 +101,122 @@ class RawDiagnosticSmokeTest {
         assertTrue(roots.none { root -> root.walkTopDown().any { it.extension == "jpg" } })
     }
     @Test fun memoryModeAndReverseOrderAreSeparate() {
-        val report = JSONObject(RawDiagnosticRunner(context).run(uri(), true, true, DiagnosticComparison.RAW4) {})
-        assertEquals("SUCCESS", report.getString("status"))
-        assertEquals("MEMORY_PERIODIC_NOT_TIMING", report.getString("mode"))
-        assertEquals("BA", report.getString("order"))
-        val runs = report.getJSONArray("runs")
-        assertEquals(2, runs.length())
-        for (index in 0 until 2) {
-            val run = runs.getJSONObject(index)
-            assertEquals(DiagnosticPlan.workers(true, memory = true)[index], run.getInt("arm"))
-            assertTrue(run.has("memoryObserved"))
-            assertTrue(run.getJSONObject("memoryObserved").getBoolean("quiescent"))
-            assertTrue(run.getJSONObject("memoryObserved").getLong("sampleCount") > 0)
-            assertFalse(run.has("memoryBoundaries"))
-            assertFalse(run.has("renderAndCloseNanos"))
+        for (comparison in listOf(DiagnosticComparison.RAW4, DiagnosticComparison.SAVE_SAFETY)) {
+            val reverse = comparison == DiagnosticComparison.RAW4
+            val report = JSONObject(RawDiagnosticRunner(context).run(uri(), true, reverse, comparison) {})
+            assertEquals("SUCCESS", report.getString("status"))
+            assertEquals("MEMORY_PERIODIC_NOT_TIMING", report.getString("mode"))
+            assertEquals(if (reverse) "BA" else "AB", report.getString("order"))
+            assertEquals(comparison.name, report.getString("comparison"))
+            assertTrue(report.getBoolean("complete"))
+            assertTrue(report.getBoolean("selectedOriginalUnchanged"))
+            assertTrue(report.getBoolean("privateInputRemoved"))
+            assertTrue(report.getBoolean("resourcesQuiescent"))
+            assertEquals("NOT_TIMING", report.getString("performanceDecision"))
+            assertEquals(1, report.getInt("measuredSuccessesA"))
+            assertEquals(1, report.getInt("measuredSuccessesB"))
+            val runs = report.getJSONArray("runs")
+            assertEquals(2, runs.length())
+            for (index in 0 until 2) {
+                val run = runs.getJSONObject(index)
+                assertEquals(DiagnosticPlan.workers(reverse, memory = true)[index], run.getInt("arm"))
+                assertProfile(report, run, comparison)
+                assertFalse(run.getBoolean("excludedWarmup"))
+                assertTrue(run.getBoolean("jpegMatchesSessionBaseline"))
+                assertTrue(run.getBoolean("sourceUnchanged"))
+                assertTrue(run.has("memoryObserved"))
+                assertTrue(run.getJSONObject("memoryObserved").getBoolean("quiescent"))
+                assertTrue(run.getJSONObject("memoryObserved").getLong("sampleCount") > 0)
+                assertFalse(run.has("memoryBoundaries"))
+                assertFalse(run.has("renderAndCloseNanos"))
+            }
         }
     }
     @Test fun boundedCancellationChecksNeverCountAsTimingSuccess() {
-        val runner = RawDiagnosticRunner(context)
-        val report = JSONObject(runner.runCancellation(uri()) {})
-        assertEquals("SUCCESS", report.getString("status"))
-        assertEquals("CANCELLATION_BOUNDARIES_NOT_TIMING", report.getString("mode"))
-        assertEquals(2, report.getInt("expectedCancellationChecks"))
-        assertEquals(0, report.getInt("measuredSuccessesB"))
-        assertTrue(report.getBoolean("selectedOriginalUnchanged"))
-        assertTrue(report.getBoolean("privateInputRemoved"))
-        assertTrue(runner.resourcesQuiescent)
-        val runs = report.getJSONArray("runs")
-        assertEquals(2, runs.length())
-        for (index in 0 until 2) {
-            val item = runs.getJSONObject(index)
-            assertEquals("CANCELLED_EXPECTED", item.getString("status"))
-            assertTrue(item.getBoolean("ownerClosed"))
-            assertTrue(item.getBoolean("noCompletedResult"))
-            assertTrue(item.getBoolean("partialJpegAbsent"))
-            assertTrue(item.getBoolean("sourceUnchanged"))
-            assertFalse(item.has("renderAndCloseNanos"))
+        for (comparison in listOf(DiagnosticComparison.RAW4, DiagnosticComparison.SAVE_SAFETY)) {
+            val runner = RawDiagnosticRunner(context)
+            val report = JSONObject(runner.runCancellation(uri(), comparison) {})
+            assertEquals("SUCCESS", report.getString("status"))
+            assertEquals("CANCELLATION_BOUNDARIES_NOT_TIMING", report.getString("mode"))
+            assertEquals(comparison.name, report.getString("comparison"))
+            assertEquals("AFTER_NATIVE_DECODE_AND_FOUNDATION_NOT_WORKER_IN_FLIGHT", report.getString("cancellationScope"))
+            assertEquals("BB", report.getString("order"))
+            assertEquals("NOT_TIMING", report.getString("performanceDecision"))
+            assertTrue(report.getBoolean("complete"))
+            assertEquals(2, report.getInt("expectedCancellationChecks"))
+            assertEquals(0, report.getInt("measuredSuccessesB"))
+            assertTrue(report.getBoolean("selectedOriginalUnchanged"))
+            assertTrue(report.getBoolean("privateInputRemoved"))
+            assertTrue(runner.resourcesQuiescent)
+            val runs = report.getJSONArray("runs")
+            assertEquals(2, runs.length())
+            for (index in 0 until 2) {
+                val item = runs.getJSONObject(index)
+                assertEquals("CANCELLED_EXPECTED", item.getString("status"))
+                assertEquals(2, item.getInt("arm"))
+                assertProfile(report, item, comparison)
+                assertEquals(if (index == 0) "NATIVE_DECODE" else "R7_FOUNDATION", item.getString("cancelBoundary"))
+                assertTrue(item.getBoolean("ownerClosed"))
+                assertTrue(item.getBoolean("noCompletedResult"))
+                assertTrue(item.getBoolean("partialJpegAbsent"))
+                assertTrue(item.getBoolean("sourceUnchanged"))
+                assertFalse(item.has("renderAndCloseNanos"))
+            }
         }
+    }
+    private fun assertProfile(report: JSONObject, run: JSONObject, comparison: DiagnosticComparison) {
+        val profile = comparison.profile(run.getInt("arm"))
+        assertEquals(2, run.getInt("foundationWorkers"))
+        assertEquals(4, report.getInt("ortonWorkers"))
+        assertEquals(2, report.getInt("characterWorkers"))
+        assertEquals(profile.glow, run.getInt("glowWorkers"))
+        assertEquals(profile.mist, run.getInt("mistWorkers"))
+        assertEquals(profile.tone, run.getInt("toneWorkers"))
+        assertEquals(profile.fuseColor, run.getBoolean("fuseR7ColorRows"))
+    }
+    @Test fun safetyTimingAndUnsupportedCancellationFailBeforeImport() {
+        val runner = RawDiagnosticRunner(context)
+        assertThrows(IllegalArgumentException::class.java) {
+            runner.run(uri(), false, false, DiagnosticComparison.SAVE_SAFETY) {}
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            runner.runCancellation(uri(), DiagnosticComparison.TONE_ONLY) {}
+        }
+        assertTrue(runner.resourcesQuiescent)
+    }
+    @Test fun safetyButtonsIgnoreLegacyControlsAndKeepProfileAcrossSessions() {
+        val filter = IntentFilter(Intent.ACTION_OPEN_DOCUMENT).apply { addCategory(Intent.CATEGORY_OPENABLE); addDataType("*/*") }
+        val picker = instrumentation.addMonitor(filter,
+            Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().setData(uri())), true)
+        try {
+            ActivityScenario.launch(RawDiagnosticActivity::class.java).use { scenario ->
+                scenario.onActivity { activity ->
+                    val all = views(activity.window.decorView)
+                    all.filterIsInstance<CheckBox>().forEach { it.isChecked = it.text.startsWith("Reverse") }
+                    all.filterIsInstance<Spinner>().single().setSelection(
+                        DiagnosticComparison.timingComparisons.indexOf(DiagnosticComparison.COLOR_FUSION_ONLY))
+                }
+                for (cancel in listOf(false, true)) {
+                    click(scenario, if (cancel) "Save safety: 2 cancellation checks" else "Save safety: Memory A/B (2 attempts)")
+                    val report = JSONObject(awaitStatus(scenario) { it.startsWith("{") })
+                    assertEquals("SUCCESS", report.getString("status"))
+                    assertTrue(report.getBoolean("complete"))
+                    assertEquals("SAVE_SAFETY", report.getString("comparison"))
+                    assertEquals(if (cancel) "BB" else "AB", report.getString("order"))
+                    assertEquals(if (cancel) "CANCELLATION_BOUNDARIES_NOT_TIMING" else "MEMORY_PERIODIC_NOT_TIMING", report.getString("mode"))
+                    assertEquals("NOT_TIMING", report.getString("performanceDecision"))
+                    val runs = report.getJSONArray("runs")
+                    assertEquals(2, runs.length())
+                    for (index in 0 until runs.length()) assertProfile(report, runs.getJSONObject(index), DiagnosticComparison.SAVE_SAFETY)
+                }
+                click(scenario, "Select DNG for 2 cancellation checks")
+                val legacy = JSONObject(awaitStatus(scenario) { it.startsWith("{") })
+                assertEquals("RAW4", legacy.getString("comparison"))
+                assertTrue(legacy.getBoolean("complete"))
+                assertTrue(legacy.getJSONArray("runs").getJSONObject(0).getBoolean("fuseR7ColorRows"))
+                assertEquals(3, picker.hits)
+            }
+        } finally { instrumentation.removeMonitor(picker) }
     }
     private fun views(view: View): List<View> = listOf(view) +
         if (view is ViewGroup) (0 until view.childCount).flatMap { views(view.getChildAt(it)) } else emptyList()

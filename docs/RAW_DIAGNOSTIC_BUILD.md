@@ -123,7 +123,7 @@ samplerの終了未確認でも既存gateを保持し次の試行を開始しな
 検証計画: profile/順序/中央値/閾値/欠測/取消/ownerのJVM試験、4候補同時onのFloat/JPEG一致と
 診断UI/lifecycle合成試験、通常と診断lint/unit/build、公開前差分検査と独立レビュー。
 実機性能・実写真品質・写真利用/インストールはこの実装/合成検証に含めない。
-### 少回数のメモリと取消確認
+### 旧RAW4の少回数メモリと取消確認
 
 時間は正順10回＋逆順10回（合計20回）。メモリは別の1 sessionでA/B各1回、合計2回に限定する。
 取消は専用ボタンからRAW4 onを2回だけ実行し、native decode完了後とR7 Foundation完了後に協調取消する。
@@ -142,3 +142,27 @@ samplerの終了未確認でも既存gateを保持し次の試行を開始しな
 RAW4の合成検証結果と枠解放は[Issue #78](https://github.com/reitojike/cinematic-camera/issues/78#issuecomment-6709899746)を参照。
 通常debug lint/unit/両ABI buildも成功（907 tests、failure/error0、既存skip4）。
 当日の12MP手順・所要目安・#208録画準備は[RAW4_DEVICE_CHECKLIST](RAW4_DEVICE_CHECKLIST.md)を参照。
+
+## 保存採用候補の安全確認profile（#261）
+
+速度採否で残ったGlow / Mist / R7 toneの2並列だけを `SAVE_SAFETY` として分離する。
+Aは3工程とも1、Bは3工程とも2。**色融合は両方OFF**。Foundation2 / Orton4 / Character2は固定。
+通常保存caller `AndroidManualOriginalTrialSaves.Backend.render` がFoundation2を明示する条件に合わせる。
+下位APIの既定1や旧RAW4 Bの色融合ONを変更しない。製品既定・画素式・原本・共有保存は変更しない。
+
+画面上部の専用ボタンを使い、下のlegacy controlsと分離する。
+
+- `Save safety: Memory A/B (2 attempts)`: Memory ON / Reverse OFF相当を固定し、warmupなしでAB各1回。
+  `comparison=SAVE_SAFETY`、`mode=MEMORY_PERIODIC_NOT_TIMING`、`order=AB`。
+- `Save safety: 2 cancellation checks`: 同じB構成でnative decode後 / Foundation後の各1回、計2試行。
+  `comparison=SAVE_SAFETY`、`mode=CANCELLATION_BOUNDARIES_NOT_TIMING`、`order=BB`。
+- 両入口はlegacyの比較選択・Memory・Reverseを使わない。安全profileの速度modeはrunnerでも拒否する。
+  `schema=2`、既存のworker数・色融合・品質/原本/回収・観測項目を維持し、旧RAW4と比較名で区別する。
+- 取消reportの固定 `cancellationScope=AFTER_NATIVE_DECODE_AND_FOUNDATION_NOT_WORKER_IN_FLIGHT` と
+  各runの `cancelBoundary` で範囲を明示する。Foundation後はtone完了後・Glow/Mist開始前なので、
+  3工程の並列worker中の取消やnative内部の任意時点取消の証拠ではない。既存の境界を増やさない。
+- 旧RAW4の速度20回・profile・schema・集計器は互換のまま残す。新profileを旧集計器へ渡したり、
+  過去reportを新候補の証拠として読み替えたりしない。充電状態は記録するが、その差を理由に速度20回を再実行しない。
+
+当日の手順は [保存安全確認](RAW4_DEVICE_CHECKLIST.md#4-保存候補のメモリと取消だけを確認する) を参照。
+この準備と合成試験は実機メモリ・取消・目視品質や製品Save/FGS復旧の合格ではない。

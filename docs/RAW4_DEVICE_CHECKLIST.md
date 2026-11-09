@@ -127,12 +127,40 @@ Foundation・Orton・Character以外まで並列化した意味ではない。�
 実機の修復・表示品質・50ms/500msの提示目標は、合成試験や内部ログだけでは合格にしない。
 表示/提示の未判定は未判定として残し、取得済みの計算時間とは分けて次の判断へ渡す。
 
-## 4. 時間があれば保存4候補を測る
+## 4. 保存候補のメモリと取消だけを確認する
 
-時間不足ならこのブロックを別日にする。回数を削って採否を出さない。録画・GPU・CPU診断を止め、冷却してから開始する。
-詳細なbuild/所有権は [RAW診断](RAW_DIAGNOSTIC_BUILD.md)、判定は [RAW4集計器](../tools/raw-diagnostic/README.md)。
+保存の速度判定はGlow / Mist / R7 toneの2並列を採用候補、色融合（#203）を不採用として確定済み。
+充電状態の差を理由に速度20回をやり直さない。ここでは製品既定を変更せず、次の短い機会に残る安全確認だけを行う。
+時間不足ならこのブロックを別日にする。録画・GPU・CPU診断を止め、冷却してから開始する。
+詳細なbuild/所有権は [RAW診断](RAW_DIAGNOSTIC_BUILD.md#保存採用候補の安全確認profile261)。当日APKが新入口を含むsourceか照合する。
 
-### 速度：正順10回＋逆順10回
+### 新しいSAVE_SAFETY: メモリ2回と取消2境界
+
+1. Hubの「保存4候補の比較」からRAW診断画面を開く。上部の `Save safety` 2ボタンを使う。
+   旧RAW4のBは色融合ONのままなので、下のlegacy controlsで代用しない。
+2. `Save safety: Memory A/B (2 attempts)` を1回押し、同じ許可済み12MP DNGを選ぶ。
+   AはGlow1 / Mist1 / tone1、BはGlow2 / Mist2 / tone2。両方とも色融合OFF、Foundation2 / Orton4 / Character2固定。
+   このボタンはlegacyのMemory / Reverse / 比較選択を無視し、AB各1回のみ。warmupや速度反復を追加しない。
+3. reportで `comparison=SAVE_SAFETY`、`mode=MEMORY_PERIODIC_NOT_TIMING`、`order=AB`、A/B成功各1、
+   `complete=true`、`status=SUCCESS`、全JPEG一致、選択原本不変、private入力削除、owner終了を確認する。
+   各runの `fuseR7ColorRows=false` とworker数も照合する。100ms目標のmanaged/nativeは観測最大、PSSは前後だけ。
+   sample数・実間隔・最大gap・観測費用・欠測・sampler終了を記録し、時間改善や瞬間peak保証に変換しない。
+4. 冷却・資源回収の確認後、`Save safety: 2 cancellation checks` を1回押して同じDNGを選ぶ。
+   同じB構成で2試行を自動実行し、native decode完了後とFoundation完了後に各1回取消する。
+   reportの `comparison=SAVE_SAFETY`、`mode=CANCELLATION_BOUNDARIES_NOT_TIMING`、`order=BB`、
+   `complete=true`、`status=SUCCESS`、`expectedCancellationChecks=2` と、両runの色融合OFF、
+   完了結果なし・部分JPEGなし・owner終了・原本不変を確認する。ボタンを2回押す手順ではない。
+5. `cancelBoundary` は `NATIVE_DECODE` / `R7_FOUNDATION`、`cancellationScope` は
+   `AFTER_NATIVE_DECODE_AND_FOUNDATION_NOT_WORKER_IN_FLIGHT`。後者はtone完了後・Glow/Mist到達前であり、
+   tone/Glow/Mistの並列worker実行中やnative内部の任意時点取消を証明しない。新しい境界を今回自動追加しない。
+
+- thermal/電池温度/充電状態は安全確認時も記録する。速度の採否を再計算したり、充電差だけで20回の再測定を要求したりしない。
+- 本人のCancel/離脱によるsession中断は期待する2回の成功に数えない。失敗scratchは既存契約で私有保持され得る。owner終了とscratch全消去を混同しない。
+- 私有JPEGは各成功試行後削除されるため、目視画質・通常製品の共有保存/FGS復旧の代替にならない。
+- このprofileは速度集計器 `compare_raw4.py` の対象外。旧RAW4の保存済みreportを新profileへ読み替えない。
+  実機確認が済んだ後に製品既定へのPRを別途判断し、診断準備だけで製品採用済みとしない。
+
+### 参考: 旧RAW4の速度判定手順（今回の再実行対象外）
 
 1. Hubの「保存4候補の比較」でRAW4を選び、Memory/ReverseをOFF。同じ許可済みDNGをFilesで選択する。
 2. warmup AB＋ABBA×2の計10回を待つ。complete=true、status=SUCCESS、全JPEG一致、選択原本不変、private入力削除、owner終了を確認し、ローカル `forward.json` へreportを保存する。
@@ -147,18 +175,15 @@ Glow/Mistは工程中央値が両順10%以上短縮なら性能採用候補、�
 tone/色が両順10%以上ならR7単独比較へ切り分ける。全体/未分解残差を併記し、安全・品質・製品採用と分ける。
 各armの測定4回からp95・統計的有意差を主張しない。不足/失敗/品質不一致/owner未終了は未判定で止める。
 
-### メモリ2回と取消2回
-
-- メモリは別session、Memory ON/Reverse OFF。同じ12MPでA/B各1回。100ms目標のmanaged/nativeは観測最大、PSSは前後だけ。sample数・実間隔・最大gap・観測費用・欠測・sampler終了を記録し、速度採否には使わない。
-- 「Select DNG for 2 cancellation checks」を1回押して同じDNGを選ぶ。専用入口がRAW4有効の2試行を自動実行し、decode完了後とFoundation完了後に各1回取消する。reportのcomplete=true、expectedCancellationChecks=2と、完了結果なし・部分JPEGなし・owner終了・原本不変を2試行分確認する。ボタンを2回押す手順ではなく、native内部の任意時点取消も保証しない。
-- 本人のCancel/離脱によるsession中断は期待する2回の成功に数えない。失敗scratchは既存契約で私有保持され得る。owner終了とscratch全消去を混同しない。
-- 私有JPEGは各試行後削除されるため、目視画質・通常製品の共有保存/FGS復旧の代替にならない。
+旧速度計画の互換参照として残す。旧メモリはlegacy controlsのRAW4・Memory ONでA/B各1回、
+旧 `Select DNG for 2 cancellation checks` はRAW4 B（色融合ON）の2境界取消を維持する。
+これらは今回の採用候補の安全確認を代替しない。
 
 ## 終了・所要時間の扱い
 
 - 各ブロック終了時に結果件数と回収を確認する。途中で止めた場合は取得数・条件・理由を残し、足りない回を推定しない。変更した診断タグは開始前の値へ戻す。
 - GPUは1024pxの1回で26対、12MPの各1回で4対を処理する。旧版の所要枠を流用せず、新版の初回完了時間と温度から残り枠を見直す。メモリ/PSS/背景と冷却の所要は未実測であり、全項目を同日に終える条件にしない。
 - CPU比較は合成慣らし2＋測定4と実編集30調整、初回/切替/値戻し/復帰確認が加わる。各項目前の温度/充電記録と必要な冷却も見込み、処理時間だけで操作時間を見積もらない。
-- 保存は同条件の1回時間をTとして速度だけ20T、さらにメモリ2回・取消2回・選択/照合/冷却。T=35秒なら速度約12分は計算例であり、新版の予測ではない。
+- 今回の保存はメモリ2回分と取消2境界の到達/回収、選択/照合/冷却だけ。旧速度計画の20回は所要枠へ加えない。過去の別buildの時間から完了時刻を約束しない。
 - 実測なしの総所要時間を約束しない。優先順を守り、熱・時間不足なら保存を別日にする。
 - 私有report/録画の保管先を本人が確認し、公開は匿名集計と採否理由だけにする。実機/写真未実施を準備完了へ付け替えない。
