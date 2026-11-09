@@ -24,6 +24,7 @@ import dev.cinematic.p0.raw.original.OriginalRasterFile
 import dev.cinematic.p0.raw.original.originalCheckpoint
 import dev.cinematic.p0.rawcapture.DngContentVerifier
 import dev.cinematic.p0.rawcapture.DngIoResources
+import dev.cinematic.p0.rawcapture.PreviewOriginalCheckTiming
 import dev.cinematic.p0.rawcapture.SharedOriginalReference
 import java.io.File
 import java.io.IOException
@@ -137,7 +138,7 @@ internal class Original24PreviewSession(
             originalCheckpoint(stop)
             resourceAdmission(Original24MemoryStage.BOUNDED_PREVIEW) // Reduced work checks current OS pressure, not the original-decode allowance.
             timing?.enter(RawPreviewTiming.Stage.VERIFY_BEFORE)
-            verifyPreviewOriginal(stop)
+            verifyPreviewOriginal(stop, draft)
             timing?.enter(RawPreviewTiming.Stage.INPUT)
             val input = if (draft) draftInput ?: reduceDraftInput(requireNotNull(asShot), stop).also { draftInput = it }
                 else asShot ?: loadInput(stop).also { asShot = it }
@@ -185,7 +186,7 @@ internal class Original24PreviewSession(
             timing?.enter(RawPreviewTiming.Stage.BITMAP)
             result = bitmap(image, stop)
             timing?.enter(RawPreviewTiming.Stage.VERIFY_AFTER)
-            verifyPreviewOriginal(stop)
+            verifyPreviewOriginal(stop, draft)
             timing?.enter(RawPreviewTiming.Stage.CLEANUP)
             releaseTransient()
             originalCheckpoint(stop)
@@ -237,11 +238,11 @@ internal class Original24PreviewSession(
         try {
             originalCheckpoint(stop)
             resourceAdmission(Original24MemoryStage.BOUNDED_PREVIEW)
-            verifyPreviewOriginal(stop)
+            verifyPreviewOriginal(stop, draft = maxEdge == 256)
             resourceAdmission(Original24MemoryStage.BOUNDED_PREVIEW)
             try { result = createBitmap(input, stop) }
             catch (_: OutOfMemoryError) { result = null } // bitmap() recycles any partially created Bitmap.
-            verifyPreviewOriginal(stop)
+            verifyPreviewOriginal(stop, draft = maxEdge == 256)
             releaseTransient()
             originalCheckpoint(stop)
             result
@@ -336,9 +337,19 @@ internal class Original24PreviewSession(
             .roundToInt().coerceIn(0, 255)
     }
     private fun io() = resources ?: DngIoResources().also { resources = it }
-    private fun verifyPreviewOriginal(stop: () -> Boolean) {
+    private fun verifyPreviewOriginal(stop: () -> Boolean, draft: Boolean) {
+        if (draft) {
+            // Drafts only use the fingerprint-bound retained input. Exact release still checks
+            // the provider before and after rendering; cancellation/epoch admission stays active.
+            PreviewOriginalCheckTiming.measure(PreviewOriginalCheckTiming.Route.SKIPPED_DRAFT) {
+                originalCheckpoint(stop)
+            }
+            return
+        }
         val check = checkPreviewSource
-        if (check == null) verifyOriginal(stop) else check(io(), stop)
+        if (check == null) PreviewOriginalCheckTiming.measure(PreviewOriginalCheckTiming.Route.SHA_SESSION) {
+            verifyOriginal(stop)
+        } else check(io(), stop)
     }
     private fun verifyOriginal(stop: () -> Boolean) = DngContentVerifier.verify(source.fingerprint,
         { io().input(openOriginal()) }, stop)

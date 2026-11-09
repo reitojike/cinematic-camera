@@ -1,6 +1,8 @@
 package dev.cinematic.p0.photoroll
 
+import android.os.OperationCanceledException
 import dev.cinematic.p0.photoedit.PhotoEditValues
+import dev.cinematic.p0.rawcapture.DngVerificationStopped
 
 /** Request acceptance to UI-state adoption, not physical touch-to-photon latency. No source data. */
 internal class PreviewTiming(
@@ -8,27 +10,47 @@ internal class PreviewTiming(
     private val operation: PreviewOperation = PreviewOperation.OPEN,
     private val clock: () -> Long = System::nanoTime,
     private val sink: (String) -> Unit,
+    initialStage: String = "CHECK_ORIGINAL",
 ) {
     private val started = clock()
     private var boundary = started
-    private var stage = "CHECK_ORIGINAL"
+    private var stage = initialStage
     private val durations = linkedMapOf<String, Long>()
     private var finished = false
 
     @Synchronized fun enter(next: String) {
         if (finished) return
-        val now = clock()
-        record(now)
-        stage = next
+        observe {
+            val now = clock()
+            record(now)
+            stage = next
+        }
     }
 
     @Synchronized fun finish(outcome: String) {
         if (finished) return
-        val now = clock()
-        record(now)
-        finished = true
-        sink("operation=$operation revision=$revision outcome=$outcome last=$stage totalNs=${now - started} " +
-            durations.entries.joinToString(" ") { "${it.key}Ns=${it.value}" })
+        observe {
+            val now = clock()
+            record(now)
+            finished = true
+            sink("operation=$operation revision=$revision outcome=$outcome last=$stage totalNs=${now - started} " +
+                durations.entries.joinToString(" ") { "${it.key}Ns=${it.value}" })
+        }
+    }
+
+    fun finishFailure(cancelled: Boolean, failure: Exception) {
+        finish(if (cancelled || failure is OperationCanceledException || failure is DngVerificationStopped)
+            "CANCELLED" else "FAILED")
+    }
+
+    private inline fun observe(block: () -> Unit) {
+        // Timing must never prevent Bitmap/owner cleanup or change rendering outcomes.
+        try { block() } catch (_: Throwable) { finished = true }
+    }
+
+    companion object {
+        inline fun optional(create: () -> PreviewTiming): PreviewTiming? =
+            try { create() } catch (_: Throwable) { null }
     }
 
     private fun record(now: Long) {

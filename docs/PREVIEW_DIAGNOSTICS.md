@@ -7,13 +7,15 @@
 
 ### 要求側：PreviewTiming
 
-[PreviewTiming](../app/src/main/java/dev/cinematic/p0/photoroll/PreviewTiming.kt) は、Composeの要求受付からUI状態採用までを単調時計で測る。
+[PreviewTiming](../app/src/main/java/dev/cinematic/p0/photoroll/PreviewTiming.kt) は、確定要求のCompose effect開始、または粗表示actorが要求を受け取った時点からUI状態採用までを単調時計で測る。Compose effectの起動前と、粗表示のconflated channel待ちは含まない。
 物理的な指の操作時刻を開始点にしない。操作種別（OPEN / STRENGTH / TEMPERATURE / BRIGHTNESS / MULTIPLE）、revision、結果、区間と総時間を記録する。
 設定復元による表示はOPENで、利用者がスライダーを操作した記録にしない。
 
-- CHECK_ORIGINAL は原本照合と設定復元を含む。診断直列受付の待ちがある場合は ADMISSION_WAIT を分ける。
+- IO_DISPATCH は最初のIOへの切替、DRAFT_GATE_WAIT は同じ画面の粗/正確描画Mutex待ち、ADMISSION_WAIT は既存の任意process直列受付の区間。直列受付は既定オフのまま。
+- CHECK_ORIGINAL は原本確認、LOAD_RECIPE は設定の読込/照合、BIND_DISPATCH / BIND_STATE / IO_RETURN はMainへ渡す待ち・画面の世代/設定束縛・IOへ戻る待ち。BUILD_REQUEST は描画要求の準備。
+- 粗表示はMainでMutexを待ち、最新世代/foregroundを確認してから一度だけIOへ渡す。Mainスレッドを同期的に待たせず、計算はIOのまま。従来の IO → Main → IO の確認往復を省く。
 - MANUAL_TRIAL の TRIAL_RENDER は展開・土台・Look・変換を含む統合区間。内部の内訳は別の RawPreviewTiming で確認する。
-- VERIFY_RESULT は結果照合とMainへの復帰待ちを含む。ADOPT_STATE はUI状態採用であり、ディスプレイのフレーム完了ではない。
+- VERIFY_RESULT は結果の契約確認。UI_DISPATCH は結果がIO側で揃ってからMainに復帰するまで。ADOPT_STATE はUI状態採用で、ディスプレイのフレーム提示ではない。kind=DRAFT の追加ログはactor受信以後の粗表示だけを示し、正確表示やRawPreviewTimingのsession sequenceとは番号を対応付けない。
 - 訪問した区間は重複せず、同じ名前へ戻った場合は加算する。区間合計と総時間を照合し、取消・未採用を成功と混同しない。
 
 ### 処理側：RawPreviewTiming
@@ -92,7 +94,7 @@ Original24PreviewSessionは縮小AS_SHOT入力、調整値に対応するR7 base
 
 この診断でも初回decodeと慣れた操作は区別する。表示Bitmapの保持cacheからの即返却だけを無効にして、毎回計算を通す。縮小入力、調整値依存のR7、Glow、DRAFT判断共有は通常と同じ寿命で保持するので、同じ値の切替だけではFOUNDATIONが再計算されないことがある。並列workerは各renderで作成し、終了待ちまでRawPreviewTimingに含める。
 
-PreviewTimingは確定要求受付からUI状態採用までの比較に使えるが、指の離れた物理時刻やOSの提示完了の測定ではない。DRAFTログだけでドラッグの50ms達成を宣言しない。実機操作・個人写真の使用はその確認の許可がある回に限定する。
+PreviewTimingは確定要求と粗表示actor受信後の待ちを分解する。指が触れた/離れた瞬間、channelへ要求を入れてからの全待ち、OSの提示完了は測定していない。DRAFTログだけでドラッグ中50ms達成を宣言しない。実機操作と個人写真の利用は、その確認の許可がある場合に限る。
 
 ## R7工程を分ける診断計測（Issue #267）
 
