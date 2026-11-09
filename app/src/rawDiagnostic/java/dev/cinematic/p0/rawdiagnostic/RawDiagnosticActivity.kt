@@ -26,6 +26,8 @@ class RawDiagnosticActivity : ComponentActivity() {
     private var cancellationMode = false
     private var saveSafetyMode = false
     private var manualCancellationMode = false
+    private var manualCancellationPlan = ManualCancellationPlan.A_GLOW
+    private var singleMemoryArm = 0
     private val picker = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val uri = result.data?.data
         if (result.resultCode != Activity.RESULT_OK || uri == null) return@registerForActivityResult
@@ -35,6 +37,8 @@ class RawDiagnosticActivity : ComponentActivity() {
         }
         val cancelMode = cancellationMode
         val manualMode = manualCancellationMode
+        val manualPlan = manualCancellationPlan
+        val memoryArm = singleMemoryArm
         val memoryMode = saveSafetyMode || memory.isChecked
         val reverseOrder = !saveSafetyMode && reverse.isChecked
         val selectedComparison = if (saveSafetyMode) DiagnosticComparison.SAVE_SAFETY
@@ -45,7 +49,8 @@ class RawDiagnosticActivity : ComponentActivity() {
             var returned = false
             val report = try {
                 val progress: (String) -> Unit = { message -> runOnUiThread { if (!isDestroyed) status.text = message } }
-                (if (manualMode) active.runManualCancellation(uri, progress)
+                (if (memoryArm != 0) active.runSingleMemory(uri, memoryArm, progress)
+                else if (manualMode) active.runManualCancellation(uri, manualPlan, progress)
                 else if (cancelMode) active.runCancellation(uri, if (selectedComparison == DiagnosticComparison.SAVE_SAFETY) selectedComparison else DiagnosticComparison.RAW4, progress)
                 else active.run(uri, memoryMode, reverseOrder, selectedComparison, progress)).also { returned = true }
             } catch (_: Throwable) {
@@ -59,6 +64,10 @@ class RawDiagnosticActivity : ComponentActivity() {
         cancellationMode = savedInstanceState?.getBoolean("cancellationMode") ?: false
         saveSafetyMode = savedInstanceState?.getBoolean("saveSafetyMode") ?: false
         manualCancellationMode = savedInstanceState?.getBoolean("manualCancellationMode") ?: false
+        manualCancellationPlan = ManualCancellationPlan.entries.firstOrNull {
+            it.name == savedInstanceState?.getString("manualCancellationPlan")
+        } ?: ManualCancellationPlan.A_GLOW
+        singleMemoryArm = savedInstanceState?.getInt("singleMemoryArm")?.takeIf { it == 1 || it == 2 } ?: 0
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 24, 24, 24) }
         layout.addView(TextView(this).apply {
@@ -68,16 +77,27 @@ class RawDiagnosticActivity : ComponentActivity() {
             text = "Save safety: Memory A/B (2 attempts)"
             setOnClickListener { selectInput(cancel = false, safety = true) }
         })
+        for (arm in 1..2) {
+            layout.addView(Button(this).apply {
+                text = "Save safety: Memory ${if (arm == 1) "A" else "B"} (1 attempt)"
+                setOnClickListener { selectInput(cancel = false, safety = true, memoryArm = arm) }
+            })
+        }
+        layout.addView(TextView(this).apply {
+            text = "Single Memory A/B: cool and check the same input/build/settings and starting conditions between sessions. Same 100 ms sampler; no true peak guarantee. Cross-arm JPEG equality is not checked across sessions; keep Memory A/B (2 attempts) for that evidence. Cooling does not reset allocator/GC state."
+        })
         layout.addView(Button(this).apply {
             text = "Save safety: 2 cancellation checks"
             setOnClickListener { selectInput(cancel = true, safety = true) }
         })
-        layout.addView(Button(this).apply {
-            text = "Save safety: Manual Cancel latency (B)"
-            setOnClickListener { selectInput(cancel = false, safety = true, manual = true) }
-        })
+        ManualCancellationPlan.entries.forEach { plan ->
+            layout.addView(Button(this).apply {
+                text = plan.label
+                setOnClickListener { selectInput(cancel = false, safety = true, manual = plan) }
+            })
+        }
         layout.addView(TextView(this).apply {
-            text = "Manual mode runs B once. Wait for Running GLOW or Running MIST, then press Cancel. Record one session per target stage. Timing starts in the button handler, not at physical touch. Missed stages, lifecycle cancellation, success and held owners are not target-stage cancellation success."
+            text = "Manual mode runs the selected arm once. Wait for the selected GLOW or MIST, then press Cancel. Compare A/B separately for each target. Stage display can lag; receipt stage and elapsed time are recorded. Equal elapsed time does not prove equal worker progress. 2s/5s are reference only; worse stop/release or unmatched conditions cannot pass. Timing starts in the button handler, not at physical touch. Missed stages, lifecycle cancellation, success and held owners are not target-stage cancellation success."
         })
         layout.addView(TextView(this).apply {
             text = "Legacy comparisons below, including RAW4 with color fusion ON in B."
@@ -108,12 +128,14 @@ class RawDiagnosticActivity : ComponentActivity() {
         layout.addView(status)
         setContentView(ScrollView(this).apply { addView(layout) })
     }
-    private fun selectInput(cancel: Boolean, safety: Boolean, manual: Boolean = false) {
+    private fun selectInput(cancel: Boolean, safety: Boolean, manual: ManualCancellationPlan? = null, memoryArm: Int = 0) {
         if (busy.get()) status.text = "An attempt is running or closing. Please wait."
         else {
             cancellationMode = cancel
             saveSafetyMode = safety
-            manualCancellationMode = manual
+            singleMemoryArm = memoryArm
+            manualCancellationMode = manual != null
+            if (manual != null) manualCancellationPlan = manual
             picker.launch(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 type = "*/*"; addCategory(Intent.CATEGORY_OPENABLE)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -124,6 +146,8 @@ class RawDiagnosticActivity : ComponentActivity() {
         outState.putBoolean("cancellationMode", cancellationMode)
         outState.putBoolean("saveSafetyMode", saveSafetyMode)
         outState.putBoolean("manualCancellationMode", manualCancellationMode)
+        outState.putString("manualCancellationPlan", manualCancellationPlan.name)
+        outState.putInt("singleMemoryArm", singleMemoryArm)
         super.onSaveInstanceState(outState)
     }
     override fun onStop() {

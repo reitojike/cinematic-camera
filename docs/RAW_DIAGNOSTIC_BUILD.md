@@ -169,9 +169,10 @@ Aは3工程とも1、Bは3工程とも2。**色融合は両方OFF**。Foundation
 
 ### 手動Cancel受付から停止・解放までの観測
 
-`Save safety: Manual Cancel latency (B)` は同じ候補Bを1回だけ走らせる。Memory samplerと速度反復は使わない。
+`Save safety: Manual Cancel A / GLOW`、`B / GLOW`、`A / MIST`、`B / MIST` の4つの専用ボタンで、構成と狙った工程を開始前に固定し各1回だけ走らせる（#273）。Memory samplerと速度反復は使わない。
+AはGlow1/Mist1/tone1、Bは2/2/2。両方で色融合OFF、Foundation2/Orton4/Character2固定。選択はFilesから戻るまで保持し、legacy選択から継承しない。
 開始後は画面下部の現在工程とCancelを見える位置にし、`Running GLOW` または `Running MIST` を見てCancelを押す。
-次回はGlowとMistで各1 sessionを観測する。工程を取り逃した回を成功へ補完せず、際限なくやり直さない。
+GLOW/MISTを分けて同じ入力・APK・設定・端末状態でA/Bを比べる。順序と回数は当日手順に従い、単発1対だけで非劣性を確定しない。工程を取り逃した回を成功へ補完せず、際限なくやり直さない。
 既存2境界の自動取消は維持し、新しい取消checkpoint・行内の取消判定・worker中断方式は追加しない。
 
 開始通知は既存 `OriginalStageTrace` の診断callbackだけ。trace=nullの製品経路は時計/通知を実行しない。
@@ -179,11 +180,14 @@ Aは3工程とも1、Bは3工程とも2。**色融合は両方OFF**。Foundation
 OSの物理タッチ時刻・画面提示時刻・特定workerの画素命令の実行時刻ではない。UIの工程表示は遅れる場合があるのでreportを正とする。
 開始callbackは処理actionの直前、終了callbackはactionの退出後に通知する。工程内のどのblur/行workerにいたかは分解しない。
 
-私有reportは `comparison=SAVE_SAFETY`、`mode=MANUAL_CANCELLATION_LATENCY_NOT_TIMING`、`order=B`。
+私有reportは `comparison=SAVE_SAFETY`、`mode=MANUAL_CANCELLATION_LATENCY_NOT_TIMING`、`order=A` または `B`。
+`intendedCancellationStage=GLOW/MIST` とrunのworker構成を残す。既存schema=2の追加項目で、旧B専用reportには狙い・経過がないため同条件の新証拠として扱わない。
 `cancellationObservation` は次を区別する（単位ns、System.nanoTimeの差分。絶対時刻は保存しない）。
 
 - `requestOrigin`: `USER_BUTTON` / `LIFECYCLE` / `NONE`。最初の要求を固定し、連打・後続の離脱で開始時刻を書き換えない。
 - `stageAtRequest`: `GLOW` / `MIST` / `OUTSIDE_GLOW_MIST`。最後に完了した工程から実行中工程を推測しない。
+- `stageElapsedAtRequestNanos`: 実受付stageの開始callbackから最初のUI受付まで。stage外・未到達・時計差不成立はnull。
+  UI表示時刻ではなく、最初の受付後の工程遷移や連打で書き換えない。stage内の行/blur/worker進捗率ではない。
 - `requestDuringRender` と `renderOutcome`: `NOT_ENTERED` / `SUCCESS` / `CANCELLED` / `FAILED`。
 - `requestToRenderExitNanos`: renderが返却/例外退出した観測まで。render内部のfinally回収も含み、最終画素演算だけの停止時刻ではない。
 - `requestToAttemptScopeExitNanos`: 既存useスコープのclose試行後まで。close失敗でownerが残っていてもこの退出時刻だけは測れるため、単独で静止成功としない。
@@ -193,7 +197,8 @@ OSの物理タッチ時刻・画面提示時刻・特定workerの画素命令の
   reportの最終書込と画面表示は含まない。report返却前の書込失敗なら既存UIのHOLDとなり、成功を表示しない。
 
 未到達・未解放・要求より前に終わった境界は `null` で、0秒や上限内に補完しない。
-`OBSERVED_TARGET_STAGE_CANCEL` はUSER_BUTTON、Glow/Mist区間、renderのCancellationException退出、owner/harness解放が揃った観測。
+`OBSERVED_TARGET_STAGE_CANCEL` はUSER_BUTTON、狙ったGlow/Mist区間への一致、renderのCancellationException退出、owner/harness解放が揃った観測。
+実受付がもう一方の工程なら `MISSED_INTENDED_STAGE`。HOLDはstage不一致より優先し、いずれも成功へ補完しない。
 `NO_REQUEST` / `NON_USER_REQUEST` / `OUTSIDE_GLOW_MIST` / `RENDER_NOT_CANCELLED` / `HOLD_NOT_QUIESCENT` は別結果のまま残す。
 通常完走は `status=FINISHED_WITHOUT_CANCELLATION`、中断は既存の `status=STOPPED`。どちらも `complete=false`、速度成功件数には数えない。
 中断時は最終の選択原本再照合に到達しないため `selectedOriginalUnchanged=true` を捏造しない。既存2境界の原本照合を代替しない。
@@ -201,3 +206,35 @@ OSの物理タッチ時刻・画面提示時刻・特定workerの画素命令の
 
 この計測は待ち時間の観測準備であり、短時間停止・安全なtimeout・実機合格の保証ではない。
 所有者が残るHOLD、OS警告、異常発熱、低メモリでは追加の回を始めず止める。失敗scratchの私有保持は従来どおり。
+
+### A/B取消比較の判定と限界（#273）
+
+採否は候補なしAよりBの取消から停止・資源解放が悪くならないこと。2秒/5秒は参考記録に留める。
+4区間を個別に比較し、ownerClosed/noCompletedResult/outputAbsentAtAttemptScopeExit、privateInputRemoved/resourcesQuiescentも確認する。
+欠測・未解放・非取消・狙いstage不一致は比較対象の成功へ補完しない。資源HOLDでは次を開始しない。
+`cancellationComparisonDecision=REQUIRES_MATCHED_CONDITIONS_NOT_AUTOMATIC_PASS` は自動採否をしない固定表示。
+
+同じRunning表示で押しても、UI配送/描画/操作遅れとA/B速度差により内部進行位置は揃わない。
+実受付stageとstageElapsedAtRequestNanosは差を発見する補助であり、同じ経過nsでも同じworker行位置の証明ではない。
+同じ入力/APK/設定、狙いと実受付stage、温度/充電条件、押下までの経過を併記し、条件差・ばらつきが残れば未判定。
+根拠のない経過許容幅を事後設定せず、Bの悪化が見えたら採用保留とする。少数回の非悪化は統計的な安全保証ではない。
+A自体が参考値を超える場合も今回の診断でcheckpointを増やさず、取消位置の改善を別Issue候補として扱う。
+
+### メモリ単発A/Bと旧ABの証拠を分ける（#273）
+
+`Save safety: Memory A (1 attempt)` / `Save safety: Memory B (1 attempt)` は同じSAVE_SAFETYの片側だけを走らせる。
+各開始前に同じ許可DNGを選び、同じAPK/設定と、冷却後のthermal/充電/開始memoryBeforeを照合する。
+`mode=MEMORY_SINGLE_ARM_NOT_TIMING`、`order=A/B`、warmupなし、測定成功件数は選んだarmが1・他方0。
+`complete=true` はその単発のみの完了であり、A/B全体の非悪化判定ではない。
+100ms managed/native sampler、PSS前後、sampling欠測/null/HOLD、最終選択原本照合は既存と同じ。
+
+別sessionではJPEG fingerprintを持ち越さないため `crossArmJpegComparison=NOT_AVAILABLE_SINGLE_ARM` を明示する。
+各runの `jpegMatchesSessionBaseline=true` は最初の自己基準であり、単発間のJPEG一致の証拠にしない。
+旧 `Memory A/B (2 attempts)` は同じ私有入力copyの連続ABとsession内JPEG一致/原本確認のために残す。
+旧ABの熱/allocator/GC/順序差は解消されず、単発の冷却済み相対観測へ読み替えない。
+同入力/APKのsession間対応は本人側で照合し、写真hash/URI/識別情報をreportへ追加しない。
+
+冷却はGC/allocator状態を初期化しない。強制GC・force-stop・CPU/thermal設定変更は行わず、
+開始値/環境と順序を記録してばらつきを評価する。条件差・欠測が残れば未判定。観測最大を真peakにしない。
+`memoryComparisonDecision=REQUIRES_MATCHED_CONDITIONS_NOT_AUTOMATIC_PASS` は自動合格を出さない固定表示。
+当日の順序/回数・既存ABの品質確認枠と単発メモリの相対比較枠は統合手順へ従う。
