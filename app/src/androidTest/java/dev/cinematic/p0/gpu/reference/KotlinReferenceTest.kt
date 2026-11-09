@@ -5,7 +5,6 @@ import android.os.SystemClock
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.gpu.GpuRenderParams
 import dev.cinematic.p0.gpu.diag.GpuStageTap.Point
-import dev.cinematic.p0.raw.FaceMask
 import dev.cinematic.p0.raw.LinearSrgbImage
 import dev.cinematic.p0.raw.PhotoAdjustments
 import dev.cinematic.p0.raw.StageClearLook
@@ -46,8 +45,12 @@ class KotlinReferenceTest {
 
     @Test fun preparedAnalysisDoesNotApplyWarmthOrAdjustmentEvToMetering() {
         val input = GpuReferenceImages.create(GpuReferenceImages.Kind.MIXED, GpuReferenceImages.FAST_SIZES.first())
-        val neutral = KotlinReference.prepare(input, PhotoAdjustments.NONE)
-        val adjusted = KotlinReference.prepare(input, PhotoAdjustments(60.0, 1.0))
+        val source = KotlinReference.Source(input)
+        val neutral = KotlinReference.prepare(source, PhotoAdjustments.NONE)
+        val adjusted = KotlinReference.prepare(source, PhotoAdjustments(60.0, 1.0))
+        assertSame(neutral.analysis, adjusted.analysis)
+        assertSame(neutral.faces, adjusted.faces)
+        assertTrue(adjusted.faces.copyWeights().all { it.toRawBits() == 0f.toRawBits() })
         assertEquals(neutral.analysis.exposure, adjusted.analysis.exposure)
         assertEquals(neutral.externalBaseEv + 1, adjusted.externalBaseEv, 0.0)
         assertEquals(0, adjusted.analysis.explicitEllipseCount)
@@ -65,6 +68,8 @@ class KotlinReferenceTest {
             val prepared = KotlinReference.prepare(GpuReferenceImages.create(kind, size), PhotoAdjustments.NONE)
             val full = KotlinReference.render(prepared, .5)
             val compact = KotlinReference.render(prepared, .5, retainIntermediates = false)
+            val independent = KotlinReference.render(prepared.input, GpuRenderParams(.5, PhotoAdjustments.NONE))
+            assertBitsEqual(full[Point.SHOULDER], independent[Point.SHOULDER], kind.name)
             assertEquals(setOf(Point.SHOULDER), compact.images.keys)
             assertBitsEqual(full[Point.SHOULDER], compact[Point.SHOULDER], kind.name)
             assertSame(full.skinWeight, compact.skinWeight)
@@ -79,15 +84,14 @@ class KotlinReferenceTest {
 
     private fun compareFixture(kind: GpuReferenceImages.Kind, size: GpuReferenceImages.Size,
         adjustments: List<PhotoAdjustments>, strengths: List<Double>) {
-        val input = GpuReferenceImages.create(kind, size)
+        val source = KotlinReference.Source(GpuReferenceImages.create(kind, size))
         for (adjustment in adjustments) {
             if (Thread.currentThread().isInterrupted) throw InterruptedException("Reference matrix stopped")
-            val prepared = KotlinReference.prepare(input, adjustment)
-            val faces = FaceMask(size.width, size.height, FloatArray(input.pixelCount))
+            val prepared = KotlinReference.prepare(source, adjustment)
             for (strength in strengths) {
                 if (Thread.currentThread().isInterrupted) throw InterruptedException("Reference matrix stopped")
                 val actual = KotlinReference.render(prepared, strength, retainIntermediates = false)
-                val expected = StageClearLook.renderFromBase(prepared.r7Final, faces, strength)
+                val expected = StageClearLook.renderFromBase(prepared.r7Final, prepared.faces, strength)
                 val label = "$kind $size strength=$strength adjustments=$adjustment SHOULDER"
                 assertBitsEqual(expected.image, actual[Point.SHOULDER], label)
                 assertEquals(label, 1.0, expected.faceCutFactor, 0.0)

@@ -8,12 +8,21 @@ import kotlin.math.max
 
 /** 現行 CPU 関数の呼び出しだけで工程を保存する。GL / DNG / I/O は使わない。 */
 internal object KotlinReference {
+    /** Immutable per-image inputs shared across adjustment/strength comparisons. */
+    class Source(val image: LinearSrgbImage) {
+        val analysis: R7PreviewInputs.Prepared = R7PreviewInputs.prepare(
+            R7PreviewInputs.AsShotInput(image, R7PreviewInputs.Source.SYNTHETIC_AS_SHOT), emptyList(),
+        )
+        val faces = FaceMask(image.width, image.height, FloatArray(image.pixelCount))
+    }
+
     data class Prepared(
         val input: LinearSrgbImage,
         val warmth: LinearSrgbImage,
         val analysis: R7PreviewInputs.Prepared,
         val externalBaseEv: Double,
         val r7Stages: List<LinearSrgbImage>,
+        val faces: FaceMask,
     ) {
         val r7Final: LinearSrgbImage get() = r7Stages[5]
         val vibrance: LinearSrgbImage get() = r7Stages[3]
@@ -40,13 +49,13 @@ internal object KotlinReference {
     }
 
     /** AS_SHOT の解析は warmth / 調整EV より前。プレビュー契約 (長辺 <=1024) を保つ。 */
-    fun prepare(input: LinearSrgbImage, adjustments: PhotoAdjustments): Prepared {
-        val analysis = R7PreviewInputs.prepare(
-            R7PreviewInputs.AsShotInput(input, R7PreviewInputs.Source.SYNTHETIC_AS_SHOT), emptyList(),
-        )
-        val warmth = adjustments.applyWarmth(input)
-        val ev = analysis.exposure.externalBaseEv + adjustments.exposureEv
-        return Prepared(input, warmth, analysis, ev, R7Base.stages(warmth, analysis.foundationSkinRoi, ev))
+    fun prepare(input: LinearSrgbImage, adjustments: PhotoAdjustments): Prepared = prepare(Source(input), adjustments)
+
+    fun prepare(source: Source, adjustments: PhotoAdjustments): Prepared {
+        val warmth = adjustments.applyWarmth(source.image)
+        val ev = source.analysis.exposure.externalBaseEv + adjustments.exposureEv
+        return Prepared(source.image, warmth, source.analysis, ev,
+            R7Base.stages(warmth, source.analysis.foundationSkinRoi, ev), source.faces)
     }
 
     fun render(input: LinearSrgbImage, params: GpuRenderParams): Result = render(prepare(input, params.adjustments), params.strength)
@@ -67,12 +76,11 @@ internal object KotlinReference {
         val skin = prepared.skinWeight
         var current = tap(Point.GLOW, StageClearGlow.render(base, strength, skin))
         val auto = StageClearMist.autoStrength(current)
-        val mist = StageClearMist.render(current, skin, strength)
+        val mist = StageClearMist.render(current, skin, strength, auto)
         tap(Point.MIST, mist.image)
         current = tap(Point.ORTON, StageClearOrton.render(mist, skin))
         current = tap(Point.CHARACTER, StageClearCharacter.render(current, strength))
-        val faces = FaceMask(base.width, base.height, FloatArray(base.pixelCount))
-        current = tap(Point.SKIN_CAP, StageClearProtections.skinChromaCap(current, faces))
+        current = tap(Point.SKIN_CAP, StageClearProtections.skinChromaCap(current, prepared.faces))
         tap(Point.SHOULDER, StageClearProtections.shoulder(current))
         return Result(prepared, images, skin, auto, mist.lightAddingStrength)
     }
