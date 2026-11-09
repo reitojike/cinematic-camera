@@ -1,5 +1,6 @@
 package dev.cinematic.p0.gpu
 
+import android.opengl.EGL14
 import android.opengl.GLES32
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -11,13 +12,16 @@ import org.junit.runner.RunWith
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.CancellationException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(AndroidJUnit4::class)
 class GpuFoundationAndroidTest {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private fun floats(size: Int) = ByteBuffer.allocateDirect(size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
     private fun <T> gpu(block: (EglContexts) -> T): T = GlThread().use { thread ->
-        thread.call { EglContexts(thread).use { egl ->
+        thread.call { EglContexts(thread, instrumentation.context.assets).use { egl ->
             val capabilities = GlCapabilities.inspect(egl)
             Log.i("GpuFoundation", "capabilities=$capabilities")
             capabilities.requireSupported()
@@ -69,6 +73,54 @@ class GpuFoundationAndroidTest {
         assertEquals(0L, small.allocatedBytes)
     }
 
+    @Test fun multipleOutputsUseOnePassAndPreserveTextureOwnership() = gpu { egl ->
+        val ledger = GpuMemoryLedger()
+        val shaders = egl.shaders(); val graph = egl.passes()
+        assertSame(shaders, egl.shaders()); assertSame(graph, egl.passes())
+        shaders.fragmentSource("two-outputs", """#version 320 es
+precision highp float;
+layout(location=0) out vec4 o_first;
+layout(location=1) out vec4 o_second;
+void main() { o_first=vec4(-0.5, 1.25, 0.25, 1.0); o_second=vec4(2.0, 0.5, -0.25, 1.0); }
+""").use { program ->
+            GpuTexture.create(egl, ledger, 8, 4, GpuTexture.Format.RGBA32F).use { first ->
+                GpuTexture.create(egl, ledger, 8, 4, GpuTexture.Format.RGBA32F).use { second ->
+                    assertSame(egl, first.context); assertSame(ledger, first.memoryLedger)
+                    val pass = FragmentPass(program, emptyList(), first, additionalOutputs = listOf(second))
+                    graph.run(pass)
+                    assertEquals(-0.5f, GpuStageTap.readRgb(egl, first)[0], 0f)
+                    assertEquals(2f, GpuStageTap.readRgb(egl, second)[0], 0f)
+                    assertEquals(2, ledger.textureCount)
+                    assertThrows(IllegalArgumentException::class.java) { graph.run(pass.copy(additionalOutputs = listOf(first))) }
+                    assertThrows(IllegalArgumentException::class.java) { graph.run(pass.copy(inputs = listOf(TextureInput("s_input", second, 0)))) }
+                    GpuTexture.create(egl, ledger, 2, 2, GpuTexture.Format.RGBA32F).use { wrongSize ->
+                        assertThrows(IllegalArgumentException::class.java) { graph.run(pass.copy(additionalOutputs = listOf(wrongSize))) }
+                    }
+                }
+            }
+        }
+        assertEquals(0L, ledger.allocatedBytes)
+    }
+
+    @Test fun contextResourcesCloseTogetherAndFailedTextureCloseKeepsAccounting() = gpu { egl ->
+        val ledger = GpuMemoryLedger()
+        val texture = GpuTexture.create(egl, ledger, 2, 2, GpuTexture.Format.R32F)
+        val program = egl.shaders().fragment("contract/copy.frag")
+        val graph = egl.passes()
+        val display = EGL14.eglGetCurrentDisplay()
+        assertTrue(EGL14.eglMakeCurrent(display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT))
+        assertThrows(IllegalStateException::class.java) { texture.close() }
+        assertEquals(16L, ledger.allocatedBytes)
+        egl.makeOffscreenCurrent()
+        texture.close()
+        assertEquals(0L, ledger.allocatedBytes)
+        egl.close(); egl.close()
+        assertThrows(IllegalStateException::class.java) { program.id }
+        assertThrows(IllegalStateException::class.java) { egl.shaders() }
+        assertThrows(IllegalStateException::class.java) { egl.passes() }
+        graph.close() // Context destruction has already released GL resources.
+    }
+
     @Test fun uiThreadCannotCallAndWorkerExceptionsReachCaller() {
         GlThread().use { thread ->
             instrumentation.runOnMainSync { assertThrows(IllegalStateException::class.java) { thread.call { 1 } } }
@@ -78,7 +130,33 @@ class GpuFoundationAndroidTest {
         }
     }
 
+    @Test fun asynchronousFailuresReportOnceAndAcceptedPostsDrainOnClose() {
+        val thread = GlThread()
+        val ran = AtomicInteger()
+        try {
+            thread.post { throw IllegalArgumentException("async failure") }
+            val failure = assertThrows(IllegalStateException::class.java) { thread.call { ran.incrementAndGet() } }
+            assertEquals("async failure", failure.cause?.message)
+            assertEquals(0, ran.get())
+            assertEquals(1, thread.call { ran.incrementAndGet() })
+            val started = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            thread.post { started.countDown(); check(release.await(5, TimeUnit.SECONDS)); ran.incrementAndGet() }
+            assertTrue(started.await(5, TimeUnit.SECONDS))
+            thread.post { ran.incrementAndGet() }
+            release.countDown()
+            thread.close()
+            assertEquals(3, ran.get())
+            assertThrows(IllegalStateException::class.java) { thread.requireCurrent() }
+        } finally { thread.close() }
+    }
+
     @Test fun badShaderIncludesDriverLogAndFenceChecksCancellation() = gpu { egl ->
+        val files = mapOf("main" to "#version 320 es\n#include \"child\"", "child" to "float example = SC_GLOW_THRESHOLD;")
+        val expanded = ShaderSource({ files.getValue(it) }).expand("main")
+        assertTrue(expanded.startsWith("#version 320 es\n#define "))
+        assertTrue(expanded.contains("float example = SC_GLOW_THRESHOLD;"))
+        assertThrows(IllegalStateException::class.java) { ShaderSource({ "#include \"cycle\"" }).expand("cycle") }
         ShaderLibrary(egl, instrumentation.context.assets).use { shaders ->
             val failure = assertThrows(IllegalStateException::class.java) {
                 shaders.fragmentSource("deliberately-invalid", "#version 320 es\nthis is invalid GLSL")

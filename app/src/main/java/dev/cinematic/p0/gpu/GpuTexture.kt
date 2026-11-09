@@ -20,6 +20,9 @@ internal class GpuTexture private constructor(
         R32I(GLES32.GL_R32I, GLES32.GL_RED_INTEGER, GLES32.GL_INT, 4),
         R32UI(GLES32.GL_R32UI, GLES32.GL_RED_INTEGER, GLES32.GL_UNSIGNED_INT, 4),
     }
+    /** Read-only owners used by fixed-signature analysis helpers; no global GL state. */
+    val context: EglContexts get() { requireOpen(); return egl }
+    val memoryLedger: GpuMemoryLedger get() { requireOpen(); return ledger }
     val byteSize: Long = width.toLong() * height * format.bytesPerPixel
     private var texture = 0
     private var framebuffer = 0
