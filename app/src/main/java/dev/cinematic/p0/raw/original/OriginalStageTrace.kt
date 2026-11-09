@@ -11,6 +11,7 @@ internal enum class OriginalStage {
 }
 
 internal fun interface OriginalStageTrace {
+    fun started(stage: OriginalStage) = Unit
     fun finished(stage: OriginalStage, elapsedNanos: Long, completed: Boolean)
 }
 
@@ -20,7 +21,10 @@ internal inline fun <T> originalStage(trace: OriginalStageTrace?, stage: Origina
     val start = System.nanoTime()
     var completed = false
     var primary: Throwable? = null
-    try { return action().also { completed = true } }
+    try {
+        trace.started(stage)
+        return action().also { completed = true }
+    }
     catch (failure: Throwable) { primary = failure; throw failure }
     finally {
         try { trace.finished(stage, System.nanoTime() - start, completed) }

@@ -37,19 +37,25 @@ internal enum class DiagnosticComparison(val label: String) {
     COLOR_FUSION_ONLY("Follow-up only: R7 separate vs fused"),
     FOUNDATION("Legacy: R7 foundation 1 vs 2"),
     GLOW_TWO("Legacy: Glow 1 vs 2 (Foundation 1)"),
-    GLOW_FOUR("Legacy: Glow 1 vs 4 (Foundation 1)");
+    GLOW_FOUR("Legacy: Glow 1 vs 4 (Foundation 1)"),
+    SAVE_SAFETY("Save safety: Glow/Mist/tone 1 vs 2; color OFF");
 
     fun profile(arm: Int): DiagnosticProfile {
         require(arm in 1..2)
         val on = arm == 2
         return when (this) {
             RAW4 -> if (on) DiagnosticProfile(glow = 2, tone = 2, mist = 2, fuseColor = true) else DiagnosticProfile()
+            SAVE_SAFETY -> if (on) DiagnosticProfile(glow = 2, tone = 2, mist = 2) else DiagnosticProfile()
             TONE_ONLY -> DiagnosticProfile(tone = if (on) 2 else 1)
             COLOR_FUSION_ONLY -> DiagnosticProfile(fuseColor = on)
             FOUNDATION -> DiagnosticProfile(foundation = if (on) 2 else 1)
             GLOW_TWO -> DiagnosticProfile(foundation = 1, glow = if (on) 2 else 1)
             GLOW_FOUR -> DiagnosticProfile(foundation = 1, glow = if (on) 4 else 1)
         }
+    }
+    companion object {
+        // The safety profile has dedicated two-attempt controls, never a timing session.
+        val timingComparisons = entries.filter { it != SAVE_SAFETY }
     }
     fun foundationWorkers(arm: Int) = profile(arm).foundation
     fun glowWorkers(arm: Int) = profile(arm).glow

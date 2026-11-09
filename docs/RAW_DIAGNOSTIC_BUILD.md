@@ -123,7 +123,7 @@ samplerの終了未確認でも既存gateを保持し次の試行を開始しな
 検証計画: profile/順序/中央値/閾値/欠測/取消/ownerのJVM試験、4候補同時onのFloat/JPEG一致と
 診断UI/lifecycle合成試験、通常と診断lint/unit/build、公開前差分検査と独立レビュー。
 実機性能・実写真品質・写真利用/インストールはこの実装/合成検証に含めない。
-### 少回数のメモリと取消確認
+### 旧RAW4の少回数メモリと取消確認
 
 時間は正順10回＋逆順10回（合計20回）。メモリは別の1 sessionでA/B各1回、合計2回に限定する。
 取消は専用ボタンからRAW4 onを2回だけ実行し、native decode完了後とR7 Foundation完了後に協調取消する。
@@ -142,3 +142,62 @@ samplerの終了未確認でも既存gateを保持し次の試行を開始しな
 RAW4の合成検証結果と枠解放は[Issue #78](https://github.com/reitojike/cinematic-camera/issues/78#issuecomment-6709899746)を参照。
 通常debug lint/unit/両ABI buildも成功（907 tests、failure/error0、既存skip4）。
 当日の12MP手順・所要目安・#208録画準備は[RAW4_DEVICE_CHECKLIST](RAW4_DEVICE_CHECKLIST.md)を参照。
+
+## 保存採用候補の安全確認profile（#261）
+
+速度採否で残ったGlow / Mist / R7 toneの2並列だけを `SAVE_SAFETY` として分離する。
+Aは3工程とも1、Bは3工程とも2。**色融合は両方OFF**。Foundation2 / Orton4 / Character2は固定。
+通常保存caller `AndroidManualOriginalTrialSaves.Backend.render` がFoundation2を明示する条件に合わせる。
+下位APIの既定1や旧RAW4 Bの色融合ONを変更しない。製品既定・画素式・原本・共有保存は変更しない。
+
+画面上部の専用ボタンを使い、下のlegacy controlsと分離する。
+
+- `Save safety: Memory A/B (2 attempts)`: Memory ON / Reverse OFF相当を固定し、warmupなしでAB各1回。
+  `comparison=SAVE_SAFETY`、`mode=MEMORY_PERIODIC_NOT_TIMING`、`order=AB`。
+- `Save safety: 2 cancellation checks`: 同じB構成でnative decode後 / Foundation後の各1回、計2試行。
+  `comparison=SAVE_SAFETY`、`mode=CANCELLATION_BOUNDARIES_NOT_TIMING`、`order=BB`。
+- 両入口はlegacyの比較選択・Memory・Reverseを使わない。安全profileの速度modeはrunnerでも拒否する。
+  `schema=2`、既存のworker数・色融合・品質/原本/回収・観測項目を維持し、旧RAW4と比較名で区別する。
+- 取消reportの固定 `cancellationScope=AFTER_NATIVE_DECODE_AND_FOUNDATION_NOT_WORKER_IN_FLIGHT` と
+  各runの `cancelBoundary` で範囲を明示する。Foundation後はtone完了後・Glow/Mist開始前なので、
+  3工程の並列worker中の取消やnative内部の任意時点取消の証拠ではない。既存の境界を増やさない。
+- 旧RAW4の速度20回・profile・schema・集計器は互換のまま残す。新profileを旧集計器へ渡したり、
+  過去reportを新候補の証拠として読み替えたりしない。充電状態は記録するが、その差を理由に速度20回を再実行しない。
+
+当日の手順は [保存安全確認](RAW4_DEVICE_CHECKLIST.md#4-保存候補のメモリと取消だけを確認する) を参照。
+この準備と合成試験は実機メモリ・取消・目視品質や製品Save/FGS復旧の合格ではない。
+
+### 手動Cancel受付から停止・解放までの観測
+
+`Save safety: Manual Cancel latency (B)` は同じ候補Bを1回だけ走らせる。Memory samplerと速度反復は使わない。
+開始後は画面下部の現在工程とCancelを見える位置にし、`Running GLOW` または `Running MIST` を見てCancelを押す。
+次回はGlowとMistで各1 sessionを観測する。工程を取り逃した回を成功へ補完せず、際限なくやり直さない。
+既存2境界の自動取消は維持し、新しい取消checkpoint・行内の取消判定・worker中断方式は追加しない。
+
+開始通知は既存 `OriginalStageTrace` の診断callbackだけ。trace=nullの製品経路は時計/通知を実行しない。
+`stageAtRequest` はUIイベントハンドラーで最初の取消要求を受理した時点の**観測上の工程区間**であり、
+OSの物理タッチ時刻・画面提示時刻・特定workerの画素命令の実行時刻ではない。UIの工程表示は遅れる場合があるのでreportを正とする。
+開始callbackは処理actionの直前、終了callbackはactionの退出後に通知する。工程内のどのblur/行workerにいたかは分解しない。
+
+私有reportは `comparison=SAVE_SAFETY`、`mode=MANUAL_CANCELLATION_LATENCY_NOT_TIMING`、`order=B`。
+`cancellationObservation` は次を区別する（単位ns、System.nanoTimeの差分。絶対時刻は保存しない）。
+
+- `requestOrigin`: `USER_BUTTON` / `LIFECYCLE` / `NONE`。最初の要求を固定し、連打・後続の離脱で開始時刻を書き換えない。
+- `stageAtRequest`: `GLOW` / `MIST` / `OUTSIDE_GLOW_MIST`。最後に完了した工程から実行中工程を推測しない。
+- `requestDuringRender` と `renderOutcome`: `NOT_ENTERED` / `SUCCESS` / `CANCELLED` / `FAILED`。
+- `requestToRenderExitNanos`: renderが返却/例外退出した観測まで。render内部のfinally回収も含み、最終画素演算だけの停止時刻ではない。
+- `requestToAttemptScopeExitNanos`: 既存useスコープのclose試行後まで。close失敗でownerが残っていてもこの退出時刻だけは測れるため、単独で静止成功としない。
+- `requestToOwnersReleasedNanos`: attemptの `hasUnreleasedResources=false` を確認できた場合だけ値を残す。
+  既存worker ownerはexecutorのawaitTermination成功まで保持し、失敗するとpending ownerを残す。worker終了不明を成功へ変えない。
+- `requestToHarnessQuiescentNanos`: sampler/attempt/harness streamの解放と私有入力copy削除を確認できた場合だけ値を残す。
+  reportの最終書込と画面表示は含まない。report返却前の書込失敗なら既存UIのHOLDとなり、成功を表示しない。
+
+未到達・未解放・要求より前に終わった境界は `null` で、0秒や上限内に補完しない。
+`OBSERVED_TARGET_STAGE_CANCEL` はUSER_BUTTON、Glow/Mist区間、renderのCancellationException退出、owner/harness解放が揃った観測。
+`NO_REQUEST` / `NON_USER_REQUEST` / `OUTSIDE_GLOW_MIST` / `RENDER_NOT_CANCELLED` / `HOLD_NOT_QUIESCENT` は別結果のまま残す。
+通常完走は `status=FINISHED_WITHOUT_CANCELLATION`、中断は既存の `status=STOPPED`。どちらも `complete=false`、速度成功件数には数えない。
+中断時は最終の選択原本再照合に到達しないため `selectedOriginalUnchanged=true` を捏造しない。既存2境界の原本照合を代替しない。
+各runの `ownerClosed` / `noCompletedResult` / `outputAbsentAtAttemptScopeExit` と全体のprivate入力削除・resourcesQuiescentも確認する。
+
+この計測は待ち時間の観測準備であり、短時間停止・安全なtimeout・実機合格の保証ではない。
+所有者が残るHOLD、OS警告、異常発熱、低メモリでは追加の回を始めず止める。失敗scratchの私有保持は従来どおり。

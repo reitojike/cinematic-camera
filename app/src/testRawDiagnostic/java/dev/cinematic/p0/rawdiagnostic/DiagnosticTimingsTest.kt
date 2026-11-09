@@ -29,6 +29,20 @@ class DiagnosticTimingsTest {
         assertThrows(IllegalArgumentException::class.java) { DiagnosticComparison.RAW4.profile(0) }
     }
 
+    @Test fun saveSafetyKeepsColorOffAndLegacyTimingProfilesUnchanged() {
+        assertEquals(DiagnosticProfile(), DiagnosticComparison.SAVE_SAFETY.profile(1))
+        assertEquals(DiagnosticProfile(glow = 2, tone = 2, mist = 2), DiagnosticComparison.SAVE_SAFETY.profile(2))
+        assertTrue(DiagnosticComparison.RAW4.profile(2).fuseColor)
+        assertEquals(listOf(DiagnosticComparison.RAW4, DiagnosticComparison.TONE_ONLY,
+            DiagnosticComparison.COLOR_FUSION_ONLY, DiagnosticComparison.FOUNDATION,
+            DiagnosticComparison.GLOW_TWO, DiagnosticComparison.GLOW_FOUR), DiagnosticComparison.timingComparisons)
+        assertEquals(listOf(1, 2), DiagnosticPlan.workers(false, memory = true))
+        assertEquals("AB", DiagnosticPlan.order(false, memory = true))
+        assertFalse(DiagnosticPlan.excluded(0, memory = true))
+        assertFalse(DiagnosticPlan.excluded(1, memory = true))
+        assertThrows(IllegalArgumentException::class.java) { DiagnosticComparison.SAVE_SAFETY.profile(3) }
+    }
+
     @Test fun excludesChildrenAndCpuButRetainsRepeatedTopLevelSpans() {
         val timing = DiagnosticTimings()
         timing.finished(OriginalStage.ORTON, 100, true)

@@ -12,6 +12,8 @@ import android.os.PowerManager
 import dev.cinematic.p0.jpegrender.original.Original24Attempt
 import dev.cinematic.p0.jpegrender.original.Original24Request
 import dev.cinematic.p0.rawcapture.*
+import dev.cinematic.p0.raw.original.OriginalStage
+import dev.cinematic.p0.raw.original.OriginalStageTrace
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
@@ -24,13 +26,19 @@ import org.json.JSONObject
 /** Private foreground trial. No save coordinator, journal, MediaStore writes or persisted URI grant. */
 internal class RawDiagnosticRunner(private val context: Context) {
     private val stopped = AtomicBoolean()
+    private val cancellation = DiagnosticCancellationLatency()
     private val harnessIo = DiagnosticIoOwner()
     @Volatile private var attemptQuiescent = true
     @Volatile private var cleanupHeld = false
     @Volatile private var samplerQuiescent = true
     val resourcesQuiescent get() = attemptQuiescent && samplerQuiescent && !harnessIo.hasOpenResources && !cleanupHeld
     @Volatile private var activeAttempt: Original24Attempt? = null
-    fun cancel() { stopped.set(true); activeAttempt?.requestStop() }
+    fun cancel() = requestCancellation(DiagnosticCancellationLatency.Origin.LIFECYCLE)
+    fun cancelFromUser() = requestCancellation(DiagnosticCancellationLatency.Origin.USER_BUTTON)
+    private fun requestCancellation(origin: DiagnosticCancellationLatency.Origin) {
+        cancellation.request(origin) // Receipt is before CancellationSignal dispatch or any wait.
+        stopped.set(true); activeAttempt?.requestStop()
+    }
     private fun checkpoint() { if (stopped.get()) throw java.util.concurrent.CancellationException() }
     private fun environment(): JSONObject {
         val battery = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
@@ -69,27 +77,38 @@ internal class RawDiagnosticRunner(private val context: Context) {
             (context.getSystemService(Context.POWER_SERVICE) as PowerManager).currentThermalStatus < 2)
     }
 
-    fun run(uri: Uri, observeMemory: Boolean, reverse: Boolean, comparison: DiagnosticComparison, update: (String) -> Unit): String =
-        runSession(uri, observeMemory, reverse, comparison, false, update)
+    fun run(uri: Uri, observeMemory: Boolean, reverse: Boolean, comparison: DiagnosticComparison, update: (String) -> Unit): String {
+        require(comparison != DiagnosticComparison.SAVE_SAFETY || observeMemory)
+        return runSession(uri, observeMemory, reverse, comparison, false, update)
+    }
 
-    fun runCancellation(uri: Uri, update: (String) -> Unit): String =
-        runSession(uri, false, false, DiagnosticComparison.RAW4, true, update)
+    fun runCancellation(uri: Uri, comparison: DiagnosticComparison = DiagnosticComparison.RAW4,
+        update: (String) -> Unit): String {
+        require(comparison == DiagnosticComparison.RAW4 || comparison == DiagnosticComparison.SAVE_SAFETY)
+        return runSession(uri, false, false, comparison, true, update)
+    }
+
+    fun runManualCancellation(uri: Uri, update: (String) -> Unit): String =
+        runSession(uri, false, false, DiagnosticComparison.SAVE_SAFETY, false, update, manualProbe = true)
 
     private fun runSession(uri: Uri, observeMemory: Boolean, reverse: Boolean, comparison: DiagnosticComparison,
-        cancelProbe: Boolean, update: (String) -> Unit): String {
+        cancelProbe: Boolean, update: (String) -> Unit, manualProbe: Boolean = false): String {
         // UUID paths stay private and are never serialized into the report.
         val root = File(context.noBackupFilesDir, "raw-diagnostic-${UUID.randomUUID()}")
         check(root.mkdir())
         val reportFile = File(root, "report.json")
         val runs = JSONArray()
         val report = JSONObject().put("schema", 2).put("scope", "private-original24-no-publication")
-            .put("mode", if (cancelProbe) "CANCELLATION_BOUNDARIES_NOT_TIMING" else if (observeMemory) "MEMORY_PERIODIC_NOT_TIMING" else "TIMING")
+            .put("mode", if (manualProbe) "MANUAL_CANCELLATION_LATENCY_NOT_TIMING" else if (cancelProbe) "CANCELLATION_BOUNDARIES_NOT_TIMING" else if (observeMemory) "MEMORY_PERIODIC_NOT_TIMING" else "TIMING")
             .put("comparison", comparison.name)
             .put("strength", .5).put("warmth", 0).put("exposureAdjustmentEv", 0)
             .put("ortonWorkers", 4).put("characterWorkers", 2)
-            .put("order", if (cancelProbe) "BB" else DiagnosticPlan.order(reverse, observeMemory))
-            .put("performanceThresholdPercent", 10).put("performanceDecision", if (cancelProbe || observeMemory) "NOT_TIMING" else "REQUIRES_BOTH_ORDERS")
+            .put("order", if (manualProbe) "B" else if (cancelProbe) "BB" else DiagnosticPlan.order(reverse, observeMemory))
+            .put("performanceThresholdPercent", 10).put("performanceDecision", if (manualProbe || cancelProbe || observeMemory) "NOT_TIMING" else "REQUIRES_BOTH_ORDERS")
             .put("runs", runs).put("complete", false)
+        if (manualProbe) report.put("cancellationTimingScope",
+            "UI_HANDLER_RECEIPT_NOT_PHYSICAL_TOUCH; RENDER_EXIT_INCLUDES_INTERNAL_CLEANUP; HARNESS_QUIESCENT_EXCLUDES_FINAL_REPORT_WRITE_AND_UI")
+        if (cancelProbe) report.put("cancellationScope", "AFTER_NATIVE_DECODE_AND_FOUNDATION_NOT_WORKER_IN_FLIGHT")
         if (observeMemory) report.put("sampling", "managed/native 100ms target; PSS before/after only; observed maxima, not peak guarantees; not comparable timing")
         fun persist() {
             harnessIo.output(reportFile.outputStream()).use { it.write(report.toString(2).toByteArray(Charsets.UTF_8)) }
@@ -116,7 +135,7 @@ internal class RawDiagnosticRunner(private val context: Context) {
             val reference = SharedOriginalReference("content://diagnostic.local/input", fingerprint, OriginalGrant.USER_SELECTED)
             var baseline: OriginalFingerprint? = null
             val successes = intArrayOf(0, 0)
-            val plannedArms = if (cancelProbe) listOf(2, 2) else DiagnosticPlan.workers(reverse, observeMemory)
+            val plannedArms = if (manualProbe) listOf(2) else if (cancelProbe) listOf(2, 2) else DiagnosticPlan.workers(reverse, observeMemory)
             for ((index, arm) in plannedArms.withIndex()) {
                 val profile = comparison.profile(arm)
                 val workers = profile.foundation
@@ -124,7 +143,7 @@ internal class RawDiagnosticRunner(private val context: Context) {
                 requireResources()
                 val item = JSONObject().put("sequence", index).put("arm", arm).put("foundationWorkers", workers).put("glowWorkers", glowWorkers)
                     .put("toneWorkers", profile.tone).put("mistWorkers", profile.mist).put("fuseR7ColorRows", profile.fuseColor)
-                    .put("excludedWarmup", (!cancelProbe && DiagnosticPlan.excluded(index, observeMemory))).put("status", "STARTED")
+                    .put("excludedWarmup", (!manualProbe && !cancelProbe && DiagnosticPlan.excluded(index, observeMemory))).put("status", "STARTED")
                     .put("environmentBefore", environment())
                 runs.put(item); persist(); update("Attempt ${index + 1}/${plannedArms.size}; arm $arm")
                 val attemptRoot = File(root, "attempt-$index"); check(attemptRoot.mkdir())
@@ -145,7 +164,18 @@ internal class RawDiagnosticRunner(private val context: Context) {
                 val probeStop = AtomicBoolean()
                 val cancelBoundary = if (index == 0) dev.cinematic.p0.raw.original.OriginalStage.NATIVE_DECODE
                     else dev.cinematic.p0.raw.original.OriginalStage.R7_FOUNDATION
-                val trace = if (cancelProbe) dev.cinematic.p0.raw.original.OriginalStageTrace { stage, _, completed ->
+                val trace = if (manualProbe) object : OriginalStageTrace {
+                    override fun started(stage: OriginalStage) {
+                        cancellation.stageStarted(stage)
+                        if (stage == OriginalStage.GLOW || stage == OriginalStage.MIST)
+                            update("Running ${stage.name}; press Cancel to observe receipt-to-stop latency.")
+                    }
+                    override fun finished(stage: OriginalStage, elapsedNanos: Long, completed: Boolean) {
+                        cancellation.stageFinished(stage)
+                        if (stage == OriginalStage.GLOW || stage == OriginalStage.MIST)
+                            update("${stage.name} exited; wait for the target stage or the report.")
+                    }
+                } else if (cancelProbe) dev.cinematic.p0.raw.original.OriginalStageTrace { stage, _, completed ->
                     if (stage == cancelBoundary && completed) {
                         probeStop.set(true)
                         activeAttempt?.requestStop()
@@ -168,7 +198,16 @@ internal class RawDiagnosticRunner(private val context: Context) {
                             samplerQuiescent = false
                             check(sampler.start())
                         }
-                        it.render { stopped.get() || probeStop.get() }
+                        if (manualProbe) cancellation.renderStarted()
+                        var outcome = DiagnosticCancellationLatency.RenderOutcome.FAILED
+                        try {
+                            it.render { stopped.get() || probeStop.get() }.also {
+                                outcome = DiagnosticCancellationLatency.RenderOutcome.SUCCESS
+                            }
+                        } catch (cancelled: java.util.concurrent.CancellationException) {
+                            outcome = DiagnosticCancellationLatency.RenderOutcome.CANCELLED
+                            throw cancelled
+                        } finally { if (manualProbe) cancellation.renderExited(outcome) }
                     }
                     check(!cancelProbe) // A cancellation probe must not return a completed result.
                     elapsed = System.nanoTime() - start
@@ -185,6 +224,12 @@ internal class RawDiagnosticRunner(private val context: Context) {
                     // No class/message/stack: providers and codecs can embed private data.
                     if (!probeCancelled) throw failure
                 } finally {
+                    if (manualProbe) {
+                        cancellation.attemptScopeExited(!attempt.hasUnreleasedResources)
+                        item.put("ownerClosed", !attempt.hasUnreleasedResources)
+                            .put("noCompletedResult", cancellation.observation().renderOutcome != DiagnosticCancellationLatency.RenderOutcome.SUCCESS)
+                            .put("outputAbsentAtAttemptScopeExit", !output.exists())
+                    }
                     if (elapsed == 0L) elapsed = System.nanoTime() - start
                     if (sampler != null) {
                         val observed = sampler.stopAndJoin()
@@ -195,7 +240,7 @@ internal class RawDiagnosticRunner(private val context: Context) {
                     }
                     attemptQuiescent = !attempt.hasUnreleasedResources
                     if (attemptQuiescent) activeAttempt = null
-                    if (!observeMemory && !cancelProbe) {
+                    if (!manualProbe && !observeMemory && !cancelProbe) {
                         val spans = JSONArray()
                         timing.spans.forEach { span -> spans.put(JSONObject().put("stage", span.stage.name)
                             .put("elapsedNanos", span.nanos).put("completed", span.completed)) }
@@ -221,9 +266,10 @@ internal class RawDiagnosticRunner(private val context: Context) {
             }
             // Verify provider bytes again outside timing; no writes to original, ever.
             DngContentVerifier.verify(fingerprint, { harnessIo.input(requireNotNull(context.contentResolver.openInputStream(uri))) }, stopped::get)
-            report.put("selectedOriginalUnchanged", true).put("complete", if (cancelProbe) successes[1] == 2 else successes.all { it == (if (observeMemory) 1 else DiagnosticPlan.MEASURED_PER_ARM) })
-                .put("measuredSuccessesA", if (cancelProbe) 0 else successes[0]).put("measuredSuccessesB", if (cancelProbe) 0 else successes[1])
-                .put("expectedCancellationChecks", if (cancelProbe) successes[1] else 0).put("status", "SUCCESS")
+            report.put("selectedOriginalUnchanged", true).put("complete", if (manualProbe) false else if (cancelProbe) successes[1] == 2 else successes.all { it == (if (observeMemory) 1 else DiagnosticPlan.MEASURED_PER_ARM) })
+                .put("measuredSuccessesA", if (manualProbe || cancelProbe) 0 else successes[0]).put("measuredSuccessesB", if (manualProbe || cancelProbe) 0 else successes[1])
+                .put("expectedCancellationChecks", if (cancelProbe) successes[1] else 0)
+                .put("status", if (manualProbe) "FINISHED_WITHOUT_CANCELLATION" else "SUCCESS")
         } catch (_: Exception) {
             report.put("status", if (stopped.get()) "STOPPED" else "FAILED")
         } finally {
@@ -236,6 +282,17 @@ internal class RawDiagnosticRunner(private val context: Context) {
             if (cleanupHeld) report.put("complete", false).put("status", "HOLD_PRIVATE_CLEANUP")
             report.put("resourcesQuiescent", resourcesQuiescent)
             if (!cleanup.quiescent) report.put("status", "HOLD_OWNER_NOT_CLOSED")
+            if (manualProbe) {
+                cancellation.harnessFinished(resourcesQuiescent)
+                val observed = cancellation.observation()
+                report.put("cancellationObservation", JSONObject().put("status", observed.status)
+                    .put("requestOrigin", observed.origin).put("stageAtRequest", observed.stageAtRequest)
+                    .put("requestDuringRender", observed.duringRender).put("renderOutcome", observed.renderOutcome.name)
+                    .put("requestToRenderExitNanos", observed.requestToRenderExitNanos ?: JSONObject.NULL)
+                    .put("requestToAttemptScopeExitNanos", observed.requestToAttemptScopeExitNanos ?: JSONObject.NULL)
+                    .put("requestToOwnersReleasedNanos", observed.requestToOwnersReleasedNanos ?: JSONObject.NULL)
+                    .put("requestToHarnessQuiescentNanos", observed.requestToHarnessQuiescentNanos ?: JSONObject.NULL))
+            }
             persist()
         }
         return report.toString(2)
