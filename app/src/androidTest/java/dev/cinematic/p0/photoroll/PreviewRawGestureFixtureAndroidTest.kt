@@ -116,18 +116,27 @@ class PreviewRawGestureFixtureAndroidTest {
                     val initial = exactRequests.last()
                     assertEquals(1, initial.diagnosticWorkers)
                     val beforeSwitch = exactCount.get()
+                    await("Switch ready before toggle") { switchControl()?.isEnabled == true }
                     click(PARALLEL_SWITCH)
                     await { exactCount.get() > beforeSwitch }
                     val enabled = exactRequests.last()
                     assertEquals(2, enabled.diagnosticWorkers)
                     assertEquals(initial.strength, enabled.strength, 0.0)
                     assertEquals(initial.adjustments, enabled.adjustments)
+                    // Renderer completion precedes main-thread adoption and accessibility publication.
+                    await("Candidate exact UI adopted") {
+                        switchControl()?.let { it.isChecked && it.isEnabled } == true
+                    }
+                    snapshot("Before STRENGTH click")
                 }
                 click("STRENGTH")
                 if (parallelProbe) {
-                    // Accessibility click returns before the next Compose frame updates semantics.
-                    await { findNode("STRENGTH", true) != null && findNode(PARALLEL_SWITCH)?.isEnabled == false }
-                    assertFalse("Cannot switch while an adjustment is open", node(PARALLEL_SWITCH).isEnabled)
+                    snapshot("After STRENGTH action")
+                    await("Adjustment panel visible") { findNode("現像調整パネル") != null }
+                    await("STRENGTH range visible") { findNode("STRENGTH", true) != null }
+                    await("Switch disabled with adjustment open") { switchControl()?.isEnabled == false }
+                    assertFalse("Cannot switch while an adjustment is open", requireNotNull(switchControl()).isEnabled)
+                    snapshot("Adjustment ready")
                 }
                 val beforeDrag = exactCount.get()
                 val bounds = Rect().also { node("STRENGTH", true).getBoundsInScreen(it) }
@@ -143,14 +152,22 @@ class PreviewRawGestureFixtureAndroidTest {
                     assertTrue("Release must use candidate execution", exactRequests.drop(1).all { it.diagnosticWorkers == 2 })
                     assertTrue("Draft must use candidate execution", draftRequests.isNotEmpty() && draftRequests.all { it.diagnosticWorkers == 2 })
                     click("目盛りを閉じる")
+                    await("Closed adjustment adopted before OFF") {
+                        findNode("現像調整パネル") == null && switchControl()?.let { it.isChecked && it.isEnabled } == true
+                    }
                     val released = exactRequests.last()
                     val beforeSwitch = exactCount.get()
+                    await("Switch ready before toggle") { switchControl()?.isEnabled == true }
                     click(PARALLEL_SWITCH)
                     await { exactCount.get() > beforeSwitch }
                     val disabled = exactRequests.last()
                     assertEquals(1, disabled.diagnosticWorkers)
                     assertEquals(released.strength, disabled.strength, 0.0)
                     assertEquals(released.adjustments, disabled.adjustments)
+                    await("Serial exact UI adopted") {
+                        switchControl()?.let { !it.isChecked && it.isEnabled } == true
+                    }
+                    snapshot("Final OFF adopted")
                     println("Synthetic editor switch: OFF=1 ON=2 draft=2 release=2 OFF=1 presentation=NOT_MEASURED")
                 }
                 assertEquals("No shared writes", 0, provider.writes.get())
@@ -171,6 +188,44 @@ class PreviewRawGestureFixtureAndroidTest {
         }
     }
 
+    /** Inspect the actual checkable control, not a labelled descendant with different flags. */
+    private fun switchControl(): AccessibilityNodeInfo? {
+        var current = findNode(PARALLEL_SWITCH)
+        while (current != null && !current.isCheckable) current = current.parent
+        return current
+    }
+
+    /** Synthetic labels only; no image bytes, source URI or private filesystem paths. */
+    private fun snapshot(checkpoint: String) {
+        val root = instrumentation.uiAutomation.rootInActiveWindow
+        if (root?.packageName?.toString() != instrumentation.targetContext.packageName) {
+            android.util.Log.i("SyntheticFixture", "checkpoint=$checkpoint targetRootUnavailable=true")
+            return
+        }
+        val labels = setOf("STRENGTH", "現像調整パネル", "目盛りを閉じる", PARALLEL_SWITCH)
+        val lines = mutableListOf("checkpoint=$checkpoint root=${root?.packageName}/${root?.className}")
+        fun flags(node: AccessibilityNodeInfo): String {
+            val bounds = Rect().also { node.getBoundsInScreen(it) }
+            val range = node.rangeInfo?.let { "${it.min}..${it.max}:${it.current}" }
+            return "class=${node.className} visible=${node.isVisibleToUser} enabled=${node.isEnabled} " +
+                "checked=${node.isChecked} checkable=${node.isCheckable} clickable=${node.isClickable} " +
+                "range=$range bounds=$bounds actions=${node.actionList.map { it.id }}"
+        }
+        var visited = 0
+        fun visit(node: AccessibilityNodeInfo?, depth: Int) {
+            if (node == null || depth > 30 || visited++ >= 1000) return
+            val label = labels.firstOrNull { it == node.text?.toString() || it == node.contentDescription?.toString() }
+            if (label != null || node.rangeInfo != null) {
+                lines += "label=${label ?: "range"} ${flags(node)}"
+                var ancestor = node.parent
+                while (ancestor != null && !ancestor.isClickable && !ancestor.isCheckable) ancestor = ancestor.parent
+                ancestor?.let { lines += "control-ancestor ${flags(it)}" }
+            }
+            for (index in 0 until node.childCount) visit(node.getChild(index), depth + 1)
+        }
+        visit(root, 0)
+        lines.forEach { android.util.Log.i("SyntheticFixture", it) }
+    }
     private fun findNode(label: String, range: Boolean = false): AccessibilityNodeInfo? {
         fun find(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
             if (node == null) return null
@@ -183,12 +238,12 @@ class PreviewRawGestureFixtureAndroidTest {
     }
     private fun node(label: String, range: Boolean = false): AccessibilityNodeInfo {
         var found: AccessibilityNodeInfo? = null
-        await { findNode(label, range).also { found = it } != null }
+        await("Visible node: $label range=$range") { findNode(label, range).also { found = it } != null }
         return requireNotNull(found)
     }
     private fun click(label: String) {
         var enabled: AccessibilityNodeInfo? = null
-        await {
+        await("Clickable node: $label") {
             var found = findNode(label)
             while (found != null && !found.isClickable) found = found.parent
             enabled = found
@@ -197,14 +252,16 @@ class PreviewRawGestureFixtureAndroidTest {
         assertTrue(requireNotNull(enabled).performAction(AccessibilityNodeInfo.ACTION_CLICK))
         instrumentation.waitForIdleSync()
     }
-    private fun await(condition: () -> Boolean) {
+    private fun await(label: String = "condition", condition: () -> Boolean) {
         val deadline = SystemClock.uptimeMillis() + 120_000
         do {
             instrumentation.waitForIdleSync()
             if (condition()) return
             SystemClock.sleep(100)
         } while (SystemClock.uptimeMillis() < deadline)
-        error("Synthetic RAW fixture condition timed out")
+        snapshot("Timed out: $label")
+        fixture.failure(label)
+        error("Synthetic RAW fixture timed out: $label")
     }
     private class SyntheticProvider(context: Context) : ContentProvider(), AutoCloseable {
         private val packageName = context.packageName
