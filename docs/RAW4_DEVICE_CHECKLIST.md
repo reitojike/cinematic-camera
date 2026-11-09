@@ -136,7 +136,7 @@ Foundation・Orton・Character以外まで並列化した意味ではない。�
 
 ### 新しいSAVE_SAFETY: メモリ2回と取消2境界
 
-1. Hubの「保存4候補の比較」からRAW診断画面を開く。上部の `Save safety` 2ボタンを使う。
+1. Hubの「保存4候補の比較」からRAW診断画面を開く。上部の `Save safety` 3ボタンのうち、まずMemoryと自動取消を使う。
    旧RAW4のBは色融合ONのままなので、下のlegacy controlsで代用しない。
 2. `Save safety: Memory A/B (2 attempts)` を1回押し、同じ許可済み12MP DNGを選ぶ。
    AはGlow1 / Mist1 / tone1、BはGlow2 / Mist2 / tone2。両方とも色融合OFF、Foundation2 / Orton4 / Character2固定。

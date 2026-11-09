@@ -295,7 +295,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                                     before?.let { it === after || it.isRecycled || it.config == Bitmap.Config.HARDWARE ||
                                         it.colorSpace?.isSrgb != true || it.width != after.width || it.height != after.height } == true)
                                     throw PhotoRollSourceFailure("操作中の表示用画像を確認できません")
-                                repository.verify(original) { cancellation.isCanceled }
+                                renderer.verifyPreviewOriginal(repository, original, cancellation) { cancellation.isCanceled }
                             }
                         }
                     }
@@ -446,7 +446,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                             bitmap.colorSpace?.isSrgb != true) {
                             throw PhotoRollSourceFailure("表示用画像の寸法・色空間を確認できません。現像を停止しました")
                         }
-                        if (rendered.mode != PhotoRollPreviewMode.PRIVATE_TRIAL) repository.verify(original, shouldStop)
+                        if (rendered.mode != PhotoRollPreviewMode.PRIVATE_TRIAL) renderer.verifyPreviewOriginal(repository, original, cancellation, shouldStop)
                         if (rendered.jpegSave?.matches(original.reference, rendered.mode) == false) {
                             throw PhotoRollSourceFailure("保存結果が選択した原本と一致しないため停止しました")
                         }

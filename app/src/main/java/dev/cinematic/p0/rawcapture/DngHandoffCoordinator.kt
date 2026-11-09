@@ -207,6 +207,7 @@ internal class DngIoResources {
         }
     }
     private fun own(value: Closeable): Resource = Resource(value).also { resources += it; count.incrementAndGet() }
+    fun <T : Closeable, R> useOwned(value: T, block: (T) -> R): R = own(value).use { block(value) }
     fun input(stream: InputStream): InputStream {
         val resource = own(stream)
         return object : FilterInputStream(stream) { override fun close() = resource.close() }
