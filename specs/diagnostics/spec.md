@@ -25,6 +25,7 @@
 
 - [GPU合成診断](../../docs/GPU_DIAGNOSTIC.md) は製品未接続の独立 `gpuDiagnostic` アプリ。`cinematicGpuDiagnostic=true` の明示ビルドと画面からの明示起動だけで動く。GPU部分は合成専用。統合入口には既存RAW保存比較とCPUプレビューを含むが、GPUを製品処理へ接続しない。写真一覧権限は持たず、CPU側の入力はFilesで明示的に選ぶ。専用instrumentationも `gpuPixelProbe=true` と `isolated=true` がなければGPUを初期化しない。
 - GPU合成診断の1024pxは全LookのCPU差、12MPはぼかし/Orton単体の負荷を測る。12MP単体や背景FGS試験の成功を、全保存出力・製品保存復旧の採用条件の達成に読み替えない。
+- GPU30msの目安は、一度のEGL文脈・shader準備を除く同一準備済みsessionの2回目以降の対象2工程に適用し、転送・同期・readbackを含める。初回の準備込み時間は別記する。現行の呼出ごとに初期化する診断は未対応であり、初期化込みの反復を新条件の合格へ読み替えない。準備/初回/反復を分離できる版になるまで実機開始を保留する。詳細は [GPU診断の制約](../../docs/GPU_DIAGNOSTIC.md#判定と制約) を参照する。
 ## プレビュー診断の契約
 
 - PreviewTimingは要求受付からUI状態採用、RawPreviewTimingはEXACT/DRAFT別のセッション計算を記録する。通常版の計測は明示DEBUG時だけで保存経路には接続しない。統合診断版の実編集では両ログをINFOで出し、並列設定とDRAFT/EXACTを識別する。前者の状態採用と後者の計算完了はいずれもOSの提示完了とは別。
@@ -34,7 +35,7 @@
 ## 詳細契約と手順
 
 - [設定の詳細](../039-settings-design/spec.md)、[診断の詳細](../040-diagnostics-design/spec.md)、[共通表示](../046-design-commonization/spec.md)。
-- 実行手順は [MANAGED_DEVICES](../../docs/MANAGED_DEVICES.md)、[OPERATIONS](../../docs/OPERATIONS.md)、現行CIを参照する。
+- 統合診断の実機確認は [当日手順](../../docs/RAW4_DEVICE_CHECKLIST.md) を入口とし、実施版・計測結果・採否はIssueに記録する。端末の共有運用は [MANAGED_DEVICES](../../docs/MANAGED_DEVICES.md)、配布/PR運用は [OPERATIONS](../../docs/OPERATIONS.md)、必須検証は現行CIを参照する。
 - 画面の現行色・書体・寸法の実装は CaptureDesign を参照する。PNGの被写体・数値・ログは実機の状態の根拠にしない。
 
 - 統合診断には、合成1024pxのFoundation・Orton・Characterを独立に直列/2並列比較する明示入口を含む。raw-bit一致と時間を記録し、通常経路には接続しない。開くだけで実行せず、離脱時は取消し、worker終了までbusyを保持する。実写真の全プレビュー・操作遅延の検証とは区別する。専用テストも `previewParallelProbe=true` に限定する。
