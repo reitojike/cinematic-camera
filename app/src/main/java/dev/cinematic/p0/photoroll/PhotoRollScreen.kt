@@ -330,7 +330,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                     currentCoroutineContext().ensureActive()
                 }
                 catch (failure: Exception) {
-                    timing?.finish("FAILED")
+                    timing?.finishFailure(cancellation.isCanceled, failure)
                     if (draftAdmission.canDisplay(draft, trialEditor, selectedUri) &&
                         (failure is DngContentChanged || failure is SecurityException || failure is PhotoRollSourceFailure)) {
                         stopDraft(); renderer.discardTransientInputs()
@@ -545,8 +545,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                 failure !is android.os.OperationCanceledException && failure !is DngVerificationStopped) {
                 renderer.discardTransientInputs()
             }
-            timing?.finish(if (shouldStop() || failure is android.os.OperationCanceledException ||
-                failure is DngVerificationStopped) "CANCELLED" else "FAILED")
+            timing?.finishFailure(shouldStop(), failure)
             if (failure is PhotoEditRestoreFailure && selection.accepts(ticket) && trialEditor.accepts(strengthTicket))
                 recipeRecoveryNeeded = true
             val message = when (failure) {

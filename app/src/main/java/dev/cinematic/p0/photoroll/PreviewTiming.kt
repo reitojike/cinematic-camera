@@ -1,6 +1,8 @@
 package dev.cinematic.p0.photoroll
 
+import android.os.OperationCanceledException
 import dev.cinematic.p0.photoedit.PhotoEditValues
+import dev.cinematic.p0.rawcapture.DngVerificationStopped
 
 /** Request acceptance to UI-state adoption, not physical touch-to-photon latency. No source data. */
 internal class PreviewTiming(
@@ -34,6 +36,11 @@ internal class PreviewTiming(
             sink("operation=$operation revision=$revision outcome=$outcome last=$stage totalNs=${now - started} " +
                 durations.entries.joinToString(" ") { "${it.key}Ns=${it.value}" })
         }
+    }
+
+    fun finishFailure(cancelled: Boolean, failure: Exception) {
+        finish(if (cancelled || failure is OperationCanceledException || failure is DngVerificationStopped)
+            "CANCELLED" else "FAILED")
     }
 
     private inline fun observe(block: () -> Unit) {

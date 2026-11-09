@@ -41,6 +41,22 @@ class PreviewTimingTest {
             assertTrue(lines.single().contains("${stage}Ns=10"))
     }
 
+    @Test fun cancellationFailureIsClassifiedBeforeFinishBecomesFinal() {
+        for ((cancelled, failure, expected) in listOf(
+            Triple(true, IllegalStateException("stopped"), "CANCELLED"),
+            Triple(false, dev.cinematic.p0.rawcapture.DngVerificationStopped(), "CANCELLED"),
+            Triple(false, IllegalStateException("broken"), "FAILED"),
+            Triple(false, dev.cinematic.p0.rawcapture.DngContentChanged(), "FAILED"),
+        )) {
+            val lines = mutableListOf<String>()
+            val timing = PreviewTiming(1, clock = { 0L }, sink = lines::add)
+            timing.finishFailure(cancelled, failure)
+            timing.finish("NOT_ADOPTED")
+            assertEquals(1, lines.size)
+            assertTrue(lines.single().contains("outcome=$expected "))
+        }
+    }
+
     @Test fun diagnosticFailureCannotEscapeOrReplaceCleanup() {
         assertNull(PreviewTiming.optional { throw OutOfMemoryError("allocation") })
         var calls = 0
