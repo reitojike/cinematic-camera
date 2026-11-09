@@ -274,19 +274,29 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                 draftCancellationOwner.begin(cancellation)
                 val presentation = dev.cinematic.p0.diagnostics.PreviewPresentationTrace.start(draft, exact = false)
                 var pending: PhotoRollRenderResult.Preview? = null
+                // Starts when the actor receives this request. Conflated-channel waiting and
+                // physical input/presentation timestamps remain outside this interval.
+                val timing = if (diagnostic || android.util.Log.isLoggable("PreviewTiming", android.util.Log.DEBUG))
+                    PreviewTiming.optional { PreviewTiming(draft.sequence, previewOperationForChange(draft.committed.values, draft.values, false),
+                        sink = {
+                            if (diagnostic) android.util.Log.i("PreviewTiming", "kind=DRAFT workers=$workers $it")
+                            else android.util.Log.d("PreviewTiming", "kind=DRAFT $it")
+                        }, initialStage = "DRAFT_GATE_WAIT") } else null
                 try {
-                    val result = withContext(Dispatchers.IO) {
-                        draftRenderGate.run(true) {
-                            val admitted = withContext(Dispatchers.Main) {
-                                currentForeground && draftAdmission.canStart(draft, trialEditor, selectedUri)
-                            }
-                            if (!admitted) return@run null
+                    val result = draftRenderGate.run(true) {
+                        // Mutex suspension does not block Main. Check the latest ticket here before
+                        // dispatching once to IO, rather than bouncing IO -> Main -> IO.
+                        if (!currentForeground || !draftAdmission.canStart(draft, trialEditor, selectedUri)) return@run null
+                        timing?.enter("IO_DISPATCH")
+                        withContext(Dispatchers.IO) {
+                            timing?.enter("RENDER")
                             val original = PhotoRollOriginal(Uri.parse(draft.source.uri), draft.source.fingerprint, draft.source.grant)
                             val request = PhotoRollRenderRequest(original, strength = draft.values.strength,
                                 adjustments = PhotoAdjustmentPolicy.adjustments(draft.values), mode = renderer.mode, maxEdge = 256,
                                 diagnosticWorkers = workers)
                             renderer.renderDraft(request, cancellation)?.also { rendered ->
                                 pending = rendered
+                                timing?.enter("VERIFY_RESULT")
                                 val after = rendered.bitmap
                                 val before = rendered.comparisonBitmap
                                 if (rendered.mode != renderer.mode || rendered.jpegSave != null || after.isRecycled ||
@@ -298,9 +308,11 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                                 // Drafts borrow only retained, fingerprint-bound pixels. Exact release
                                 // verifies the original; lifecycle/selection tickets still reject stale work.
                                 cancellation.throwIfCanceled()
+                                timing?.enter("UI_DISPATCH")
                             }
                         }
                     }
+                    timing?.enter("ADOPT_STATE")
                     if (result != null && !cancellation.isCanceled && currentForeground &&
                         draftAdmission.canDisplay(draft, trialEditor, selectedUri)) {
                         draftAdmission.displayed(draft)
@@ -309,13 +321,16 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                         comparisonLabel = result.comparisonLabel; draftShown = true
                         trialEditor = trialEditor.showingDraft()
                         pending = null
+                        timing?.finish("STATE_ADOPTED")
                     }
                 } catch (_: CancellationException) {
+                    timing?.finish("CANCELLED")
                     // A resource/native stop can cancel only this producer. Keep the actor alive;
                     // lifecycle/disposal cancellation still exits through the coroutine's own job.
                     currentCoroutineContext().ensureActive()
                 }
                 catch (failure: Exception) {
+                    timing?.finishFailure(cancellation.isCanceled, failure)
                     if (draftAdmission.canDisplay(draft, trialEditor, selectedUri) &&
                         (failure is DngContentChanged || failure is SecurityException || failure is PhotoRollSourceFailure)) {
                         stopDraft(); renderer.discardTransientInputs()
@@ -325,7 +340,10 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                     }
                     // Other optional-draft failures keep the prior image; exact release retries safely.
                 }
-                finally { pending?.recycleDisplayPixels(); draftCancellationOwner.finish(cancellation) }
+                finally {
+                    timing?.finish(if (cancellation.isCanceled) "CANCELLED" else "NOT_ADOPTED")
+                    pending?.recycleDisplayPixels(); draftCancellationOwner.finish(cancellation)
+                }
             }
         }
     }
@@ -391,19 +409,22 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         val requestScope = this
         val serialPreview = manualTrial && android.util.Log.isLoggable("PreviewSerial", android.util.Log.DEBUG)
         val timing = if (diagnostic || android.util.Log.isLoggable("PreviewTiming", android.util.Log.DEBUG))
-            PreviewTiming(strengthTicket.revision, previewOperation, sink = {
+            PreviewTiming.optional { PreviewTiming(strengthTicket.revision, previewOperation, sink = {
                 if (diagnostic) android.util.Log.i("PreviewTiming", "workers=$workersThisRequest serial=$serialPreview draftGate=$manualTrial $it")
                 else android.util.Log.d("PreviewTiming", "serial=$serialPreview draftGate=$manualTrial $it")
-            }) else null
+            }, initialStage = "IO_DISPATCH") } else null
         // WithContext may discard a completed result when Main resumes into cancellation.
         // Until the current ticket adopts it, this request still owns its display copies.
         var pendingPreview: PhotoRollRenderResult.Preview? = null
         try {
             val result = withContext(Dispatchers.IO) {
-                if (serialPreview) timing?.enter("ADMISSION_WAIT")
-                draftRenderGate.run(manualTrial) { PreviewRequestGate.process.run(serialPreview) {
-                    if (serialPreview) timing?.enter("CHECK_ORIGINAL")
+                timing?.enter("DRAFT_GATE_WAIT")
+                draftRenderGate.run(manualTrial) {
+                    timing?.enter("ADMISSION_WAIT")
+                    PreviewRequestGate.process.run(serialPreview) {
+                    timing?.enter("CHECK_ORIGINAL")
                     val original = renderer.checkOriginal(repository, Uri.parse(source), selectedFromFiles, cancellation)
+                    timing?.enter("LOAD_RECIPE")
                     val restore = if (manualTrial) try {
                         if (restoreRecipeThisRequest) {
                             if (skipRecipeThisRequest) null else editRecipes.read(original.reference)
@@ -412,7 +433,9 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                             null
                         }
                     } catch (failure: Exception) { throw PhotoEditRestoreFailure(failure) } else null
+                    timing?.enter("BIND_DISPATCH")
                     withContext(Dispatchers.Main) {
+                        timing?.enter("BIND_STATE")
                         if (!selection.accepts(ticket) || !trialEditor.accepts(strengthTicket)) throw CancellationException("Photo selection changed")
                         if (manualTrial && !recipeLoaded) {
                             recipeLoaded = true
@@ -429,7 +452,9 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                                 ?: throw PhotoRollSourceFailure("原本の内容や参照が変わりました。Filesから選び直してください")
                         }
                         selection = selection.rendering(ticket)
+                        timing?.enter("IO_RETURN")
                     }
+                    timing?.enter("BUILD_REQUEST")
                     val adjustments = if (manualTrial) PhotoAdjustmentPolicy.adjustments(strengthTicket.values) else PhotoAdjustments()
                     val request = PhotoRollRenderRequest(original, strength = strengthTicket.strength, adjustments = adjustments,
                         mode = renderer.mode, maxEdge = renderer.maxEdge, diagnosticWorkers = workersThisRequest,
@@ -475,6 +500,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                             (rendered.trialStrength != request.strength || rendered.trialAdjustments != request.adjustments))
                             throw PhotoRollSourceFailure("試験画像の強度が要求と一致しないため停止しました")
                     }
+                    timing?.enter("UI_DISPATCH")
                     rendered
                 } }
             }
@@ -519,8 +545,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                 failure !is android.os.OperationCanceledException && failure !is DngVerificationStopped) {
                 renderer.discardTransientInputs()
             }
-            timing?.finish(if (shouldStop() || failure is android.os.OperationCanceledException ||
-                failure is DngVerificationStopped) "CANCELLED" else "FAILED")
+            timing?.finishFailure(shouldStop(), failure)
             if (failure is PhotoEditRestoreFailure && selection.accepts(ticket) && trialEditor.accepts(strengthTicket))
                 recipeRecoveryNeeded = true
             val message = when (failure) {
