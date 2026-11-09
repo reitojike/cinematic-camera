@@ -47,7 +47,9 @@ internal object AndroidManualOriginalTrialSaves {
 
     fun renderPreview(context: Context, source: SharedOriginalReference, strength: Double,
         conditions: AutoDevelopConditions, adjustments: PhotoAdjustments = PhotoAdjustments.NONE,
+        diagnosticWorkers: Int? = null,
         shouldStop: () -> Boolean = { false }): CompletableFuture<ManualOriginalTrialPreview> {
+        require(diagnosticWorkers == null || (dev.cinematic.p0.BuildConfig.EDITOR_PREVIEW_DIAGNOSTIC && diagnosticWorkers in 1..2))
         val app = context.applicationContext
         val queue = AndroidAutoDevelopQueue.get(app)
         return queue.manualOriginalIo {
@@ -59,20 +61,21 @@ internal object AndroidManualOriginalTrialSaves {
                 previewAuthority?.discardPreview()
                 previewAuthority = authority
             }
-            authority.renderPreview(handle, conditions, shouldStop)
+            authority.renderPreview(handle, conditions, diagnosticWorkers, shouldStop)
         }
     }
 
     /** Drafts borrow only an existing exact session. They never allocate a durable save request. */
     fun renderDraftPreview(context: Context, source: SharedOriginalReference, strength: Double,
-        conditions: AutoDevelopConditions, adjustments: PhotoAdjustments,
+        conditions: AutoDevelopConditions, adjustments: PhotoAdjustments, diagnosticWorkers: Int? = null,
         shouldStop: () -> Boolean): CompletableFuture<ManualOriginalDraftPreview?> {
+        require(diagnosticWorkers == null || (dev.cinematic.p0.BuildConfig.EDITOR_PREVIEW_DIAGNOSTIC && diagnosticWorkers in 1..2))
         val app = context.applicationContext
         return AndroidAutoDevelopQueue.get(app).manualOriginalIo {
             if (shouldStop()) throw java.util.concurrent.CancellationException("Draft preview stopped")
             val authority = authorities[app.noBackupFilesDir.canonicalPath to source]
             if (authority == null || previewAuthority !== authority) null
-            else authority.renderDraftPreview(strength, adjustments, conditions, shouldStop)
+            else authority.renderDraftPreview(strength, adjustments, conditions, diagnosticWorkers, shouldStop)
         }
     }
 
@@ -142,7 +145,7 @@ internal object AndroidManualOriginalTrialSaves {
         }
 
         fun renderPreview(handle: ManualOriginalTrialHandle, conditions: AutoDevelopConditions,
-            stop: () -> Boolean): ManualOriginalTrialPreview {
+            diagnosticWorkers: Int?, stop: () -> Boolean): ManualOriginalTrialPreview {
             if (previewSlot != null || sessionEpoch != previewEpoch.get()) discardPreview()
             val slot = DevelopExecution.tryStartObserved(conditions) ?: throw IOException("Trial preview admission blocked")
             previewSlot = slot
@@ -161,9 +164,9 @@ internal object AndroidManualOriginalTrialSaves {
                 }
                 activePreview = session
                 DevelopExecution.registerStop(slot, session::requestStop)
-                bitmap = session.render(handle.request.strength, handle.request.adjustments) {
-                    stop() || DevelopExecution.shouldStop(slot) || currentRequest != handle.request || sessionEpoch != previewEpoch.get()
-                }
+                val stopped = { stop() || DevelopExecution.shouldStop(slot) || currentRequest != handle.request || sessionEpoch != previewEpoch.get() }
+                bitmap = if (diagnosticWorkers == null) session.render(handle.request.strength, handle.request.adjustments, stopped)
+                    else session.renderDiagnostic(handle.request.strength, handle.request.adjustments, false, diagnosticWorkers, stopped)
                 comparison = session.comparisonBitmap {
                     stop() || DevelopExecution.shouldStop(slot) || currentRequest != handle.request || sessionEpoch != previewEpoch.get()
                 }
@@ -182,7 +185,7 @@ internal object AndroidManualOriginalTrialSaves {
         }
 
         fun renderDraftPreview(strength: Double, adjustments: PhotoAdjustments,
-            conditions: AutoDevelopConditions, stop: () -> Boolean): ManualOriginalDraftPreview? {
+            conditions: AutoDevelopConditions, diagnosticWorkers: Int?, stop: () -> Boolean): ManualOriginalDraftPreview? {
             if (previewSlot != null || sessionEpoch != previewEpoch.get()) discardPreview()
             val session = previewSession?.takeIf { it.hasDraftDecisions } ?: return null
             val request = currentRequest ?: return null
@@ -195,7 +198,8 @@ internal object AndroidManualOriginalTrialSaves {
             try {
                 activePreview = session
                 DevelopExecution.registerStop(slot, session::requestStop)
-                bitmap = session.renderDraft(strength, adjustments, stopped) ?: return null
+                bitmap = (if (diagnosticWorkers == null) session.renderDraft(strength, adjustments, stopped)
+                    else session.renderDiagnostic(strength, adjustments, true, diagnosticWorkers, stopped)) ?: return null
                 comparison = session.comparisonBitmap(maxEdge = 256, shouldStop = stopped)
                 if (stopped()) throw java.util.concurrent.CancellationException("Draft preview stopped")
                 return ManualOriginalDraftPreview(requireNotNull(bitmap), comparison).also { delivered = true }

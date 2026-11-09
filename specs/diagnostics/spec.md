@@ -27,7 +27,7 @@
 - GPU合成診断の1024pxは全LookのCPU差、12MPはぼかし/Orton単体の負荷を測る。12MP単体や背景FGS試験の成功を、全保存出力・製品保存復旧の採用条件の達成に読み替えない。
 ## プレビュー診断の契約
 
-- PreviewTimingは要求受付からUI状態採用、RawPreviewTimingはEXACT/DRAFT別のセッション計算を記録する。計測は明示DEBUG時だけで保存経路には接続しない。前者の状態採用と後者の計算完了はいずれもOSの提示完了とは別。
+- PreviewTimingは要求受付からUI状態採用、RawPreviewTimingはEXACT/DRAFT別のセッション計算を記録する。通常版の計測は明示DEBUG時だけで保存経路には接続しない。統合診断版の実編集では両ログをINFOで出し、並列設定とDRAFT/EXACTを識別する。前者の状態採用と後者の計算完了はいずれもOSの提示完了とは別。
 - 原本・URI・素材名・編集値・個人識別子は含めず、非重複の区間合計・取消/失敗を記録する。RawPreviewTimingの任意出力の失敗は現像結果や後片付けを変えない。
 - PreviewSerialはMANUAL_TRIALの診断専用で既定オフ。通常のdraft/exact排他と混同しない。詳細設計と明示有効化・停止手順は [プレビュー診断](../../docs/PREVIEW_DIAGNOSTICS.md) を参照する。
 
@@ -40,3 +40,7 @@
 - 統合診断には、合成1024pxのFoundation・Orton・Characterを独立に直列/2並列比較する明示入口を含む。raw-bit一致と時間を記録し、通常経路には接続しない。開くだけで実行せず、離脱時は取消し、worker終了までbusyを保持する。実写真の全プレビュー・操作遅延の検証とは区別する。専用テストも `previewParallelProbe=true` に限定する。
 
 - プレビュー入力と提示相関の試作は独立した `previewDiagnostic` variantに限る。release継承・非debuggable・profileableの非公開hostを使い、製品・統合診断Hub・通常CIには接続しない。合成fixtureは実screen/rendererを使うが、リソース条件は固定する。処理完了・draw・OS提示候補を区別し、FrameTimeline相関が未検証の間は50msを合格扱いにしない。手順と制約は [提示相関の診断](../../tools/preview-presentation/README.md) を参照する。
+
+- 統合診断版のCPU編集画面では、既定OFF（製品と同じ直列）とON（既存Foundation・Orton・Characterの画素処理を2並列）を明示切替できる。調整パネルを閉じ、確定表示と保存の停止を確認してから切り替え、同じ値で再計算する。設定は編集画面内だけで保持し、プロセス/画面再生成でOFFに戻る。通常版・原寸保存の既定を変えない。
+- 診断設定は各要求の開始時に固定し、切替時に旧要求を失効させる。実行中workerは既存IO所有者が終了待ちしてから解放する。診断では表示Bitmap cacheの返却を避ける一方、縮小入力・Foundation・Glow・判定値の通常のセッション保持は維持する。計測の慣らし・操作種別・順序をそろえて比較する。
+- RawPreviewTimingは各DRAFT/EXACT処理にworkersとmaxEdgeを付ける。最大256pxの各回のセッション時間を取り出せるが、要求前処理・Before生成・OS提示完了を含まない。計算時間から50ms提示合否や実機速度向上を断定しない。

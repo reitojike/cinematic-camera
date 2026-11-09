@@ -35,6 +35,7 @@ android {
     }
     defaultConfig {
         applicationId = "dev.cinematic.p0"
+        buildConfigField("boolean", "EDITOR_PREVIEW_DIAGNOSTIC", "false")
         minSdk = 33
         targetSdk = 37
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
@@ -97,6 +98,7 @@ android {
         buildTypes.create("gpuDiagnostic") {
             initWith(buildTypes.getByName("release"))
             applicationIdSuffix = ".gpudiagnostic"
+            buildConfigField("boolean", "EDITOR_PREVIEW_DIAGNOSTIC", "true")
             isDebuggable = false
             isJniDebuggable = false
             isMinifyEnabled = false

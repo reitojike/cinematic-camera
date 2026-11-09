@@ -10,10 +10,11 @@ STAGES = set("ADMISSION VERIFY_BEFORE INPUT FOUNDATION GLOW_PREPARE SKIN_EXPAND 
 TAG = re.compile(r"(?:\bRawPreviewTiming\s*:|\bRawPreviewTiming\([^)]*\)\s*:)")
 
 
-def summarize(lines, kind="DRAFT", warmup=0):
-    if kind not in {"DRAFT", "EXACT"} or warmup < 0:
+def summarize(lines, kind="DRAFT", warmup=0, workers=None):
+    if kind not in {"DRAFT", "EXACT"} or warmup < 0 or workers not in {None, 1, 2}:
         raise ValueError("kind または warmup が不正です")
     samples = []
+    configurations = set()
     failed = malformed = 0
     for line in lines:
         match = TAG.search(line)
@@ -38,7 +39,12 @@ def summarize(lines, kind="DRAFT", warmup=0):
             if int(fields["sequence"]) <= 0:
                 raise ValueError()
             total = int(fields["totalNs"])
-            stage_keys = set(fields) - {"kind", "sequence", "outcome", "totalNs"}
+            configuration = None
+            if "workers" in fields or "maxEdge" in fields:
+                configuration = int(fields["workers"])
+                if configuration not in {1, 2} or int(fields["maxEdge"]) != (256 if kind == "DRAFT" else 1024):
+                    raise ValueError()
+            stage_keys = set(fields) - {"kind", "sequence", "outcome", "totalNs", "workers", "maxEdge"}
             if not stage_keys or any(key not in {s + "Ns" for s in STAGES} for key in stage_keys):
                 raise ValueError()
             stages = [int(fields[key]) for key in stage_keys]
@@ -47,15 +53,23 @@ def summarize(lines, kind="DRAFT", warmup=0):
         except (KeyError, ValueError):
             malformed += 1
             continue
+        if workers is not None and configuration != workers:
+            continue
+        configurations.add(configuration)
         if fields["outcome"] == "FAILED":
             failed += 1
         else:
             samples.append(total / 1_000_000)
-    retained = sorted(samples[warmup:])
-    valid = bool(retained) and malformed == 0
+    mixed = len(configurations) > 1
+    ordered = samples[warmup:] if not mixed else []
+    retained = sorted(ordered)
+    valid = bool(retained) and malformed == 0 and not mixed
     return {
         "metric": "render_session_elapsed_ms_NOT_input_to_display",
         "kind": kind,
+        "workers_filter": workers,
+        "mixed_worker_configurations": mixed,
+        "per_render_ms": ordered,
         "successful_records": len(samples),
         "warmup_removed": min(warmup, len(samples)),
         "sample_count": len(retained),
@@ -74,13 +88,14 @@ def main():
     parser.add_argument("log", type=Path)
     parser.add_argument("--kind", choices=("DRAFT", "EXACT"), default="DRAFT")
     parser.add_argument("--warmup", type=int, default=0)
+    parser.add_argument("--workers", type=int, choices=(1, 2))
     args = parser.parse_args()
     if args.warmup < 0:
         parser.error("--warmup は0以上")
     # パス・生ログは出力しない。複数セッションを連結せず操作別に入力する。
     try:
         with args.log.open(encoding="utf-8-sig") as log:
-            result = summarize(log, args.kind, args.warmup)
+            result = summarize(log, args.kind, args.warmup, args.workers)
     except (OSError, UnicodeError):
         print(json.dumps({"status": "LOG_UNREADABLE"}))
         return 2

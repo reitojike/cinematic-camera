@@ -41,7 +41,7 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
         cancellation.throwIfCanceled()
         if (AutoDevelopPolicy.blockers(resources().developConditions(rendererAvailable = true)).isNotEmpty()) return null
         val future = AndroidManualOriginalTrialSaves.renderDraftPreview(app, request.original.reference,
-            request.strength, resources().developConditions(rendererAvailable = true), request.adjustments) { cancellation.isCanceled }
+            request.strength, resources().developConditions(rendererAvailable = true), request.adjustments, request.diagnosticWorkers) { cancellation.isCanceled }
         val abandoned = AtomicBoolean(false)
         cancellation.setOnCancelListener { AndroidManualOriginalTrialSaves.invalidatePreviews() }
         future.whenComplete { delivery, _ -> if (abandoned.get() || cancellation.isCanceled) delivery?.close() }
@@ -73,7 +73,8 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
             return PhotoRollRenderResult.Unavailable("撮影状態、空き容量、メモリまたは温度を確認し、撮影を終えてから再試行してください")
         val key = PhotoRollPreviewKey(request.original.reference, request.strength, request.adjustments,
             request.lookVersion, request.maxEdge, request.mode)
-        val cacheTicket = previewCache?.begin(key, request.explicitRetry)
+        // Diagnostic comparisons must execute, never return a retained display-only bitmap.
+        val cacheTicket = if (request.diagnosticWorkers != null) null else previewCache?.begin(key, request.explicitRetry)
         val retained = if (request.refreshDecisions) null else cacheTicket?.let { previewCache?.copy(it) }
         if (retained != null) {
             var adopted = false
@@ -99,7 +100,7 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
         }
         request.onStage(PhotoRollRenderStage.TRIAL_RENDER)
         val future = AndroidManualOriginalTrialSaves.renderPreview(app, request.original.reference,
-            request.strength, resources().developConditions(rendererAvailable = true), request.adjustments) {
+            request.strength, resources().developConditions(rendererAvailable = true), request.adjustments, request.diagnosticWorkers) {
             cancellation.isCanceled
         }
         val abandoned = AtomicBoolean(false)
