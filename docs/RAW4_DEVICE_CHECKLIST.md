@@ -4,6 +4,48 @@
 旧ファイル名は参照互換のため維持する。本書を実行順・反復・ログ回収の入口とし、実施版と結果はIssueに記録する。
 手順の準備は実機操作・写真利用・インストールの許可ではない。実行する回に対象と範囲を確認する。
 
+## 今回の限定メニュー（#270）
+
+今回の準備対象は、保存3候補のメモリ・取消、GPUの内訳、原本照合軽量化後のプレビュー時間だけである。以下の一般手順にある保存20回、CPU1/2並列AB、GPUのメモリ/PSS/背景試験を自動追加しない。GPU採否は内訳を読むまで保留する。APK配布と実機確認は、準備完了後に本人からその回の許可を得てから行う。
+
+### 取り込みと固定成果物
+
+#262、保存profile #263、#268とR7内訳 #271がmainへ取り込まれたcleanなsourceを使う。#269も取り込み・検証済みなら含め、対象sourceの記録に有無を明示する。未mergeの寄せ集めAPKを当日版にしない。
+`gpuDiagnostic` 1 APK、package `dev.cinematic.p0.gpudiagnostic` に統一し、別variantのflagsを併用しない。source/tree・APK hash・署名証明書hash・manifest・最適化条件を固定し、許可前に配布/アップロード/インストールしない。既存署名不一致はデータ消去で回避しない。
+
+### 1. GPU内訳を別modeで採取する
+
+メモリ観測OFF、録画なし。比較順・熱・充電条件を記録し、各ブロックで回収と冷却を確認する。
+
+- 1024px全Look: 「内訳を分離」OFFのbaselineとONのsplitを各1回。各回はHDR/暗部それぞれ初回1＋再利用12、合計26対を自動実行する。各強度の通常/逆順は既存のABBAのまま。ボタンを押し直した初回をwarmへ数えない。
+- 12MPぼかし/Orton: 各入口でbaseline通常/逆、split通常/逆を各1回。8回のボタン実行、各回初回1＋再利用3の計32対。1024pxとの単位を揃えるため実calls/passes/bytesを参照する。
+- baseline/splitと初回/反復、入力、強度、比較順を混ぜず、stageごとの各行と条件別中央値を出す。各行のtotalと非重複内訳＋otherの和を照合する。baselineは従来3内訳、splitだけが詳細内訳を持つ。
+- CPU確保・pack/unpack・入力準備/検査、GPU割当・upload・draw・readback、解放・otherと実calls/passes/論理bytesを残す。Orton CPU前処理、EGL準備、対象2工程、全Lookは別区間である。
+- splitはtexture確保方法と同期条件が異なるため、旧upload値との差をそのままCPU変換時間としない。splitをbaselineの30ms判定へ入れず、約150ms固定費や純粋なGPU限界を2サイズだけで決めない。
+- 1024pxのCPU差と12MP Ortonの部分品質条件、完了/解放を照合する。12MPぼかしは画素品質未測定であり、finiteを合格の代用にしない。
+
+### 2. workers OFFでプレビューを測る
+
+GPUの熱が残らない状態で、本人が選ぶ同じ12MP DNGの同一sessionを使う。診断2並列スイッチはOFFのままにする。初回OPENをwarm調整と分け、強さ・色温度・明るさをそれぞれ慣らし1回＋測定4回、計15調整とする。値戻し・切替・採取開始以前のbufferは測定へ数えない。前回に対応する開始値/終了値・方向・800ms操作は私有の対応表で照合する。
+
+各操作のDRAFT256は正常renderの工程中央値を操作1件とし、EXACT1024は対応する最新確定renderを1件とする。render数が多い操作へ重みを増やさず、操作・kind・成功/取消を分ける。工程時間、処理total、要求→UI状態採用を別に示し、物理入力→OS提示と呼ばない。強さ/色温度/明るさでR7/Glow再利用条件が異なるため混ぜない。
+
+#268後のVERIFY_BEFORE/AFTERはmetadata・読取権限の軽量確認で、未知mtimeはSHAへfallbackする。以前の全文SHA区間と同じ内容の速度比較にしない。全体値を比べる際もsource、provider、cold/warm、操作、充電/温度を合わせ、変更された安全性の境界を併記する。metadataだけから内容一致を主張しない。#269を含む場合でも初回decodeと保存の768MiB条件は維持され、warm条件変更を初回必要RAMの実測と扱わない。
+
+同じ操作で `R7StageTiming:I` も採取する（#271、追加操作なし）。同sessionのkind/sequence/workersでRawPreviewTimingと対応付け、r7Visitedとoutcomeを確認する。保持済みbaseではSETUPのみ/r7Visited=false、DRAFTではEXACTの自動EVを共有するためMETER区間がない場合がある。未訪問stageを0ms実行へ補完せず、R7内側totalを外側FOUNDATIONへ足さない。R7が成功しても後続Lookが失敗したrenderはRaw側outcomeで除外する。詳しいstage定義は [プレビュー診断](PREVIEW_DIAGNOSTICS.md) を参照する。 #271の追加計時・ログの負担も今回の条件に含むため、旧版との差を#268単独の改善量と断定しない。
+
+### 3. 保存3候補のメモリ・取消
+
+詳細は本書の保存安全確認節と [取消fieldの定義](RAW_DIAGNOSTIC_BUILD.md#手動cancel受付から停止解放までの観測) を正とする。Memory A/B各1回、自動取消BBのdecode後/Foundation後各1回に加え、候補Bの手動CancelをGlow/Mist中に各1session観測する。計6試行、開始ボタンは4回で、速度20回は再実行しない。候補BはGlow2/Mist2/tone2・色融合OFF、Foundation2/Orton4/Character2を維持する。旧RAW4の色融合ON profileで代用しない。
+
+手動CancelはUIハンドラー受付を起点に、render退出・use/close試行退出・owner解放確認・harness静止確認を分ける。物理タッチ時刻や個別worker内部の停止時刻ではない。USER_BUTTON、実際のstageAtRequest、renderOutcome、対象取消観測statusとresourcesQuiescentを確認する。STOPPED/complete=falseを速度成功へ補完せず、未到達/未解放はnullのまま残す。中断後の原本最終照合未実施を原本不変確認済みにしない。取り逃し・離脱先行・未押下・正常完走・HOLDを区別し、際限なく再試行しない。
+
+### 全ブロック共通の記録と停止
+
+各ブロックの開始/終了、温度/充電状態、実行数・成功・取消・欠測、owner/worker/FGS終了を記録する。最初の走行で必要タグ/fieldsが存在することを確かめ、空のまま反復しない。原本/品質不一致、MODERATE以上、低メモリ、未回収、busy/HOLDでは次へ進まない。GPUは失敗を含め最大2試行で止め、熱が残ればCPUへ負荷を移さない。予定枠を超えた分は未測定とし、回数を削って合格扱いしない。
+
+私有の原本対応表・生ログ・写真別情報は外部へ出さない。今回の結果を共有する範囲は別途の許可に従う。準備のCI/合成成功を実機の時間・画質・メモリ安全性の成功へ読み替えない。
+
 ## 0. 版と条件を固定する
 
 - 対象は同じPixel 9a。CPU編集/保存だけは本人が診断用に選ぶ12MP DNG 1枚を使い、原本を変更しない。GPU/CPU3工程比較は合成入力だけ。24MPは追加しない。
