@@ -25,7 +25,7 @@ internal object StageClearGlow {
         require(originalSkin.width == base.width && originalSkin.height == base.height) {
             "Original skin weight must align with base RGB"
         }
-        repeat(base.pixelCount) { require(originalSkin[it] in 0f..1f) { "Skin weight must be within 0..1" } }
+        originalSkin.requireUnitRange()
         if (strength == 0.0) return base
         return renderNonzero(base, strength, originalSkin)
     }

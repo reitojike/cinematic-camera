@@ -82,7 +82,7 @@ internal object StageClearMist {
         require(glowed.width == skinWeight.width && glowed.height == skinWeight.height) {
             "Colour skin weight must align with glowed RGB"
         }
-        repeat(glowed.pixelCount) { require(skinWeight[it] in 0f..1f) { "Skin weight must be within 0..1" } }
+        skinWeight.requireUnitRange()
     }
 
     private fun luminance(image: LinearSrgbImage, p: Int): Float {

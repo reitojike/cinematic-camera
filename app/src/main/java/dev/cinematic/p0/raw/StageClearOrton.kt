@@ -86,6 +86,6 @@ internal object StageClearOrton {
         require(image.width == skinWeight.width && image.height == skinWeight.height) {
             "Original base's colour skin weight must align with RGB"
         }
-        repeat(image.pixelCount) { require(skinWeight[it] in 0f..1f) { "Skin weight must be within 0..1" } }
+        skinWeight.requireUnitRange()
     }
 }
