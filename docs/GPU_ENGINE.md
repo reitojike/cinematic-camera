@@ -225,7 +225,10 @@ internal data class GpuDecisions(val mistAutoStrength: Double, val faceCutFactor
 
 ## 5. GLSL の契約（#277 PR1）
 
-- 先頭は `#version 320 es`、`precision highp float; precision highp int;`
+- 先頭は `#version 320 es`、`precision highp float; precision highp int; precision highp sampler2D; precision highp isampler2D;`
+- GLSL ES の予約語（`input`、`output`、`sample`、`filter`、`common`、`half`、`fixed` など）を変数名・引数名に使わない。
+  Kotlin の変数名を写すときも予約語を避ける。例えば `half` は `halfWidth` とする。
+  フラグメントシェーダーの `isampler2D` には既定の精度がないため、サンプラー型の精度も上記のように明示する。
 - uniform は `u_`、サンプラーは `s_`、フラグメントの出力は `o_color`、共通関数は `cs_` で始める
 - `#include "common/color.glsl"` の形で取り込む（`ShaderLibrary` が展開する）
 - 定数は `#define SC_<接頭辞>_<定数名>` で注入される。接頭辞は `StageClearV1`→`STAGECLEAR`、`StageClearGlowV1`→`GLOW`、`StageClearMistV1`→`MIST`、`StageClearOrtonV1`→`ORTON`、`StageClearCharacterV1`→`CHARACTER`、`R7BaseV1`→`R7`（例: `SC_GLOW_THRESHOLD`、`SC_R7_CONTRAST`）。
@@ -234,7 +237,9 @@ internal data class GpuDecisions(val mistAutoStrength: Double, val faceCutFactor
 
 共通 include ファイルには `#version` を置かない。各エントリーポイントが上記のヘッダーを持ち、
 `ShaderLibrary` がその `#version` の直後へ定数を注入し、include を展開する。
-PR1 の共通関数は契約だけの空の本体・宣言であり、シェーダーとしての実行は #279 の実装後に行う。
+PR1 の共通関数は契約だけの仮実装であり、値を返す全関数に `return 0.0`・`return vec3(0.0)`・
+`return vec4(0.0)` を置く。未定義の戻り値やドライバーごとのコンパイル差を避けるためであり、
+画像処理としての実行は #279 が実際の計算式に置き換えて試験した後に行う。
 
 ### 5.1 共通関数
 
@@ -247,7 +252,7 @@ float cs_unitToLinear(float v);
 float cs_encode(float linear);
 float cs_decode(float display);
 float cs_hueDeg(vec3 lab);
-float cs_band(float hue, float centre, float half);
+float cs_band(float hue, float centre, float halfWidth);
 float cs_skinWeight(float l, float c, float hueDeg);
 
 vec4 cs_resampleAxis(sampler2D s_input, sampler2D s_weights,
