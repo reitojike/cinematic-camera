@@ -114,13 +114,30 @@ class R7PreviewInputsTest {
         }
     }
 
-    @Test fun cancellationAtBeginRowsSortAndReturnDoesNotReturnSuccessOrChangeInput() {
+    @Test fun cancellationAtBeginRowsSelectionAndReturnDoesNotReturnSuccessOrChangeInput() {
         val image = constant(8, 6, .2f); val before = image.copyPixels()
         val regions = listOf(ellipse())
-        var checkpoints = 0
-        R7PreviewInputs.prepare(asShot(image), regions) { checkpoints++; false }
-        assertEquals(13, checkpoints) // begin + 3 central rows + before/after sort + 6 ROI rows + return
-        for (stopAt in 1..checkpoints) {
+        val stages = listOf(R7StageTiming.Stage.SETUP, R7StageTiming.Stage.METER_LUMA,
+            R7StageTiming.Stage.METER_QUANTILE, R7StageTiming.Stage.ROI)
+        var stageIndex = -1
+        val timing = R7StageTiming(RawPreviewTiming.Kind.EXACT, 1, 1,
+            clock = { (++stageIndex).toLong() }, sink = {})
+        val checkpoints = mutableListOf<R7StageTiming.Stage>()
+        var plainCheckpoints = 0
+        val baseline = R7PreviewInputs.prepare(asShot(image), regions) { plainCheckpoints++; false }
+        val checked = R7PreviewInputs.prepare(asShot(image), regions, timing) {
+            checkpoints += stages[stageIndex]; false
+        }
+        assertEquals(plainCheckpoints, checkpoints.size)
+        assertEquals(stages.lastIndex, stageIndex)
+        assertEquals(stages, checkpoints.distinct())
+        assertEquals(1, checkpoints.count { it == R7StageTiming.Stage.SETUP })
+        assertEquals(4, checkpoints.count { it == R7StageTiming.Stage.METER_LUMA }) // 3 rows + before selection
+        assertTrue(checkpoints.count { it == R7StageTiming.Stage.METER_QUANTILE } > 1)
+        assertEquals(7, checkpoints.count { it == R7StageTiming.Stage.ROI }) // 6 rows + return
+        assertEquals(baseline.exposure, checked.exposure)
+        assertArrayEquals(baseline.foundationSkinRoi.copyValues(), checked.foundationSkinRoi.copyValues(), 0f)
+        for (stopAt in 1..checkpoints.size) {
             var calls = 0
             assertThrows(CancellationException::class.java) {
                 R7PreviewInputs.prepare(asShot(image), regions) { ++calls == stopAt }
@@ -133,12 +150,32 @@ class R7PreviewInputsTest {
     @Test fun r7CancellationCoversAllSixStageBoundariesAndPreservesDefaultOutput() {
         val image = constant(8, 6, .2f); val before = image.copyPixels()
         val roi = FloatPlane(8, 6, FloatArray(48)); val roiBefore = roi.copyValues()
-        val baseline = R7Base.render(image, roi, 0.0)
-        var checkpoints = 0
-        val checked = R7Base.render(image, roi, 0.0) { checkpoints++; false }
-        assertEquals(7, checkpoints)
+        var plainCheckpoints = 0
+        val baseline = R7Base.render(image, roi, 0.0) { plainCheckpoints++; false }
+        val stages = listOf(R7StageTiming.Stage.SETUP, R7StageTiming.Stage.VALIDATE,
+            R7StageTiming.Stage.PROFILE, R7StageTiming.Stage.LOCAL_LOG_LUMA, R7StageTiming.Stage.LOCAL_BOX,
+            R7StageTiming.Stage.LOCAL_BICUBIC, R7StageTiming.Stage.LOCAL_QUANTILES,
+            R7StageTiming.Stage.LOCAL_APPLY, R7StageTiming.Stage.FOUNDATION, R7StageTiming.Stage.VIBRANCE,
+            R7StageTiming.Stage.CRISP, R7StageTiming.Stage.SKIN)
+        var stageIndex = -1
+        val timing = R7StageTiming(RawPreviewTiming.Kind.EXACT, 1, 1,
+            clock = { (++stageIndex).toLong() }, sink = {})
+        val checkpoints = mutableListOf<R7StageTiming.Stage>()
+        val checked = R7Base.render(image, roi, 0.0, null, timing) {
+            checkpoints += stages[stageIndex]; false
+        }
+        assertEquals(plainCheckpoints, checkpoints.size)
+        assertEquals(stages.lastIndex, stageIndex)
+        val boundaries = listOf(R7StageTiming.Stage.SETUP, R7StageTiming.Stage.PROFILE,
+            R7StageTiming.Stage.LOCAL_APPLY, R7StageTiming.Stage.FOUNDATION, R7StageTiming.Stage.VIBRANCE,
+            R7StageTiming.Stage.CRISP, R7StageTiming.Stage.SKIN)
+        // Every original boundary remains exactly once, in order; selection adds internal checks.
+        assertEquals(boundaries, checkpoints.filter { it != R7StageTiming.Stage.LOCAL_QUANTILES })
+        assertTrue(checkpoints.count { it == R7StageTiming.Stage.LOCAL_QUANTILES } > 1)
+        assertEquals(boundaries.take(2) + R7StageTiming.Stage.LOCAL_QUANTILES + boundaries.drop(2),
+            checkpoints.distinct())
         assertArrayEquals(baseline.copyPixels(), checked.copyPixels(), 0f)
-        for (stopAt in 1..checkpoints) {
+        for (stopAt in 1..checkpoints.size) {
             var calls = 0
             assertThrows(CancellationException::class.java) { R7Base.render(image, roi, 0.0) { ++calls == stopAt } }
             assertEquals(stopAt, calls)
