@@ -13,28 +13,21 @@ internal object GpuDiagnosticGlow {
     /** The same blurred colour-based skin protection retained for future stages 2..5. */
     fun skinWeight(base: LinearSrgbImage): FloatPlane = smoothSkin(StageClearColor.skinWeight(base))
 
-    fun render(base: LinearSrgbImage, strength: Double = StageClearV1.DEFAULT_STRENGTH): LinearSrgbImage {
-        require(strength.isFinite() && strength in 0.0..1.0) { "Strength must be within 0..1" }
-        if (strength == 0.0) return base // stage_clear.render bypasses glow at zero.
-        return renderNonzero(base, strength, null)
-    }
-
-    /** Same original base's immutable skin plane, shared only within one Look invocation.
-     * Direct two-argument callers retain their existing calculation path and zero-strength bypass. */
-    internal fun render(base: LinearSrgbImage, strength: Double, originalSkin: FloatPlane): LinearSrgbImage {
+    /** Original skin plane and the prepared GPU session belong to the synthetic photo. */
+    internal fun render(session: GpuDiagnosticSession, base: LinearSrgbImage, strength: Double, originalSkin: FloatPlane): LinearSrgbImage {
         require(strength.isFinite() && strength in 0.0..1.0) { "Strength must be within 0..1" }
         require(originalSkin.width == base.width && originalSkin.height == base.height) {
             "Original skin weight must align with base RGB"
         }
         repeat(base.pixelCount) { require(originalSkin[it] in 0f..1f) { "Skin weight must be within 0..1" } }
         if (strength == 0.0) return base
-        return renderNonzero(base, strength, originalSkin)
+        return renderNonzero(session, base, strength, originalSkin)
     }
 
-    private fun renderNonzero(base: LinearSrgbImage, strength: Double, originalSkin: FloatPlane?): LinearSrgbImage {
+    private fun renderNonzero(session: GpuDiagnosticSession, base: LinearSrgbImage, strength: Double, originalSkin: FloatPlane?): LinearSrgbImage {
         // Source, excess, bloom, halation and skin temporaries belong to addLight's frame.
         // Keep only its pixels/protection while the full-size diffusion blur runs.
-        val layer = addLight(base, strength, originalSkin)
+        val layer = addLight(session, base, strength, originalSkin)
         val values = layer.pixels
         val protect = layer.protection
         // Snapshot is intentional: diffusion writes to values after reading this image.
@@ -52,7 +45,7 @@ internal object GpuDiagnosticGlow {
 
     private data class LightLayer(val pixels: FloatArray, val protection: FloatArray)
 
-    private fun addLight(base: LinearSrgbImage, strength: Double, originalSkin: FloatPlane?): LightLayer {
+    private fun addLight(session: GpuDiagnosticSession, base: LinearSrgbImage, strength: Double, originalSkin: FloatPlane?): LightLayer {
         val count = base.pixelCount
         val threshold = StageClearGlowV1.THRESHOLD.toFloat()
         val thresholdSpan = (1 - StageClearGlowV1.THRESHOLD).toFloat()
@@ -68,7 +61,7 @@ internal object GpuDiagnosticGlow {
         val sourceImage = LinearSrgbImage.takeOwnership(base.width, base.height, source)
         val bloom = FloatArray(source.size)
         for ((radius, weight) in kernels) {
-            val blurred = if (radius == StageClearGlowV1.BLOOM_KERNELS.first().first) GpuProbeImages.blur(sourceImage, radius) else StageClearBlur.rgb(sourceImage, radius)
+            val blurred = if (radius == StageClearGlowV1.BLOOM_KERNELS.first().first) GpuProbeImages.blur(session, sourceImage, radius) else StageClearBlur.rgb(sourceImage, radius)
             for (i in bloom.indices) bloom[i] += weight * blurred[i]
         }
         val halation = StageClearBlur.plane(FloatPlane.takeOwnership(base.width, base.height, excess),

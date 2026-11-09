@@ -25,6 +25,9 @@
 
 - [GPU合成診断](../../docs/GPU_DIAGNOSTIC.md) は製品未接続の独立 `gpuDiagnostic` アプリ。`cinematicGpuDiagnostic=true` の明示ビルドと画面からの明示起動だけで動く。GPU部分は合成専用。統合入口には既存RAW保存比較とCPUプレビューを含むが、GPUを製品処理へ接続しない。写真一覧権限は持たず、CPU側の入力はFilesで明示的に選ぶ。専用instrumentationも `gpuPixelProbe=true` と `isolated=true` がなければGPUを初期化しない。
 - GPU合成診断の1024pxは全LookのCPU差、12MPはぼかし/Orton単体の負荷を測る。12MP単体や背景FGS試験の成功を、全保存出力・製品保存復旧の採用条件の達成に読み替えない。
+- GPU合成診断は合成入力ごとに同一owner threadでEGL/contextと2 shaderを一度準備し、初回と再利用後を区分する。30msの目安は1024pxの `phase=reused` の対象2工程 `sumNs` だけに適用し、準備と初回処理を足した時間は別に記録する。upload/同期付きdraw/readbackのCPU wall内訳を分けるが、純粋GPU演算時間・非同期pipeline・GPU常駐入力の性能とは扱わない。通常製品へ接続せず、原本/goldenを変えない。
+- 再利用はcontext/shaderに限り、転送・CPU変換・一時texture/FBO・readbackは処理時間に含む。初回/失敗/取消や別sessionをwarm反復へ混ぜず、文脈喪失時に自動再生成しない。合成試験で毎回作り直す版とのfloat完全一致とCPU許容差、owner/lifetime/回収を確認する。手順と内訳の境界は[GPU診断](../../docs/GPU_DIAGNOSTIC.md#初回と反復の計測境界257)を参照する。
+
 ## プレビュー診断の契約
 
 - PreviewTimingは要求受付からUI状態採用、RawPreviewTimingはEXACT/DRAFT別のセッション計算を記録する。通常版の計測は明示DEBUG時だけで保存経路には接続しない。統合診断版の実編集では両ログをINFOで出し、並列設定とDRAFT/EXACTを識別する。前者の状態採用と後者の計算完了はいずれもOSの提示完了とは別。
