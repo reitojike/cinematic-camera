@@ -91,15 +91,13 @@ internal class GpuTexture private constructor(
     override fun close() {
         egl.glThread.requireCurrent()
         if (closed) return
-        try {
-            egl.releaseResource {
-                if (framebuffer != 0) GLES32.glDeleteFramebuffers(1, intArrayOf(framebuffer), 0)
-                if (texture != 0) GLES32.glDeleteTextures(1, intArrayOf(texture), 0)
-            }
-        } finally {
-            texture = 0; framebuffer = 0; closed = true
-            if (reserved) { ledger.release(byteSize); reserved = false }
+        // A foreign current context is a caller error: leave ownership/accounting intact for retry.
+        egl.releaseResource {
+            if (framebuffer != 0) GLES32.glDeleteFramebuffers(1, intArrayOf(framebuffer), 0)
+            if (texture != 0) GLES32.glDeleteTextures(1, intArrayOf(texture), 0)
         }
+        texture = 0; framebuffer = 0; closed = true
+        if (reserved) { ledger.release(byteSize); reserved = false }
     }
     companion object {
         fun create(egl: EglContexts, ledger: GpuMemoryLedger, width: Int, height: Int, format: Format): GpuTexture =
