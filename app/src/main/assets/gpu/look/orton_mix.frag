@@ -7,8 +7,6 @@ precision highp isampler2D;
 #include "common/color.glsl"
 
 uniform sampler2D s_mist;
-uniform sampler2D s_encoded;
-uniform sampler2D s_bright;
 // blurRgb(bright, StageClearOrtonV1.RADIUS), not a blur of encoded.
 uniform sampler2D s_soft;
 layout(location = 0) out vec4 o_color;
@@ -16,8 +14,11 @@ layout(location = 0) out vec4 o_color;
 void main() {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
     vec3 rgb = texelFetch(s_mist, pixel, 0).rgb;
-    vec3 encoded = texelFetch(s_encoded, pixel, 0).rgb;
-    vec3 bright = texelFetch(s_bright, pixel, 0).rgb;
+    // Recreate the same pointwise values as orton_prepare; only the blurred
+    // bright field is supplied as a separate texture.
+    vec3 encoded = vec3(cs_linearToUnit(rgb.r), cs_linearToUnit(rgb.g), cs_linearToUnit(rgb.b));
+    precise vec3 inverseEncoded = vec3(1.0) - encoded;
+    precise vec3 bright = vec3(1.0) - inverseEncoded * inverseEncoded;
     vec3 soft = texelFetch(s_soft, pixel, 0).rgb;
     precise float y = encoded.r * SC_STAGECLEAR_LUMA_0 + encoded.g * SC_STAGECLEAR_LUMA_1 +
         encoded.b * SC_STAGECLEAR_LUMA_2;

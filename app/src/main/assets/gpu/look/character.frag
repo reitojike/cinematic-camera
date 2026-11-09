@@ -39,8 +39,8 @@ void main() {
     // atan(0, 0) is undefined in GLSL. Kotlin atan2 is finite, even for black.
     float angle = lab.y == 0.0 && lab.z == 0.0 ? 0.0 : degrees(atan(lab.z, lab.y));
     float hue = cs_characterRemainder(cs_characterRemainder(angle, 360.0) + 360.0, 360.0);
-    float distance = abs(cs_characterRemainder(hue - 50.0 + 180.0, 360.0) - 180.0);
-    t = clamp(1.0 - distance / 40.0, 0.0, 1.0);
+    float hueDistance = abs(cs_characterRemainder(hue - 50.0 + 180.0, 360.0) - 180.0);
+    t = clamp(1.0 - hueDistance / 40.0, 0.0, 1.0);
     precise float band = t * t * (3.0 - 2.0 * t);
     precise float skin = band * clamp((chroma - 0.015) / 0.03, 0.0, 1.0) *
         clamp(1.0 - (chroma - 0.13) / 0.05, 0.0, 1.0);

@@ -15,8 +15,8 @@ void main() {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
     vec3 rgb = texelFetch(s_mist, pixel, 0).rgb;
     vec3 encoded = vec3(cs_linearToUnit(rgb.r), cs_linearToUnit(rgb.g), cs_linearToUnit(rgb.b));
-    precise vec3 inverse = vec3(1.0) - encoded;
-    precise vec3 bright = vec3(1.0) - inverse * inverse;
+    precise vec3 inverseEncoded = vec3(1.0) - encoded;
+    precise vec3 bright = vec3(1.0) - inverseEncoded * inverseEncoded;
     o_color = vec4(encoded, 1.0);
     o_colorBright = vec4(bright, 1.0);
 }
