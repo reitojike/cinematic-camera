@@ -524,6 +524,8 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
             val message = when (failure) {
                 is PhotoEditRestoreFailure -> "保持した調整設定を確認できません。原本は変更していません。設定を使わずに開くか、再試行してください"
                 is PhotoRollSourceFailure -> failure.userMessage
+                is dev.cinematic.p0.jpegrender.original.Original24MemoryUnavailable ->
+                    "表示用のメモリが不足しました。原本は変更していません。調整値を保ったまま再試行できます"
                 is DngContentChanged -> "原本の内容が変わったため停止しました。Filesから選び直してください"
                 is DngVerificationStopped -> "原本の確認を中断しました"
                 is android.os.OperationCanceledException -> "現像を中断しました。原本を確認して再試行してください"

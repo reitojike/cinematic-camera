@@ -20,4 +20,4 @@ Issue #265。手動試験プレビューにおける原本照合の境界と、�
 
 JVM は metadata の一致/変更/未知、同一metadataでは検出できない改変を SHA が拒否すること、cursor close failure の所有権を確認する。隔離 GMD はローカル合成 provider と合成 DNG のみを使う。warm の原本全体読取り0件、cold SHA維持、画素同一、変更と取消の失効を確認する。
 
-RawPreviewTiming の VERIFY_BEFORE / VERIFY_AFTER は今後この確認境界を指す。過去の SHA 全体読取り時間と、改修後の metadata 時間を同じ処理の速度差と混同しない。実機性能、個人写真、OS の提示時間はこの変更で再測定しない。
+RawPreviewTiming の VERIFY_BEFORE / VERIFY_AFTER は今後この確認境界を指す。過去の SHA 全体読取り時間と、改修後の metadata 確認時間は処理内容が異なるため、新旧の数値を並べた速度比較に使わない。実機性能、個人写真、OS の提示時間はこの変更で再測定しない。

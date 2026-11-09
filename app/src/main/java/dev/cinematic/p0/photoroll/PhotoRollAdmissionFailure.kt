@@ -5,7 +5,8 @@ import dev.cinematic.p0.rawcapture.AutoDevelopConditions
 import dev.cinematic.p0.rawcapture.AutoDevelopPolicy
 
 /** Explain the actual admission blockers without changing the shared fail-closed policy. */
-internal fun photoRollAdmissionFailure(conditions: AutoDevelopConditions): String? {
+internal fun photoRollAdmissionFailure(observed: AutoDevelopConditions, preview: Boolean = false): String? {
+    val conditions = if (preview) AutoDevelopPolicy.previewConditions(observed) else observed
     val blockers = AutoDevelopPolicy.blockers(conditions)
     if (blockers.isEmpty()) return null
     val reasons = blockers.map { when (it) {

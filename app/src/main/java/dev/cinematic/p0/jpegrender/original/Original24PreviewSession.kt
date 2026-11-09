@@ -48,7 +48,7 @@ import org.json.JSONObject
 internal class Original24PreviewSession(
     val source: SharedOriginalReference,
     private val scratchDirectory: File,
-    private val resourceAdmission: () -> Unit,
+    private val resourceAdmission: (Original24MemoryStage) -> Unit,
     private val expectedGeometry: Original24PreflightGeometry,
     /** Optional provider-metadata fence supplied by the checked photo selection. Saves never use it. */
     private val checkPreviewSource: ((DngIoResources, () -> Boolean) -> Unit)? = null,
@@ -133,13 +133,13 @@ internal class Original24PreviewSession(
         try {
             if (diagnosticWorkers == 2) execution = PreviewPixelExecution(2, stop)
             originalCheckpoint(stop)
-            resourceAdmission() // Cached Look renders also need the fixed original-trial resource gate.
+            resourceAdmission(Original24MemoryStage.BOUNDED_PREVIEW) // Reduced work checks current OS pressure, not the original-decode allowance.
             timing?.enter(RawPreviewTiming.Stage.VERIFY_BEFORE)
             verifyPreviewOriginal(stop)
             timing?.enter(RawPreviewTiming.Stage.INPUT)
             val input = if (draft) draftInput ?: reduceDraftInput(requireNotNull(asShot), stop).also { draftInput = it }
                 else asShot ?: loadInput(stop).also { asShot = it }
-            resourceAdmission()
+            resourceAdmission(Original24MemoryStage.BOUNDED_PREVIEW)
             timing?.enter(RawPreviewTiming.Stage.FOUNDATION)
             val foundation = if (draft) {
                 if (draftBase == null || draftAdjustments != adjustments) {
@@ -170,7 +170,7 @@ internal class Original24PreviewSession(
             } else glow.render(noProtection, strength, null, timing, execution) { originalCheckpoint(stop) }
             val image = rendered.image
             originalCheckpoint(stop)
-            resourceAdmission()
+            resourceAdmission(Original24MemoryStage.BOUNDED_PREVIEW)
             timing?.enter(RawPreviewTiming.Stage.BITMAP)
             result = bitmap(image, stop)
             timing?.enter(RawPreviewTiming.Stage.VERIFY_AFTER)
@@ -188,7 +188,7 @@ internal class Original24PreviewSession(
             failed = true; clearInputs()
             failure = error
             result?.recycle()
-            if (error is OutOfMemoryError) throw IOException("Original preview memory unavailable", error)
+            if (error is OutOfMemoryError) throw Original24MemoryUnavailable(error)
             throw error
         } finally {
             timing?.enter(RawPreviewTiming.Stage.CLEANUP)
@@ -224,9 +224,9 @@ internal class Original24PreviewSession(
         var failure: Throwable? = null
         try {
             originalCheckpoint(stop)
-            resourceAdmission()
+            resourceAdmission(Original24MemoryStage.BOUNDED_PREVIEW)
             verifyPreviewOriginal(stop)
-            resourceAdmission()
+            resourceAdmission(Original24MemoryStage.BOUNDED_PREVIEW)
             try { result = createBitmap(input, stop) }
             catch (_: OutOfMemoryError) { result = null } // bitmap() recycles any partially created Bitmap.
             verifyPreviewOriginal(stop)
@@ -237,7 +237,7 @@ internal class Original24PreviewSession(
             failed = true; clearInputs()
             failure = error
             result?.recycle()
-            if (error is OutOfMemoryError) throw IOException("Original comparison memory unavailable", error)
+            if (error is OutOfMemoryError) throw Original24MemoryUnavailable(error)
             throw error
         } finally {
             try { releaseTransient() }
@@ -267,7 +267,7 @@ internal class Original24PreviewSession(
         ownsRaster = true
         rasterFd = ParcelFileDescriptor.open(rasterFile, ParcelFileDescriptor.MODE_READ_WRITE)
         sourceFd = ParcelFileDescriptor.open(snapshotFile, ParcelFileDescriptor.MODE_READ_ONLY)
-        resourceAdmission()
+        resourceAdmission(Original24MemoryStage.ORIGINAL_DECODE)
         val metadata = JSONObject(NativeOriginalRaster.decode24(requireNotNull(sourceFd).fd,
             requireNotNull(rasterFd).fd, signal))
         closeDescriptors()
@@ -287,7 +287,7 @@ internal class Original24PreviewSession(
         val scale = min(1.0, 1024.0 / max(width, height))
         val reducedWidth = floor(width * scale).toInt(); val reducedHeight = floor(height * scale).toInt()
         if (reducedWidth < 4 || reducedHeight < 4) throw IOException("Original preview aspect is unsupported")
-        resourceAdmission()
+        resourceAdmission(Original24MemoryStage.BOUNDED_PREVIEW)
         val reduced = OriginalFields.reduce(rows, reducedWidth, reducedHeight, 3, stop) { rgb, output ->
             rgb.copyInto(output)
         }.reducedRgb()

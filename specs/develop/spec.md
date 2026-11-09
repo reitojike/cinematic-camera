@@ -44,6 +44,19 @@
 - この軽い確認は内容一致の保証ではない。同一サイズ・同一更新日時の差し替え、MediaStore の時刻情報への未反映は見逃し得る。保存に使う URI・bytes・SHA-256・grant は最初の強い確認値から更新せず、保存前後の全体照合を維持する。
 - 更新日時が不明/欠落/0以下のプロバイダでは互換性のため従来の全体照合へ戻す。軽い確認の成功を保存可否や現在のファイル内容の証明へ昇格しない。
 
+## 写真表示のメモリ条件
+
+- 写真表示の受付と原寸保存の受付は同じqueue/ownerの中で区別する。手動試験プレビューはOSが低メモリと判断した時、観測不能時、空きメモリ値が不正な時に停止する。撮影優先・foreground・温度・作業容量・取消・所有資源の解放確認は従来どおり必要とする。
+- 初回の原寸native decode直前と原寸保存には従来の768MiB空き条件を残す。これは測定済みの必要最小量ではなく、保守的な既存条件である。展開後の縮小、保持した1024px/256px入力の再編集、比較Bitmapには原寸用768MiBや保存受付の512MiBを再要求しない。
+- OSの `MemoryInfo.lowMemory` を現在値として確認し、既存の500ms観測と処理境界の確認を併用する。`onLowMemory` や実行中の `onTrimMemory` 通知だけには依存しない。これらの低メモリ通知はAPI 34以降配信されない。
+- 表示の割当失敗は結果を採用せず、失敗したsessionの縮小入力・一時ファイル・descriptorを解放する。解放失敗時はownerを保持する。原本と編集値を保ち、利用者の明示再試行で新しいsessionを作る。通知による停止や失敗したsessionを自動復活させない。
+- 比較Bitmapの割当失敗だけは従来どおり任意のBefore欠落として扱う。原本変化、取消、IO/close失敗、OS低メモリの確認は無視しない。保存の原寸条件と公開境界は弱めない。
+- 受付成功やOOM処理は、確保成功やOSによるprocess終了の回避を保証しない。合成観測と注入試験を実機の低メモリ耐性・必要RAMの合格に読み替えない。
+
+公式根拠: [MemoryInfo](https://developer.android.com/reference/android/app/ActivityManager.MemoryInfo)、
+[ComponentCallbacks2](https://developer.android.com/reference/android/content/ComponentCallbacks2)、
+[ComponentCallbacks](https://developer.android.com/reference/android/content/ComponentCallbacks)。
+
 ## 製品に採用していないもの
 
 - process共通の直列受付（PreviewSerial）は診断の明示指定だけで通常オフ。同一画面内の粗/正確処理の排他とは別。
