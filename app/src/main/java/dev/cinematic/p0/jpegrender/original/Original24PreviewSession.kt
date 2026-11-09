@@ -13,6 +13,8 @@ import dev.cinematic.p0.raw.LinearSrgbImage
 import dev.cinematic.p0.raw.PhotoAdjustments
 import dev.cinematic.p0.raw.PreparedStageClearGlow
 import dev.cinematic.p0.raw.RawPreviewTiming
+import dev.cinematic.p0.raw.PreviewPixelExecution
+import dev.cinematic.p0.BuildConfig
 import dev.cinematic.p0.raw.R7Base
 import dev.cinematic.p0.raw.R7PreviewInputs
 import dev.cinematic.p0.raw.original.NativeOriginalRaster
@@ -95,25 +97,39 @@ internal class Original24PreviewSession(
     fun requestStop() { stopped = true; signal.cancel() }
 
     fun render(strength: Double, adjustments: PhotoAdjustments = PhotoAdjustments.NONE,
-        shouldStop: () -> Boolean = { false }): Bitmap = requireNotNull(renderInternal(strength, adjustments, false, shouldStop))
+        shouldStop: () -> Boolean = { false }): Bitmap = requireNotNull(renderInternal(strength, adjustments, false, null, shouldStop))
 
     /** No decode, new judgement or save generation. Missing exact decisions retain the UI's prior image. */
     fun renderDraft(strength: Double, adjustments: PhotoAdjustments = PhotoAdjustments.NONE,
-        shouldStop: () -> Boolean = { false }): Bitmap? = renderInternal(strength, adjustments, true, shouldStop)
+        shouldStop: () -> Boolean = { false }): Bitmap? = renderInternal(strength, adjustments, true, null, shouldStop)
+
+    /** Integrated diagnostic only. Null execution for OFF is exactly the normal serial path. */
+    fun renderDiagnostic(strength: Double, adjustments: PhotoAdjustments, draft: Boolean, workers: Int,
+        shouldStop: () -> Boolean): Bitmap? {
+        check(BuildConfig.EDITOR_PREVIEW_DIAGNOSTIC)
+        require(workers in 1..2)
+        return renderInternal(strength, adjustments, draft, workers, shouldStop)
+    }
 
     private fun renderInternal(strength: Double, adjustments: PhotoAdjustments, draft: Boolean,
-        shouldStop: () -> Boolean): Bitmap? = exclusive {
+        diagnosticWorkers: Int?, shouldStop: () -> Boolean): Bitmap? = exclusive {
         check(Looper.myLooper() != Looper.getMainLooper()) { "Original preview requires existing IO owner" }
         require(strength.isFinite() && strength in 0.0..1.0)
         check(!closed && !failed && !stopped) { "Original preview session is unavailable" }
         if (draft && !hasDraftDecisions) return@exclusive null
         val stop = { stopped || signal.isCanceled || shouldStop() }
-        val timing = if (android.util.Log.isLoggable("PreviewTiming", android.util.Log.DEBUG))
+        val timing = if (diagnosticWorkers != null || android.util.Log.isLoggable("PreviewTiming", android.util.Log.DEBUG))
             RawPreviewTiming.optional { RawPreviewTiming(if (draft) RawPreviewTiming.Kind.DRAFT else RawPreviewTiming.Kind.EXACT,
-                ++timingSequence, sink = { android.util.Log.d("RawPreviewTiming", it) }) } else null
+                ++timingSequence, sink = {
+                    if (diagnosticWorkers != null) android.util.Log.i("RawPreviewTiming",
+                        "workers=$diagnosticWorkers maxEdge=${if (draft) 256 else 1024} $it")
+                    else android.util.Log.d("RawPreviewTiming", it)
+                }) } else null
+        var execution: PreviewPixelExecution? = null
         var result: Bitmap? = null
         var failure: Throwable? = null
         try {
+            if (diagnosticWorkers == 2) execution = PreviewPixelExecution(2, stop)
             originalCheckpoint(stop)
             resourceAdmission() // Cached Look renders also need the fixed original-trial resource gate.
             timing?.enter(RawPreviewTiming.Stage.VERIFY_BEFORE)
@@ -130,14 +146,14 @@ internal class Original24PreviewSession(
                     // Exact foundation uses emptyList() ellipses, so this is the same zero ROI,
                     // without recomputing automatic exposure on the coarse image.
                     draftBase = R7Base.render(warmed, FloatPlane(input.width, input.height, FloatArray(input.pixelCount)),
-                        requireNotNull(meteredBaseEv) + adjustments.exposureEv, stop)
+                        requireNotNull(meteredBaseEv) + adjustments.exposureEv, execution, stop)
                     draftAdjustments = adjustments
                 }
                 requireNotNull(draftBase)
             } else if (base != null && baseAdjustments == adjustments) requireNotNull(base) else {
                 // Drop the old base before allocating a replacement; warmth and EV both invalidate it.
                 base = null; baseAdjustments = null; previewExternalEv = null; previewGlow = null
-                original24PreviewFoundation(input, adjustments, stop).also {
+                original24PreviewFoundation(input, adjustments, stop, execution).also {
                     originalCheckpoint(stop)
                     base = it.image; baseAdjustments = adjustments; previewExternalEv = it.externalEv
                 }.image
@@ -147,9 +163,9 @@ internal class Original24PreviewSession(
             val glow = (if (draft) draftGlow else previewGlow) ?: PreparedStageClearGlow.prepare(foundation) {
                 originalCheckpoint(stop)
             }.also { if (draft) draftGlow = it else { previewGlow = it; previewFieldBuilds++ } }
-            val rendered = if (draft) glow.render(noProtection, strength, requireNotNull(previewDecisions), timing) {
+            val rendered = if (draft) glow.render(noProtection, strength, requireNotNull(previewDecisions), timing, execution) {
                 originalCheckpoint(stop)
-            } else glow.render(noProtection, strength, null, timing) { originalCheckpoint(stop) }
+            } else glow.render(noProtection, strength, null, timing, execution) { originalCheckpoint(stop) }
             val image = rendered.image
             originalCheckpoint(stop)
             resourceAdmission()
@@ -175,7 +191,7 @@ internal class Original24PreviewSession(
         } finally {
             timing?.enter(RawPreviewTiming.Stage.CLEANUP)
             var cleanupFailed = false
-            try { releaseTransient() }
+            try { execution?.close(); releaseTransient() }
             catch (cleanup: Throwable) {
                 cleanupFailed = true
                 failed = true; clearInputs()
@@ -364,12 +380,15 @@ internal class Original24PreviewSession(
 internal data class Original24PreviewFoundation(val image: LinearSrgbImage, val externalEv: Double)
 
 internal fun original24PreviewFoundation(input: LinearSrgbImage, adjustments: PhotoAdjustments,
-    stop: () -> Boolean): Original24PreviewFoundation {
+    stop: () -> Boolean): Original24PreviewFoundation = original24PreviewFoundation(input, adjustments, stop, null)
+
+internal fun original24PreviewFoundation(input: LinearSrgbImage, adjustments: PhotoAdjustments,
+    stop: () -> Boolean, execution: PreviewPixelExecution?): Original24PreviewFoundation {
     val diagnostic = R7PreviewInputs.prepare(R7PreviewInputs.AsShotInput(input,
         R7PreviewInputs.Source.LIBRAW_PRELIMINARY_AS_SHOT), emptyList(), stop)
     val warmed = adjustments.applyWarmth(input, stop)
     val externalEv = diagnostic.exposure.externalBaseEv + adjustments.exposureEv
-    return Original24PreviewFoundation(R7Base.render(warmed, diagnostic.foundationSkinRoi, externalEv, stop), externalEv)
+    return Original24PreviewFoundation(R7Base.render(warmed, diagnostic.foundationSkinRoi, externalEv, execution, stop), externalEv)
 }
 
 /** Preview-only BOX reduction reuses the existing reducer, without changing any processing kernel. */

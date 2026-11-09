@@ -42,6 +42,21 @@ class ProcessingSummaryTest(unittest.TestCase):
     def test_too_much_warmup_is_not_success(self):
         self.assertEqual("INSUFFICIENT_OR_INVALID", summarize([event(10)], warmup=2)["status"])
 
+    def test_diagnostic_workers_are_separated_and_each_render_is_reported(self):
+        lines = [event(20) + " workers=1 maxEdge=256", event(10) + " workers=2 maxEdge=256",
+                 event(12) + " workers=2 maxEdge=256"]
+        self.assertTrue(summarize(lines)["mixed_worker_configurations"])
+        self.assertIsNone(summarize(lines)["median_ms"])
+        result = summarize(lines, workers=2)
+        self.assertEqual([10, 12], result["per_render_ms"])
+        self.assertEqual(11, result["median_ms"])
+        self.assertEqual("NOT_MEASURED", result["input_to_present_50ms"])
+
+    def test_diagnostic_dimensions_and_workers_are_validated(self):
+        for suffix in (" workers=3 maxEdge=256", " workers=2 maxEdge=1024", " workers=1", " maxEdge=256"):
+            self.assertEqual(1, summarize([event(10) + suffix])["malformed_records"])
+        self.assertEqual(10, summarize([event(10, "EXACT") + " workers=2 maxEdge=1024"], kind="EXACT", workers=2)["median_ms"])
+
     def test_bad_kind_and_negative_values(self):
         with self.assertRaises(ValueError):
             summarize([], warmup=-1)

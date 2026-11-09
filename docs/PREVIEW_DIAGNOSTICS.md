@@ -28,7 +28,7 @@
 - タイマーは工程境界だけにあり、画素ループ、取消チェックポイント、並列の既定値、保存経路を変えない。
 - 計測器生成・時計・出力先の失敗は任意診断として隔離し、画素処理や後片付けの結果に置き換えない。処理/後片付けの失敗はSUCCESSにしない。
 
-どちらも PreviewTiming のDEBUG指定を作成条件とし、通常は計測を生成しない。写真・URI・素材名・撮影情報・編集値・端末固有識別子をログに含めない。
+通常版ではどちらも PreviewTiming のDEBUG指定を作成条件とし、通常は計測を生成しない。統合診断版のCPU編集画面は両ログをINFOで常時取得できる。写真・URI・素材名・撮影情報・編集値・端末固有識別子をログに含めない。
 既存CPU goldenは維持し、計測あり/なしの合成出力・判定値・取消挙動の同一性をテストする。
 
 ## 明示的な取得手順
@@ -78,3 +78,18 @@ Original24PreviewSessionは縮小AS_SHOT入力、調整値に対応するR7 base
 
 関連する変更・結果は [#205](https://github.com/reitojike/cinematic-camera/issues/205)、[#206](https://github.com/reitojike/cinematic-camera/issues/206)、
 [#207](https://github.com/reitojike/cinematic-camera/issues/207)、[#208](https://github.com/reitojike/cinematic-camera/issues/208)、[#223](https://github.com/reitojike/cinematic-camera/issues/223) を参照する。
+
+## 統合診断版の実編集で1/2並列を比較する
+
+`cinematicGpuDiagnostic=true` の統合診断だけで `BuildConfig.EDITOR_PREVIEW_DIAGNOSTIC=true` とする。通常debug/release、rawDiagnostic、previewDiagnosticはfalseで、編集UI・sessionの両入口で境界を確認する。
+統合診断は撮影Activity/権限を持たないため、編集Activityの生存中だけアプリ内撮影処理なしの観測所有者を登録し、破棄時に解放する。他の所有者のtrue/未確認や、端末カメラ利用可否・温度・メモリ・ストレージ・foregroundの判定は緩和しない。
+
+1. Hubの「CPUプレビューの確認（Filesから選択）」から入力を明示選択し、初回1024px表示を待つ。
+2. 画像上の「診断: 候補3工程の2並列」を確認する。初期値OFFは既存製品と同じ直列処理。ONは既存Foundation・Orton・Characterの画素演算だけを2 workerに渡す。残りの工程まで並列化した意味ではない。
+3. 調整を閉じた確定表示中に切り替える。切替自体で同じ値を再計算する。計算中、調整中、保存中/保留/未確認中は切り替えない。保存ボタンは既存の共有JPEG保存なので、速度比較だけなら押さない。
+4. OFF/ONそれぞれで強さ・色温度・明るさを同じ開始値と操作にそろえ、順を交互にして慣らし後に比較する。写真切替やアプリ再生成と通常の調整を混ぜない。画面再生成ではOFFに戻る。
+5. 診断版ではタグ設定変更なしで `PreviewTiming:I RawPreviewTiming:I` を対象PID限定で取得する。RawPreviewTimingの`workers=1/2 maxEdge=256/1024 kind=DRAFT/EXACT`を確認する。各回の計算は[補助集計](../tools/preview-timing/README.md)の`per_render_ms`へ出せる。
+
+この診断でも初回decodeと慣れた操作は区別する。表示Bitmapの保持cacheからの即返却だけを無効にして、毎回計算を通す。縮小入力、調整値依存のR7、Glow、DRAFT判断共有は通常と同じ寿命で保持するので、同じ値の切替だけではFOUNDATIONが再計算されないことがある。並列workerは各renderで作成し、終了待ちまでRawPreviewTimingに含める。
+
+PreviewTimingは確定要求受付からUI状態採用までの比較に使えるが、指の離れた物理時刻やOSの提示完了の測定ではない。DRAFTログだけでドラッグの50ms達成を宣言しない。実機操作・個人写真の使用はその確認の許可がある回に限定する。

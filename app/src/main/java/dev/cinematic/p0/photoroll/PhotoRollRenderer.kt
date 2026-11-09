@@ -21,6 +21,8 @@ internal data class PhotoRollRenderRequest(
     val adjustments: PhotoAdjustments = PhotoAdjustments(),
     val maxEdge: Int = 1024,
     val mode: PhotoRollPreviewMode = PhotoRollPreviewMode.STAGE_CLEAR,
+    /** Null outside the integrated diagnostic; 1 is normal serial, 2 is candidate pixel workers. */
+    val diagnosticWorkers: Int? = null,
     val explicitRetry: Boolean = false,
     /** An edit release must refresh exact decisions even if display pixels were retained. */
     val refreshDecisions: Boolean = false,

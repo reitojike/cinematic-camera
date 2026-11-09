@@ -11,7 +11,10 @@ internal object R7Base {
         foundationSkinRoi: FloatPlane,
         externalBaseEv: Double,
         shouldStop: () -> Boolean = { false },
-    ): LinearSrgbImage {
+    ): LinearSrgbImage = render(input, foundationSkinRoi, externalBaseEv, null, shouldStop)
+
+    internal fun render(input: LinearSrgbImage, foundationSkinRoi: FloatPlane, externalBaseEv: Double,
+        execution: PreviewPixelExecution?, shouldStop: () -> Boolean): LinearSrgbImage {
         fun checkpoint() {
             if (shouldStop()) throw CancellationException("R7 rendering stopped")
         }
@@ -23,7 +26,7 @@ internal object R7Base {
         checkpoint()
         image = localTone(image)
         checkpoint()
-        image = foundation(image, foundationSkinRoi, externalBaseEv)
+        image = foundation(image, foundationSkinRoi, externalBaseEv, execution)
         checkpoint()
         image = vibrance(image)
         checkpoint()
