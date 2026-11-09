@@ -102,7 +102,8 @@ class PreviewRawGestureFixtureAndroidTest {
             }
         }
         if (parallelProbe) instrumentation.runOnMainSync {
-            assertEquals(PhotoRollCameraSnapshot(), AndroidPhotoRollCameraObservations.snapshot())
+            assertEquals("Owner-free diagnostic process starts idle",
+                PhotoRollCameraSnapshot(false, false, false, false), AndroidPhotoRollCameraObservations.snapshot())
         }
         try {
             ActivityScenario.launch<androidx.activity.ComponentActivity>(android.content.Intent().setClassName(target.packageName, hostClassName)).use {
@@ -175,8 +176,8 @@ class PreviewRawGestureFixtureAndroidTest {
                 println("Synthetic RAW gesture: exact=${exactCount.get()} draft=${draftCount.get()} presentation=NOT_MEASURED")
             }
             if (parallelProbe) instrumentation.runOnMainSync {
-                assertEquals("Diagnostic Activity must release its camera observation",
-                    PhotoRollCameraSnapshot(), AndroidPhotoRollCameraObservations.snapshot())
+                assertEquals("Owner-free diagnostic process stays idle after the editor closes",
+                    PhotoRollCameraSnapshot(false, false, false, false), AndroidPhotoRollCameraObservations.snapshot())
             }
         } finally {
             // 新しいsource readを先に拒否する。queue barrierだけでは画面側verify IOを待てない。
