@@ -11,6 +11,9 @@ import java.util.concurrent.ExecutionException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+import dev.cinematic.p0.rawcapture.DngIoResources
+import dev.cinematic.p0.rawcapture.DngVerificationStopped
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
@@ -25,7 +28,14 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
     override val maxEdge = 1024
     override val maxSourceBytes = 64L * 1024 * 1024
 
+    private val originalEpoch = AtomicLong(0)
+    private data class CheckedOriginal(val original: PhotoRollOriginal, val fromFiles: Boolean, val epoch: Long,
+        val repository: PhotoRollRepository)
+    @Volatile private var checkedOriginal: CheckedOriginal? = null
+
     override fun discardTransientInputs() {
+        originalEpoch.incrementAndGet()
+        checkedOriginal = null
         AndroidManualOriginalTrialSaves.invalidatePreviews()
         AndroidManualOriginalTrialSaves.discardPreview(app)
     }
@@ -33,8 +43,32 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
     override fun checkOriginal(repository: PhotoRollRepository, uri: Uri, fromFiles: Boolean,
         cancellation: CancellationSignal): PhotoRollOriginal =
         PhotoRollOriginalChecks.run(resources, cancellation) { readers, stop ->
-            repository.check(uri, fromFiles, stop, maxSourceBytes, readers)
+            val epoch = originalEpoch.get()
+            val prior = checkedOriginal?.takeIf { it.epoch == epoch && it.original.uri == uri && it.fromFiles == fromFiles }
+            val original = if (prior != null) {
+                repository.verifyPreview(prior.original, stop, readers = readers)
+                prior.original
+            } else repository.check(uri, fromFiles, stop, maxSourceBytes, readers)
+            if (stop() || epoch != originalEpoch.get()) throw DngVerificationStopped()
+            checkedOriginal = CheckedOriginal(original, fromFiles, epoch, repository)
+            original
         }
+
+    private fun checked(original: PhotoRollOriginal): CheckedOriginal = checkedOriginal?.takeIf {
+        it.epoch == originalEpoch.get() && it.original.reference == original.reference
+    } ?: throw PhotoRollSourceFailure("原本の確認が失効しました。写真を開き直してください")
+
+    private fun previewCheck(original: PhotoRollOriginal): (DngIoResources, () -> Boolean) -> Unit {
+        val checked = checked(original)
+        return { io, stop ->
+            checked.repository.verifyPreview(checked.original, { stop() || checked.epoch != originalEpoch.get() }, io)
+        }
+    }
+
+    override fun verifyPreviewOriginal(repository: PhotoRollRepository, original: PhotoRollOriginal, shouldStop: () -> Boolean) {
+        val checked = checked(original)
+        repository.verifyPreview(checked.original, { shouldStop() || checked.epoch != originalEpoch.get() })
+    }
 
     override fun renderDraft(request: PhotoRollRenderRequest, cancellation: CancellationSignal): PhotoRollRenderResult.Preview? {
         require(request.mode == mode && request.lookVersion == "stage-clear-v1" && request.maxEdge == 256)
@@ -100,7 +134,7 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
         }
         request.onStage(PhotoRollRenderStage.TRIAL_RENDER)
         val future = AndroidManualOriginalTrialSaves.renderPreview(app, request.original.reference,
-            request.strength, resources().developConditions(rendererAvailable = true), request.adjustments, request.diagnosticWorkers) {
+            request.strength, resources().developConditions(rendererAvailable = true), request.adjustments, request.diagnosticWorkers, previewCheck(request.original)) {
             cancellation.isCanceled
         }
         val abandoned = AtomicBoolean(false)

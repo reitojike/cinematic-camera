@@ -11,6 +11,8 @@ import android.os.Bundle
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.OpenableColumns
+import dev.cinematic.p0.rawcapture.DngVerificationStopped
+import dev.cinematic.p0.rawcapture.DngIoResources
 import dev.cinematic.p0.rawcapture.DngContentVerifier
 import dev.cinematic.p0.rawcapture.OriginalGrant
 import dev.cinematic.p0.rawcapture.isDngRowUri
@@ -123,6 +125,43 @@ internal class PhotoRollRepository(private val resolver: ContentResolver, privat
 
     fun check(uri: Uri, fromFiles: Boolean, shouldStop: () -> Boolean, maxBytes: Long = MAX_SOURCE_BYTES,
         readers: PhotoRollReadResources? = null): PhotoRollOriginal {
+        val observed = observe(uri, fromFiles, shouldStop, maxBytes, readers)
+        val fingerprint = DngContentVerifier.identify(observed.bytes,
+            { openRead(uri, readers = readers) }, shouldStop)
+        observed.requireMatches(observe(uri, fromFiles, shouldStop, maxBytes, readers))
+        return PhotoRollOriginal(uri, fingerprint, observed.grant, observed)
+    }
+
+    /** Preview-only hint, never a replacement fingerprint or an authorization to publish. */
+    fun verifyPreview(original: PhotoRollOriginal, shouldStop: () -> Boolean,
+        io: DngIoResources? = null, readers: PhotoRollReadResources? = null) {
+        val expected = original.previewObservation
+        if (expected == null) {
+            DngContentVerifier.verify(original.fingerprint, { openRead(original.uri, io, readers) }, shouldStop)
+            return
+        }
+        expected.requireMatches(observe(original.uri, expected.fromFiles, shouldStop,
+            MAX_SOURCE_BYTES, readers, io))
+        // A successful metadata query alone does not establish that content read permission remains.
+        // Open read-only and close without consuming bytes. Failed closes stay with the caller's owner.
+        if (expected.modified == null) {
+            // Providers may legitimately omit mtime. Keep the conservative compatibility path.
+            DngContentVerifier.verify(original.fingerprint, { openRead(original.uri, io, readers) }, shouldStop)
+        } else openRead(original.uri, io, readers).use { checkpoint(shouldStop) }
+        checkpoint(shouldStop)
+    }
+
+    private fun openRead(uri: Uri, io: DngIoResources? = null, readers: PhotoRollReadResources? = null): java.io.InputStream {
+        val open = { resolver.openInputStream(uri)
+            ?: throw PhotoRollSourceFailure("原本を読み取れません。Filesから選び直してください") }
+        return if (readers != null) readers.open(open) else if (io != null) io.input(open()) else open()
+    }
+
+    private fun checkpoint(shouldStop: () -> Boolean) { if (shouldStop()) throw DngVerificationStopped() }
+
+    private fun observe(uri: Uri, fromFiles: Boolean, shouldStop: () -> Boolean, maxBytes: Long,
+        readers: PhotoRollReadResources? = null, io: DngIoResources? = null): PhotoRollSourceObservation {
+        checkpoint(shouldStop)
         require(maxBytes in 1..MAX_SOURCE_BYTES)
         if (uri.scheme != "content") throw PhotoRollSourceFailure("読み取り権限のある端末内DNGを選んでください")
         if (fromFiles) {
@@ -137,6 +176,7 @@ internal class PhotoRollRepository(private val resolver: ContentResolver, privat
         }
         var name: String? = null
         var size: Long? = null
+        var modified: Long? = null
         var appOwnedVerified = false
         var publishedVerified = false
         var rowMime: String? = null
@@ -147,10 +187,14 @@ internal class PhotoRollRepository(private val resolver: ContentResolver, privat
             columns += MediaStore.MediaColumns.IS_TRASHED
         } else null
         val mimeIndex = if (!fromFiles) columns.size.also { columns += MediaStore.MediaColumns.MIME_TYPE } else null
+        val modifiedColumn = if (fromFiles) DocumentsContract.Document.COLUMN_LAST_MODIFIED else MediaStore.MediaColumns.DATE_MODIFIED
+        columns += modifiedColumn
         fun inspect(cursor: android.database.Cursor) {
             if (cursor.moveToFirst()) {
                 name = cursor.getString(0)
                 size = if (cursor.isNull(1)) null else cursor.getLong(1)
+                val modifiedIndex = cursor.getColumnIndex(modifiedColumn)
+                modified = if (modifiedIndex < 0 || cursor.isNull(modifiedIndex)) null else cursor.getLong(modifiedIndex).takeIf { it > 0 }
                 if (!fromFiles) {
                     appOwnedVerified = cursor.getString(2) == packageName
                     publishedVerified = !cursor.isNull(3) && cursor.getInt(3) == 0 &&
@@ -161,17 +205,20 @@ internal class PhotoRollRepository(private val resolver: ContentResolver, privat
             }
         }
         resolver.query(uri, columns.toTypedArray(), null, null, null)?.let { cursor ->
-            if (readers == null) cursor.use(::inspect) else readers.useOwned(cursor, ::inspect)
+            when {
+                readers != null -> readers.useOwned(cursor, ::inspect)
+                io != null -> io.useOwned(cursor, ::inspect)
+                else -> cursor.use(::inspect)
+            }
         }
         if (!fromFiles && !publishedVerified) throw PhotoRollSourceFailure("公開済みの原本と確認できないか、アクセス権がありません。一覧から選び直してください")
         if (cameraRollKind(name ?: "", if (fromFiles) resolver.getType(uri) else rowMime, false) != CameraRollKind.DNG)
             throw PhotoRollSourceFailure("DNGを選んでください。拡張子だけでは現像対応は確定しません")
         val bytes = size?.takeIf { it in 1..maxBytes }
             ?: throw PhotoRollSourceFailure("原本のサイズが不明、空、または${maxBytes / (1024 * 1024)} MiBを超えています。この入力はまだ扱えません")
-        val openRead = { resolver.openInputStream(uri)
-            ?: throw PhotoRollSourceFailure("原本を読み取れません。Filesから選び直してください") }
-        val fingerprint = DngContentVerifier.identify(bytes, { readers?.open(openRead) ?: openRead() }, shouldStop)
-        return PhotoRollOriginal(uri, fingerprint, if (!fromFiles && appOwnedVerified) OriginalGrant.APP_OWNED else OriginalGrant.USER_SELECTED)
+        checkpoint(shouldStop)
+        return PhotoRollSourceObservation(fromFiles, bytes, modified,
+            if (!fromFiles && appOwnedVerified) OriginalGrant.APP_OWNED else OriginalGrant.USER_SELECTED)
     }
 
     fun verify(original: PhotoRollOriginal, shouldStop: () -> Boolean) {

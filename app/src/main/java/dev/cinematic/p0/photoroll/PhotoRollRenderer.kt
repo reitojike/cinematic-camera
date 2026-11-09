@@ -9,7 +9,9 @@ import dev.cinematic.p0.rawcapture.SharedOriginalReference
 import dev.cinematic.p0.raw.PhotoAdjustments
 
 /** A checked shared original. Open only with ContentResolver's read-only stream/FD APIs. */
-internal data class PhotoRollOriginal(val uri: Uri, val fingerprint: OriginalFingerprint, val grant: OriginalGrant) {
+internal data class PhotoRollOriginal(val uri: Uri, val fingerprint: OriginalFingerprint, val grant: OriginalGrant,
+    /** In-memory preview hint only; deliberately excluded from reference and durable identity. */
+    val previewObservation: PhotoRollSourceObservation? = null) {
     /** Selection origin only. This never grants or persists provider permissions. */
     val reference get() = SharedOriginalReference(uri.toString(), fingerprint, grant)
 }
@@ -87,6 +89,8 @@ internal interface PhotoRollRenderer {
     val maxEdge: Int get() = 1024
     fun checkOriginal(repository: PhotoRollRepository, uri: Uri, fromFiles: Boolean, cancellation: CancellationSignal) =
         repository.check(uri, fromFiles, { cancellation.isCanceled }, maxSourceBytes)
+    fun verifyPreviewOriginal(repository: PhotoRollRepository, original: PhotoRollOriginal, shouldStop: () -> Boolean) =
+        repository.verify(original, shouldStop)
     fun render(request: PhotoRollRenderRequest, cancellation: CancellationSignal): PhotoRollRenderResult
 }
 
