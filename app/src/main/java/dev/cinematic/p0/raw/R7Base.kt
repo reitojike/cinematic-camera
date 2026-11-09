@@ -14,24 +14,34 @@ internal object R7Base {
     ): LinearSrgbImage = render(input, foundationSkinRoi, externalBaseEv, null, shouldStop)
 
     internal fun render(input: LinearSrgbImage, foundationSkinRoi: FloatPlane, externalBaseEv: Double,
-        execution: PreviewPixelExecution?, shouldStop: () -> Boolean): LinearSrgbImage {
+        execution: PreviewPixelExecution?, shouldStop: () -> Boolean): LinearSrgbImage =
+        render(input, foundationSkinRoi, externalBaseEv, execution, null, shouldStop)
+
+    internal fun render(input: LinearSrgbImage, foundationSkinRoi: FloatPlane, externalBaseEv: Double,
+        execution: PreviewPixelExecution?, timing: R7StageTiming?, shouldStop: () -> Boolean): LinearSrgbImage {
         fun checkpoint() {
             if (shouldStop()) throw CancellationException("R7 rendering stopped")
         }
         // Stage boundaries only; a running colour/blur kernel is not interrupted.
         checkpoint()
+        timing?.enter(R7StageTiming.Stage.VALIDATE)
         validate(input, foundationSkinRoi, externalBaseEv)
         // Production does not retain every full-frame intermediate as the comparison test does.
+        timing?.enter(R7StageTiming.Stage.PROFILE)
         var image = profile(input)
         checkpoint()
-        image = localTone(image)
+        image = localTone(image, timing)
         checkpoint()
+        timing?.enter(R7StageTiming.Stage.FOUNDATION)
         image = foundation(image, foundationSkinRoi, externalBaseEv, execution)
         checkpoint()
+        timing?.enter(R7StageTiming.Stage.VIBRANCE)
         image = vibrance(image)
         checkpoint()
+        timing?.enter(R7StageTiming.Stage.CRISP)
         image = crisp(image)
         checkpoint()
+        timing?.enter(R7StageTiming.Stage.SKIN)
         return skin(image).also { checkpoint() }
     }
 
@@ -69,22 +79,27 @@ internal object R7Base {
             lab[1] = (chroma * cos(angle)).toFloat(); lab[2] = (chroma * sin(angle)).toFloat()
     }
 
-    internal fun smoothLogLuma(input: LinearSrgbImage): FloatPlane {
+    internal fun smoothLogLuma(input: LinearSrgbImage, timing: R7StageTiming? = null): FloatPlane {
+        timing?.enter(R7StageTiming.Stage.LOCAL_LOG_LUMA)
         val cell = .04 * max(input.width, input.height)
         val width = max(4, round(input.width / cell).toInt())
         val height = max(4, round(input.height / cell).toInt())
         val log = FloatPlane.takeOwnership(input.width, input.height, FloatArray(input.pixelCount) { p ->
             log2(max(luma(input, p).toDouble(), 1e-5)).toFloat()
         })
+        timing?.enter(R7StageTiming.Stage.LOCAL_BOX)
         val down = StageClearBlur.resize(log, width, height, StageClearBlur.Filter.BOX)
+        timing?.enter(R7StageTiming.Stage.LOCAL_BICUBIC)
         return StageClearBlur.resize(down, input.width, input.height, StageClearBlur.Filter.BICUBIC)
     }
 
-    private fun localTone(input: LinearSrgbImage): LinearSrgbImage {
-        val base = smoothLogLuma(input)
+    private fun localTone(input: LinearSrgbImage, timing: R7StageTiming? = null): LinearSrgbImage {
+        val base = smoothLogLuma(input, timing)
+        timing?.enter(R7StageTiming.Stage.LOCAL_QUANTILES)
         val sorted = base.copyValues().also { it.sort() }
         val high = percentile(sorted, .92)
         val low = percentile(sorted, .5)
+        timing?.enter(R7StageTiming.Stage.LOCAL_APPLY)
         return pixels(input) { p, out ->
             val value = base[p].toDouble()
             val delta = -R7BaseV1.HIGHLIGHTS * max(value - high, 0.0) - R7BaseV1.SHADOWS * min(value - low, 0.0)

@@ -93,3 +93,76 @@ Original24PreviewSessionは縮小AS_SHOT入力、調整値に対応するR7 base
 この診断でも初回decodeと慣れた操作は区別する。表示Bitmapの保持cacheからの即返却だけを無効にして、毎回計算を通す。縮小入力、調整値依存のR7、Glow、DRAFT判断共有は通常と同じ寿命で保持するので、同じ値の切替だけではFOUNDATIONが再計算されないことがある。並列workerは各renderで作成し、終了待ちまでRawPreviewTimingに含める。
 
 PreviewTimingは確定要求受付からUI状態採用までの比較に使えるが、指の離れた物理時刻やOSの提示完了の測定ではない。DRAFTログだけでドラッグの50ms達成を宣言しない。実機操作・個人写真の使用はその確認の許可がある回に限定する。
+
+## R7工程を分ける診断計測（Issue #267、Draft提案）
+
+R7全体は単一RGB→RGB表では表現できない。全体の統計を固定しても、localToneの位置別fieldが残る。
+この節と`R7StageTiming`は工程の分類と測定境界だけを追加する提案であり、LUT・近似・統計cacheを実装しない。
+
+### 取得範囲と集計
+
+統合診断の`renderDiagnostic`だけが`R7StageTiming:I`を出す。通常previewと保存はtimerを作らない。
+取得時は既存の`PreviewTiming:I RawPreviewTiming:I`にこのタグを加える。対象の実機・素材を使う許可は別途必要。
+新APKの配布や実機測定が済んだことを、この実装の存在から推定しない。
+
+- 同一sessionの`kind=EXACT/DRAFT sequence workers`で`RawPreviewTiming`と対応する。sequenceはsession内だけの番号。
+  EXACTとDRAFT、worker数、coldと再計算と保持済み結果を混ぜない。写真・入力URI・調整値・統計値は記録しない。
+- `totalNs`はFOUNDATIONに入った後の最初の時計取得からR7 baseを取り出すまで。RawPreviewTimingのFOUNDATIONより狭く、
+  最初の時計取得前・最終ログ出力、後続の保護mask生成などは外側に残る。計測器内の配列確保はSETUPに含む。両者を足してはいけない。
+- 表の区間は単調時計`System.nanoTime`で非重複に測り、再訪した同名区間は加算する。区間合計が`totalNs`。
+  `Ns / 1_000_000.0`でmsへ変換する。画素ループ内に時計やログを置かず、境界・既存checkpoint・配列割当/検査の費用を含む。
+  単一kernelのCPU時間ではなく経過時間であり、GC・OS scheduling・2 workerの終了待ちも含み得る。
+- `r7Visited=false outcome=SUCCESS`でSETUPだけなら保持済みbaseを取り出した回。未訪問工程を0msの測定結果にしない。
+  DRAFTのMETER_*欠落はEXACTで得た自動EVを再利用したため。R7の失敗/取消はFAILEDで、成功回の集計へ入れない。
+  R7がSUCCESSでも後続のLookや保存/表示が成功したことは意味しない。RawPreviewTimingの結果も別に確認する。
+- 時計・計測器・出力先の障害は任意診断として隔離する。その回のログ欠落を0msや成功の証拠としない。
+  固定時計を使うunit試験は境界と加算の検証であり、性能測定ではない。既存のFOUNDATION合計だけのログから内部時間を復元しない。
+
+### 非重複の分類
+
+「画素ごと」は**この区間で行う演算**の分類であり、外部から受け取るfield/統計までRGB独立という意味ではない。
+局所処理と統計を含むlocalTone全体をどれか1つに押し込めず、次の境界で分ける。3分類へ入らない準備/検査も別枠で残す。
+
+| 計測区間 | 分類 | 内容・入力依存 |
+| --- | --- | --- |
+| SETUP | 準備・保持確認 | 入力/設定に対応するbaseの保持確認、AsShotInput検査等。保持済みならここだけ |
+| METER_LUMA | 画素ごと | 未変更AS_SHOT中央領域の各RGBから輝度配列を作る。中央領域を使うこと自体は統計集約ではない |
+| METER_QUANTILE | 画像の統計 | 中央輝度配列のsort、97%点、そこから自動EVを求める。画像全画素ではなく中央領域の分布 |
+| ROI | 画素ごと | 寸法と明示ellipseから位置別weightを作る。周囲RGBは見ない。現行sessionは空ellipse/0一定 |
+| WARMTH | 画素ごと | 同じRGBと色温度設定から一定利得。中立設定は既存の早期return |
+| VALIDATE | 検査 | R7のEV・寸法・ROIの検査。色変換ではない |
+| PROFILE | 画素ごと | 同じRGBのOKLab・色相・彩度変換 |
+| LOCAL_LOG_LUMA | 画素ごと | profile後RGBの輝度とlog2、局所field寸法の計算 |
+| LOCAL_BOX | 周辺画素 | log輝度のBOX縮小。複数画素の重み付き和 |
+| LOCAL_BICUBIC | 周辺画素 | 縮小fieldを入力寸法へ拡大。複数field sampleの重み付き和 |
+| LOCAL_QUANTILES | 画像全体の統計 | **拡大後field全体**をcopy/sortし、50%/92%点を求める |
+| LOCAL_APPLY | 画素ごと | 同位置のfield値と50%/92%点から利得を求めRGBへ適用。位置別fieldと統計が外部入力として必須 |
+| FOUNDATION | 画素ごと | 総EV・同位置ROIを受けたtone/彩度。ROI=0一定の場合と可変ROIの場合を区別 |
+| VIBRANCE | 画素ごと | OKLabによる彩度調整 |
+| CRISP | 画素ごと | 輝度curveとOKLab彩度の2pass。名前に反して周辺画素を見ないので同じ分類でまとめる |
+| SKIN | 画素ごと | 同画素の色による肌weightと色調整。顔検出/周辺mask作成ではない |
+
+LOCAL_*の5区間がlocalToneに対応する。R7自体はVALIDATEからSKINまで、測光/ROI/WARMTHはその前準備。
+Glow準備/Lookはこの表とR7StageTimingの外。各工程の実機msはこの境界を持つログの取得後にだけ記入する。
+
+### 統計を固定できる条件と縮小画像の扱い
+
+| 値・中間結果 | 正確に再利用できる条件 | 変わる/再確認が必要なもの |
+| --- | --- | --- |
+| 中央P97・自動EV | 同じ未変更AS_SHOTの画素・寸法・向き・crop・測光式の版 | 新しい入力/解像度/crop等。手動warmth/EV/Look強度は参照しない |
+| profile後画像 | 同じAS_SHOT・寸法・warmth・profile/色変換の版 | warmth変更。総EV/ROI/Look強度は未適用 |
+| localToneのfieldと50%/92% | 同じprofile後画像・寸法・BOX/BICUBIC/係数の版 | warmth・入力・寸法変更。総EV/ROI/Look強度は参照しない |
+| localTone後画像 | 上記field/統計/入力とlocalTone係数が同じ | 同じwarmthなら手動EV変更からは独立 |
+| foundation以降 | 同じlocalTone出力・総EV・ROI・R7/色変換の版 | 手動EVはここから作用。ROIが位置で変わればRGBだけの一表ではない |
+
+これはcache可能性の条件であり、新cacheを採用したという意味ではない。現行EXACTはbaseを再構築する際に
+`R7PreviewInputs.prepare`を呼び直し、DRAFTはEXACTの自動EVを共有して中央P97を再測定しない。
+
+小さいAS_SHOT画像からP97を出す場合、BOX平均と中央領域の画素境界/分布が変わり、元解像度の分位と一般に一致しない。
+localToneは既にlog輝度を小さいgridへ落としているが、そのgridの分位ではなく**拡大後の全fieldの分位**を使用する。
+小さいgridだけの分位に置換する、または先にRGB画像を縮小してprofile→log→field→分位を作ると、非線形変換・
+resize重み・丸め・sample分布が変わるため近似である。既存出力の正確な保持とは区別して別途誤差評価が必要。
+
+統計2個だけを固定しても、LOCAL_APPLYには位置ごとのfieldが残る。提案を検討する順番は、実測で統計・空間処理・
+画素計算の負担を分け、同条件での正確な再利用が効く範囲を確認し、その後に必要なら近似を別に評価すること。
+本変更は統計の推定、LUT、演算順序、出力、既定値、保存経路を変更しない。
