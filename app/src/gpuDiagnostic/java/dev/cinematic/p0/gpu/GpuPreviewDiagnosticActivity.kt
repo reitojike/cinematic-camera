@@ -87,9 +87,12 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
         stopMeasurement()
         dngSelected = true
         dngLoading = true
-        error = null
+        // Keep a reported GPU failure and its retry control until a real frame succeeds.
         inputStatus = "DNG原本を照合して入力を準備中…"
         renderer.closePhoto()
+        // Explicit input selection may retry GPU failure, but never re-upload the old failed input.
+        // Both calls run in order on the same GL queue; the new input arrives after native decoding.
+        if (error != null) renderer.retry()
         val epoch = inputEpoch
         val signal = CancellationSignal().also { inputSignal = it }
         GpuDiagnosticDngInput.load(this, uri, resourceObserver::snapshot, signal).whenComplete { input, failure ->

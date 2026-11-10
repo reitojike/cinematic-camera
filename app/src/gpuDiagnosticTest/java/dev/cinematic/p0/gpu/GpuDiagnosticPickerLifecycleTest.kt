@@ -64,6 +64,30 @@ class GpuDiagnosticPickerLifecycleTest {
         assertTrue(nodes().none { it.text?.toString()?.startsWith("DNGを読み込めません") == true })
     }
 
+    @Test fun failedGpuKeepsRetryVisibleUntilSelectedInputActuallyRenders() = withBlockedInput { scenario, monitor, drain ->
+        // A rejected synthetic preview size drives the renderer's real non-context-loss failure path.
+        // It is not a device photo or a forced context-loss recovery.
+        scenario.onActivity { activity ->
+            activity.renderer.openPhoto(dev.cinematic.p0.raw.LinearSrgbImage(1025, 1, FloatArray(1025 * 3) { .2f }))
+        }
+        awaitText { it.startsWith("GPU診断エラー:") }
+        click(pickerText)
+        await("picker result after GPU failure") { monitor.hits == 1 }
+        awaitText { it == "DNG原本を照合して入力を準備中…" }
+        // The selection resets the failed GPU after closing the old photo, but does not hide failure
+        // before any new frame exists. This was previously cleared while renderer.failed stayed true.
+        assertTrue(nodes().any { it.text?.toString() == "GPUを再作成して再試行" })
+        clickMatching { it.startsWith("合成入力:") }
+        click("MIXED")
+        awaitText { it.startsWith("1024 × 769 / 固定seedの合成入力") }
+        await("a real new frame clears the GPU failure") {
+            nodes().none { it.text?.toString()?.startsWith("GPU診断エラー:") == true }
+        }
+        drain()
+        assertTrue(nodes().none { it.text?.toString()?.startsWith("DNGを読み込めません") == true })
+        assertTrue(nodes().none { it.text?.toString() == "GPUを再作成して再試行" })
+    }
+
     private fun withBlockedInput(test: (scenario: ActivityScenario<GpuPreviewDiagnosticActivity>, monitor: Instrumentation.ActivityMonitor,
         drain: () -> Unit) -> Unit) {
         val result = Instrumentation.ActivityResult(Activity.RESULT_OK,
