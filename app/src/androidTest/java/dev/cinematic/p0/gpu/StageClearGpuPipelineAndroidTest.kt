@@ -289,6 +289,6 @@ class StageClearGpuPipelineAndroidTest {
 
     private companion object {
         const val TAG = "GpuPipeline"
-        const val PREVIEW_BYTES = 96L * 1024 * 1024
+        const val PREVIEW_BYTES = GpuMemoryLedger.PREVIEW_BUDGET
     }
 }

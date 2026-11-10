@@ -3,7 +3,7 @@
 Issue #284 / Draft PR #319。製品既定のCPU経路と数式は変更しない。表示判定はユーザーが承認したCPU-only Orton境界例外に従う。
 R7 → Glow → Mist → Finish の接続は診断用。本記録は各候補の限定結果であり、最新の受け入れ・merge状況は [PR #319](https://github.com/reitojike/cinematic-camera/pull/319) で管理する。
 Orton以降は新しい正式判定で検証を再開する。全行列の合格と前半接続・解放順・メモリ観測は区別する。
-preview 96MiB、export 192MiB は既存の承認値から増やさない。compute 置換はここに含めない。
+preview上限は#323で利用者が96MiBから128MiBへ変更（第1部と資源再利用Mesa結果を見た後の判断）。export192MiB・基準①〜③は不変。下記旧測定の96MiB基準を遡って変更しない。compute置換はここに含めない。
 
 ## Orton 境界
 
