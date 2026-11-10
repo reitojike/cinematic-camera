@@ -66,7 +66,7 @@ class GpuDiagnosticDngPipelineTest {
                 EglContexts(thread, target.assets).use { egl ->
                     GlCapabilities.inspect(egl).requireSupported()
                     val ledger = GpuMemoryLedger()
-                    DefaultStageClearGpu(egl, ledger).use { engine ->
+                    DefaultStageClearGpu(egl, ledger, GpuFrameMode.FULL_RECOMPUTE).use { engine ->
                         engine.openPhoto(input) { false }.use { photo ->
                             for (params in listOf(GpuRenderParams(0.0, PhotoAdjustments.NONE),
                                 GpuRenderParams(1.0, PhotoAdjustments(60.0, 1.0)))) {

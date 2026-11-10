@@ -64,7 +64,7 @@ class StageClearGpuPipelineAndroidTest {
         var captured: MatrixPipeline? = null
         DefaultStageClearGpu(egl, ledger) { texture, analysis ->
             assertOwner(label, egl, ledger, texture)
-            MatrixPipeline(egl, ConnectedStageClearGpuPipeline(texture, analysis)).also { captured = it }
+            MatrixPipeline(egl, ConnectedStageClearGpuPipeline(texture, analysis, GpuFrameMode.FULL_RECOMPUTE)).also { captured = it }
         }.use { engine ->
             val baseline = memory(ledger)
             val peakBeforeClose = engine.openPhoto(input) { false }.use { photo ->
@@ -137,11 +137,10 @@ class StageClearGpuPipelineAndroidTest {
             if (point == Point.MIST) mist = GpuStageTap.readRgb(egl, image)
             tap?.invoke(point, image)
         }, consume)
-        override fun beginFrame(analysis: GpuPhotoAnalysis) = connected.beginFrame(analysis)
         override fun close() { mist = null; connected.close() }
     }
 
-    @Test fun everyFrameRecomputesAndMatchesTappedRgbaBitsAtBothSizes() = gpu { egl ->
+    @Test fun strengthReusesBothCachesAndMatchesFreshRgbaBitsAtBothSizes() = gpu { egl ->
         var comparisons = 0
         var observedPeak = 0L
         for (size in listOf(GpuReferenceImages.Size(256, 192), GpuReferenceImages.Size(1024, 768))) {
@@ -160,6 +159,7 @@ class StageClearGpuPipelineAndroidTest {
                     val pipeline = checkNotNull(captured)
                     assertTrue("$label R7 prepared", pipeline.r7FragmentPassCount > 0)
                     assertTrue("$label Glow prepared", pipeline.glowPreparationCount > 0)
+                    var previousAdjustments = PhotoAdjustments.NONE
                     // Warmth-only, EV-only, and return-to-original invalidations are distinct.
                     for (adjustments in listOf(PhotoAdjustments.NONE, PhotoAdjustments(60.0, 0.0),
                         PhotoAdjustments(60.0, 1.0), PhotoAdjustments.NONE)) {
@@ -169,9 +169,14 @@ class StageClearGpuPipelineAndroidTest {
                             val beforeR7 = pipeline.r7FragmentPassCount
                             val beforeGlow = pipeline.glowPreparationCount
                             val cached = shoulderBits(condition, egl, ledger, pipeline, params, forceFresh = false)
-                            assertTrue("$condition R7 recomputed", pipeline.r7FragmentPassCount > beforeR7)
-                            assertEquals("$condition Glow recomputed", beforeGlow + 1, pipeline.glowPreparationCount)
-                            assertTrue("$condition storage reused", pipeline.resourceReuseCount > 0)
+                            if (adjustments == previousAdjustments) {
+                                assertEquals("$condition R7 reused", beforeR7, pipeline.r7FragmentPassCount)
+                                assertEquals("$condition Glow reused", beforeGlow, pipeline.glowPreparationCount)
+                            } else {
+                                assertTrue("$condition R7 invalidated", pipeline.r7FragmentPassCount > beforeR7)
+                                assertEquals("$condition Glow invalidated", beforeGlow + 1, pipeline.glowPreparationCount)
+                            }
+                            previousAdjustments = adjustments
                             val cachedDecision = pipeline.lastDecisions
                             val cachedR7 = pipeline.r7FragmentPassCount
                             val cachedGlow = pipeline.glowPreparationCount
@@ -200,7 +205,7 @@ class StageClearGpuPipelineAndroidTest {
     private fun shoulderBits(label: String, egl: EglContexts, ledger: GpuMemoryLedger,
         pipeline: ConnectedStageClearGpuPipeline, params: GpuRenderParams, forceFresh: Boolean): IntArray {
         var result: IntArray? = null
-        // Both paths recompute. The tap path additionally reads diagnostic stages.
+        // Non-null tap forces fresh R7 and Glow preparation; null is the production cache path.
         val tap: ((Point, GpuTexture) -> Unit)? = if (forceFresh) { point, texture ->
             assertOwner("$label $point", egl, ledger, texture)
             assertWithinBudget("$label $point", ledger)

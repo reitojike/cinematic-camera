@@ -66,7 +66,7 @@ class OrtonBoundaryDiagnosticAndroidTest {
                 var actualDisplay: IntArray? = null
                 var decisions: GpuDecisions? = null
                 DefaultStageClearGpu(egl, ledger) { texture, analysis ->
-                    val connected = ConnectedStageClearGpuPipeline(texture, analysis)
+                    val connected = ConnectedStageClearGpuPipeline(texture, analysis, GpuFrameMode.FULL_RECOMPUTE)
                     object : StageClearGpuPipeline {
                         override fun render(params: GpuRenderParams, tap: ((Point, GpuTexture) -> Unit)?,
                             consume: (GpuTexture, GpuDecisions) -> Unit) = connected.render(params, { point, image ->
@@ -77,7 +77,6 @@ class OrtonBoundaryDiagnosticAndroidTest {
                             }
                             tap?.invoke(point, image)
                         }) { output, value -> decisions = value; consume(output, value) }
-                        override fun beginFrame(analysis: GpuPhotoAnalysis) = connected.beginFrame(analysis)
                 override fun close() = connected.close()
                     }
                 }.use { engine ->
