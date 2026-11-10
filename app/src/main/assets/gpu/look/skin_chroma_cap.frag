@@ -9,6 +9,8 @@ precision highp isampler2D;
 uniform sampler2D s_character;
 // R32F aligned face mask. Phase 0 supplies zero; this is NOT colour skinWeight.
 uniform sampler2D s_faceMask;
+// A missing Phase-0 face mask is uniform zero, without bypassing the Lab round trip.
+uniform bool u_hasFaceMask;
 layout(location = 0) out vec4 o_color;
 
 void main() {
@@ -22,7 +24,7 @@ void main() {
     precise float red = cs_band(wrappedHue, 10.0, 30.0) * clamp((chroma - 0.015) / 0.025, 0.0, 1.0) *
         clamp(1.0 - (chroma - SC_STAGECLEAR_SKIN_VIVID) / 0.06, 0.0, 1.0) *
         clamp((lightness - 0.3) / 0.15, 0.0, 1.0);
-    float weight = max(skin, red) * texelFetch(s_faceMask, pixel, 0).r;
+    float weight = max(skin, red) * (u_hasFaceMask ? texelFetch(s_faceMask, pixel, 0).r : 0.0);
     precise float capped = chroma > SC_STAGECLEAR_SKIN_KNEE ?
         SC_STAGECLEAR_SKIN_KNEE + (chroma - SC_STAGECLEAR_SKIN_KNEE) * SC_STAGECLEAR_SKIN_SLOPE : chroma;
     precise float newChroma = chroma * (1.0 + weight * (capped / max(chroma, 1e-6) - 1.0));
