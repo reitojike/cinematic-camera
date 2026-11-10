@@ -7,6 +7,8 @@ val original24Probe = providers.gradleProperty("cinematicOriginal24Probe").orNul
 val rawDiagnostic = providers.gradleProperty("cinematicRawDiagnostic").orNull == "true"
 val previewDiagnostic = providers.gradleProperty("cinematicPreviewDiagnostic").orNull == "true"
 val gpuDiagnostic = providers.gradleProperty("cinematicGpuDiagnostic").orNull == "true"
+// Host-only shader regression tests. Nothing is added to an APK or a normal test run.
+val gpuMesa = providers.gradleProperty("cinematicGpuMesa").orNull == "true"
 require(listOf(original24Probe, rawDiagnostic, gpuDiagnostic, previewDiagnostic).count { it } <= 1) { "Choose one diagnostic build type" }
 // A variant-specific false positive must never suppress a normal or aggregate lint invocation.
 val diagnosticLintTasks = setOf("lintRawDiagnostic", "testRawDiagnosticUnitTest", "assembleRawDiagnostic", "processReleaseMainManifest")
@@ -134,6 +136,23 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     testOptions {
+        if (gpuMesa) {
+            unitTests.all {
+                it.systemProperty("gpu.mesa.assetRoot", file("src/main/assets/gpu").absolutePath)
+                it.systemProperty("gpu.mesa.testAssetRoot", file("src/androidTest/assets/gpu").absolutePath)
+                it.maxHeapSize = "3g"
+                it.maxParallelForks = 1
+                it.testLogging { events("passed", "failed", "skipped"); showStandardStreams = true }
+                it.reports.junitXml.outputLocation.set(layout.buildDirectory.dir("test-results/gpuMesa/${it.name}"))
+                it.reports.html.outputLocation.set(layout.buildDirectory.dir("reports/tests/gpuMesa/${it.name}"))
+                // Assets live outside the normal JVM test inputs: shader-only edits must rerun the test.
+                it.inputs.dir("src/main/assets/gpu")
+                it.inputs.dir("src/androidTest/assets/gpu")
+                // A different Mesa/driver must execute, never reuse a cached success.
+                it.outputs.upToDateWhen { false }
+                it.outputs.cacheIf { false }
+            }
+        }
         managedDevices {
             localDevices {
                 create("pixel9aapi37") {
@@ -154,6 +173,14 @@ android {
         abortOnError = true
         if (diagnosticLintInvocation) lintConfig = file("src/rawDiagnostic/lint.xml")
     }
+    if (gpuMesa) {
+        sourceSets.getByName("test").java.apply {
+            srcDir("src/testGpuMesa/java")
+            // Compile the current comparison helpers in place, not a Mesa-specific copy.
+            srcDir("src/androidTest/java/dev/cinematic/p0/gpu/reference")
+            exclude("**/GpuReferenceImagesTest.kt", "**/KotlinReferenceTest.kt")
+        }
+    }
 }
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2026.09.00"))
@@ -168,6 +195,14 @@ dependencies {
     implementation("androidx.camera:camera-view:$cameraX")
     implementation("androidx.camera:camera-video:$cameraX")
     testImplementation("junit:junit:4.13.2")
+    if (gpuMesa) {
+        val lwjgl = "3.3.6"
+        testImplementation("org.lwjgl:lwjgl:$lwjgl")
+        testImplementation("org.lwjgl:lwjgl-egl:$lwjgl")
+        testImplementation("org.lwjgl:lwjgl-opengles:$lwjgl")
+        testRuntimeOnly("org.lwjgl:lwjgl:$lwjgl:natives-linux")
+        testRuntimeOnly("org.lwjgl:lwjgl-opengles:$lwjgl:natives-linux")
+    }
     implementation("androidx.exifinterface:exifinterface:1.4.2")
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")

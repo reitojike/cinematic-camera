@@ -41,6 +41,51 @@ jobs:
           cache-provider: basic
       - name: lint・unit・debug build
         run: ./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :rawprobe:lintNormalDebug :rawprobe:assembleNormalDebug :rawprobe:assembleNormalDebugAndroidTest :rawprobe:lintLargeHeapDebug :rawprobe:assembleLargeHeapDebug :rawprobe:assembleLargeHeapDebugAndroidTest --no-daemon
+      - name: Mesa software EGL / GLES libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libegl1-mesa-dev libgles2-mesa-dev libgl1-mesa-dri
+          dpkg-query -W libegl-mesa0 libgl1-mesa-dri libgles2
+      - name: Mesa GLES 3.2 shader / pixel regression (not Android acceptance)
+        env:
+          EGL_PLATFORM: surfaceless
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          MESA_LOADER_DRIVER_OVERRIDE: llvmpipe
+          LP_NUM_THREADS: '2'
+        shell: bash
+        run: |
+          set -euo pipefail
+          started=$SECONDS
+          ./gradlew :app:testDebugUnitTest -PcinematicGpuMesa=true --tests 'dev.cinematic.p0.gpu.mesa.*' --no-daemon --max-workers=2
+          echo "GPU_MESA_GRADLE_SECONDS=$((SECONDS - started))"
+      - name: Mesa test counts (zero tests or any skip is a failure)
+        if: ${{ !cancelled() }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          reports = list(Path('app/build/test-results/gpuMesa/testDebugUnitTest').glob('TEST-*.xml'))
+          assert reports, 'Mesa tests did not produce JUnit reports'
+          totals = dict.fromkeys(('tests', 'failures', 'errors', 'skipped'), 0)
+          seconds = 0.0
+          for path in reports:
+              suite = ET.parse(path).getroot()
+              for key in totals:
+                  totals[key] += int(suite.get(key, '0'))
+              seconds += float(suite.get('time', '0'))
+          print(f'GPU_MESA_JUNIT {totals} seconds={seconds:.3f}', flush=True)
+          assert totals['tests'] > 0 and not any(totals[key] for key in ('failures', 'errors', 'skipped')), totals
+          PY
+      - name: Mesa shader regression reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cinematic-gpu-mesa-reports
+          path: |
+            app/build/test-results/gpuMesa/
+            app/build/reports/tests/gpuMesa/
+          if-no-files-found: warn
+          retention-days: 7
       - name: RAW diagnostic lint・unit・build and release manifest
         run: ./gradlew :app:lintRawDiagnostic :app:testRawDiagnosticUnitTest :app:assembleRawDiagnostic :app:processReleaseMainManifest -PcinematicRawDiagnostic=true -Pandroid.onlyEnableUnitTestForTheTestedBuildType=false --no-daemon
       - name: Compile synthetic RAW diagnostic instrumentation

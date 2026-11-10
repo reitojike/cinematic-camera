@@ -99,7 +99,7 @@ internal data class GpuDecisions(val mistAutoStrength: Double, val faceCutFactor
 
 ### 4.3 GL 環境・スレッド・メモリ
 
-- **API**: OpenGL ES 3.2（Compute シェーダーを含む）。Android 標準 API であり、新しい依存関係は加えない。
+- **API**: OpenGL ES 3.2（Compute シェーダーを含む）。Android 標準 API であり、新しい製品依存は加えない。host専用テスト依存は §4.11 の承認条件に従う。
 - **必須の能力**（`GlCapabilities` で起動時に検査し、満たさなければ GPU 経路を使わない）:
   - `GL_EXT_color_buffer_float`（RGBA32F/R32F へ描画）
   - 最大テクスチャサイズ ≥ 4096
@@ -217,13 +217,41 @@ internal data class GpuDecisions(val mistAutoStrength: Double, val faceCutFactor
 
 | 種類 | 内容 | 場所 |
 |---|---|---|
-| 合成画像セット | 決まった乱数で作る合成画像（グラデーション、白飛び、肌色、彩度の高い色、暗部、ノイズ）。1024×769 と 256×192 | `androidTest`、`GpuReferenceImages.kt`（新規） |
-| 工程ごとの一致 | `GpuStageTap` で各工程の出力を読み戻し、Kotlin の同じ工程（`R7Base.stages()` など既存の関数）と比べる | `androidTest`（エミュレーター。GPU はソフトウェア実装だが正しさの確認には足りる） |
+| 合成画像セット | 決まった乱数で作る合成画像（グラデーション、白飛び、肌色、彩度の高い色、暗部、ノイズ）。Mesa CI は64×48・256×192・1600×1200、Androidは各工程の受入寸法 | 共通の `androidTest/.../reference/GpuReferenceImages.kt` を直接利用 |
+| 工程ごとの一致 | `GpuStageTap` で各工程の出力を読み戻し、Kotlin の同じ工程（`R7Base.stages()` など既存の関数）と比べる | 下記のMesa計算回帰とAndroid結合検証を別々に記録 |
 | 最終出力の一致 | 表示 8bit で最大差 ≤2、99.9 パーセンタイル ≤1、平均差を記録 | 同上 |
-| 判定値の一致 | Mist 自動強度は差 ≤0.005、局所トーン p50/p92 は単精度の範囲で一致 | 同上 |
+| 判定値の一致 | Mist 自動強度は差 ≤0.005、局所トーン p50/p92 は絶対差 ≤1e-4。`GpuTolerances` を正本とする | 同上 |
 | 実写 | ユーザーの写真で、手元だけで比較（非公開の比較ページ、タップで切り替え）。数値・写真は Git に入れない | 実機・PC |
 
 許容範囲を超えた工程は、式の写し間違いとして直す。許容範囲そのものを後から広げない（広げる場合はユーザーの判断として記録する）。
+
+#### 2層の実行環境（#290）
+
+GPUのないLinux CIのエミュレーター/GMDでは、現在の `#version 320 es` が要求するES 3.2を提供できない。
+host GPU + `GuestAngle,Vulkan` の通常AVDでの成功を、GPUのないGMDでも実行可能という根拠にはしない。
+従来のGMD CI案を次の2層に置き換え、どちらかの成功を他方の合格へ読み替えない。
+
+- **Mesa CI**: MesaのEGLでGLES 3.2 contextを実際に作り、GLSLの計算と回帰を検証する。
+  実assetを現行 `ShaderSource` / `ShaderConstants` で展開し、コピー・CI専用の書換えはしない。
+  共有 `GpuReferenceImages` / `ImageDiff` / `GpuTolerances` とKotlin計算をそのまま使い、Mesa向けの閾値緩和はしない。
+  超過した工程・条件・入力・Kotlin/GPU値・差を報告する。Mesa版、EGL driver名、renderer、実ES版、件数、失敗、skip、所要時間をCIログへ出す。
+- **Android opt-in**: host GPU + `GuestAngle,Vulkan` の通常AVDで、対象Android instrumentation試験を**GPU PRごと**に実行する。
+  最終候補head、実行件数・成功/失敗/skip、実contextのES版、環境をPRに記録する。記録がないPRはマージしない。
+  AndroidのEGL/GLES binding、resource寿命、pass graphとの結合はこの層で検証し、Mesa用host harnessの成功では代替しない。
+- 4000×3000以上は引き続きopt-in。Pixel 9aの画質・速度・メモリ・目視は #285 Gate 1 で判断し、Gate 1/2と依存順を飛ばさない。
+
+先行CI基盤は `-PcinematicGpuMesa=true --tests 'dev.cinematic.p0.gpu.mesa.*'` を付けた
+`:app:testDebugUnitTest` だけで有効になる。全製品assetのcompile/link、共有10fixtureのRGBA32F往復、
+実 `common/color.glsl` のRGB→Lab / Lab→RGB / 往復を上記3サイズで検証する。
+stage wrapperは実関数を呼ぶだけで、GLSLの計算式を持たない。これは #278/#279 の一部の継続回帰であり、
+R7・Glow/Mist・Orton/Character・全工程・書き出しの一致試験統合とLiving Spec更新は依存後の #290 残件である。
+この先行基盤だけで #290 全体完了、GPU製品採用、実機合格とはしない。
+
+JVM binding候補は **LWJGL 3.3.6** の `org.lwjgl:lwjgl`、`lwjgl-egl`、`lwjgl-opengles` と
+`lwjgl` / `lwjgl-opengles` の `natives-linux`。明示フラグ時のtest依存だけに隔離し、APK・製品依存・通常のJVM試験には加えない。
+依存名と版をPRへ記載し、**利用者の承認前はマージしない**。製品依存追加の許可へ広げない。
+EGL/GLES bindingは [LWJGL公式](https://www.lwjgl.org/guide) と
+[EGL API](https://javadoc.lwjgl.org/org/lwjgl/egl/EGL15.html) を利用する。
 
 ### 4.12 失敗時の扱い（Gate 2 で最終決定）
 
