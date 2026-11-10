@@ -189,7 +189,10 @@ class GpuInputReadinessTest {
                     starts++; CompletableDeferred(GpuInputAdmissionResult(failure))
                 }
             }.exceptionOrNull()
-            assertSame(failure, actual)
+            assertEquals(failure.javaClass, actual?.javaClass)
+            // Coroutine debug stacktrace recovery may copy the same exception type. The original
+            // must still be preserved as its cause; a wrapper or a different failure is not accepted.
+            assertSame(failure, if (actual === failure) actual else actual?.cause)
             assertEquals(1, starts)
         }
     }
