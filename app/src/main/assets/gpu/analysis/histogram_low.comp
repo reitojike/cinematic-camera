@@ -1,0 +1,29 @@
+#version 320 es
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp isampler2D;
+
+layout(local_size_x = 8, local_size_y = 8) in;
+uniform sampler2D s_input;
+uniform ivec2 u_size;
+// CPU が p50/p92 の lo/hi を含む上位ビンを重複なしで渡す（1..4）。
+uniform int u_targetCount;
+uniform uvec4 u_highBins;
+// 長さ u_targetCount * 65536。呼び出し元が全ビンを 0 に初期化する。
+layout(std430, binding = 0) buffer LowHistograms {
+    uint counts[];
+};
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(pixel, u_size))) return;
+    int bits = floatBitsToInt(texelFetch(s_input, pixel, 0).r);
+    uint key = uint(bits) ^ (bits < 0 ? 0xffffffffu : 0x80000000u);
+    uint highBin = key >> 16u;
+    for (int i = 0; i < u_targetCount; ++i) {
+        if (highBin == u_highBins[i]) {
+            atomicAdd(counts[uint(i) * 65536u + (key & 65535u)], 1u);
+        }
+    }
+}
