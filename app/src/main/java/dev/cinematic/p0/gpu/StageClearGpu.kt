@@ -3,6 +3,7 @@ package dev.cinematic.p0.gpu
 import android.opengl.GLES32
 import dev.cinematic.p0.gpu.diag.GpuStageTap
 import dev.cinematic.p0.gpu.preview.present
+import dev.cinematic.p0.gpu.r7.R7Gpu
 import dev.cinematic.p0.raw.LinearSrgbImage
 import dev.cinematic.p0.raw.PhotoAdjustments
 import dev.cinematic.p0.raw.R7PreviewInputs
@@ -79,8 +80,8 @@ internal interface StageClearGpuPipeline : AutoCloseable {
 internal class DefaultStageClearGpu(
     private val egl: EglContexts,
     private val ledger: GpuMemoryLedger,
-    private val createPipeline: (GpuTexture, GpuPhotoAnalysis) -> StageClearGpuPipeline = { _, _ ->
-        error("Stage Clear GPU passes are not connected yet")
+    private val createPipeline: (GpuTexture, GpuPhotoAnalysis) -> StageClearGpuPipeline = { input, analysis ->
+        ConnectedStageClearGpuPipeline(input, analysis)
     },
 ) : StageClearGpu {
     private val photos = mutableSetOf<Photo>()
@@ -247,4 +248,26 @@ internal class DefaultStageClearGpu(
         failure?.let { throw it }
         closed = true
     }
+}
+
+/** #284: accepted passes are connected here without changing their owning implementation. */
+internal class ConnectedStageClearGpuPipeline(
+    private val input: GpuTexture,
+    private val analysis: GpuPhotoAnalysis,
+) : StageClearGpuPipeline {
+    private val r7 = R7Gpu(input.context, input.memoryLedger)
+    internal val r7FragmentPassCount get() = r7.fragmentPassCount
+
+    override fun render(params: GpuRenderParams, tap: ((GpuStageTap.Point, GpuTexture) -> Unit)?,
+        consume: (GpuTexture, GpuDecisions) -> Unit) {
+        // R7 owns its final texture and caches by input/warmth/EV, never by strength. A tap
+        // forces recomputation so an earlier intermediate remains observable after cache reuse.
+        r7.render(input, params.adjustments.warmth, analysis.meteredBaseEv + params.adjustments.exposureEv,
+            foundationRoi = null, tap = tap)
+        // Until the remaining owners arrive, only R7 taps can complete. Do not display an R7
+        // result as a complete Stage Clear look, invent Mist decisions, or fall back to CPU.
+        if (tap == null) error("Glow, Mist and Finish GPU passes are not connected yet")
+    }
+
+    override fun close() = r7.close()
 }

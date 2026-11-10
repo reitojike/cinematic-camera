@@ -1,9 +1,12 @@
 package dev.cinematic.p0.gpu
 
+import android.net.Uri
+import android.os.CancellationSignal
 import android.os.Bundle
 import android.os.PowerManager
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -36,12 +39,14 @@ import dev.cinematic.p0.gpu.preview.GpuPreviewFrame
 import dev.cinematic.p0.gpu.preview.GpuPreviewRenderer
 import dev.cinematic.p0.gpu.preview.GpuPreviewSurface
 import dev.cinematic.p0.raw.PhotoAdjustments
+import dev.cinematic.p0.photoroll.PhotoRollResourceObserver
+import dev.cinematic.p0.rawcapture.DevelopExecution
 import java.util.Locale
 import kotlin.math.ceil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** 合成入力のみ。製品の写真選択・処理・保存には接続しない。 */
+/** 診断専用の合成入力と公開・合成DNG。製品の保存経路には接続しない。 */
 class GpuPreviewDiagnosticActivity : ComponentActivity() {
     internal lateinit var renderer: GpuPreviewRenderer
     private val measurement = PreviewMeasurement()
@@ -51,8 +56,86 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
     private var error by mutableStateOf<String?>(null)
     private var allocatedBytes by mutableStateOf(0L)
 
+    private lateinit var resourceObserver: PhotoRollResourceObserver
+    private var inputSignal: CancellationSignal? = null
+    private var inputEpoch = 0L
+    private var resumed = false
+    private var pendingDocument: Uri? = null
+    private var dngSelected by mutableStateOf(false)
+    private var dngLoading by mutableStateOf(false)
+    private var inputStatus by mutableStateOf("公開・合成の試験用DNGのみ。個人の写真は選ばないでください。")
+    // OpenDocument uses ACTION_OPEN_DOCUMENT. No persistable permission is taken.
+    // https://developer.android.com/training/data-storage/shared/documents-files
+    private val pickDng = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            pendingDocument = uri
+            if (resumed) loadPendingDocument()
+        }
+    }
+
+    private fun cancelInput() {
+        inputEpoch++
+        inputSignal?.cancel()
+        inputSignal = null
+        dngLoading = false
+    }
+
+    private fun loadPendingDocument() {
+        val uri = pendingDocument ?: return
+        pendingDocument = null
+        cancelInput()
+        stopMeasurement()
+        dngSelected = true
+        dngLoading = true
+        error = null
+        inputStatus = "DNG原本を照合して入力を準備中…"
+        renderer.closePhoto()
+        val epoch = inputEpoch
+        val signal = CancellationSignal().also { inputSignal = it }
+        GpuDiagnosticDngInput.load(this, uri, resourceObserver::snapshot, signal).whenComplete { input, failure ->
+            runOnUiThread {
+                if (!isDestroyed && resumed && epoch == inputEpoch) {
+                    inputSignal = null
+                    dngLoading = false
+                    if (failure == null && !signal.isCanceled) {
+                        renderer.openPhoto(input)
+                        inputStatus = "DNG AS_SHOT入力: ${input.width} × ${input.height}（長辺1024以下）"
+                    } else {
+                        // Provider/native exception messages can contain names or URIs. Never display/log them.
+                        inputStatus = "DNGを読み込めません。内部ストレージの試験用DNGと端末の空き資源を確認し、選び直してください。"
+                    }
+                }
+            }
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        resourceObserver.start()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        resumed = true
+        resourceObserver.foreground(true)
+        loadPendingDocument()
+    }
+
+    override fun onPause() {
+        resumed = false
+        cancelInput()
+        resourceObserver.foreground(false)
+        if (dngSelected) {
+            renderer.closePhoto()
+            inputStatus = "DNG表示を中断しました。再開するには選び直してください。"
+        }
+        if (dngSelected) GpuDiagnosticDngInput.release(this) // Same process-retained serial owner.
+        super.onPause()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        resourceObserver = PhotoRollResourceObserver(this, DevelopExecution::updateConditions)
         renderer = GpuPreviewRenderer(assets, onFrame = { frame ->
             // Renderer callbacks are on GL thread. Compose state and sample storage belong to main.
             runOnUiThread {
@@ -92,11 +175,18 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
     override fun onStop() {
         // A background pause must not become an apparent slow render interval.
         stopMeasurement()
+        resourceObserver.stop()
         super.onStop()
     }
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN && dngSelected) {
+            cancelInput()
+            renderer.closePhoto()
+            inputStatus = "DNG表示を解放しました。再開するには選び直してください。"
+            GpuDiagnosticDngInput.release(this)
+        }
         if (::renderer.isInitialized) renderer.trimMemory(level)
     }
 
@@ -117,7 +207,8 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
         var fixtureName by rememberSaveable { mutableStateOf(GpuPreviewDiagnosticImages.Kind.MIXED.name) }
         var choosing by remember { mutableStateOf(false) }
         var loading by remember { mutableStateOf(true) }
-        LaunchedEffect(fixtureName) {
+        LaunchedEffect(fixtureName, dngSelected) {
+            if (dngSelected) { loading = false; return@LaunchedEffect }
             stopMeasurement()
             loading = true
             // Compose effect cancellation prevents a stale fixture from replacing a newer choice.
@@ -128,7 +219,7 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
                     GpuPreviewDiagnosticImages.PREVIEW_SIZE,
                 )
             }
-            renderer.openPhoto(input)
+            if (!dngSelected) renderer.openPhoto(input)
             loading = false
         }
         LaunchedEffect(strength, warmth, exposure, before, rotation) {
@@ -142,20 +233,29 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text("GPU 表示診断・製品未採用", style = MaterialTheme.typography.titleLarge)
-            Text("この段階は入力の表示のみです。スライダーは再描画を要求しますが、ルック処理は行いません。合成入力のみ・写真の読込や保存なし。")
+            Text("この画面はAS_SHOT入力の表示です。全工程の表示は接続準備中です。保存なし。DNG選択は全工程計測を開始しません。")
             GpuPreviewSurface(renderer, Modifier.fillMaxWidth().height(240.dp))
             Column {
                 Button(onClick = { choosing = true }) { Text("合成入力: $fixtureName") }
                 DropdownMenu(expanded = choosing, onDismissRequest = { choosing = false }) {
                     GpuPreviewDiagnosticImages.Kind.entries.forEach { kind ->
                         DropdownMenuItem(text = { Text(kind.name) }, onClick = {
+                            cancelInput()
+                            stopMeasurement()
+                            dngSelected = false
                             fixtureName = kind.name
                             choosing = false
                         })
                     }
                 }
             }
-            Text(if (loading) "入力を生成中…" else "1024 × 769 / 固定seedの合成入力")
+            Button(onClick = {
+                cancelInput()
+                stopMeasurement()
+                pickDng.launch(arrayOf("image/x-adobe-dng", "image/dng", "application/octet-stream"))
+            }) { Text("試験用DNGをFilesから選択") }
+            Text(if (dngSelected) inputStatus else if (loading) "入力を生成中…" else
+                "1024 × 769 / 固定seedの合成入力。公開・合成DNGのみ選択可。個人の写真は使用しないでください。")
             DiagnosticSlider("強度", strength, 0f..1f) { strength = it }
             DiagnosticSlider("暖かさ", warmth, -100f..100f) { warmth = it }
             DiagnosticSlider("露出 EV", exposure, -2f..2f) { exposure = it }
@@ -164,7 +264,7 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
                 Switch(checked = before, onCheckedChange = { before = it })
                 Button(onClick = { rotation = (rotation + 90) % 360 }) { Text("回転 $rotation°") }
             }
-            Button(enabled = !loading && error == null, onClick = {
+            Button(enabled = !loading && !dngSelected && !dngLoading && error == null, onClick = {
                 if (measuring) stopMeasurement() else {
                     measurement.start()
                     sampleCount = 0

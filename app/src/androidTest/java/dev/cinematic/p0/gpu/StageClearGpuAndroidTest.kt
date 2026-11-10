@@ -81,7 +81,7 @@ class StageClearGpuAndroidTest {
     }
 
     @Test fun missingOrFailingPassesAreErrorsAndCloseReleasesTheirResources() = gpu { egl, ledger ->
-        DefaultStageClearGpu(egl, ledger).use { missing ->
+        DefaultStageClearGpu(egl, ledger) { _, _ -> error("synthetic missing pipeline") }.use { missing ->
             missing.openPhoto(input()) { false }.use { photo ->
                 assertThrows(IllegalStateException::class.java) {
                     missing.renderForTest(photo, params, GpuStageTap.Point.R7_FINAL)
