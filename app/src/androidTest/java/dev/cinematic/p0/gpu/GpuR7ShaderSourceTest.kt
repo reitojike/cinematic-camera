@@ -44,6 +44,12 @@ class GpuR7ShaderSourceTest {
         }
     }
 
+    @Test fun eachPixelShaderComputesHueOnlyOnce() {
+        for (path in listOf("r7/profile.frag", "r7/finish.frag")) {
+            assertEquals(path, 1, Regex("cs_hueDeg\\s*\\(").findAll(read(path)).count())
+        }
+    }
+
     @Test fun histogramStagesUseTheSameExactFloatKeyAndAllPixels() {
         val high = read("analysis/histogram_high.comp")
         val low = read("analysis/histogram_low.comp")

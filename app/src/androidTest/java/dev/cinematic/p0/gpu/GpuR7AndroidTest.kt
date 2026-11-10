@@ -50,15 +50,23 @@ class GpuR7AndroidTest {
         val lo = floor(rank).toInt(); val hi = ceil(rank).toInt()
         return sorted[lo].toDouble() + (sorted[hi].toDouble() - sorted[lo]) * (rank - lo)
     }
-    private fun compare(label: String, expected: LinearSrgbImage, actual: LinearSrgbImage): String? {
+    private fun compare(label: String, input: LinearSrgbImage, gpuInput: LinearSrgbImage, expected: LinearSrgbImage, actual: LinearSrgbImage): String? {
         assertEquals(expected.width, actual.width); assertEquals(expected.height, actual.height)
         var worst = 0.0; var index = 0; var failures = 0
         repeat(expected.pixelCount * 3) { i ->
-            val error = abs(expected[i].toDouble() - actual[i]); val limit = if (abs(expected[i]) <= 1f) 1e-4 else abs(expected[i]) * 1e-4
+            val error = abs(expected[i].toDouble() - actual[i]); val limit = if (expected[i] <= 1f) 1e-4 else expected[i] * 1e-4
             if (!actual[i].isFinite() || error > limit) failures++
             if (error / limit > worst) { worst = error / limit; index = i }
         }
-        Log.i(TAG, "$label failed=$failures worstRatio=$worst pixel=${index / 3} channel=${index % 3} expected=${expected[index]} actual=${actual[index]}")
+        fun ordered(value: Float): Long {
+            val bits = value.toRawBits().toLong()
+            return if (bits < 0) Int.MIN_VALUE.toLong() - bits else bits
+        }
+        val offset = index / 3 * 3
+        val ulp = abs(ordered(expected[index]) - ordered(actual[index]))
+        Log.i(TAG, "$label failed=$failures worstRatio=$worst pixel=${index / 3} channel=${index % 3} " +
+            "input=[${input[offset]},${input[offset + 1]},${input[offset + 2]}] " +
+            "gpuInput=[${gpuInput[offset]},${gpuInput[offset + 1]},${gpuInput[offset + 2]}] expected=${expected[index]} actual=${actual[index]} ulp=$ulp")
         return if (failures == 0) null else "$label failed=$failures worstRatio=$worst"
     }
     @Test fun everyR7TapAndQuantileMatchesKotlin() = gpu { egl, ledger ->
@@ -73,11 +81,15 @@ class GpuR7AndroidTest {
                             val reference = KotlinReference.prepare(source, adjustment)
                             val expected = mapOf(Point.WARMTH to reference.warmth, Point.R7_PROFILE to reference.r7Stages[0],
                                 Point.R7_TONE to reference.r7Stages[1], Point.R7_FOUNDATION to reference.r7Stages[2], Point.R7_FINAL to reference.r7Final)
+                            val stageInputs = mapOf(Point.WARMTH to image, Point.R7_PROFILE to reference.warmth,
+                                Point.R7_TONE to reference.r7Stages[0], Point.R7_FOUNDATION to reference.r7Stages[1], Point.R7_FINAL to reference.r7Stages[2])
+                            var previousActual = image
                             val label = "$kind ${size.width}x${size.height} $adjustment"; val seen = mutableSetOf<Point>()
                             r7.render(input, adjustment.warmth, reference.externalBaseEv, tap = { point, texture ->
                                 assertTrue("Duplicate tap $point", seen.add(point))
                                 val actual = GpuStageTap.readRgb(egl, texture)
-                                compare("$label $point", expected.getValue(point), actual)?.let(failures::add)
+                                compare("$label $point", stageInputs.getValue(point), previousActual, expected.getValue(point), actual)?.let(failures::add)
+                                previousActual = actual
                                 if (point == Point.R7_FINAL) {
                                     val a = TrialDisplayPixels.encode(actual, max(size.width, size.height)) { false }
                                     val b = TrialDisplayPixels.encode(reference.r7Final, max(size.width, size.height)) { false }
@@ -112,6 +124,8 @@ class GpuR7AndroidTest {
     }
     @Test fun radixSelectionIsExactAndRejectsInvalidInputs() = gpu { egl, ledger ->
         val cases = listOf(floatArrayOf(1f), floatArrayOf(-0f, 0f), FloatArray(4097) { -.25f },
+            FloatArray(17) { Float.MIN_VALUE }, FloatArray(17) { -Float.MIN_VALUE },
+            floatArrayOf(-10f, -5f, 0f, 1f, 10f, 100f),
             floatArrayOf(-Float.MAX_VALUE, -1f, -Float.MIN_VALUE, -0f, 0f, Float.MIN_VALUE, 1f, Float.MAX_VALUE),
             FloatArray(1024 * 769) { p -> ((p * 15485863L % 32452843) / 32452843.0 * 40 - 20).toFloat() })
         for (values in cases) {
@@ -126,6 +140,46 @@ class GpuR7AndroidTest {
         for (invalid in floatArrayOf(Float.NaN, Float.NEGATIVE_INFINITY, Float.POSITIVE_INFINITY)) {
             upload(egl, ledger, 2, 1, floatArrayOf(0f, invalid)).use { texture ->
                 assertThrows(IllegalArgumentException::class.java) { GpuAnalysis.localToneQuantiles(texture, 2, 1) }
+            }
+        }
+    }
+    /** 診断値のみ。pow専用の許容差を新設せず、画像の合否は上の固定基準を使う。 */
+    @Test fun recordPowPrecisionWithoutNewTolerance() = gpu { egl, ledger ->
+        val bases = doubleArrayOf(0.0, 1e-8, 1e-5, .0031308, .04, .1, .18 / .82, .10 / .90, .5, .75, 1.0, 1.01, 4.0)
+        val powers = doubleArrayOf(1.23, 1.12, 1.23 - 1, 1.12 - 1, 1.0 / 2.4)
+        val cases = bases.flatMap { base -> powers.map { power -> base to power } }
+        val pixels = FloatArray(cases.size * 3) { i -> when (i % 3) { 0 -> cases[i / 3].first.toFloat(); 1 -> cases[i / 3].second.toFloat(); else -> 0f } }
+        val shader = """
+            #version 320 es
+            precision highp float;
+            precision highp int;
+            precision highp sampler2D;
+            uniform sampler2D s_input;
+            layout(location = 0) out vec4 o_color;
+            void main() {
+                vec2 value = texelFetch(s_input, ivec2(gl_FragCoord.xy), 0).rg;
+                o_color = vec4(vec3(pow(value.x, value.y)), 1.0);
+            }
+        """.trimIndent()
+        upload(egl, ledger, cases.size, 1, pixels, true).use { input ->
+            GpuTexture.create(egl, ledger, cases.size, 1, GpuTexture.Format.RGBA32F).use { output ->
+                egl.shaders().fragmentSource("r7-pow-diagnostic", shader).use { program ->
+                    egl.passes().run(FragmentPass(program, listOf(TextureInput("s_input", input, 0)), output))
+                    val actual = GpuStageTap.readRgb(egl, output)
+                    fun display(value: Float): Int {
+                        val x = value.toDouble().coerceIn(0.0, 1.0)
+                        return ((if (x <= .0031308) 12.92 * x else 1.055 * x.pow(1.0 / 2.4) - .055) * 255).roundToInt()
+                    }
+                    for ((i, pair) in cases.withIndex()) {
+                        val (base, power) = pair
+                        val cpu = base.pow(power).toFloat()
+                        val floatArgs = base.toFloat().toDouble().pow(power.toFloat().toDouble()).toFloat()
+                        val value = actual[i * 3]
+                        // Inputs/outputs are nonnegative, so raw-bit distance is ULP distance.
+                        val ulp = abs(cpu.toRawBits().toLong() - value.toRawBits())
+                        Log.i(TAG, "POW input=$base exponent=$power cpu=$cpu floatArgsCpu=$floatArgs gpu=$value ulp=$ulp display8=${abs(display(cpu) - display(value))}")
+                    }
+                }
             }
         }
     }

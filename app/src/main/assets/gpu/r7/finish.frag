@@ -42,7 +42,9 @@ void main() {
     // crisp: Lab 部分
     lab = cs_linearToLab(rgb);
     c = length(lab.yz);
-    float skinWeight = cs_skinWeight(lab.x, c, cs_hueDeg(lab));
+    // Both chroma adjustments scale a/b equally. Reuse this pixel's hue;
+    // retain every Float RGB/Lab boundary and recompute lightness/chroma.
+    float skinWeight = cs_skinWeight(lab.x, c, h);
     gain = 1.0 + SC_R7_CRISP_CHROMA * (1.0 - skinWeight);
     lab.y *= gain;
     lab.z *= gain;
@@ -51,7 +53,6 @@ void main() {
     // skin
     lab = cs_linearToLab(rgb);
     c = length(lab.yz);
-    h = cs_hueDeg(lab);
     float weight = cs_skinWeight(lab.x, c, h);
     float delta = mod(18.0 - h + 540.0, 360.0) - 180.0;
     float angle = radians(h + 0.35 * weight * delta);
