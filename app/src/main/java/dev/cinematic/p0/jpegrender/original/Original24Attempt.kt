@@ -51,7 +51,7 @@ internal class Original24Attempt(context: Context, private val request: Original
     private var workspace: OriginalRasterWorkspace? = null
     private var rawRaster: OriginalRasterFile? = null
     val hasUnreleasedResources get() = sourceFd != null || rasterFd != null || resources.hasOpenResources ||
-        rawRaster?.hasPendingOwners == true || workspace?.hasPendingOwners == true
+        rawRaster?.hasPendingOwners == true || workspace != null
     fun requestStop() = signal.cancel()
 
     fun render(shouldStop: () -> Boolean): Original24TrialJpeg {
@@ -171,21 +171,19 @@ internal class Original24Attempt(context: Context, private val request: Original
             originalStage(trace, OriginalStage.RESOURCE_CLOSE) { closeOwners() }
             checkpoint()
             originalStage(trace, OriginalStage.SCRATCH_CLEANUP) {
-                check(raw.delete())
-                check(snapshot.delete())
-                work.disposeConfirmed()
+                disposeScratch()
             }
             checkpoint()
             return Original24TrialJpeg(request, observed.output, fingerprint, geometry, ev, observedGeometry)
         } catch (error: Throwable) { failure = error; throw error }
         finally {
-            try { originalStage(trace, OriginalStage.RESOURCE_CLOSE) { closeOwners() } }
+            try { originalStage(trace, OriginalStage.RESOURCE_CLOSE) { closeOwners(); disposeScratch() } }
             catch (cleanup: Throwable) {
                 val primary = failure
                 if (primary == null) throw cleanup
                 if (primary !== cleanup) primary.addSuppressed(cleanup)
             } finally { active.set(false) }
-            // Failed/uncertain attempts retain their scratch/output for the existing owner.
+            // Disposable copies are removed only after every resource owner acknowledges close.
         }
     }
 
@@ -205,7 +203,18 @@ internal class Original24Attempt(context: Context, private val request: Original
     }
     override fun close() {
         check(active.compareAndSet(false, true))
-        try { closed = true; closeOwners() } finally { active.set(false) }
+        try { closed = true; closeOwners(); disposeScratch() } finally { active.set(false) }
+    }
+    /** Keep the directory owned until every known temporary file is removed. Retriable on close(). */
+    private fun disposeScratch() {
+        val work = workspace ?: return
+        check(sourceFd == null && rasterFd == null && !resources.hasOpenResources &&
+            rawRaster?.hasPendingOwners != true && !work.hasPendingOwners)
+        java.nio.file.Files.deleteIfExists(File(scratchDirectory, "source-linear.rgb16").toPath())
+        java.nio.file.Files.deleteIfExists(File(scratchDirectory, "source-snapshot.dng").toPath())
+        work.disposeConfirmed()
+        rawRaster = null
+        workspace = null
     }
     private fun channel(value: Float): Int {
         val x = value.toDouble().coerceIn(0.0, 1.0)
