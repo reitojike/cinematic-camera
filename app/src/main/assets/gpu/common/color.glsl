@@ -1,7 +1,17 @@
 // StageClearColor / StageClearProtections / R7Base の数式を移す。
 // include 用。#version / precision / SC_* 定数は ShaderLibrary が用意する。
 float cs_signedCbrt(float x) {
-    return x == 0.0 ? 0.0 : sign(x) * pow(abs(x), 1.0 / 3.0);
+    if (x == 0.0) return 0.0;
+    precise float a = abs(x);
+    precise float y = pow(a, 1.0 / 3.0);
+    precise float cube = y * y * y;
+    precise float denominator = 3.0 * y * y;
+    // One Newton step reduces the pow seed's error. At finite extremes, keep the
+    // finite seed if its cube overflows or the denominator underflows to zero.
+    if (!isinf(cube) && denominator > 0.0) {
+        y = y - (cube - a) / denominator;
+    }
+    return sign(x) * y;
 }
 
 vec3 cs_linearToLab(vec3 rgb) {
