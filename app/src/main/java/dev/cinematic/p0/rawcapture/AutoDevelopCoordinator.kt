@@ -1,5 +1,7 @@
 package dev.cinematic.p0.rawcapture
 
+import java.util.Collections
+
 /**
  * Process-local admission state, deliberately not connected to CameraX or a worker.
  * All methods serialize short state transitions; none invokes caller code or performs IO.
@@ -72,6 +74,42 @@ internal class AutoDevelopCoordinator {
 
     /** Preview ownership is distinct from save admission, not a second slot or executor. */
     @Synchronized fun tryStartPreviewObserved(observations: AutoDevelopConditions): Attempt? = startObserved(observations, preview = true)
+
+    /** GPU diagnostic evidence only, captured before the unchanged admission decision under its lock.
+     * Stored blockers use the same job-local renderer normalization as startObserved and apply only
+     * when conditionsObserved is true. The snapshot contains no owner identities or live state. */
+    data class GpuDiagnosticPreviewSnapshot(
+        val freshPreviewBlockers: Set<AutoDevelopBlocker>,
+        val storedGlobalPreviewBlockers: Set<AutoDevelopBlocker>,
+        val conditionsObserved: Boolean,
+        val freshForeground: Boolean?,
+        val storedForeground: Boolean?,
+        val freshRendererAvailable: Boolean?,
+        val hasActiveSlot: Boolean,
+        val activeStopRequested: Boolean?,
+        val captureCount: Int,
+        val hasPendingExport: Boolean,
+    )
+
+    class GpuDiagnosticPreviewAdmission(val attempt: Attempt?, val snapshot: GpuDiagnosticPreviewSnapshot)
+
+    @Synchronized
+    fun tryStartGpuDiagnosticPreviewObserved(observations: AutoDevelopConditions): GpuDiagnosticPreviewAdmission {
+        val snapshot = GpuDiagnosticPreviewSnapshot(
+            freshPreviewBlockers = Collections.unmodifiableSet(AutoDevelopPolicy.previewBlockers(observations)),
+            storedGlobalPreviewBlockers = Collections.unmodifiableSet(
+                AutoDevelopPolicy.previewBlockers(conditions.copy(rendererAvailable = true))),
+            conditionsObserved = conditionsObserved,
+            freshForeground = observations.foreground,
+            storedForeground = conditions.foreground,
+            freshRendererAvailable = observations.rendererAvailable,
+            hasActiveSlot = active != null,
+            activeStopRequested = active?.stopRequested,
+            captureCount = captures.size,
+            hasPendingExport = pendingExport != null,
+        )
+        return GpuDiagnosticPreviewAdmission(startObserved(observations, preview = true), snapshot)
+    }
 
     private fun startObserved(observations: AutoDevelopConditions, preview: Boolean): Attempt? {
         fun blocked(value: AutoDevelopConditions) = if (preview) AutoDevelopPolicy.previewBlockers(value).isNotEmpty()

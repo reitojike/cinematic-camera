@@ -204,7 +204,10 @@ class GpuFinishAndroidTest {
                                     assertTrue(ledger.allocatedBytes <= ledger.budgetBytes)
                                 }
                             }
-                            assertEquals(83_040_972L, ledger.peakAllocatedBytes)
+                            // cc54f48 releases the owned 83x63 RGBA32F reduced field after its
+                            // first upsample axis: the old simultaneous lifetime overcounted 83,664 B.
+                            // Verified unchanged on #319's 44a12b9 baseline and the #323 candidate.
+                            assertEquals(82_957_308L, ledger.peakAllocatedBytes)
                             Log.i("GpuFinish", "Retained-cache peak=${ledger.peakAllocatedBytes}; budget=${ledger.budgetBytes}; headroom=${ledger.budgetBytes - ledger.peakAllocatedBytes}")
                             input.requireContext(egl); skin.requireContext(egl); halation.requireContext(egl)
                             outerRgb.forEach { it.requireContext(egl) }

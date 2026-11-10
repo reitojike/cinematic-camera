@@ -33,6 +33,7 @@ APK 固定時点で次のすべてが確認できれば B を含める。1つで
 - 第1部本体 `7a5eac72a81051f9a9afa7f211e4d21e479c1518` との差分、および CPU 基準との差分を記録する。共有観測 metadata の追加と、CPU の既存状態の意味・通知時期・100ms再試行が変わらない根拠を最終sourceで照合する。ソースの機能上の根拠を性能同一の証明にしない。
 - B の未マージheadを使う場合も全識別を固定し、後のマージcommitとの差分を記録する。
 - 診断設定: `GpuSurfaceProbe` / `DngInputProbe` の調査用 DEBUG は無効。速度走行に画像読戻し・PSS採取・目視画像の書出しを重ねない。
+- 正式①のエンジンは `GpuFrameMode.FULL_RECOMPUTE` を明示する。`DefaultStageClearGpu(egl, ledger, GpuFrameMode.FULL_RECOMPUTE)` または同モードを渡す `ConnectedStageClearGpuPipeline` を写真単位で保持し、frameごとに作り直す旧試験と区別する。製品通常の `NORMAL` はR7/Glow結果再利用を維持するため①へ混ぜない。GPU表示診断はFULLであり、最終試験method/引数にもモードを記録する。
 - GPU/CPUの署名・package・導入順を確認する。同じpackageの入替えが必要なら許可に含める。署名不一致や削除が必要な場合、既存データを勝手に消さない。
 
 | CPU固定票（build済み、未配布・未導入） | 値 |

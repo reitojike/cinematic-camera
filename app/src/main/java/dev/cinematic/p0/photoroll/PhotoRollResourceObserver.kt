@@ -26,6 +26,7 @@ internal class PhotoRollResourceObserver(context: Context,
     private val publishConditions: (AutoDevelopConditions) -> Unit = {},
     private val authority: PhotoRollObservationAuthority = PhotoRollObservationOwners.authority,
     private val serviceOwned: Boolean = false,
+    private val onPublication: ((PhotoRollObservationMetadata) -> Unit)? = null,
 ) {
     private val cameraManager = context.getSystemService(CameraManager::class.java)
     private val activityManager = context.getSystemService(ActivityManager::class.java)
@@ -41,6 +42,7 @@ internal class PhotoRollResourceObserver(context: Context,
     private var lastPublishedBlockers: Set<AutoDevelopBlocker>? = null
     private var polling: CoroutineScope? = null
     private var callback: CameraManager.AvailabilityCallback? = null
+    private val cameraSampler = onPublication?.let { PhotoRollCameraObservationSampler() }
 
     fun start() {
         stop()
@@ -50,14 +52,15 @@ internal class PhotoRollResourceObserver(context: Context,
                 registered = true
                 val epoch = generation
                 val next = object : CameraManager.AvailabilityCallback() {
-                    override fun onCameraAvailable(cameraId: String) { if (registered && generation == epoch) available[cameraId] = true }
-                    override fun onCameraUnavailable(cameraId: String) { if (registered && generation == epoch) available[cameraId] = false }
+                    override fun onCameraAvailable(cameraId: String) { if (registered && generation == epoch) observeCamera(cameraId, true) }
+                    override fun onCameraUnavailable(cameraId: String) { if (registered && generation == epoch) observeCamera(cameraId, false) }
                 }
                 callback = next
                 cameraManager?.registerAvailabilityCallback(next, Handler(Looper.getMainLooper()))
                 polling = CoroutineScope(SupervisorJob() + Dispatchers.IO).also { scope -> scope.launch {
                     while (isActive) {
                         val observedEpoch = synchronized(observationLock) { generation to observationEpoch }
+                        val cameraSample = cameraSampler?.capture(generation, registered, ids, available)
                         val conditions = snapshot().developConditions(rendererAvailable = true)
                         synchronized(observationLock) {
                             if (registered && generation == observedEpoch.first && observationEpoch == observedEpoch.second) {
@@ -66,8 +69,9 @@ internal class PhotoRollResourceObserver(context: Context,
                                     Log.i("CinematicRaw", "PHOTO_ROLL_BLOCKERS=${blockers.map { it.name }.sorted().joinToString(",")}")
                                     lastPublishedBlockers = blockers
                                 }
-                                if (serviceOwned) publishConditions(conditions)
-                                else authority.observed(this@PhotoRollResourceObserver, conditions, publishConditions)
+                                val publish = publication(cameraSample, resourceObserved = true)
+                                if (serviceOwned) publish(conditions)
+                                else authority.observed(this@PhotoRollResourceObserver, conditions, publish)
                             }
                         }
                         delay(500)
@@ -84,8 +88,9 @@ internal class PhotoRollResourceObserver(context: Context,
             generation++
             observationEpoch++
             lastPublishedBlockers = null
-            if (serviceOwned) publishConditions(AutoDevelopConditions())
-            else authority.foreground(this, false, publishConditions)
+            val publish = publication()
+            if (serviceOwned) publish(AutoDevelopConditions())
+            else authority.foreground(this, false, publish)
         }
         polling?.cancel(); polling = null
         try { callback?.let { cameraManager?.unregisterAvailabilityCallback(it) } } catch (_: Exception) { /* Unconfirmed remains blocked. */ }
@@ -98,7 +103,27 @@ internal class PhotoRollResourceObserver(context: Context,
         observationEpoch++ // A pre-pause IO observation must not restore an old allowed snapshot.
         lastPublishedBlockers = null
         Log.i("CinematicRaw", "PHOTO_ROLL_FOREGROUND=$value")
-        authority.foreground(this, value, publishConditions)
+        authority.foreground(this, value, publication())
+    }
+
+    private fun observeCamera(cameraId: String, value: Boolean) {
+        val sampler = cameraSampler
+        if (sampler == null) available[cameraId] = value
+        else sampler.change { available[cameraId] = value }
+    }
+
+    // Runs under the existing publication lock. The listener must not wait for main/GL work.
+    private fun publication(sample: PhotoRollCameraObservationSampler.Sample? = null,
+        resourceObserved: Boolean = false): (AutoDevelopConditions) -> Unit {
+        val listener = onPublication ?: return publishConditions
+        val sampler = checkNotNull(cameraSampler)
+        val captured = sample ?: sampler.capture(generation, registered, ids, available)
+        val epoch = observationEpoch
+        return photoRollPublicationWithMetadata(publishConditions, listener) { conditions ->
+            if (captured.generation != generation || epoch != observationEpoch) null
+            else PhotoRollObservationMetadata(conditions, generation, epoch, resourceObserved,
+                captured.complete, captured.unavailable, sampler.consistent(captured, generation))
+        }
     }
 
     fun snapshot(): PhotoRollResources {
