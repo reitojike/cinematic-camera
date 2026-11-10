@@ -9,11 +9,15 @@ import dev.cinematic.p0.photoroll.PhotoRollCameraSnapshot
 import dev.cinematic.p0.photoroll.PhotoRollResources
 import dev.cinematic.p0.photoroll.PhotoRollSourceFailure
 import dev.cinematic.p0.rawcapture.DevelopExecution
+import dev.cinematic.p0.rawcapture.DngVerificationStopped
 import dev.cinematic.p0.rawcapture.AutoDevelopConditions
 import java.io.IOException
 import java.util.concurrent.ExecutionException
+import java.util.concurrent.CompletionException
+import java.util.concurrent.CancellationException
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.After
@@ -49,6 +53,25 @@ class GpuDiagnosticDngInputTest {
             .get(10, TimeUnit.SECONDS) }
         assertTrue(failure is OperationCanceledException)
         assertAdmissionReleased()
+    }
+
+    @Test fun wrappedCancellationIsNotAReadFailure() {
+        val signal = CancellationSignal()
+        for (cancelled in listOf(OperationCanceledException(), CancellationException(), DngVerificationStopped())) {
+            assertTrue(inputWasCancelled(signal, CompletionException(ExecutionException(cancelled))))
+        }
+    }
+
+    @Test fun trueReadFailureIsNotCancellation() {
+        val signal = CancellationSignal()
+        assertFalse(inputWasCancelled(signal, CompletionException(IOException("synthetic read failure"))))
+        assertFalse(inputWasCancelled(signal, null))
+        val malformed = object : RuntimeException() {
+            override val cause: Throwable get() = throw IllegalStateException("synthetic accessor failure")
+        }
+        assertFalse(inputWasCancelled(signal, malformed))
+        signal.cancel()
+        assertTrue(inputWasCancelled(signal, null))
     }
 
     @Test fun nonLocalSelectionIsRejectedAndReleasesAdmissionForNextSelection() {

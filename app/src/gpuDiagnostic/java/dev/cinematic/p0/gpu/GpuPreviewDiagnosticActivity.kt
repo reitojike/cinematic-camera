@@ -3,6 +3,7 @@ package dev.cinematic.p0.gpu
 import android.content.Context
 import android.net.Uri
 import android.os.CancellationSignal
+import android.os.OperationCanceledException
 import android.os.Bundle
 import android.os.PowerManager
 import android.os.SystemClock
@@ -47,6 +48,8 @@ import dev.cinematic.p0.photoroll.PhotoRollResourceObserver
 import dev.cinematic.p0.rawcapture.AutoDevelopConditions
 import dev.cinematic.p0.rawcapture.AutoDevelopPolicy
 import dev.cinematic.p0.rawcapture.DevelopExecution
+import dev.cinematic.p0.rawcapture.DngVerificationStopped
+import java.util.concurrent.CancellationException
 import java.util.Locale
 import kotlin.math.ceil
 import kotlinx.coroutines.Dispatchers
@@ -129,7 +132,7 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
         val signal = CancellationSignal().also { inputSignal = it }
         GpuDiagnosticDngInput.load(inputContext, uri, resourceObserver::snapshot, signal).whenComplete { input, failure ->
             if (failure != null) GpuSurfaceProbe.failure("activity.input.failure", failure)
-            if (failure != null) DngInputProbe.failure("gpu.input_completion", failure)
+            if (failure != null) logInputFailure(failure)
             runOnUiThread {
                 GpuSurfaceProbe.event("activity.input.completion") {
                     "loadEpoch=$epoch currentEpoch=$inputEpoch resumed=$resumed canceled=${signal.isCanceled} failed=${failure != null}"
@@ -138,7 +141,9 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
                 if (!isDestroyed && resumed && epoch == inputEpoch) {
                     inputSignal = null
                     dngLoading = false
-                    if (failure == null && !signal.isCanceled) {
+                    if (inputWasCancelled(signal, failure)) {
+                        inputStatus = "DNG読み込みを中断しました。再開するには選び直してください。"
+                    } else if (failure == null) {
                         renderer.openPhoto(input)
                         inputStatus = "DNG AS_SHOT入力: ${input.width} × ${input.height}（長辺1024・786,432画素以下）"
                     } else {
@@ -239,6 +244,12 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
             "arrivalNs=${SystemClock.elapsedRealtimeNanos()} level=$level resumed=$resumed loadEpoch=$inputEpoch loading=$dngLoading"
         }
         super.onTrimMemory(level)
+        // UI_HIDDEN may arrive after onResume. It belongs to the previous background interval,
+        // not the new foreground input. Do not enqueue renderer cleanup for that stale notice.
+        if (level == android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN && resumed) {
+            trace("activity.trim.ignored_after_resume")
+            return
+        }
         if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN && dngSelected) {
             cancelInput("ui_hidden")
             renderer.closePhoto()
@@ -404,4 +415,25 @@ private class PreviewMeasurement {
     }
 
     companion object { const val MAX_SAMPLES = 10_000 }
+}
+
+/** Completion wrappers do not turn cancellation into a read failure. */
+internal fun inputWasCancelled(signal: CancellationSignal, failure: Throwable?): Boolean {
+    if (signal.isCanceled) return true
+    return try {
+        generateSequence(failure) { it.cause?.takeUnless { cause -> cause === it } }.take(16)
+            .any { it is CancellationException || it is OperationCanceledException || it is DngVerificationStopped }
+    } catch (_: Throwable) { false } // A malformed failure must still complete as a failure.
+}
+
+/** No throwable/message overload: keep cleanup failures visible without leaking document metadata. */
+private fun logInputFailure(failure: Throwable) {
+    try {
+        Log.w("GpuPreview", DngInputProbe.failureSummary(failure))
+        generateSequence(failure) { it.cause?.takeUnless { cause -> cause === it } }.take(4).forEach { cause ->
+            cause.suppressed.take(4).forEach { cleanup ->
+                Log.w("GpuPreview", DngInputProbe.failureSummary(cleanup))
+            }
+        }
+    } catch (_: Throwable) { /* Logging must not replace the original completion. */ }
 }

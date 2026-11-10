@@ -184,6 +184,24 @@ class GpuDiagnosticSurfaceInputTest {
                     if (device.hasObject(By.pkg(target.packageName).text(EXPECTED_STATUS))) true
                     else { scroll(Direction.UP); false }
                 }
+                if (delayedTrim) {
+                    // The earlier UI_HIDDEN must not affect a selection started after that notice.
+                    val previousEpoch = state(scenario).epoch
+                    scenario.onActivity { it.acceptDiagnosticDocument(document.uri) }
+                    await("new selection after the earlier UI_HIDDEN", 60_000) {
+                        val current = state(scenario)
+                        check(current.inputResult != "load_error" && !current.gpuError)
+                        current.epoch > previousEpoch && current.inputResult == "loaded" && !current.loading
+                    }
+                    val secondLoadedDraw = snapshot(renderer).drawCount
+                    await("rotation control after second DNG load") {
+                        device.findObject(By.pkg(target.packageName).text("回転 90°"))?.let { it.click(); true }
+                            ?: run { scroll(); false }
+                    }
+                    awaitSnapshot(renderer, "new frame after the earlier UI_HIDDEN") {
+                        it.drawCount > secondLoadedDraw && it.windowCount == 1 && it.surfaceAttached
+                    }
+                }
                 document.verifyClosedAndUnchanged()
             }
             state(scenario)
