@@ -2,8 +2,12 @@ package dev.cinematic.p0.gpu
 
 import android.opengl.GLES32
 import dev.cinematic.p0.gpu.diag.GpuStageTap
+import dev.cinematic.p0.gpu.look.StageClearFinishGpu
+import dev.cinematic.p0.gpu.look.StageClearGlowGpu
+import dev.cinematic.p0.gpu.look.StageClearMistGpu
 import dev.cinematic.p0.gpu.preview.present
 import dev.cinematic.p0.gpu.r7.R7Gpu
+import dev.cinematic.p0.gpu.resample.GpuResample
 import dev.cinematic.p0.raw.LinearSrgbImage
 import dev.cinematic.p0.raw.PhotoAdjustments
 import dev.cinematic.p0.raw.R7PreviewInputs
@@ -66,7 +70,7 @@ internal data class StageClearGpuPreviewTarget(
 /**
  * 写真ごとの R7/Glow 保持と一時出力を所有する接続点。入力は借用し、close しない。
  * tap/consume は同じ GL thread 上の同期 callback。渡す texture は callback 中だけ借用する。
- * 実パスを順に接続する間も、不足する工程をコピーや CPU 経路で成功扱いにしない。
+ * 診断のtap指定は全工程を再計算する。通常描画の強さ変更ではR7/Glowの保持を使う。
  */
 internal interface StageClearGpuPipeline : AutoCloseable {
     fun render(params: GpuRenderParams, tap: ((GpuStageTap.Point, GpuTexture) -> Unit)? = null,
@@ -75,7 +79,7 @@ internal interface StageClearGpuPipeline : AutoCloseable {
 
 /**
  * 公開 API の写真・入力・解析・表示の所有者。EGL/ledger は renderer から借用する。
- * 全ルックの接続前でも INPUT/Before と資源の回収を実行・検証できる。
+ * INPUT/Beforeはルックを通さず、同じ常駐AS_SHOTから描画する。
  */
 internal class DefaultStageClearGpu(
     private val egl: EglContexts,
@@ -250,24 +254,91 @@ internal class DefaultStageClearGpu(
     }
 }
 
-/** #284: accepted passes are connected here without changing their owning implementation. */
+/** Photo-local connections. Cache owners outlive frames; frame outputs never outlive consume. */
 internal class ConnectedStageClearGpuPipeline(
     private val input: GpuTexture,
     private val analysis: GpuPhotoAnalysis,
 ) : StageClearGpuPipeline {
-    private val r7 = R7Gpu(input.context, input.memoryLedger)
+    private val egl = input.context
+    private val ledger = input.memoryLedger
+    private val r7 = R7Gpu(egl, ledger)
+    private val resample = GpuResample(egl, ledger)
+    private val finish = StageClearFinishGpu(egl, ledger)
+    private var glow: StageClearGlowGpu.Prepared? = null
+    private var adjustments: PhotoAdjustments? = null
+    private val transient = linkedSetOf<GpuTexture>()
+    private var closed = false
     internal val r7FragmentPassCount get() = r7.fragmentPassCount
+    internal var glowPreparationCount = 0; private set
+    internal var lastDecisions = GpuDecisions(0.0, 1.0); private set
 
     override fun render(params: GpuRenderParams, tap: ((GpuStageTap.Point, GpuTexture) -> Unit)?,
         consume: (GpuTexture, GpuDecisions) -> Unit) {
-        // R7 owns its final texture and caches by input/warmth/EV, never by strength. A tap
-        // forces recomputation so an earlier intermediate remains observable after cache reuse.
-        r7.render(input, params.adjustments.warmth, analysis.meteredBaseEv + params.adjustments.exposureEv,
-            foundationRoi = null, tap = tap)
-        // Until the remaining owners arrive, only R7 taps can complete. Do not display an R7
-        // result as a complete Stage Clear look, invent Mist decisions, or fall back to CPU.
-        if (tap == null) error("Glow, Mist and Finish GPU passes are not connected yet")
+        input.requireOpen(); check(!closed) { "Stage Clear pipeline is closed" }
+        require(params.strength.isFinite() && params.strength in 0.0..1.0)
+        releaseTransient()
+        // Glow borrows R7_FINAL. Release it BEFORE any R7 recomputation, including diagnostic taps.
+        if (adjustments != params.adjustments || tap != null) {
+            glow?.close(); glow = null; adjustments = null
+        }
+        val base = r7.render(input, params.adjustments.warmth,
+            analysis.meteredBaseEv + params.adjustments.exposureEv, foundationRoi = null, tap = tap)
+        val prepared = glow ?: StageClearGlowGpu.prepare(base, resample).also {
+            glow = it; adjustments = params.adjustments; glowPreparationCount++
+        }
+        var failure: Throwable? = null
+        try {
+            tap?.invoke(GpuStageTap.Point.SKIN_WEIGHT, prepared.skinWeight)
+            val glowed = prepared.render(params.strength).also { if (it !== base) transient += it }
+            tap?.invoke(GpuStageTap.Point.GLOW, glowed)
+            val auto = StageClearMistGpu.autoStrength(glowed)
+            val mist = StageClearMistGpu.render(glowed, prepared.skinWeight, params.strength,
+                resample, autoStrength = auto).also { if (it.image !== glowed) transient += it.image }
+            // Mist may borrow base at strength zero; otherwise its new image replaces Glow.
+            if (mist.image !== glowed) release(glowed)
+            tap?.invoke(GpuStageTap.Point.MIST, mist.image)
+            val shoulder = finish.render(mist, params.strength, faceMask = null, tap = tap)
+                .also { transient += it }
+            release(mist.image)
+            // Normal preview goes straight to the window, with no RGBA8 allocation/readback.
+            if (tap != null) {
+                val bytes = finish.encode(shoulder).also { transient += it }
+                tap(GpuStageTap.Point.DISPLAY8, bytes)
+                release(bytes)
+            }
+            val decisions = GpuDecisions(auto, 1.0)
+            consume(shoulder, decisions)
+            lastDecisions = decisions
+        } catch (problem: Throwable) {
+            failure = problem
+            throw problem
+        } finally {
+            try { releaseTransient() } catch (cleanup: Throwable) {
+                if (failure == null) throw cleanup
+                if (failure !== cleanup) failure.addSuppressed(cleanup)
+            }
+        }
     }
 
-    override fun close() = r7.close()
+    private fun release(texture: GpuTexture) {
+        if (texture in transient) { texture.close(); transient.remove(texture) }
+    }
+    private fun releaseTransient() {
+        var failure: Throwable? = null
+        transient.toList().asReversed().forEach { texture ->
+            try { release(texture) } catch (problem: Throwable) {
+                if (failure == null) failure = problem else failure!!.addSuppressed(problem)
+            }
+        }
+        failure?.let { throw it }
+    }
+    override fun close() {
+        egl.glThread.requireCurrent()
+        if (closed) return
+        // Keep an owner if close fails, so the photo/engine can explicitly retry cleanup.
+        releaseTransient()
+        glow?.close(); glow = null; adjustments = null
+        finish.close(); resample.close(); r7.close()
+        closed = true
+    }
 }

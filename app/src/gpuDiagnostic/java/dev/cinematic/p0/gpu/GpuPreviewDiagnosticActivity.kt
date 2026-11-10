@@ -155,7 +155,7 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
                     stopMeasurement()
                 }
             }
-        })
+        }, engineFactory = { egl, ledger -> DefaultStageClearGpu(egl, ledger) })
         setContent {
             MaterialTheme {
                 Surface(Modifier.fillMaxSize()) { DiagnosticScreen() }
@@ -233,7 +233,7 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text("GPU 表示診断・製品未採用", style = MaterialTheme.typography.titleLarge)
-            Text("この画面はAS_SHOT入力の表示です。全工程の表示は接続準備中です。保存なし。DNG選択は全工程計測を開始しません。")
+            Text("R7 → Glow → Mist → Finish の全工程GPUプレビュー。BeforeはAS_SHOT入力です。保存なし。製品未採用。")
             GpuPreviewSurface(renderer, Modifier.fillMaxWidth().height(240.dp))
             Column {
                 Button(onClick = { choosing = true }) { Text("合成入力: $fixtureName") }
@@ -264,7 +264,7 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
                 Switch(checked = before, onCheckedChange = { before = it })
                 Button(onClick = { rotation = (rotation + 90) % 360 }) { Text("回転 $rotation°") }
             }
-            Button(enabled = !loading && !dngSelected && !dngLoading && error == null, onClick = {
+            Button(enabled = !loading && !dngLoading && error == null, onClick = {
                 if (measuring) stopMeasurement() else {
                     measurement.start()
                     sampleCount = 0

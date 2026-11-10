@@ -1,0 +1,25 @@
+#version 320 es
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp isampler2D;
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+uniform sampler2D s_glowed;
+uniform ivec2 u_size;
+// Clear to zero before each dispatch. Read exactly this scalar after the
+// storage/buffer barrier and completion fence; do not read back image pixels.
+layout(std430, binding = 0) buffer NearWhiteCount {
+    uint nearWhiteCount;
+};
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(pixel, u_size))) return;
+    vec3 rgb = texelFetch(s_glowed, pixel, 0).rgb;
+    // Kotlin uses left-associated Float arithmetic, not dot/FMA. precise keeps
+    // contraction/reassociation from moving values across the strict threshold.
+    precise float luminance = rgb.r * SC_STAGECLEAR_LUMA_0 +
+        rgb.g * SC_STAGECLEAR_LUMA_1 + rgb.b * SC_STAGECLEAR_LUMA_2;
+    if (luminance > SC_MIST_NEAR_WHITE) atomicAdd(nearWhiteCount, 1u);
+}

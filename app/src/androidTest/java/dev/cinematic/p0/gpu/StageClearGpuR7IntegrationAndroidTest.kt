@@ -60,15 +60,12 @@ class StageClearGpuR7IntegrationAndroidTest {
                 val first = engine.renderForTest(photo, params, Point.R7_FINAL)
                 val passes = checkNotNull(pipeline)
                 val initialCount = passes.r7FragmentPassCount
-                // Missing Look remains an explicit failure; R7's warm cache can still be checked.
-                assertThrows(IllegalStateException::class.java) { passes.render(params.copy(strength = .75)) { _, _ -> fail("Look must not be fabricated") } }
+                passes.render(params.copy(strength = .75)) { output, _ -> output.requireOpen() }
                 assertEquals(initialCount, passes.r7FragmentPassCount)
                 val second = engine.renderForTest(photo, params.copy(strength = .75), Point.R7_FINAL)
                 repeat(first.pixelCount * 3) { assertEquals(first[it].toRawBits(), second[it].toRawBits()) }
                 val afterTap = passes.r7FragmentPassCount
-                assertThrows(IllegalStateException::class.java) {
-                    passes.render(params.copy(adjustments = PhotoAdjustments(0.0, 1.0))) { _, _ -> fail("Look must not be fabricated") }
-                }
+                passes.render(params.copy(adjustments = PhotoAdjustments(0.0, 1.0))) { output, _ -> output.requireOpen() }
                 assertTrue(passes.r7FragmentPassCount > afterTap)
             }
         }
