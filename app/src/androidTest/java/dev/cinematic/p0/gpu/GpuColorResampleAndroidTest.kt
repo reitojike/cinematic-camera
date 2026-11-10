@@ -171,13 +171,30 @@ class GpuColorResampleAndroidTest {
         return abs(ordered(a) - ordered(b))
     }
 
+    // Acceptance must report non-finite GPU results before the finite-only image model rejects them.
+    private fun readRawRgb(egl: EglContexts, texture: GpuTexture): FloatArray {
+        GpuFence(egl).use { it.await() }
+        val rgba = ByteBuffer.allocateDirect(texture.width * texture.height * 16)
+            .order(ByteOrder.nativeOrder()).asFloatBuffer()
+        GLES32.glBindFramebuffer(GLES32.GL_FRAMEBUFFER, texture.framebufferId)
+        GLES32.glReadBuffer(GLES32.GL_COLOR_ATTACHMENT0)
+        GLES32.glBindBuffer(GLES32.GL_PIXEL_PACK_BUFFER, 0)
+        GLES32.glPixelStorei(GLES32.GL_PACK_ALIGNMENT, 1)
+        GLES32.glPixelStorei(GLES32.GL_PACK_ROW_LENGTH, 0)
+        GLES32.glPixelStorei(GLES32.GL_PACK_SKIP_PIXELS, 0)
+        GLES32.glPixelStorei(GLES32.GL_PACK_SKIP_ROWS, 0)
+        GLES32.glReadPixels(0, 0, texture.width, texture.height, GLES32.GL_RGBA, GLES32.GL_FLOAT, rgba)
+        egl.checkGl("read raw color acceptance")
+        return FloatArray(texture.width * texture.height * 3) { rgba[it / 3 * 4 + it % 3] }
+    }
+
     private fun checkColor(egl: EglContexts, ledger: GpuMemoryLedger, program: GpuProgram, w: Int, h: Int,
         input: FloatArray, expected: FloatArray, operation: Int, label: String): String? {
         upload(egl, ledger, w, h, input, true).use { source ->
             GpuTexture.create(egl, ledger, w, h, GpuTexture.Format.RGBA32F).use { output ->
                 egl.passes().run(FragmentPass(program, listOf(TextureInput("s_input", source, 0)), output,
                     uniforms = { GLES32.glUniform1i(GLES32.glGetUniformLocation(it, "u_operation"), operation) }))
-                val actual = GpuStageTap.readRgb(egl, output)
+                val actual = readRawRgb(egl, output)
                 var worstRatio = -1.0; var worst = 0; var maximum = 0.0; var maxUlps = 0L; var failed = 0
                 expected.indices.forEach { i ->
                     val limit = when {
@@ -186,25 +203,27 @@ class GpuColorResampleAndroidTest {
                         operation in 0..2 -> if (abs(expected[i]) <= 1) GpuTolerances.LAB_ABSOLUTE else abs(expected[i]) * GpuTolerances.LAB_RELATIVE
                         else -> if (abs(expected[i]) <= 1) 2e-6 else abs(expected[i]) * 1e-5
                     }
-                    val delta = if (operation == 7) GpuTolerances.circularHueDifference(expected[i], actual[i])
+                    val delta = if (!actual[i].isFinite()) Double.POSITIVE_INFINITY else if (operation == 7) GpuTolerances.circularHueDifference(expected[i], actual[i])
                         else abs(expected[i].toDouble() - actual[i])
                     if (!actual[i].isFinite() || (operation == 7 && actual[i] !in 0f..360f) || delta > limit) failed++
-                    maximum = max(maximum, delta); maxUlps = max(maxUlps, ulps(expected[i], actual[i]))
+                    maximum = max(maximum, delta); if (actual[i].isFinite()) maxUlps = max(maxUlps, ulps(expected[i], actual[i]))
                     if (delta / limit > worstRatio) { worstRatio = delta / limit; worst = i }
                 }
+                val nonFinitePixels = actual.indices.filter { !actual[it].isFinite() }.map { it / 3 }.distinct()
+                for (p in nonFinitePixels) Log.i(TAG, "$label nonfinite pixel=$p; input=${input.copyOfRange(p * 3, p * 3 + 3).contentToString()}; kotlin=${expected[p * 3]}; gpu=${actual[p * 3]}")
                 val pixel = worst / 3
-                val display = if (operation == 1 || operation == 2) {
-                    val diff = ImageDiff.display(LinearSrgbImage(w, h, expected), actual, label)
-                    "display8bitMax=${diff.maxDiff}; displayChangedPixels=${diff.changedPixels}; displayMean=${diff.meanDiff}"
+                val display = if ((operation == 1 || operation == 2) && actual.all { it.isFinite() }) {
+                    val diff = ImageDiff.display(LinearSrgbImage(w, h, expected), LinearSrgbImage(w, h, actual), label)
+                    "display8bitMax=${diff.maxDiff}; displayP999=${diff.p999}; displayChangedPixels=${diff.changedPixels}; displayMean=${diff.meanDiff}"
                 } else "display8bit=not-applicable-to-this-intermediate"
                 val metric = if (operation == 7) "circularDegrees" else "absolute"
                 val report = "$label; metric=$metric; failedChannels=$failed; maxDiff=$maximum; maxULP=$maxUlps; " +
                     "worstPixel=$pixel (${pixel % w},${pixel / w}); channel=${worst % 3}; " +
                     "input=${input.copyOfRange(pixel * 3, pixel * 3 + 3).contentToString()}; " +
-                    "kotlin=${expected[worst]}; gpu=${actual[worst]}; ULP=${ulps(expected[worst], actual[worst])}; " +
+                    "kotlin=${expected[worst]}; gpu=${actual[worst]}; ULP=${if (actual[worst].isFinite()) ulps(expected[worst], actual[worst]).toString() else "undefined(nonfinite)"}; " +
                     "toleranceRatio=$worstRatio; $display"
                 Log.i(TAG, (if (failed == 0) "PASS " else "FAIL ") + report)
-                if (w * h <= 4) Log.i(TAG, "$label; fullKotlin=${expected.contentToString()}; fullGpu=${actual.copyPixels().contentToString()}")
+                if (w * h <= 4) Log.i(TAG, "$label; fullKotlin=${expected.contentToString()}; fullGpu=${actual.contentToString()}")
                 return report.takeIf { failed != 0 }
             }
         }
