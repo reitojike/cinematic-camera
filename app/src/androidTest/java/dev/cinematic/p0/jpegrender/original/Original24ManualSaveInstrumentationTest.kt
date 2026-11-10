@@ -65,7 +65,8 @@ class Original24ManualSaveInstrumentationTest {
             }, null, null))
             val fingerprint = DngContentVerifier.identify(sourceBytes, { requireNotNull(resolver.openInputStream(sourceUri)) })
             val source = SharedOriginalReference(sourceUri.toString(), fingerprint, OriginalGrant.APP_OWNED)
-            val allowed = AutoDevelopConditions(true, false, false, false, true, true, true, true)
+            val allowed = AutoDevelopConditions(true, false, false, false, true, true, true, true,
+                previewMemoryAvailable = true)
             val edits = PhotoAdjustments(20.0, .3)
             DevelopExecution.updateConditions(allowed)
             val pendingFirst = PreviewFutureOwner(AndroidManualOriginalTrialSaves.renderPreview(app, source, .45, allowed, edits))
@@ -158,7 +159,7 @@ class Original24ManualSaveInstrumentationTest {
             assertFalse(save.hasUnreleasedResources)
             AndroidManualOriginalTrialSaves.discardPreview(app).get(30, TimeUnit.SECONDS)
 
-            // The real save factory selects two Foundation workers. Compare its public JPEG with
+            // The real save factory selects Foundation/Glow/tone/Mist=2. Compare its public JPEG with
             // the explicit serial baseline, after the save has returned its coordinator admission.
             // This extra attempt is synthetic-only and cannot insert or publish a MediaStore row.
             val serialBytes = ByteArrayOutputStream()
@@ -170,7 +171,7 @@ class Original24ManualSaveInstrumentationTest {
             }
             val serialScratch = File(app.cacheDir, "synthetic-original24-serial-${UUID.randomUUID()}")
             val serialAttempt = Original24Attempt(app, save.request, serialIo, serialScratch,
-                parallelFoundationWorkers = 1, parallelGlowWorkers = 1)
+                parallelFoundationWorkers = 1, parallelGlowWorkers = 1, parallelToneWorkers = 1, parallelMistWorkers = 1)
             val serialResult = serialAttempt.use { it.render { false } }
             assertFalse(serialAttempt.hasUnreleasedResources)
             assertFalse(serialScratch.exists())

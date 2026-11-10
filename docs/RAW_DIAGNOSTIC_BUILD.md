@@ -35,7 +35,7 @@ realPhotoProbe recipeと保存済みmanifest/native監査もrelease継承、非d
 永続grantや写真名/EXIF照会をしない。camera/FGS/通常画面/要求permissionを専用manifestから除外する。
 64MiB上限の私有入力copyを作り、各試行は新しいOriginal24Attemptとscratchを使う。
 製品のsave coordinator/journal/MediaStoreを通らず、既存保存結果の再利用を反復に数えない。
-入力copyは終了時に削除、成功JPEGは各試行後削除。失敗scratchと数値reportは私有領域に残る場合がある。
+入力copy/未完JPEG/失敗scratchは解放確認後に削除、成功JPEGは各試行後に削除する。数値reportだけ私有領域に残す。回収未確認はHOLD。
 選択元のbytesを最後に再照合する。試行のsourceUnchangedは私有入力、selectedOriginalUnchangedは選択元の検査を指す。
 
 APK導入、Files選択、比較条件/測定modeの選択、開始、取消、結果共有は本人の操作として別途案内する。
@@ -128,7 +128,7 @@ samplerの終了未確認でも既存gateを保持し次の試行を開始しな
 時間は正順10回＋逆順10回（合計20回）。メモリは別の1 sessionでA/B各1回、合計2回に限定する。
 取消は専用ボタンからRAW4 onを2回だけ実行し、native decode完了後とR7 Foundation完了後に協調取消する。
 この境界取消はnative処理内部の任意時点の取消試験を代替しない。終了owner、部分JPEGなし、完了結果なし、
-原本不変を記録し、性能測定の成功件数に含めない。失敗scratchは既存契約どおり私有保持し、勝手に削除しない。
+原本不変を記録し、性能測定の成功件数に含めない。失敗scratchも全owner解放を確認して回収する。削除失敗や所有不明はHOLDにし、原本や公開の記録は削除しない。
 本人が途中で取消した場合は診断成功に補完せず停止する。24MPを自動選択/先行測定しない。
 
 所要時間は同じ診断APK・同じ入力で観測した1回時間をTとすると、時間20T＋メモリ2回分＋取消2回の到達/回収時間。
@@ -147,7 +147,7 @@ RAW4の合成検証結果と枠解放は[Issue #78](https://github.com/reitojike
 
 速度採否で残ったGlow / Mist / R7 toneの2並列だけを `SAVE_SAFETY` として分離する。
 Aは3工程とも1、Bは3工程とも2。**色融合は両方OFF**。Foundation2 / Orton4 / Character2は固定。
-通常保存caller `AndroidManualOriginalTrialSaves.Backend.render` がFoundation2を明示する条件に合わせる。
+通常保存caller `AndroidManualOriginalTrialSaves.Backend.render` もFoundation2 / Orton4 / Character2を共通とし、保存3候補の採用後はGlow2 / Mist2 / tone2を明示する。A/Bは過去と同じ比較構成を保ち、診断profileから製品の設定を切り替えない。
 下位APIの既定1や旧RAW4 Bの色融合ONを変更しない。製品既定・画素式・原本・共有保存は変更しない。
 
 画面上部の専用ボタンを使い、下のlegacy controlsと分離する。
@@ -205,7 +205,7 @@ OSの物理タッチ時刻・画面提示時刻・特定workerの画素命令の
 各runの `ownerClosed` / `noCompletedResult` / `outputAbsentAtAttemptScopeExit` と全体のprivate入力削除・resourcesQuiescentも確認する。
 
 この計測は待ち時間の観測準備であり、短時間停止・安全なtimeout・実機合格の保証ではない。
-所有者が残るHOLD、OS警告、異常発熱、低メモリでは追加の回を始めず止める。失敗scratchの私有保持は従来どおり。
+所有者が残るHOLD、OS警告、異常発熱、低メモリでは追加の回を始めず止める。取消・失敗scratchはowner解放後に即時回収する。未解放または削除失敗ではHOLDにし、写真コピーを調査用に残さない。
 
 ### A/B取消比較の判定と限界（#273）
 
@@ -238,3 +238,12 @@ A自体が参考値を超える場合も今回の診断でcheckpointを増やさ
 開始値/環境と順序を記録してばらつきを評価する。条件差・欠測が残れば未判定。観測最大を真peakにしない。
 `memoryComparisonDecision=REQUIRES_MATCHED_CONDITIONS_NOT_AUTOMATIC_PASS` は自動合格を出さない固定表示。
 当日の順序/回数・既存ABの品質確認枠と単発メモリの相対比較枠は統合手順へ従う。
+
+### 取消後の作業コピーと合成回帰（#301）
+
+`Original24Attempt` は成功・取消・失敗とも、全resource ownerのclose後に既知のDNG snapshot・RGB16・Float32を削除する。削除が未確認ならownerを保持し、`close()` で再試行する。診断runnerの私有input/未完JPEGもharness解放後に回収する。
+最初の診断sessionを作る前に、前のprocessが残した既知sessionの写真コピーを回収する。数値reportは残す。稼働中/close不明ownerを後続sessionが削除しない。旧reportの `privateFailedScratchRetained=true` を変更せず、新しい確認ではfalseを期待する。
+
+`SaveCandidateCancellationTest` は合成DNGだけを使用し、既存の `OriginalStageTrace.started(MIST)` で取消を要求する。A/B各3回で停止、owner/worker/FD解放、出力未開始、最後の原本照合、scratch消去を確認する。これはMist開始直前の同じ境界での確認であり、Mist worker実行中や実機の待ち時間比較ではない。既存のnative decode後/Foundation後も3sessionで残存0を確認する。
+
+実行は `docs/MANAGED_DEVICES.md` のATD枠を利用し、classを `dev.cinematic.p0.rawdiagnostic.SaveCandidateCancellationTest` に限定する。rawDiagnostic/testプロパティと `isolated=true` を明示する。旧S06のreportにはbyte inventoryがないため、合成再現の値を実機の残存実測として扱わない。

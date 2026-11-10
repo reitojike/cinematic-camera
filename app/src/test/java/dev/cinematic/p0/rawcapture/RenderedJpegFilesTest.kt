@@ -29,6 +29,23 @@ class RenderedJpegFilesTest {
         assertFalse(java.io.File(root, "capture/original.dng").exists())
     }
 
+    @Test fun failedOutputCannotBeDeletedWhileOpenOrAfterPublicationSeal() {
+        val root = temporary.newFolder()
+        val files = RenderedJpegFiles(root, "capture", 1)
+        val writer = files.createOutput()
+        writer.write(1)
+        assertThrows(IOException::class.java) { files.discardFailedOutput() }
+        writer.close()
+        files.discardFailedOutput()
+        files.discardFailedOutput()
+        assertFalse(java.io.File(files.generationRoot(), "output.jpg").exists())
+        val published = RenderedJpegFiles(root, "capture", 2)
+        published.createOutput().use { it.write(2) }
+        published.sealCompleted()
+        assertThrows(IOException::class.java) { published.discardFailedOutput() }
+        assertEquals(2, published.openRead().use { it.read() })
+    }
+
     @Test fun separateGenerationsKeepTheirFilesAndInvalidIdentitiesAreRejected() {
         val root = temporary.newFolder()
         for (generation in 1L..2) RenderedJpegFiles(root, "capture", generation).createOutput().use { it.write(generation.toInt()) }

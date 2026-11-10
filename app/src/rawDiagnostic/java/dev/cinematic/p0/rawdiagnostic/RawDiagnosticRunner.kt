@@ -25,6 +25,16 @@ import org.json.JSONObject
 
 /** Private foreground trial. No save coordinator, journal, MediaStore writes or persisted URI grant. */
 internal class RawDiagnosticRunner(private val context: Context) {
+    companion object {
+        private val recoveredRoots = mutableSetOf<String>()
+        /** Only before this process creates its first diagnostic owner for the private root. */
+        @Synchronized private fun recoverPreviousProcess(context: Context) {
+            val root = context.noBackupFilesDir.canonicalFile
+            if (root.path in recoveredRoots) return
+            Original24ScratchRecovery.diagnostics(root)
+            recoveredRoots += root.path
+        }
+    }
     private val stopped = AtomicBoolean()
     private val cancellation = DiagnosticCancellationLatency()
     private val harnessIo = DiagnosticIoOwner()
@@ -98,6 +108,7 @@ internal class RawDiagnosticRunner(private val context: Context) {
 
     private fun runSession(uri: Uri, observeMemory: Boolean, reverse: Boolean, comparison: DiagnosticComparison,
         cancelProbe: Boolean, update: (String) -> Unit, manualPlan: ManualCancellationPlan? = null, singleMemoryArm: Int? = null): String {
+        recoverPreviousProcess(context)
         val manualProbe = manualPlan != null
         // UUID paths stay private and are never serialized into the report.
         val root = File(context.noBackupFilesDir, "raw-diagnostic-${UUID.randomUUID()}")
@@ -124,6 +135,7 @@ internal class RawDiagnosticRunner(private val context: Context) {
             harnessIo.output(reportFile.outputStream()).use { it.write(report.toString(2).toByteArray(Charsets.UTF_8)) }
         }
         var source: File? = null
+        val outputs = mutableListOf<File>()
         try {
             requireResources()
             // Bounded read-only import is outside all measured runs. No filename or EXIF queries.
@@ -157,7 +169,7 @@ internal class RawDiagnosticRunner(private val context: Context) {
                     .put("environmentBefore", environment())
                 runs.put(item); persist(); update("Attempt ${index + 1}/${plannedArms.size}; arm $arm")
                 val attemptRoot = File(root, "attempt-$index"); check(attemptRoot.mkdir())
-                val output = File(attemptRoot, "result.jpg")
+                val output = File(attemptRoot, "result.jpg").also { outputs += it }
                 val io = object : AutoRenderIo {
                     override fun openOriginal() = harnessIo.input(input.inputStream())
                     override fun openOriginalDescriptor(): AutoReadOnlyDescriptor = error("Snapshot required")
@@ -260,7 +272,7 @@ internal class RawDiagnosticRunner(private val context: Context) {
                     item.put("environmentAfter", environment())
                     if (observeMemory) item.put("memoryAfter", memory())
                     persist()
-                    // Failed attempts remain private for owner cleanup; successful scratch is already disposed.
+                    // Attempt close disposes known scratch after all resource owners acknowledge close.
                     if (success) check(output.delete())
                 }
                 check(memoryValid)
@@ -283,12 +295,17 @@ internal class RawDiagnosticRunner(private val context: Context) {
         } catch (_: Exception) {
             report.put("status", if (stopped.get()) "STOPPED" else "FAILED")
         } finally {
-            // Imported source is a disposable private copy; failed scratch is retained, not shared or uploaded.
+            // Remove disposable import/output copies only after every attempt and stream owner is quiescent.
+            var inputRemoved = false
+            var outputsRemoved = false
             val cleanup = harnessIo.finish(attemptQuiescent && samplerQuiescent) {
-                source?.let { !it.exists() || it.delete() } ?: true
+                inputRemoved = source?.let { try { Files.deleteIfExists(it.toPath()); true } catch (_: IOException) { false } } ?: true
+                outputsRemoved = outputs.map { try { Files.deleteIfExists(it.toPath()); true } catch (_: IOException) { false } }.all { it }
+                inputRemoved && outputsRemoved
             }
             cleanupHeld = !cleanup.quiescent || !cleanup.sourceRemoved || cleanup.closeFailed
-            report.put("privateInputRemoved", cleanup.sourceRemoved).put("harnessCloseFailed", cleanup.closeFailed)
+            report.put("privateInputRemoved", inputRemoved).put("privateOutputsRemoved", outputsRemoved)
+                .put("harnessCloseFailed", cleanup.closeFailed)
             if (cleanupHeld) report.put("complete", false).put("status", "HOLD_PRIVATE_CLEANUP")
             report.put("resourcesQuiescent", resourcesQuiescent)
             if (!cleanup.quiescent) report.put("status", "HOLD_OWNER_NOT_CLOSED")
