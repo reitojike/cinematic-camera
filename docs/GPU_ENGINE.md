@@ -133,7 +133,7 @@ internal data class GpuDecisions(val mistAutoStrength: Double, val faceCutFactor
 根拠: [GLSL ES 3.20.8 §4.7.1](https://registry.khronos.org/OpenGL/specs/es/3.2/GLSL_ES_Specification_3.20.html) は、pow の精度要件を `exp2(y * log2(x))` から継承させ、三角関数の精度を同表で定義しない。subnormal の0へのflushも許す。powが必ずその式で実装されるという規定ではなく、Math.cbrt/atan2 と同じ丸めを保証するものでもない。
 今回の閾値は規格から得られる保証値ではなく、測定と利用者承認に基づく契約である。Newton後の往復最大差は Android 2.682209e-6 / Mesa 2.592802e-6、B2後のMesa色相最大差は約3.05176e-5度だった。最終の exact head を両環境で検証して記録する。
 
-**全工程の基準は変えない。** #276 の表示8bit最大差2・99.9パーセンタイル差1、Mist自動強度0.005、局所分位点1e-4を #284 の全工程で確認する。単体の表示差やエミュレーター成功を最終画質・実機速度の合格へ読み替えない。
+**全工程の基準は #276 §2.1 に従う。** 表示8bit最大差2・全RGBの99.9パーセンタイル差1を維持し、Orton入力の境界画素だけに下記§4.11の承認済み最大差例外を適用する。Mist自動強度0.005、局所分位点1e-4とOrton以外の工程判定は変更しない。単体の表示差やエミュレーター成功を最終画質・実機速度の合格へ読み替えない。
 ### 4.5 Pillow 互換のリサンプル（GPU）
 
 `StageClearBlur.resize` と `OriginalField` が真実の源。GPU 版は次の通りに実装する。
@@ -223,9 +223,31 @@ internal data class GpuDecisions(val mistAutoStrength: Double, val faceCutFactor
 |---|---|---|
 | 合成画像セット | 決まった乱数で作る合成画像（グラデーション、白飛び、肌色、彩度の高い色、暗部、ノイズ）。256×192 と公開入力上限内の1024×768。単体passの旧1024×769 fixtureは履歴比較として保持 | `androidTest`、`GpuReferenceImages.kt`（新規） |
 | 工程ごとの一致 | `GpuStageTap` で各工程の出力を読み戻し、Kotlin の同じ工程（`R7Base.stages()` など既存の関数）と比べる | `androidTest`（エミュレーター。GPU はソフトウェア実装だが正しさの確認には足りる） |
-| 最終出力の一致 | 表示 8bit で最大差 ≤2、99.9 パーセンタイル ≤1、平均差を記録 | 同上 |
+| 最終出力の一致 | 表示8bitで境界対象外の最大差≤2、**全RGB**の99.9パーセンタイル≤1。下記CPU-only境界画素の比率上限も必須。全画素最大・平均も記録 | 同上 |
 | 判定値の一致 | Mist 自動強度は差 ≤0.005、局所トーン p50/p92 は単精度の範囲で一致 | 同上 |
 | 実写 | ユーザーの写真で、手元だけで比較（非公開の比較ページ、タップで切り替え）。数値・写真は Git に入れない | 実機・PC |
+
+#### Orton の1.0境界に対する承認済み表示判定
+
+[#276 §2.1](https://github.com/reitojike/cinematic-camera/issues/276) と
+[#285 Gate 1 基準②](https://github.com/reitojike/cinematic-camera/issues/285) のユーザー判断に従う。
+対象は **Kotlin見本の `StageClearOrton.mixOrton` に渡すimage（MIST）だけ** から決める。
+いずれかのRGB成分について `abs(component.toDouble() - 1.0) <= 1e-5` の画素を対象とし、GPU値では選ばない。
+
+- 比率は比較画像ごとに対象画素数 / 全画素数 ≤0.01%。整数の `対象数 * 10000L <= 全画素数` で判定し、超えたら不合格。
+- 対象画素の全RGBを **最終表示8bitの最大差≤2だけ** から外す。99.9パーセンタイル≤1は対象を含む全RGBで計算する。分母や補間方法は変えない。
+- 毎条件、対象数・比率・全対象の位置・Kotlin/GPU入力RGB・Kotlin/GPU表示RGBと差を記録する。対象0でも要約を残し、判定失敗前に保存する。
+- Orton以外の工程判定、Mist自動強度差0.005、局所分位点差1e-4、float単体判定、式・shader・予算は変えない。float中間画像へこの例外を広げない。
+
+理由は既存Kotlin式 `if (image[j] > 1f) max(image[j], value) else value` の1.0での値の飛び。
+MIXED 256×192 / strength0.5 / warmth0 / userEV+1 の(248,102)赤では、Kotlin入力1.000000238418579に対し
+Mesaは0.9999969601631165、指定Androidエミュレーターは0.9999984502792358となり、反対側の分岐へ入った。
+表示は双方245対240で、旧全画素最大差は5、全RGB p99.9は0。
+Kotlinだけで選んだ対象は(248,102)と(142,121)の2/49,152画素（0.0040690104%）。
+対象外最大差1・全RGB p99.9=0で、この1条件は新基準を満たす。
+[Androidの入力/value/分岐直後/保護後の記録](https://github.com/reitojike/cinematic-camera/issues/282#issuecomment-6761721229) を参照。
+以前のCPU/GPU union対象除外後の分位点は診断値であり、この正式基準では使わない。
+1条件の再評価を全工程200条件やGate 1全体の合格とは扱わず、最終候補で別途検証する。
 
 許容範囲を超えた工程は、式の写し間違いとして直す。許容範囲そのものを後から広げない（広げる場合はユーザーの判断として記録する）。
 

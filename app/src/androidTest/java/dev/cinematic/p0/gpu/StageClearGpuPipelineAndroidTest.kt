@@ -4,12 +4,16 @@ import android.opengl.GLES32
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import dev.cinematic.p0.gpu.diag.GpuStageTap
+import dev.cinematic.p0.gpu.diag.OrtonDisplayAcceptance
 import dev.cinematic.p0.gpu.diag.GpuStageTap.Point
 import dev.cinematic.p0.gpu.reference.GpuReferenceImages
 import dev.cinematic.p0.gpu.reference.GpuTolerances
 import dev.cinematic.p0.gpu.reference.ImageDiff
 import dev.cinematic.p0.gpu.reference.KotlinReference
 import dev.cinematic.p0.raw.PhotoAdjustments
+import dev.cinematic.p0.raw.LinearSrgbImage
+import java.io.File
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Before
@@ -39,56 +43,101 @@ class StageClearGpuPipelineAndroidTest {
         assertEquals("#278 fixture count", 10, GpuReferenceImages.Kind.entries.size)
         var conditions = 0
         var observedPeak = 0L
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val log = File(checkNotNull(context.getExternalFilesDir("gpu-diagnostics")), "pipeline-display-acceptance.log")
+        log.writeText("Kotlin-only Orton input mask; maximum only; all-RGB p999 retained\n")
         for (case in cases) for (kind in GpuReferenceImages.Kind.entries) {
-            val label = "$kind ${case.size.width}x${case.size.height}"
-            val input = GpuReferenceImages.create(kind, case.size)
-            val source = KotlinReference.Source(input)
-            val ledger = previewLedger()
-            var pipeline: ConnectedStageClearGpuPipeline? = null
-            DefaultStageClearGpu(egl, ledger) { texture, analysis ->
-                assertOwner(label, egl, ledger, texture)
-                ConnectedStageClearGpuPipeline(texture, analysis).also { pipeline = it }
-            }.use { engine ->
-                val baseline = memory(ledger)
-                val peakBeforeClose = engine.openPhoto(input) { false }.use { photo ->
-                    assertEquals("$label AS_SHOT bytes", input.pixelCount * 16L, ledger.allocatedBytes)
-                    assertEquals("$label AS_SHOT texture", 1, ledger.textureCount)
-                    for (adjustments in case.adjustments) {
-                        val prepared = KotlinReference.prepare(source, adjustments)
-                        for (strength in case.strengths) {
-                            val condition = "$label strength=$strength adjustments=$adjustments"
-                            Log.i(TAG, "BEGIN $condition")
-                            val expected = KotlinReference.render(prepared, strength, retainIntermediates = false)
-                            val actual = engine.renderForTest(photo, GpuRenderParams(strength, adjustments), Point.DISPLAY8)
-                            assertEquals("$condition width", input.width, actual.width)
-                            assertEquals("$condition height", input.height, actual.height)
-                            // DISPLAY8 is reconstructed linear RGB; re-encoding recovers its exact bytes.
-                            val difference = ImageDiff.display(expected.display8, ImageDiff.encodeDisplay(actual),
-                                input.width, input.height, "$condition DISPLAY8")
-                            val decisions = checkNotNull(pipeline).lastDecisions
-                            val mistDifference = ImageDiff.scalar(expected.mistAutoStrength, decisions.mistAutoStrength)
-                            Log.i(TAG, "$condition max=${difference.maxDiff} p999=${difference.p999} " +
-                                "mean=${difference.meanDiff} mistDelta=$mistDifference peakBytes=${ledger.peakAllocatedBytes}")
-                            difference.assertDisplayWithin()
-                            ImageDiff.assertScalarWithin(expected.mistAutoStrength, decisions.mistAutoStrength,
-                                GpuTolerances.MIST_AUTO_STRENGTH, "$condition mistAutoStrength")
-                            assertEquals("$condition faceCutFactor", 1.0, decisions.faceCutFactor, 0.0)
-                            assertWithinBudget(condition, ledger)
-                            conditions++
-                        }
-                    }
-                    ledger.peakAllocatedBytes
-                }
-                // Check photo.close(), before engine.close() can conceal a photo-owned leak.
-                assertReleased(label, ledger, baseline, peakBeforeClose)
-                observedPeak = maxOf(observedPeak, ledger.peakAllocatedBytes)
-            }
-            assertEquals("$label engine close bytes", 0L, ledger.allocatedBytes)
-            assertEquals("$label engine close textures", 0, ledger.textureCount)
+            observedPeak = maxOf(observedPeak, checkMatrixImage(egl, case, kind, log))
+            conditions += case.adjustments.size * case.strengths.size
         }
         assertEquals("All #284 conditions must run", 200, conditions)
         Log.i(TAG, "PASS DISPLAY8/Mist conditions=$conditions peakBytes=$observedPeak budgetBytes=$PREVIEW_BYTES " +
             "headroomBytes=${PREVIEW_BYTES - observedPeak}")
+    }
+
+    // Separate stack frames prevent old CPU Prepared/Result arrays surviving into the next prepare.
+    private fun checkMatrixImage(egl: EglContexts, case: Matrix, kind: GpuReferenceImages.Kind, log: File): Long {
+        val label = "$kind ${case.size.width}x${case.size.height}"
+        val input = GpuReferenceImages.create(kind, case.size)
+        val source = KotlinReference.Source(input)
+        val ledger = previewLedger()
+        var captured: MatrixPipeline? = null
+        DefaultStageClearGpu(egl, ledger) { texture, analysis ->
+            assertOwner(label, egl, ledger, texture)
+            MatrixPipeline(egl, ConnectedStageClearGpuPipeline(texture, analysis)).also { captured = it }
+        }.use { engine ->
+            val baseline = memory(ledger)
+            val peakBeforeClose = engine.openPhoto(input) { false }.use { photo ->
+                assertEquals("$label AS_SHOT bytes", input.pixelCount * 16L, ledger.allocatedBytes)
+                assertEquals("$label AS_SHOT texture", 1, ledger.textureCount)
+                for (adjustments in case.adjustments) {
+                    checkMatrixAdjustment(label, source, adjustments, case.strengths, engine, photo,
+                        { captured }, ledger, log)
+                }
+                ledger.peakAllocatedBytes
+            }
+            assertReleased(label, ledger, baseline, peakBeforeClose)
+        }
+        assertEquals("$label engine close bytes", 0L, ledger.allocatedBytes)
+        assertEquals("$label engine close textures", 0, ledger.textureCount)
+        return ledger.peakAllocatedBytes
+    }
+
+    private fun checkMatrixAdjustment(label: String, source: KotlinReference.Source, adjustments: PhotoAdjustments,
+        strengths: List<Double>, engine: DefaultStageClearGpu, photo: StageClearGpuPhoto,
+        pipeline: () -> MatrixPipeline?, ledger: GpuMemoryLedger, log: File) {
+        val prepared = KotlinReference.prepare(source, adjustments)
+        for (strength in strengths) {
+            checkMatrixCondition(label, prepared, GpuRenderParams(strength, adjustments), engine, photo, pipeline, ledger, log)
+        }
+    }
+
+    private fun checkMatrixCondition(label: String, prepared: KotlinReference.Prepared, params: GpuRenderParams,
+        engine: DefaultStageClearGpu, photo: StageClearGpuPhoto, pipeline: () -> MatrixPipeline?,
+        ledger: GpuMemoryLedger, log: File) {
+        val condition = "$label strength=${params.strength} adjustments=${params.adjustments}"
+        Log.i(TAG, "BEGIN $condition")
+        // Retain only MIST (the actual mixOrton input) and final output, not all intermediate images.
+        val expected = KotlinReference.render(prepared, params.strength, retainIntermediates = false, retainOrtonInput = true)
+        try {
+            val actual = engine.renderForTest(photo, params, Point.DISPLAY8)
+            assertEquals("$condition width", photo.width, actual.width)
+            assertEquals("$condition height", photo.height, actual.height)
+            val cpuMist = expected[Point.MIST]
+            val gpuMist = checkNotNull(pipeline()?.mist) { "Missing GPU Orton input" }
+            val display = ImageDiff.encodeDisplay(actual)
+            val difference = ImageDiff.display(expected.display8, display, photo.width, photo.height, "$condition DISPLAY8")
+            val acceptance = OrtonDisplayAcceptance.evaluate(photo.width, photo.height,
+                { cpuMist[it] }, { gpuMist[it] }, expected.display8, display)
+            // Persist every condition and every excluded pixel before asserting, including failures.
+            acceptance.logLines().forEach { line ->
+                Log.i(TAG, "$condition $line")
+                log.appendText("$condition $line\n")
+            }
+            assertEquals("$condition all-RGB percentile is unchanged", difference.p999, acceptance.p999AllRgb, 0.0)
+            val decisions = checkNotNull(pipeline()).connected.lastDecisions
+            val mistDifference = ImageDiff.scalar(expected.mistAutoStrength, decisions.mistAutoStrength)
+            Log.i(TAG, "$condition maxAll=${difference.maxDiff} maxOutside=${acceptance.maxDiffOutsideMask} " +
+                "p999All=${difference.p999} mean=${difference.meanDiff} mistDelta=$mistDifference peakBytes=${ledger.peakAllocatedBytes}")
+            acceptance.assertPassed()
+            ImageDiff.assertScalarWithin(expected.mistAutoStrength, decisions.mistAutoStrength,
+                GpuTolerances.MIST_AUTO_STRENGTH, "$condition mistAutoStrength")
+            assertEquals("$condition faceCutFactor", 1.0, decisions.faceCutFactor, 0.0)
+            assertWithinBudget(condition, ledger)
+        } finally {
+            // The persistent pipeline never retains the prior condition's CPU readback arrays.
+            pipeline()?.mist = null
+        }
+    }
+
+    private class MatrixPipeline(val egl: EglContexts, val connected: ConnectedStageClearGpuPipeline) : StageClearGpuPipeline {
+        var mist: LinearSrgbImage? = null
+        override fun render(params: GpuRenderParams, tap: ((Point, GpuTexture) -> Unit)?,
+            consume: (GpuTexture, GpuDecisions) -> Unit) = connected.render(params, { point, image ->
+            if (point == Point.MIST) mist = GpuStageTap.readRgb(egl, image)
+            tap?.invoke(point, image)
+        }, consume)
+        override fun close() { mist = null; connected.close() }
     }
 
     @Test fun strengthReusesBothCachesAndMatchesFreshRgbaBitsAtBothSizes() = gpu { egl ->

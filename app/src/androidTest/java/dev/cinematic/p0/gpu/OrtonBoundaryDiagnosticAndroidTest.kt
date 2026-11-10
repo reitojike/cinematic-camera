@@ -4,6 +4,7 @@ import android.opengl.GLES32
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import dev.cinematic.p0.gpu.diag.OrtonDisplayAcceptance
 import dev.cinematic.p0.gpu.diag.GpuStageTap
 import dev.cinematic.p0.gpu.diag.GpuStageTap.Point
 import dev.cinematic.p0.gpu.reference.GpuReferenceImages
@@ -29,7 +30,7 @@ class OrtonBoundaryDiagnosticAndroidTest {
         check(android.os.Build.HARDWARE in setOf("ranchu", "goldfish")) { "Synthetic emulator only" }
     }
 
-    @Test fun captureUnchangedBoundaryConditionWithoutRelaxingGate() = GlThread().use { thread ->
+    @Test fun captureBoundaryAndApplyApprovedDisplayGate() = GlThread().use { thread ->
         thread.call {
             val context = InstrumentationRegistry.getInstrumentation().targetContext
             // The non-debuggable diagnostic APK cannot use run-as. App-specific external storage
@@ -56,7 +57,7 @@ class OrtonBoundaryDiagnosticAndroidTest {
             write(folder, "cpu_ORTON_MIX", BoundaryStageClearOrton.diagnosticMixed)
             EglContexts(thread, context.assets).use { egl ->
                 GlCapabilities.inspect(egl).requireSupported()
-                val report = JSONObject().put("scope", "Diagnostic only; formal max 2 and p99.9 1 unchanged; no full-pipeline acceptance")
+                val report = JSONObject().put("scope", "Single-condition diagnostic; approved Kotlin-only boundary max exception; no full-matrix acceptance")
                     .put("width", input.width).put("height", input.height).put("strength", .5).put("warmth", 0.0).put("exposureEv", 1.0)
                     .put("renderer", GLES32.glGetString(GLES32.GL_RENDERER)).put("version", GLES32.glGetString(GLES32.GL_VERSION))
                 val ledger = GpuMemoryLedger()
@@ -87,14 +88,24 @@ class OrtonBoundaryDiagnosticAndroidTest {
                 assertEquals(0L, ledger.allocatedBytes); assertEquals(0, ledger.textureCount)
                 val display = checkNotNull(actualDisplay)
                 val diff = ImageDiff.display(reference.display8, display, input.width, input.height, "unchanged boundary")
+                val gpuMist = checkNotNull(images[Point.MIST])
+                val acceptance = OrtonDisplayAcceptance.evaluate(input.width, input.height,
+                    { cpuMist[it] }, { gpuMist[it] }, reference.display8, display)
+                val acceptanceLog = acceptance.logLines().toList()
+                File(folder, "display-acceptance.log").writeText(acceptanceLog.joinToString("\n", postfix = "\n"))
+                acceptanceLog.forEach { Log.i("OrtonBoundary", it) }
+                assertEquals("All RGB remain in p999", diff.p999, acceptance.p999AllRgb, 0.0)
                 report.put("displayMax", diff.maxDiff).put("displayP999", diff.p999).put("displayMean", diff.meanDiff)
-                    .put("changedPixels", diff.changedPixels).put("formalDisplayPass", diff.maxDiff <= 2 && diff.p999 <= 1)
+                    .put("changedPixels", diff.changedPixels).put("legacyAllPixelDisplayPass", diff.maxDiff <= 2 && diff.p999 <= 1)
+                    .put("formalDisplayPass", acceptance.passed).put("maskSource", "Kotlin MIST only; any RGB within 1e-5 of 1.0")
+                    .put("maskedPixels", acceptance.maskedPixels.size).put("maskedFraction", acceptance.maskFraction)
+                    .put("maskWithinLimit", acceptance.maskWithinLimit).put("maxOutsideMask", acceptance.maxDiffOutsideMask)
+                    .put("p999AllRgb", acceptance.p999AllRgb)
                     .put("pipelinePeakBytes", ledger.peakAllocatedBytes).put("pipelineClosedBytes", ledger.allocatedBytes)
                     .put("mistAutoStrengthCpu", reference.mistAutoStrength).put("mistAutoStrengthGpu", checkNotNull(decisions).mistAutoStrength)
                 File(folder, "result.json").writeText(report.toString(2))
                 // Re-upload exact captured GPU input only in this isolated diagnostic replay, after the real pipeline closes.
                 val diagnosticLedger = GpuMemoryLedger()
-                val gpuMist = checkNotNull(images[Point.MIST])
                 val gpuSkin = checkNotNull(skin)
                 upload(egl, diagnosticLedger, gpuMist).use { mist ->
                     upload(egl, diagnosticLedger, gpuSkin).use { skinTexture ->
@@ -137,7 +148,9 @@ class OrtonBoundaryDiagnosticAndroidTest {
                 report.put("cpuInstrumentationRawBitsEqual", true).put("gpuMrtMixedRawBitsEqual", true)
                     .put("gpuReplayOrtonRawBitsEqual", true).put("diagnosticClosedBytes", diagnosticLedger.allocatedBytes)
                 File(folder, "result.json").writeText(report.toString(2))
-                Log.i("OrtonBoundary", "DIAGNOSTIC COMPLETE max=${diff.maxDiff} p999=${diff.p999}; formal gate unchanged; artifacts=${folder.name}")
+                Log.i("OrtonBoundary", "DIAGNOSTIC COMPLETE maxAll=${diff.maxDiff} maxOutside=${acceptance.maxDiffOutsideMask} " +
+                    "p999All=${acceptance.p999AllRgb} approvedPass=${acceptance.passed}; artifacts=${folder.name}")
+                acceptance.assertPassed()
                 Unit
             }
         }
