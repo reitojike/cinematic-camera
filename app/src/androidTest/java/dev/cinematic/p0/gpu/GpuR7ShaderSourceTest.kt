@@ -15,7 +15,7 @@ class GpuR7ShaderSourceTest {
     @Test fun packagedEntriesKeepTheShaderContract() {
         for (path in entries) {
             val source = read(path)
-            assertTrue(path, source.startsWith("#version 320 es\n"))
+            assertEquals(path, "#version 320 es", source.lineSequence().first())
             for (type in listOf("float", "int", "sampler2D", "isampler2D")) {
                 assertTrue("$path: $type", source.contains("precision highp $type;"))
             }
