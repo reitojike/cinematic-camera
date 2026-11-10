@@ -84,17 +84,16 @@ internal object R7PreviewInputs {
             }
         }
         checkpoint()
-        // Cooperative checks surround sort; a running sort/kernel is not interrupted.
         timing?.enter(R7StageTiming.Stage.METER_QUANTILE)
-        luminance.sort()
-        checkpoint()
         val rank = (luminance.size - 1) * .97
         val lo = floor(rank).toInt(); val hi = ceil(rank).toInt()
+        val lower = PreviewFloatSelection.select(luminance, lo, ::checkpoint)
+        val upper = if (hi == lo) lower else PreviewFloatSelection.select(luminance, hi, ::checkpoint)
         val fraction = (rank - lo).toFloat()
-        val delta = luminance[hi] - luminance[lo]
+        val delta = upper - lower
         // NumPy's float32 linear quantile uses the nearer endpoint for interpolation.
-        val p97 = if (fraction >= .5f) luminance[hi] - delta * (1f - fraction)
-            else luminance[lo] + delta * fraction
+        val p97 = if (fraction >= .5f) upper - delta * (1f - fraction)
+            else lower + delta * fraction
         require(p97.isFinite()) { "Central percentile must be finite" }
         val ev = (-.13 - .83 * log2(max(p97.toDouble(), 1e-5))).coerceIn(-3.0, 6.0) - R7BaseV1.BRIGHTNESS_EV
         timing?.enter(R7StageTiming.Stage.ROI)

@@ -317,10 +317,11 @@ class Original24PreviewSessionInstrumentationTest {
                         assertTrue(draft.height <= 256)
                         assertSame(decisions, retained.previewDecisions)
                         assertEquals(exactEv, retained.previewExternalEv)
-                        assertEquals(2, reads - beforeReads) // Source fences only, never another decode.
+                        assertEquals(0, reads - beforeReads) // Drafts do not reopen or verify the retained input.
                         val before = requireNotNull(retained.comparisonBitmap(maxEdge = 256))
                         try { assertNotSame(draft, before); assertEquals(draft.width, before.width); assertEquals(draft.height, before.height) }
                         finally { before.recycle() }
+                        assertEquals(0, reads - beforeReads) // The draft comparison also performs no source I/O.
                     } finally { draft.recycle() }
                 }
                 assertTrue(retained.draftFieldBytes > 0)
@@ -346,7 +347,7 @@ class Original24PreviewSessionInstrumentationTest {
         assertFalse(retained.hasUnreleasedResources)
     }
 
-    @Test fun draftSourceFailureAndCancellationClearAllPhotoScopedDecisions() {
+    @Test fun draftDefersSourceFailureUntilExactWhileCancellationStillClearsAllDecisions() {
         for (mutate in listOf(false, true)) fixture { input, root, source ->
             val context = InstrumentationRegistry.getInstrumentation().targetContext
             val session = Original24PreviewSession(source, File(root, "preview"),
@@ -355,8 +356,13 @@ class Original24PreviewSessionInstrumentationTest {
                 session.render(.5).recycle()
                 requireNotNull(session.renderDraft(.7)).recycle()
                 if (mutate) {
+                    val before = requireNotNull(session.renderDraft(.8))
                     input.writeBytes(input.readBytes().also { it[it.lastIndex] = (it.last().toInt() xor 1).toByte() })
-                    assertThrows(IOException::class.java) { session.renderDraft(.8) }
+                    try {
+                        val again = requireNotNull(session.renderDraft(.8))
+                        try { assertArrayEquals(pixels(before), pixels(again)) } finally { again.recycle() }
+                    } finally { before.recycle() }
+                    assertThrows(IOException::class.java) { session.render(.8) }
                 } else assertThrows(java.util.concurrent.CancellationException::class.java) {
                     session.renderDraft(.8, shouldStop = { true })
                 }
@@ -392,7 +398,7 @@ class Original24PreviewSessionInstrumentationTest {
             requireNotNull(session.renderDraft(.7)).also { bitmaps += it }
             requireNotNull(session.comparisonBitmap(maxEdge = 256)).also { bitmaps += it }
             assertEquals(initialReads, sourceReads)
-            assertEquals(8, metadataChecks)
+            assertEquals(4, metadataChecks) // Only the two exact renders check before/after.
             val originalBytes = input.readBytes()
             input.writeBytes(originalBytes.also { it[it.lastIndex] = (it.last().toInt() xor 1).toByte() })
             // Deliberately unchanged metadata cannot detect this. The old decoded pixels stay bound
@@ -408,7 +414,8 @@ class Original24PreviewSessionInstrumentationTest {
             try { assertThrows(dev.cinematic.p0.rawcapture.DngContentChanged::class.java) { cold.render(.5) } }
             finally { cold.close() }
             metadataChanged = true
-            assertThrows(dev.cinematic.p0.rawcapture.DngContentChanged::class.java) { session.renderDraft(.6) }
+            requireNotNull(session.renderDraft(.6)).also { bitmaps += it }
+            assertThrows(dev.cinematic.p0.rawcapture.DngContentChanged::class.java) { session.render(.6) }
             assertNull(session.previewDecisions)
             assertFalse(session.hasUnreleasedResources)
             assertThrows(IllegalStateException::class.java) { session.render(.5) }

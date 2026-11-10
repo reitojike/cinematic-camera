@@ -7,6 +7,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.gpu.diag.GpuStageTap
 import org.junit.Assert.*
+import org.junit.Assume.assumeTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.nio.ByteBuffer
@@ -19,6 +21,10 @@ import java.util.concurrent.atomic.AtomicInteger
 @RunWith(AndroidJUnit4::class)
 class GpuFoundationAndroidTest {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
+    @Before fun syntheticEmulatorOnly() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("isolated") == "true")
+        check(android.os.Build.HARDWARE in setOf("ranchu", "goldfish")) { "Synthetic emulator only" }
+    }
     private fun floats(size: Int) = ByteBuffer.allocateDirect(size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
     private fun gpu(block: (EglContexts) -> Unit): Unit = GlThread().use { thread ->
         thread.call { EglContexts(thread, instrumentation.context.assets).use { egl ->
