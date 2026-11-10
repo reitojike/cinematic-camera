@@ -1,0 +1,277 @@
+package dev.cinematic.p0.gpu
+
+import android.opengl.GLES32
+import android.util.Log
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import dev.cinematic.p0.gpu.diag.GpuStageTap
+import dev.cinematic.p0.gpu.reference.GpuReferenceImages
+import dev.cinematic.p0.gpu.reference.ImageDiff
+import dev.cinematic.p0.gpu.resample.GpuResample
+import dev.cinematic.p0.raw.FloatPlane
+import dev.cinematic.p0.raw.LinearSrgbImage
+import dev.cinematic.p0.raw.StageClearBlur
+import dev.cinematic.p0.raw.StageClearColor
+import dev.cinematic.p0.raw.StageClearProtections
+import org.junit.Assert.*
+import org.junit.Assume.assumeTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import kotlin.math.*
+
+/** #279 の合成入力のみ。asset 構文試験の成功後に opt-in で実行する。 */
+@RunWith(AndroidJUnit4::class)
+class GpuColorResampleAndroidTest {
+    private val assets get() = InstrumentationRegistry.getInstrumentation().targetContext.assets
+    @Before fun syntheticEmulatorOnly() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("isolated") == "true")
+        check(android.os.Build.HARDWARE in setOf("ranchu", "goldfish")) { "Synthetic emulator only" }
+    }
+    private fun gpu(block: (EglContexts, GpuMemoryLedger) -> Unit) = GlThread().use { thread ->
+        thread.call { EglContexts(thread, assets).use { egl ->
+            val caps = GlCapabilities.inspect(egl)
+            Log.i(TAG, "capabilities=$caps")
+            caps.requireSupported()
+            val ledger = GpuMemoryLedger()
+            block(egl, ledger)
+            assertEquals("All photo textures released", 0L, ledger.allocatedBytes)
+            assertEquals(0, ledger.textureCount)
+        } }
+    }
+    private fun upload(egl: EglContexts, ledger: GpuMemoryLedger, w: Int, h: Int, values: FloatArray, rgb: Boolean): GpuTexture {
+        val data = if (rgb) FloatArray(w * h * 4) { i -> if (i % 4 == 3) 1f else values[(i / 4) * 3 + i % 4] } else values
+        val texture = GpuTexture.create(egl, ledger, w, h, if (rgb) GpuTexture.Format.RGBA32F else GpuTexture.Format.R32F)
+        try {
+            texture.upload(ByteBuffer.allocateDirect(data.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer().apply { put(data); flip() })
+            return texture
+        } catch (failure: Throwable) { texture.close(); throw failure }
+    }
+
+    @Test fun colorFunctionsMatchKotlinForEverySyntheticPixel() = gpu { egl, ledger ->
+        val source = ShaderSource({ path -> if (path == "color-test.frag") COLOR_TEST else assets.open("gpu/$path").bufferedReader().use { it.readText() } })
+        egl.shaders().fragmentSource("color-acceptance", source.expand("color-test.frag")).use { program ->
+            var conditions = 0
+            for (size in GpuReferenceImages.FAST_SIZES) for (kind in GpuReferenceImages.Kind.entries) {
+                val image = GpuReferenceImages.create(kind, size)
+                val pixels = image.copyPixels()
+                val lab = FloatArray(pixels.size)
+                val triple = FloatArray(3)
+                repeat(image.pixelCount) { p -> StageClearColor.toLab(image, p * 3, triple); triple.copyInto(lab, p * 3) }
+                for (operation in 0..10) {
+                    val input = if (operation == 1 || operation in 7..9) lab else pixels
+                    val expected = colorReference(operation, image, input)
+                    checkColor(egl, ledger, program, size.width, size.height, input, expected, operation, "$kind $size op=$operation")
+                    conditions++
+                }
+            }
+            // Signed, zero, HDR and transfer breakpoints beyond the nonnegative reference set.
+            val boundary = floatArrayOf(-2f, -.1f, -0f, 0f, 1e-8f, .0031308f, .04045f, .25f, 1f, 1.01f, 2f, 4f)
+            val image = LinearSrgbImage(4, 1, boundary)
+            for (operation in 0..10) {
+                checkColor(egl, ledger, program, 4, 1, boundary, colorReference(operation, image, boundary), operation, "boundary op=$operation")
+                conditions++
+            }
+            Log.i(TAG, "PASS color conditions=$conditions; all pixels; abs<=2e-6 / relative<=1e-5; skin abs<=1e-5")
+        }
+    }
+
+    private fun colorReference(operation: Int, image: LinearSrgbImage, input: FloatArray): FloatArray {
+        val result = FloatArray(input.size)
+        val lab = FloatArray(3)
+        repeat(image.pixelCount) { p ->
+            val i = p * 3
+            when (operation) {
+                0 -> { StageClearColor.toLab(image, i, lab); lab.copyInto(result, i) }
+                1 -> { input.copyInto(lab, 0, i, i + 3); StageClearColor.toRgb(lab, result, i) }
+                2 -> { StageClearColor.toLab(image, i, lab); StageClearColor.toRgb(lab, result, i) }
+                in 3..6 -> repeat(3) { c -> result[i + c] = when (operation) {
+                    3 -> StageClearColor.linearToUnit(input[i + c])
+                    4 -> StageClearColor.unitToLinear(input[i + c])
+                    5 -> StageClearProtections.encode(input[i + c].toDouble()).toFloat()
+                    else -> StageClearProtections.decode(input[i + c].toDouble()).toFloat()
+                } }
+                10 -> repeat(3) { c -> result[i + c] = Math.cbrt(input[i + c].toDouble()).toFloat() }
+                else -> {
+                    val hue = (Math.toDegrees(atan2(input[i + 2].toDouble(), input[i + 1].toDouble())) + 360) % 360
+                    val value = when (operation) {
+                        7 -> hue
+                        8 -> { val t = (1 - abs((hue - 40 + 540) % 360 - 180) / 45).coerceIn(0.0, 1.0); t * t * (3 - 2 * t) }
+                        else -> StageClearColor.skinWeight(input[i].toDouble(), hypot(input[i + 1].toDouble(), input[i + 2].toDouble()), hue)
+                    }.toFloat()
+                    repeat(3) { result[i + it] = value }
+                }
+            }
+        }
+        return result
+    }
+
+    private fun checkColor(egl: EglContexts, ledger: GpuMemoryLedger, program: GpuProgram, w: Int, h: Int,
+        input: FloatArray, expected: FloatArray, operation: Int, label: String) {
+        upload(egl, ledger, w, h, input, true).use { source ->
+            GpuTexture.create(egl, ledger, w, h, GpuTexture.Format.RGBA32F).use { output ->
+                egl.passes().run(FragmentPass(program, listOf(TextureInput("s_input", source, 0)), output,
+                    uniforms = { GLES32.glUniform1i(GLES32.glGetUniformLocation(it, "u_operation"), operation) }))
+                val actual = GpuStageTap.readRgb(egl, output)
+                var worstRatio = 0.0
+                expected.indices.forEach { i ->
+                    val limit = if (operation == 9) 1e-5 else if (abs(expected[i]) <= 1) 2e-6 else abs(expected[i]) * 1e-5
+                    val delta = abs(expected[i].toDouble() - actual[i])
+                    assertTrue("$label i=$i ref=${expected[i]} actual=${actual[i]} diff=$delta limit=$limit", actual[i].isFinite() && delta <= limit)
+                    worstRatio = max(worstRatio, delta / limit)
+                }
+                Log.i(TAG, "PASS $label; worstToleranceRatio=$worstRatio")
+            }
+        }
+    }
+
+    @Test fun planeAndRgbBlurMatchAllRadiiAndSizes() = gpu { egl, ledger ->
+        var conditions = 0
+        for (size in listOf(GpuReferenceImages.Size(256, 192), GpuReferenceImages.PREVIEW_SIZE)) {
+            // Smooth + random + hard edges in all channels, clamped to the AC's [0,1] input.
+            val raw = GpuReferenceImages.create(GpuReferenceImages.Kind.MIXED, size).copyPixels()
+            val image = LinearSrgbImage(size.width, size.height, FloatArray(raw.size) { raw[it].coerceIn(0f, 1f) })
+            val plane = FloatPlane.fromChannel(image, 0)
+            GpuResample(egl, ledger).use { resample ->
+                upload(egl, ledger, size.width, size.height, image.copyPixels(), true).use { rgb ->
+                    upload(egl, ledger, size.width, size.height, plane.copyValues(), false).use { single ->
+                        for (radius in RADII) {
+                            val label = "$size radius=$radius"
+                            resample.blurPlane(single, radius).use { output ->
+                                val reference = StageClearBlur.plane(plane, radius)
+                                val actual = FloatPlane(size.width, size.height, GpuStageTap.readPlane(egl, output))
+                                val diff = ImageDiff.linear(reference, actual, "plane $label")
+                                assertTrue(diff.toString(), diff.maxAbsolute <= 1e-5)
+                                assertDisplayPlane(reference, actual, "plane $label")
+                                Log.i(TAG, "PASS $diff")
+                            }
+                            resample.blurRgb(rgb, radius).use { output ->
+                                val reference = StageClearBlur.rgb(image, radius)
+                                val actual = LinearSrgbImage(size.width, size.height, GpuStageTap.readRgb(egl, output))
+                                val diff = ImageDiff.linear(reference, actual, "rgb $label")
+                                assertTrue(diff.toString(), diff.maxAbsolute <= 1e-5)
+                                ImageDiff.display(reference, actual, label).assertDisplayWithin(maxDiff = 1)
+                                Log.i(TAG, "PASS $diff")
+                            }
+                            conditions += 2
+                        }
+                    }
+                }
+            }
+        }
+        Log.i(TAG, "PASS blur conditions=$conditions; all radii/sizes; linear abs<=1e-5, display<=1")
+    }
+
+    private fun assertDisplayPlane(reference: FloatPlane, actual: FloatPlane, label: String) {
+        fun rgb(plane: FloatPlane) = LinearSrgbImage(plane.width, plane.height, FloatArray(plane.width * plane.height * 3) { plane[it / 3] })
+        ImageDiff.display(rgb(reference), rgb(actual), label).assertDisplayWithin(maxDiff = 1)
+    }
+
+    @Test fun bicubicLogLumaAndVerticalFirstMatchKotlin() = gpu { egl, ledger ->
+        for (size in listOf(GpuReferenceImages.Size(256, 192), GpuReferenceImages.PREVIEW_SIZE)) {
+            val image = GpuReferenceImages.create(GpuReferenceImages.Kind.MIXED, size)
+            val log = FloatPlane(size.width, size.height, FloatArray(image.pixelCount) { p ->
+                log2(max((.2126f * image[p * 3] + .7152f * image[p * 3 + 1] + .0722f * image[p * 3 + 2]).toDouble(), 1e-5)).toFloat()
+            })
+            val cell = .04 * max(size.width, size.height)
+            val w = max(4, round(size.width / cell).toInt()); val h = max(4, round(size.height / cell).toInt())
+            val reference = StageClearBlur.resize(StageClearBlur.resize(log, w, h, StageClearBlur.Filter.BOX), size.width, size.height, StageClearBlur.Filter.BICUBIC)
+            GpuResample(egl, ledger).use { resample ->
+                upload(egl, ledger, size.width, size.height, log.copyValues(), false).use { input ->
+                    resample.reduce(input, w, h).use { down ->
+                        resample.upsampleFrom(down, size.width, size.height, StageClearBlur.Filter.BICUBIC).use { output ->
+                            val diff = ImageDiff.linear(reference, FloatPlane(size.width, size.height, GpuStageTap.readPlane(egl, output)), "log2 bicubic $size")
+                            assertTrue(diff.toString(), diff.maxAbsolute <= 1e-4)
+                            Log.i(TAG, "PASS $diff")
+                        }
+                    }
+                }
+            }
+        }
+        val image = GpuReferenceImages.create(GpuReferenceImages.Kind.NOISE, GpuReferenceImages.Size(64, 1024))
+        val plane = FloatPlane.fromChannel(image, 0)
+        for (filter in StageClearBlur.Filter.entries) GpuResample(egl, ledger).use { resample ->
+            upload(egl, ledger, 64, 1024, plane.copyValues(), false).use { input ->
+                resample.resize(input, 60, 200, filter).use { output ->
+                    val diff = ImageDiff.linear(StageClearBlur.resize(plane, 60, 200, filter), FloatPlane(60, 200, GpuStageTap.readPlane(egl, output)), "verticalFirst $filter")
+                    assertTrue(diff.toString(), diff.maxAbsolute <= 1e-5)
+                    Log.i(TAG, "PASS $diff")
+                }
+            }
+        }
+    }
+
+    @Test fun cacheReusesKeysReleasesOnCloseAndKeepsInputOwnedByCaller() = gpu { egl, ledger ->
+        upload(egl, ledger, 64, 48, FloatArray(64 * 48) { (it % 19) / 19f }, false).use { input ->
+            val baseline = ledger.allocatedBytes
+            val resample = GpuResample(egl, ledger)
+            resample.use {
+                assertSame(input, resample.resize(input, 64, 48, StageClearBlur.Filter.BOX))
+                assertSame(input, resample.blurPlane(input, 0.0))
+                resample.reduce(input, 8, 6).close()
+                val cached = ledger.allocatedBytes; val textures = ledger.textureCount
+                assertTrue(cached > baseline)
+                assertEquals(5, textures) // input + two axes, each R32F weights / R32I first.
+                repeat(3) { resample.reduce(input, 8, 6).close(); assertEquals(cached, ledger.allocatedBytes); assertEquals(textures, ledger.textureCount) }
+                resample.resize(input, 8, 6, StageClearBlur.Filter.BILINEAR).close()
+                assertEquals(textures + 4, ledger.textureCount) // filter is part of the key.
+                // One-axis passes transfer their output to the caller, never return a closed intermediate.
+                resample.resize(input, 64, 6, StageClearBlur.Filter.BOX).use { output -> output.requireOpen() }
+                resample.resize(input, 8, 48, StageClearBlur.Filter.BOX).use { output -> output.requireOpen() }
+                assertThrows(IllegalArgumentException::class.java) { resample.resize(input, 0, 6, StageClearBlur.Filter.BOX) }
+                assertThrows(IllegalArgumentException::class.java) { resample.blurPlane(input, Double.NaN) }
+            }
+            resample.close()
+            assertEquals(baseline, ledger.allocatedBytes); input.requireOpen()
+            assertThrows(IllegalStateException::class.java) { resample.reduce(input, 8, 6) }
+        }
+    }
+
+    @Test fun allocationFailureReleasesIntermediateAndPartiallyBuiltWeights() = gpu { egl, _ ->
+        // Horizontal BOX weights/output fit, vertical weights' values fit, their first-index texture does not.
+        val ledger = GpuMemoryLedger(64L * 48 * 4 + 288 + 8 * 48 * 4 + 200)
+        upload(egl, ledger, 64, 48, FloatArray(64 * 48), false).use { input ->
+            val baseline = ledger.allocatedBytes
+            GpuResample(egl, ledger).use { resample ->
+                assertThrows(GpuMemoryBudgetException::class.java) { resample.reduce(input, 8, 6) }
+                assertEquals(baseline + 288, ledger.allocatedBytes) // only successful horizontal weights remain.
+                assertEquals(3, ledger.textureCount)
+                input.requireOpen()
+            }
+            assertEquals(baseline, ledger.allocatedBytes)
+        }
+        assertEquals(0L, ledger.allocatedBytes)
+    }
+
+    private companion object {
+        const val TAG = "GpuColorResample"
+        val RADII = doubleArrayOf(.006, .01, .012, .02, .025, .03, .06, .07)
+        val COLOR_TEST = """#version 320 es
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+#include "common/color.glsl"
+uniform sampler2D s_input;
+uniform int u_operation;
+layout(location=0) out vec4 o_color;
+void main() {
+    vec3 v = texelFetch(s_input, ivec2(gl_FragCoord.xy), 0).rgb;
+    vec3 value;
+    if (u_operation == 0) value = cs_linearToLab(v);
+    else if (u_operation == 1) value = cs_labToLinear(v);
+    else if (u_operation == 2) value = cs_labToLinear(cs_linearToLab(v));
+    else if (u_operation == 3) value = vec3(cs_linearToUnit(v.r), cs_linearToUnit(v.g), cs_linearToUnit(v.b));
+    else if (u_operation == 4) value = vec3(cs_unitToLinear(v.r), cs_unitToLinear(v.g), cs_unitToLinear(v.b));
+    else if (u_operation == 5) value = vec3(cs_encode(v.r), cs_encode(v.g), cs_encode(v.b));
+    else if (u_operation == 6) value = vec3(cs_decode(v.r), cs_decode(v.g), cs_decode(v.b));
+    else if (u_operation == 7) value = vec3(cs_hueDeg(v));
+    else if (u_operation == 8) value = vec3(cs_band(cs_hueDeg(v), 40.0, 45.0));
+    else if (u_operation == 10) value = vec3(cs_signedCbrt(v.r), cs_signedCbrt(v.g), cs_signedCbrt(v.b));
+    else value = vec3(cs_skinWeight(v.r, length(v.gb), cs_hueDeg(v)));
+    o_color = vec4(value, 1.0);
+}
+"""
+    }
+}
