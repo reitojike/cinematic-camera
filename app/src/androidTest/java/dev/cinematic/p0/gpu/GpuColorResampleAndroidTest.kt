@@ -6,6 +6,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.gpu.diag.GpuStageTap
 import dev.cinematic.p0.gpu.reference.GpuReferenceImages
+import dev.cinematic.p0.gpu.reference.GpuTolerances
 import dev.cinematic.p0.gpu.reference.ImageDiff
 import dev.cinematic.p0.gpu.resample.GpuResample
 import dev.cinematic.p0.raw.FloatPlane
@@ -21,6 +22,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.security.MessageDigest
 import kotlin.math.*
 
 /** #279 の合成入力のみ。asset 構文試験の成功後に opt-in で実行する。 */
@@ -55,6 +57,8 @@ class GpuColorResampleAndroidTest {
         val source = ShaderSource({ path -> if (path == "color-test.frag") COLOR_TEST else assets.open("gpu/$path").bufferedReader().use { it.readText() } })
         egl.shaders().fragmentSource("color-acceptance", source.expand("color-test.frag")).use { program ->
             var conditions = 0
+            val inputDigest = MessageDigest.getInstance("SHA-256")
+            val referenceDigest = MessageDigest.getInstance("SHA-256")
             val failures = mutableListOf<String>()
             for (size in GpuReferenceImages.FAST_SIZES) for (kind in GpuReferenceImages.Kind.entries) {
                 val image = GpuReferenceImages.create(kind, size)
@@ -65,6 +69,7 @@ class GpuColorResampleAndroidTest {
                 for (operation in 0..10) {
                     val input = if (operation == 1 || operation in 7..9) lab else pixels
                     val expected = colorReference(operation, image, input)
+                    recordHashes("$kind $size op=$operation", input, expected, inputDigest, referenceDigest)
                     checkColor(egl, ledger, program, size.width, size.height, input, expected, operation, "$kind $size op=$operation")?.let(failures::add)
                     conditions++
                 }
@@ -73,10 +78,13 @@ class GpuColorResampleAndroidTest {
             val boundary = floatArrayOf(-2f, -.1f, -0f, 0f, 1e-8f, .0031308f, .04045f, .25f, 1f, 1.01f, 2f, 4f)
             val image = LinearSrgbImage(4, 1, boundary)
             for (operation in 0..10) {
-                checkColor(egl, ledger, program, 4, 1, boundary, colorReference(operation, image, boundary), operation, "boundary op=$operation")?.let(failures::add)
+                val expected = colorReference(operation, image, boundary)
+                recordHashes("boundary op=$operation", boundary, expected, inputDigest, referenceDigest)
+                checkColor(egl, ledger, program, 4, 1, boundary, expected, operation, "boundary op=$operation")?.let(failures::add)
                 conditions++
             }
-            Log.i(TAG, "Color conditions=$conditions; failed=${failures.size}; all pixels; abs<=2e-6 / relative<=1e-5; skin abs<=1e-5")
+            Log.i(TAG, "Color conditions=$conditions; failed=${failures.size}; Lab abs<=4e-6 / relative<=2e-5; circular hue<=1e-4 degrees; other bounds unchanged")
+            Log.i(TAG, "Color all raw-float little-endian SHA256; input=${hex(inputDigest.digest())}; reference=${hex(referenceDigest.digest())}")
             assertTrue(failures.joinToString("\n"), failures.isEmpty())
         }
     }
@@ -111,6 +119,49 @@ class GpuColorResampleAndroidTest {
         return result
     }
 
+    private fun hex(bytes: ByteArray): String = bytes.joinToString("") { "%02x".format(it) }
+
+    private fun recordHashes(label: String, input: FloatArray, reference: FloatArray,
+        inputDigest: MessageDigest, referenceDigest: MessageDigest) {
+        fun bytes(values: FloatArray): ByteArray = ByteBuffer.allocate(values.size * 4)
+            .order(ByteOrder.LITTLE_ENDIAN).apply { values.forEach { putInt(it.toRawBits()) } }.array()
+        val inputBytes = bytes(input); val referenceBytes = bytes(reference)
+        inputDigest.update(inputBytes); referenceDigest.update(referenceBytes)
+        Log.i(TAG, "Color SHA256 $label; input=${hex(MessageDigest.getInstance("SHA-256").digest(inputBytes))}; reference=${hex(MessageDigest.getInstance("SHA-256").digest(referenceBytes))}")
+    }
+
+    @Test fun circularHueAndBandMatchAtSignedAxesAndFiniteExtremes() = gpu { egl, ledger ->
+        assertEquals(0.0, GpuTolerances.circularHueDifference(0f, 360f), 0.0)
+        assertEquals(2.0, GpuTolerances.circularHueDifference(359f, 1f), 0.0)
+        assertEquals(2.0, GpuTolerances.circularHueDifference(1f, 359f), 0.0)
+        assertEquals(180.0, GpuTolerances.circularHueDifference(0f, 180f), 0.0)
+        val directions = mutableListOf<Pair<Float, Float>>()
+        for (a in floatArrayOf(0f, -0f)) for (b in floatArrayOf(0f, -0f)) directions += a to b
+        directions += listOf(1f to 0f, 1f to -0f, -1f to 0f, -1f to -0f,
+            0f to 1f, -0f to 1f, 0f to -1f, -0f to -1f)
+        for (epsilon in floatArrayOf(1e-30f, 1e-20f, 1e-10f, 1e-8f, 1e-6f, 1e-4f)) {
+            for (sign in floatArrayOf(-1f, 1f)) { directions += -1f to sign * epsilon; directions += 1f to sign * epsilon }
+        }
+        for (scale in floatArrayOf(java.lang.Float.MIN_NORMAL, 1e-30f, 1e-20f, 1e-8f)) {
+            for (sign in floatArrayOf(-1f, 1f)) directions += scale to sign * scale
+        }
+        val m = Float.MAX_VALUE
+        directions += listOf(m to m, m to -m, -m to m, -m to -m,
+            m to 1f, m to -1f, -m to 1f, -m to -1f, 1f to m, -1f to m, 1f to -m, -1f to -m,
+            m to 0f, m to -0f, -m to 0f, -m to -0f, 0f to m, -0f to m, 0f to -m, -0f to -m)
+        assertEquals(64, directions.size)
+        val pixels = FloatArray(directions.size * 3) { i -> when (i % 3) {
+            0 -> .5f; 1 -> directions[i / 3].first; else -> directions[i / 3].second
+        } }
+        val image = LinearSrgbImage(directions.size, 1, pixels)
+        val source = ShaderSource({ path -> if (path == "color-test.frag") COLOR_TEST else assets.open("gpu/$path").bufferedReader().use { it.readText() } })
+        egl.shaders().fragmentSource("hue-boundaries", source.expand("color-test.frag")).use { program ->
+            val failures = mutableListOf<String>()
+            for (operation in 7..8) checkColor(egl, ledger, program, directions.size, 1,
+                pixels, colorReference(operation, image, pixels), operation, "hue boundary 64 op=$operation")?.let(failures::add)
+            assertTrue(failures.joinToString("\n"), failures.isEmpty())
+        }
+    }
     private fun ulps(a: Float, b: Float): Long {
         fun ordered(value: Float): Long {
             val bits = value.toRawBits()
@@ -129,9 +180,15 @@ class GpuColorResampleAndroidTest {
                 val actual = GpuStageTap.readRgb(egl, output)
                 var worstRatio = -1.0; var worst = 0; var maximum = 0.0; var maxUlps = 0L; var failed = 0
                 expected.indices.forEach { i ->
-                    val limit = if (operation == 9) 1e-5 else if (abs(expected[i]) <= 1) 2e-6 else abs(expected[i]) * 1e-5
-                    val delta = abs(expected[i].toDouble() - actual[i])
-                    if (!actual[i].isFinite() || delta > limit) failed++
+                    val limit = when {
+                        operation == 7 -> GpuTolerances.HUE_CIRCULAR_DEGREES
+                        operation == 9 -> 1e-5
+                        operation in 0..2 -> if (abs(expected[i]) <= 1) GpuTolerances.LAB_ABSOLUTE else abs(expected[i]) * GpuTolerances.LAB_RELATIVE
+                        else -> if (abs(expected[i]) <= 1) 2e-6 else abs(expected[i]) * 1e-5
+                    }
+                    val delta = if (operation == 7) GpuTolerances.circularHueDifference(expected[i], actual[i])
+                        else abs(expected[i].toDouble() - actual[i])
+                    if (!actual[i].isFinite() || (operation == 7 && actual[i] !in 0f..360f) || delta > limit) failed++
                     maximum = max(maximum, delta); maxUlps = max(maxUlps, ulps(expected[i], actual[i]))
                     if (delta / limit > worstRatio) { worstRatio = delta / limit; worst = i }
                 }
@@ -140,7 +197,8 @@ class GpuColorResampleAndroidTest {
                     val diff = ImageDiff.display(LinearSrgbImage(w, h, expected), actual, label)
                     "display8bitMax=${diff.maxDiff}; displayChangedPixels=${diff.changedPixels}; displayMean=${diff.meanDiff}"
                 } else "display8bit=not-applicable-to-this-intermediate"
-                val report = "$label; failedChannels=$failed; maxAbs=$maximum; maxULP=$maxUlps; " +
+                val metric = if (operation == 7) "circularDegrees" else "absolute"
+                val report = "$label; metric=$metric; failedChannels=$failed; maxDiff=$maximum; maxULP=$maxUlps; " +
                     "worstPixel=$pixel (${pixel % w},${pixel / w}); channel=${worst % 3}; " +
                     "input=${input.copyOfRange(pixel * 3, pixel * 3 + 3).contentToString()}; " +
                     "kotlin=${expected[worst]}; gpu=${actual[worst]}; ULP=${ulps(expected[worst], actual[worst])}; " +

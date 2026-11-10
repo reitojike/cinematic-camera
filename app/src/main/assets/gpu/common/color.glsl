@@ -74,7 +74,20 @@ float cs_hueDeg(vec3 lab) {
     if (lab.y == 0.0 && lab.z == 0.0) {
         return (floatBitsToUint(lab.y) & 0x80000000u) == 0u ? 0.0 : 180.0;
     }
-    return mod(degrees(atan(lab.z, lab.y)) + 360.0, 360.0);
+    // B2: refine the atan seed once. Normalize only the residual's direction
+    // to avoid subnormal products and overflow at finite Float extremes.
+    precise float scale = max(abs(lab.y), abs(lab.z));
+    precise float a = lab.y / scale;
+    precise float b = lab.z / scale;
+    precise float theta = atan(lab.z, lab.y);
+    precise float cosine = cos(theta);
+    precise float sine = sin(theta);
+    precise float numerator = b * cosine - a * sine;
+    precise float denominator = a * cosine + b * sine;
+    theta = theta + numerator / denominator;
+    precise float h = degrees(theta);
+    if (h < 0.0) h = h + 360.0;
+    return h == 360.0 ? 0.0 : h;
 }
 
 float cs_band(float hue, float centre, float halfWidth) {
