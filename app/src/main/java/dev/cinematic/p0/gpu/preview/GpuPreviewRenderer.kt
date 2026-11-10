@@ -72,6 +72,7 @@ internal class GpuPreviewRenderer(
     private var missedChangedFrames = 0L
     private var pendingSinceNanos = 0L
     private var failed = false
+    private var contextLost = false
     private val callback = Choreographer.FrameCallback { frameTime ->
         frameScheduled = false
         guarded { renderFrame(frameTime) }
@@ -88,6 +89,7 @@ internal class GpuPreviewRenderer(
     fun openPhoto(input: LinearSrgbImage) = post {
         check(maxOf(input.width, input.height) <= 1024) { "Phase 0 preview input must have long edge <= 1024" }
         retainedInput = input
+        if (contextLost) resetContext()
         uploadPhoto(input)
         latest.invalidate(); schedule()
     }
@@ -105,6 +107,13 @@ internal class GpuPreviewRenderer(
             bytes.rewind(); texture.upload(bytes)
             photo = GpuPreviewPhoto(texture)
         } catch (failure: Throwable) { texture.close(); throw failure }
+    }
+
+    /** Explicit retry after a reported failure. No implicit CPU fallback or retry loop. */
+    fun retry() = post {
+        resetContext()
+        retainedInput?.let(::uploadPhoto)
+        latest.invalidate(); schedule()
     }
 
     fun closePhoto() = post { cancelFrame(); retainedInput = null; releasePhoto(); latest.invalidate() }
@@ -169,7 +178,10 @@ internal class GpuPreviewRenderer(
 
     private fun wake() {
         if (!closed.get() && wakeQueued.compareAndSet(false, true)) post {
-            wakeQueued.set(false); schedule()
+            wakeQueued.set(false)
+            // GPU_ENGINE §4.3: a new request after context loss rebuilds GPU state from the input.
+            if (contextLost) { resetContext(); retainedInput?.let(::uploadPhoto); latest.invalidate() }
+            schedule()
         }
     }
 
@@ -182,10 +194,32 @@ internal class GpuPreviewRenderer(
 
     private fun guarded(block: () -> Unit) {
         try { block() } catch (failure: Throwable) {
-            failed = true; cancelFrame()
+            failed = true
+            contextLost = generateSequence(failure) { it.cause }.any { it is GpuContextLostException }
+            cancelFrame()
             runCatching { releaseWindow() }.exceptionOrNull()?.let(failure::addSuppressed)
             onError(failure)
         }
+    }
+
+    private fun resetContext() {
+        cancelFrame()
+        var problem: Throwable? = null
+        fun cleanup(block: () -> Unit) {
+            try { block() } catch (failure: Throwable) {
+                if (problem == null) problem = failure else problem!!.addSuppressed(failure)
+            }
+        }
+        cleanup { releaseWindow() }
+        cleanup { releasePhoto() }
+        cleanup { timer?.close() }; timer = null
+        cleanup { egl?.close() }; egl = null
+        // Lost EGL objects can report teardown errors; EGL owns their GL names. Accounting still
+        // has to be empty before starting again. Do not hide an actual ownership cleanup failure.
+        check(ledger.allocatedBytes == 0L) { "Preview resources survived context reset" }
+        failed = false; contextLost = false
+        latest.invalidate()
+        problem?.let { onError(it) }
     }
 
     private fun context(): EglContexts = egl ?: EglContexts(thread, assets).also { context ->
@@ -249,8 +283,15 @@ internal class GpuPreviewRenderer(
         schedule() // A concurrent submit replaces the mailbox rather than appending another frame.
     }
 
-    private fun releaseWindow() { window?.close(); window = null; windowLease = null }
-    private fun releasePhoto() { output?.close(); output = null; photo?.input?.close(); photo = null }
+    private fun releaseWindow() {
+        val old = window; window = null; windowLease = null
+        old?.close()
+    }
+    private fun releasePhoto() {
+        val oldOutput = output; val oldPhoto = photo
+        output = null; photo = null
+        try { oldOutput?.close() } finally { oldPhoto?.input?.close() }
+    }
 
     override fun close() {
         synchronized(gate) {

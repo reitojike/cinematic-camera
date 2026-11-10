@@ -23,6 +23,7 @@ import java.nio.ByteOrder
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.abs
 import kotlin.math.pow
@@ -150,6 +151,83 @@ class GpuPreviewAndroidTest {
                 }
             }
             assertNull(failure.get())
+        } finally {
+            renderer.close()
+            consumer.quitSafely()
+            consumer.join(5_000)
+            assertFalse("Image consumer did not stop", consumer.isAlive)
+        }
+    }
+
+    @Test fun nextSubmitRecoversInjectedContextLossAndBeforeBypassesLookDraw() {
+        val failure = AtomicReference<Throwable?>()
+        val frames = ArrayBlockingQueue<GpuPreviewFrame>(8)
+        val drawCalls = AtomicInteger()
+        val errorCalls = AtomicInteger()
+        val lost = CountDownLatch(1)
+        val firstContext = AtomicReference<EglContexts>()
+        val injected = GpuContextLostException("synthetic preview context loss")
+        val renderer = GpuPreviewRenderer(instrumentation.targetContext.assets,
+            onFrame = { check(frames.offer(it)) },
+            onError = {
+                if (errorCalls.incrementAndGet() == 1 && it === injected) lost.countDown()
+                else failure.compareAndSet(null, it)
+            },
+            draw = { photo, _, output ->
+                val context = photo.input.context
+                context.glThread.requireCurrent()
+                context.requireCurrent()
+                if (drawCalls.incrementAndGet() == 1) {
+                    firstContext.set(context)
+                    throw injected
+                }
+                assertNotSame("Recovery must replace the EGL context", firstContext.get(), context)
+                assertSame(context, output.context)
+                GLES32.glBindFramebuffer(GLES32.GL_FRAMEBUFFER, output.framebufferId)
+                GLES32.glDisable(GLES32.GL_SCISSOR_TEST)
+                GLES32.glClearColor(0.1f, 0.2f, 0.3f, 1f)
+                GLES32.glClear(GLES32.GL_COLOR_BUFFER_BIT)
+                context.checkGl("synthetic recovered look draw")
+            })
+        val consumer = HandlerThread("PreviewRecoveryConsumer").apply { start() }
+        try {
+            ImageReader.newInstance(16, 16, PixelFormat.RGBA_8888, 2).use { reader ->
+                reader.setOnImageAvailableListener({ it.acquireLatestImage()?.close() }, Handler(consumer.looper))
+                val surface = reader.surface
+                try {
+                    val params = GpuRenderParams(0.75, PhotoAdjustments.NONE)
+                    val display = GpuDisplayOptions(false, 0)
+                    renderer.submit(params, display)
+                    renderer.setStarted(true)
+                    renderer.openPhoto(LinearSrgbImage(4, 2, FloatArray(4 * 2 * 3) { 0.18f }))
+                    renderer.attachSurface(surface, 16, 16)
+                    assertTrue("Injected context loss was not reported", lost.await(5, TimeUnit.SECONDS))
+                    val failed = snapshot(renderer, failure)
+                    assertEquals(0, failed.windowCount)
+                    assertEquals(0L, failed.drawCount)
+                    assertEquals(1, drawCalls.get())
+
+                    // Identical request is enough to rebuild context and re-upload retained input.
+                    renderer.submit(params, display)
+                    awaitFrame(frames, failure)
+                    val recovered = snapshot(renderer, failure)
+                    assertEquals(1, recovered.windowCount)
+                    assertEquals(1L, recovered.drawCount)
+                    assertEquals(4L * 2 * 16 * 2, recovered.allocatedBytes)
+                    assertEquals(2, drawCalls.get())
+
+                    renderer.submit(params, GpuDisplayOptions(true, 0))
+                    awaitFrame(frames, failure)
+                    assertEquals(2L, snapshot(renderer, failure).drawCount)
+                    assertEquals("Before must bypass the injected look", 2, drawCalls.get())
+                    assertEquals("No additional recovery errors", 1, errorCalls.get())
+                } finally {
+                    renderer.detachSurface(surface)
+                    assertEquals(0, snapshot(renderer, failure).windowCount)
+                    renderer.closePhoto()
+                    assertEquals(0L, snapshot(renderer, failure).allocatedBytes)
+                }
+            }
         } finally {
             renderer.close()
             consumer.quitSafely()

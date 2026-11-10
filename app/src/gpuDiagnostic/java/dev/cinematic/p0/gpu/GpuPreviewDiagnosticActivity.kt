@@ -57,6 +57,7 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
             // Renderer callbacks are on GL thread. Compose state and sample storage belong to main.
             runOnUiThread {
                 if (!isDestroyed) {
+                    error = null
                     allocatedBytes = frame.allocatedBytes
                     if (measuring && measurement.add(frame)) {
                         sampleCount = measurement.count
@@ -178,7 +179,10 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
             Text(summary)
             Text("GPU割当: $allocatedBytes bytes（renderer台帳）")
             Text("CPUは描画提出時間、GPUは取得できたサンプルのみ。フレーム間隔は描画コールバック間隔で、操作待ちを含み、画面提示FPSではありません。最大${PreviewMeasurement.MAX_SAMPLES}件で自動停止。実機の速度・画質合格を示すものではありません。")
-            error?.let { Text("GPU診断エラー: $it", color = MaterialTheme.colorScheme.error) }
+            error?.let {
+                Text("GPU診断エラー: $it", color = MaterialTheme.colorScheme.error)
+                Button(onClick = { renderer.retry() }) { Text("GPUを再作成して再試行") }
+            }
         }
     }
 }
