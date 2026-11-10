@@ -15,6 +15,8 @@ APK 固定時点で次のすべてが確認できれば B を含める。1つで
 - 写真を閉じる・trimMemory・surface loss 後の台帳が 0。フレーム間の保持量も4形状で記録済み。
 - CI と canonical review が通っている。B のマージ自体には別途、main 同期・独立レビュー・未解決0等の通常条件も必要。
 
+2026-11-10 の準備状況: [第2部の登録](https://github.com/reitojike/cinematic-camera/issues/285#issuecomment-6772026000)で4条件を確認し、Bありを選択済み。#319・#328・#327 はmainへ取り込まれた。その後の #321・#325 も含むmainは `b3ac4e5beafe3085f23bee4213899ac39a819920`。これはソースの確認であり、最終GPU/試験APKの固定、実機の計測入口・操作・PSS境界の完成、配布/実施許可を意味しない。下表のBなしは事前登録した代替ケースの履歴として残す。
+
 | APK 固定時の選択 | 第2部の項目 | ①の扱い |
 | --- | --- | --- |
 | B を含む | 同じ DNG の CPU/GPU 操作、DNG④、PSS参考、準備できた③、§3の合成連続走行 | §3の完了待ち込み時間を正式①へ対応させる |
@@ -45,7 +47,7 @@ APK 固定時点で次のすべてが確認できれば B を含める。1つで
 | 条件 | release由来、debuggable/JNI debug/minify/shrink=false、profileable shell=true、EDITOR_PREVIEW_DIAGNOSTIC=true、native RelWithDebInfo（-O2 -g -DNDEBUG） |
 | source / 入口 | tracked製品source差0。Hub「CPUプレビューの確認（Filesから選択）」→PhotoRollActivity。PreviewSerial DEBUGは直列化を変えるためOFF |
 
-**未確定**: GPU最終source/実APK、B採否、DNG入力と実寸法の一致、各入口/試験名、③、総所要枠。
+**未確定**: GPU/試験APKの最終source・実bytes/hash、DNG入力と実寸法の一致、正式①/DNG④の最終入口・試験名、CPU/GPUの同じ物理操作と値の推移、PSSの観測境界・回数、総所要枠。③は表示取得入口が未準備で、未実施。
 固定票と手順書のマージが揃ったら、配布する APK・Pixel 9a・範囲・所要見込みをユーザーへ示し、改めて許可を求める。
 不足を推定値で埋めず、許可前に配布・インストール・実機操作をしない。
 
@@ -93,6 +95,7 @@ CPU基準は長辺1024制限、GPUは長辺1024かつ786432画素の入口上限
 
 - CPUの通常保持/再利用、プレビュー候補2並列OFF、追加直列受付OFFは基準版のまま。第2部のCPU計測前に #292 等のCPU高速化を入れない。
 - 同じDNG・同じ開始/終了値・方向・800msの操作で、各軸慣らし1回＋測定4回を初期案とする。CPU/GPU各15調整。実現できる操作端点、経路順、総回数を計測前に #285 へ確定し、結果後に延長しない。
+- **同じ物理操作は未確定**。CPUは相対ルーラー、GPUは絶対Sliderであり、同じ座標への800ms swipeだけでは同じ値の推移にならない。初期強度もCPU0.5/GPU1.0を揃え、開始/終了値・方向・時間に加えて途中の値の対応を検証してから固定する。値を直接指定するハーネスの成功を、このUI操作の準備完了と扱わない。
 - CPU/GPUの導入切替・計測境界・熱を揃えた実施順を固定する。異なる日のCPU値や改善前の数字を代入しない。
 - DRAFT256とEXACT1024を分け、初回OPEN・慣らし・値戻し・写真切替・cold/warmを通常調整と分ける。
 - CPU `PreviewTiming` 要求側、`RawPreviewTiming` 処理側、GPU完了時間/受付間隔の区間を分ける。互いに内包する時間を足さず、境界の違う値から高速化率を作らない。
@@ -137,6 +140,8 @@ Gate 2でプレビューと書き出しの同時動作を判断する材料と�
 - CPU書出しも測るなら、同じ公開/合成DNGで既存の取得可能な開始/終了PSS・managed/native観測を別枠で固定する。未実装のsamplerや新予算を追加せず、観測間隔/欠測/診断負荷と、真peakを捉えない限界を明記する。
 - Gate 2の判断材料であり、今回から12MP/24MPピークやGate 2合格を確定しない。
 
+**PSS境界は未確定**。CPU/GPUそれぞれで観測対象PID、入力前・初回完了・操作後・解放後へ到達/待機する方法、回数と別走行の枠を固定するまで準備完了としない。instrumentation側の台帳0を別PIDのUI本体の解放証拠にせず、Hubへ戻ったことだけで台帳0やCPU資源解放を推定しない。
+
 参照: [Android dumpsys meminfo](https://developer.android.com/tools/dumpsys#meminfo)、[Debug.MemoryInfo](https://developer.android.com/reference/android/os/Debug.MemoryInfo)。
 
 ## 7. ③と保存出力の同等性
@@ -151,6 +156,8 @@ Gate 2でプレビューと書き出しの同時動作を判断する材料と�
 JPEG全byteのSHA/長さ/向き、保存・公開順序、journal遷移・確定記録・原本/recipe対応、再試行で重複公開や確定済み書換えがないことを確認する。
 実行ごとに変わるID/URI/時刻を同値比較せず対応と順序を照合する。旧 #309 の部分試験をこの完了証拠にしない。
 実行commit/test/条件/pass/fail/skip/未確認を残し、serial対照を改善前の速度値として使わない。
+
+合成エミュレーターでの受入は [#325](https://github.com/reitojike/cinematic-camera/pull/325) で完了し、main `b3ac4e5beafe3085f23bee4213899ac39a819920` へマージ済み。最終head `50fe792be7c4a5bd1b03213a5e4ccde30256b633` の既存API37 Google APIsエミュレーターへの直接instrumentationで1 test・内部2条件AB/BAが成功し、全JPEG bytes、公開順序、journal全7状態、再要求2回、原本不変と資源解放を確認した。GMD/ATD実行や製品factory/FGS/UI配線・実機・実写真・速度の合格とは区別する。詳細な再実行手順は [RAW_DIAGNOSTIC_BUILD](RAW_DIAGNOSTIC_BUILD.md) とPRに集約し、同じ受入を未完として重複実施しない。追加の実機保存確認を行う場合だけ、別の範囲と許可を固定する。
 
 ## 8. 結果整理
 
