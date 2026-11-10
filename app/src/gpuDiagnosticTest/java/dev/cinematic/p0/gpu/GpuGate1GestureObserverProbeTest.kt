@@ -84,18 +84,20 @@ class GpuGate1GestureObserverProbeTest {
 
     @Test fun observeRealEngineAndDeliveredTouch() {
         val args = InstrumentationRegistry.getArguments()
-        org.junit.Assume.assumeTrue(args.getString("gate1Part2") == "gesture-observer-probe-v2")
+        org.junit.Assume.assumeTrue(args.getString("gate1Part2") == "gesture-observer-probe-v3")
         check(args.getString("class") == "dev.cinematic.p0.gpu.GpuGate1GestureObserverProbeTest#observeRealEngineAndDeliveredTouch")
         check(Build.HARDWARE in setOf("ranchu", "goldfish") && args.getString("isolated") == "true")
         check(target.packageName == "dev.cinematic.p0.gpudiagnostic")
         val run = checkNotNull(args.getString("gate1ProbeRun")).also { check(it.matches(Regex("[a-zA-Z0-9_-]{1,40}"))) }
-        val output = File(checkNotNull(target.getExternalFilesDir("gpu-diagnostics")), "gesture-probe-v2-$run.json")
+        val output = File(checkNotNull(target.getExternalFilesDir("gpu-diagnostics")), "gesture-probe-v3-$run.json")
         check(output.createNewFile()) { "Do not overwrite prior evidence" }
-        val report = JSONObject().put("version", "gesture-observer-probe-v2")
+        val report = JSONObject().put("version", "gesture-observer-probe-v3")
             .put("purpose", "synthetic emulator endpoint and observer proof only; timing validity not assessed; not criterion 1 or Pixel acceptance")
             .put("frameMeaning", "real engine render completed, FIFO paired with renderer callback after swap; not scanout")
-            .put("profile", "three value triangles, one trial per axis; 800ms DOWN to UP, 400ms each linear segment")
+            .put("profile", "three rise-hold-return value profiles, one trial per axis; 200ms linear rise, 400ms peak hold, 200ms linear return; 800ms DOWN to UP")
             .put("candidateOnly", true)
+            .put("profileIdentity", "v3 symmetric rise-hold-return candidate; not the v2 triangle or an identical prior comparison")
+            .put("peakObservation", "Holding the requested peak does not guarantee a rendered peak; frozen endpoint rules still apply")
             .put("trajectoryTimingStatus", "not_assessed")
             .put("timingDiagnostics", "late means actualInjectMs>plannedMs; burst interval means adjacent injections in the same uptime millisecond; diagnostic counts only, no timing acceptance tolerance")
             .put("finalMoveIdentity", "Window MOVE with matching downTime, eventTime=down+800, and x within 1px of injected return coordinate; otherwise boundary_unproven")
@@ -150,16 +152,19 @@ class GpuGate1GestureObserverProbeTest {
             report.put("preInputContract", JSONArray(axes.map { axis ->
                 val g = geometry.getValue(axis)
                 JSONObject().put("axis", axis.name).put("start", axis.baseline).put("peak", axis.peak)
-                    .put("return", axis.baseline).put("durationMs", 800).put("segmentMs", 400)
-                    .put("outwardValuePerSecond", (axis.peak - axis.baseline) / .4)
-                    .put("returnValuePerSecond", -(axis.peak - axis.baseline) / .4)
+                    .put("return", axis.baseline).put("durationMs", 800)
+                    .put("riseMs", 200).put("peakHoldStartMs", 200).put("peakHoldEndMs", 600)
+                    .put("peakHoldMs", 400).put("returnMs", 200)
+                    .put("outwardValuePerSecond", (axis.peak - axis.baseline) / .2)
+                    .put("holdValuePerSecond", 0.0)
+                    .put("returnValuePerSecond", -(axis.peak - axis.baseline) / .2)
                     .put("density", density.toDouble()).put("touchSlopPx", slop)
                     .put("activeThumbModelPx", 2.0 * density).put("trackPx", g.track)
                     .put("rangeMin", axis.min.toDouble()).put("rangeMax", axis.max.toDouble())
                     .put("cpuTapStep", axis.cpuTapStep).put("cpuQuantizationHalfWidth", axis.quantizationHalfWidth)
                     .put("cpuOnePx", g.cpuOnePx).put("gpuValuePerPx", g.gpuOnePx)
                     .put("eightFloatUlp", g.floatAllowance).put("endpointTolerance", g.tolerance)
-                    .put("plannedInjectedEventCount", 52).put("plannedMoveCount", 50)
+                    .put("plannedInjectedEventCount", 42).put("plannedMoveCount", 40).put("moveIntervalMs", 20)
             })).put("preInputContractRecordedUptimeMs", SystemClock.uptimeMillis())
             output.writeText(report.toString(2))
             val startReference = AtomicReference<State>()
@@ -262,9 +267,13 @@ class GpuGate1GestureObserverProbeTest {
                     check(accepted)
                 }
                 send(MotionEvent.ACTION_DOWN, down, center)
-                for (index in 1..50) {
-                    val fraction = if (index <= 25) index / 25f else (50 - index) / 25f
-                    send(MotionEvent.ACTION_MOVE, down + index * 16, center + slop + travel * fraction)
+                for (index in 1..40) {
+                    val fraction = when {
+                        index <= 10 -> index / 10f
+                        index <= 30 -> 1f
+                        else -> (40 - index) / 10f
+                    }
+                    send(MotionEvent.ACTION_MOVE, down + index * 20, center + slop + travel * fraction)
                 }
                 send(MotionEvent.ACTION_UP, down + 800, center + slop)
                 val injectionRows = (injectionFrom until injected.length()).map { injected.getJSONObject(it) }
