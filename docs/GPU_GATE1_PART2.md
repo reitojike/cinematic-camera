@@ -27,6 +27,7 @@ APK 固定時点で次のすべてが確認できれば B を含める。1つで
 ### APK 固定票（配布前に全欄を埋める）
 
 - GPU: #319 マージ済み source commit/tree、B有無と該当head、APK SHA-256/bytes、variant/ABI、package/version、公開署名fingerprint、build/最適化条件。
+- B採否にかかわらず、最終APKのプレビュー台帳上限128MiB・書き出し192MiBを確認する。B不採用なら予算だけの独立変更を通常CI/review後に取り込み、#319の検証を途中で止めず、旧96MiBコードのまま最終固定しない。
 - CPU: `1ce63154bd886d50b7669ccfdcfd01a8e192f83e`、tree `1b9ca54e1309ae350cc6f2d10c220037abcc3ac0`。実APKの固定値は下表。改善前の値や後続 main を対照にしない。
 - 試験 APK を使う場合: source/tree・差分・APK SHA-256・target/runner・全method/引数・署名一致。未公開の試験sourceを公開commitリンクで表さない。
 - 第1部本体 `7a5eac72a81051f9a9afa7f211e4d21e479c1518` との差分、および CPU 基準との差分を記録する。共有観測 metadata の追加と、CPU の既存状態の意味・通知時期・100ms再試行が変わらない根拠を最終sourceで照合する。ソースの機能上の根拠を性能同一の証明にしない。
