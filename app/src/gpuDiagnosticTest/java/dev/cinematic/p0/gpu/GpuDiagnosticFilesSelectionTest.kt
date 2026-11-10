@@ -165,13 +165,18 @@ class GpuDiagnosticFilesSelectionTest {
         val labels = listOfNotNull(Build.MODEL,
             Settings.Global.getString(target.contentResolver, "device_name"),
             "Internal storage", "Internal shared storage", "内部ストレージ", "内部共有ストレージ")
-        val internalRoot = By.pkg(filesPackage).text(Pattern.compile(labels.distinct().joinToString("|") { Pattern.quote(it) }))
+        val rootsList = By.res(filesPackage, "roots_list")
+        // Match only a drawer descendant, never a same-named breadcrumb or backing content.
+        // BySelector.hasAncestor is available in the existing UiAutomator 2.3.0 dependency.
+        val internalRoot = By.pkg(filesPackage)
+            .text(Pattern.compile(labels.distinct().joinToString("|") { Pattern.quote(it) }))
+            .hasAncestor(rootsList)
         fun openRoots() {
-            if (!device.hasObject(By.res(filesPackage, "roots_list"))) {
+            if (!device.hasObject(rootsList)) {
                 find("Files navigation drawer", By.pkg(filesPackage).clazz("android.widget.ImageButton")
                     .desc(Pattern.compile("Show roots|Open navigation drawer|ルートを表示|ナビゲーション ドロワーを開く"))).click()
             }
-            find("Files roots list", By.res(filesPackage, "roots_list"))
+            find("Files roots list", rootsList)
         }
         openRoots()
         if (!device.hasObject(internalRoot)) {
@@ -182,8 +187,28 @@ class GpuDiagnosticFilesSelectionTest {
                 .text(Pattern.compile("Show internal storage|内部ストレージを表示"))).click()
             openRoots()
         }
-        find("internal storage root", internalRoot).click()
-        find("internal Download directory", By.pkg(filesPackage).text(Environment.DIRECTORY_DOWNLOADS), Direction.DOWN).click()
+        find("internal storage root in Files drawer", internalRoot)
+        captureEvidence("internal-root-before-click")
+        // Evidence collection can change the hierarchy; resolve the scoped root again before clicking.
+        val root = checkNotNull(device.findObject(internalRoot)) { "Scoped internal storage root disappeared before click" }
+        val transitionDeadline = SystemClock.elapsedRealtime() + 10_000
+        root.click()
+        captureEvidence("internal-root-after-click")
+        // Count evidence capture in the same 10s deadline; never grant a second transition wait.
+        val remainingMs = transitionDeadline - SystemClock.elapsedRealtime()
+        check(remainingMs > 0) { "Internal storage transition exceeded the existing 10s bound" }
+        await("internal Download directory after Files drawer closes", remainingMs) {
+            if (device.hasObject(rootsList)) false else {
+                val download = device.findObject(By.pkg(filesPackage).text(Environment.DIRECTORY_DOWNLOADS))
+                if (download != null) {
+                    download.click()
+                    true
+                } else {
+                    scroll(filesPackage)
+                    false
+                }
+            }
+        }
     }
 
     private fun find(label: String, selector: BySelector, scrollDirection: Direction? = null): UiObject2 {
