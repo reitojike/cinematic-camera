@@ -13,6 +13,7 @@ import dev.cinematic.p0.raw.LinearSrgbImage
 import dev.cinematic.p0.raw.StageClearBlur
 import dev.cinematic.p0.raw.StageClearColor
 import dev.cinematic.p0.raw.StageClearProtections
+import dev.cinematic.p0.raw.StageClearV1
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Before
@@ -54,6 +55,7 @@ class GpuColorResampleAndroidTest {
         val source = ShaderSource({ path -> if (path == "color-test.frag") COLOR_TEST else assets.open("gpu/$path").bufferedReader().use { it.readText() } })
         egl.shaders().fragmentSource("color-acceptance", source.expand("color-test.frag")).use { program ->
             var conditions = 0
+            val failures = mutableListOf<String>()
             for (size in GpuReferenceImages.FAST_SIZES) for (kind in GpuReferenceImages.Kind.entries) {
                 val image = GpuReferenceImages.create(kind, size)
                 val pixels = image.copyPixels()
@@ -63,7 +65,7 @@ class GpuColorResampleAndroidTest {
                 for (operation in 0..10) {
                     val input = if (operation == 1 || operation in 7..9) lab else pixels
                     val expected = colorReference(operation, image, input)
-                    checkColor(egl, ledger, program, size.width, size.height, input, expected, operation, "$kind $size op=$operation")
+                    checkColor(egl, ledger, program, size.width, size.height, input, expected, operation, "$kind $size op=$operation")?.let(failures::add)
                     conditions++
                 }
             }
@@ -71,10 +73,11 @@ class GpuColorResampleAndroidTest {
             val boundary = floatArrayOf(-2f, -.1f, -0f, 0f, 1e-8f, .0031308f, .04045f, .25f, 1f, 1.01f, 2f, 4f)
             val image = LinearSrgbImage(4, 1, boundary)
             for (operation in 0..10) {
-                checkColor(egl, ledger, program, 4, 1, boundary, colorReference(operation, image, boundary), operation, "boundary op=$operation")
+                checkColor(egl, ledger, program, 4, 1, boundary, colorReference(operation, image, boundary), operation, "boundary op=$operation")?.let(failures::add)
                 conditions++
             }
-            Log.i(TAG, "PASS color conditions=$conditions; all pixels; abs<=2e-6 / relative<=1e-5; skin abs<=1e-5")
+            Log.i(TAG, "Color conditions=$conditions; failed=${failures.size}; all pixels; abs<=2e-6 / relative<=1e-5; skin abs<=1e-5")
+            assertTrue(failures.joinToString("\n"), failures.isEmpty())
         }
     }
 
@@ -108,25 +111,76 @@ class GpuColorResampleAndroidTest {
         return result
     }
 
+    private fun ulps(a: Float, b: Float): Long {
+        fun ordered(value: Float): Long {
+            val bits = value.toRawBits()
+            val magnitude = bits.toLong() and 0x7fffffffL
+            return 0x80000000L + if (bits < 0) -magnitude else magnitude
+        }
+        return abs(ordered(a) - ordered(b))
+    }
+
     private fun checkColor(egl: EglContexts, ledger: GpuMemoryLedger, program: GpuProgram, w: Int, h: Int,
-        input: FloatArray, expected: FloatArray, operation: Int, label: String) {
+        input: FloatArray, expected: FloatArray, operation: Int, label: String): String? {
         upload(egl, ledger, w, h, input, true).use { source ->
             GpuTexture.create(egl, ledger, w, h, GpuTexture.Format.RGBA32F).use { output ->
                 egl.passes().run(FragmentPass(program, listOf(TextureInput("s_input", source, 0)), output,
                     uniforms = { GLES32.glUniform1i(GLES32.glGetUniformLocation(it, "u_operation"), operation) }))
                 val actual = GpuStageTap.readRgb(egl, output)
-                var worstRatio = 0.0
+                var worstRatio = -1.0; var worst = 0; var maximum = 0.0; var maxUlps = 0L; var failed = 0
                 expected.indices.forEach { i ->
                     val limit = if (operation == 9) 1e-5 else if (abs(expected[i]) <= 1) 2e-6 else abs(expected[i]) * 1e-5
                     val delta = abs(expected[i].toDouble() - actual[i])
-                    assertTrue("$label i=$i ref=${expected[i]} actual=${actual[i]} diff=$delta limit=$limit", actual[i].isFinite() && delta <= limit)
-                    worstRatio = max(worstRatio, delta / limit)
+                    if (!actual[i].isFinite() || delta > limit) failed++
+                    maximum = max(maximum, delta); maxUlps = max(maxUlps, ulps(expected[i], actual[i]))
+                    if (delta / limit > worstRatio) { worstRatio = delta / limit; worst = i }
                 }
-                Log.i(TAG, "PASS $label; worstToleranceRatio=$worstRatio")
+                val pixel = worst / 3
+                val display = if (operation == 1 || operation == 2) {
+                    val diff = ImageDiff.display(LinearSrgbImage(w, h, expected), actual, label)
+                    "display8bitMax=${diff.maxDiff}; displayChangedPixels=${diff.changedPixels}; displayMean=${diff.meanDiff}"
+                } else "display8bit=not-applicable-to-this-intermediate"
+                val report = "$label; failedChannels=$failed; maxAbs=$maximum; maxULP=$maxUlps; " +
+                    "worstPixel=$pixel (${pixel % w},${pixel / w}); channel=${worst % 3}; " +
+                    "input=${input.copyOfRange(pixel * 3, pixel * 3 + 3).contentToString()}; " +
+                    "kotlin=${expected[worst]}; gpu=${actual[worst]}; ULP=${ulps(expected[worst], actual[worst])}; " +
+                    "toleranceRatio=$worstRatio; $display"
+                Log.i(TAG, (if (failed == 0) "PASS " else "FAIL ") + report)
+                if (w * h <= 4) Log.i(TAG, "$label; fullKotlin=${expected.contentToString()}; fullGpu=${actual.copyPixels().contentToString()}")
+                return report.takeIf { failed != 0 }
             }
         }
     }
 
+    @Test fun precisionProbesRecordCbrtAndSignedTinyInputs() = gpu { egl, ledger ->
+        val source = ShaderSource({ path -> if (path == "color-test.frag") COLOR_TEST else assets.open("gpu/$path").bufferedReader().use { it.readText() } })
+        egl.shaders().fragmentSource("color-probes", source.expand("color-test.frag")).use { program ->
+            val failures = mutableListOf<String>()
+            for ((size, pixel) in listOf(GpuReferenceImages.Size(64, 48) to 241,
+                GpuReferenceImages.Size(64, 48) to 242, GpuReferenceImages.Size(256, 192) to 25097,
+                GpuReferenceImages.Size(256, 192) to 24833)) {
+                val image = GpuReferenceImages.create(GpuReferenceImages.Kind.NOISE, size)
+                val rgb = FloatArray(3) { image[pixel * 3 + it] }
+                val matrix = StageClearV1.RGB_TO_LMS
+                val lms = FloatArray(3) { row -> matrix[row * 3] * rgb[0] + matrix[row * 3 + 1] * rgb[1] + matrix[row * 3 + 2] * rgb[2] }
+                val roots = FloatArray(3) { Math.cbrt(lms[it].toDouble()).toFloat() }
+                val lab = FloatArray(3).also { StageClearColor.toLab(image, pixel * 3, it) }
+                val roundTrip = FloatArray(3).also { StageClearColor.toRgb(lab, it, 0) }
+                val label = "NOISE $size pixel=$pixel"
+                Log.i(TAG, "Kotlin probe $label; rgb=${rgb.contentToString()}; lms=${lms.contentToString()}; cbrt=${roots.contentToString()}; lab=${lab.contentToString()}; roundTrip=${roundTrip.contentToString()}")
+                checkColor(egl, ledger, program, 1, 1, lms, roots, 10, "$label cbrt(LMS)")?.let(failures::add)
+                checkColor(egl, ledger, program, 1, 1, rgb, lab, 0, "$label toLab")?.let(failures::add)
+                checkColor(egl, ledger, program, 1, 1, rgb, roundTrip, 2, "$label roundTrip")?.let(failures::add)
+            }
+            // Finite extremes and denormals reveal flushing/overflow; ULP is logged even below the absolute limit.
+            val tiny = floatArrayOf(Float.MIN_VALUE, -Float.MIN_VALUE, 0f,
+                java.lang.Float.MIN_NORMAL, -java.lang.Float.MIN_NORMAL, -0f,
+                Float.MAX_VALUE, -Float.MAX_VALUE, 1e-30f)
+            checkColor(egl, ledger, program, 3, 1, tiny,
+                FloatArray(tiny.size) { Math.cbrt(tiny[it].toDouble()).toFloat() }, 10, "finite cbrt extremes")?.let(failures::add)
+            assertTrue(failures.joinToString("\n"), failures.isEmpty())
+        }
+    }
     @Test fun planeAndRgbBlurMatchAllRadiiAndSizes() = gpu { egl, ledger ->
         var conditions = 0
         for (size in listOf(GpuReferenceImages.Size(256, 192), GpuReferenceImages.PREVIEW_SIZE)) {
