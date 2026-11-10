@@ -31,7 +31,8 @@ class PipelineMemoryDiagnosticAndroidTest {
         thread.call {
             val context = InstrumentationRegistry.getInstrumentation().targetContext
             val rows = JSONArray()
-            val file = File(context.filesDir, "pipeline-memory-diagnostic.json")
+            val root = checkNotNull(context.getExternalFilesDir("gpu-diagnostics")) { "Synthetic artifact storage unavailable" }
+            val file = File(root, "pipeline-memory-diagnostic.json")
             EglContexts(thread, context.assets).use { egl ->
                 GlCapabilities.inspect(egl).requireSupported()
                 val sizes = listOf(GpuReferenceImages.Size(1024, 768), GpuReferenceImages.Size(768, 1024),
@@ -101,7 +102,8 @@ class PipelineMemoryDiagnosticAndroidTest {
                     rows.put(JSONObject().put("width", size.width).put("height", size.height)
                         .put("outcome", "explicit input rejection before allocation").put("peakBytes", ledger.peakAllocatedBytes))
                 }
-                File(context.filesDir, "pipeline-input-rejection-diagnostic.json").writeText(rows.toString(2))
+                val root = checkNotNull(context.getExternalFilesDir("gpu-diagnostics")) { "Synthetic artifact storage unavailable" }
+                File(root, "pipeline-input-rejection-diagnostic.json").writeText(rows.toString(2))
                 Log.i("PipelineMemory", "INPUT REJECTION PASS: four oversized shapes; no implicit resizing; peak=0")
                 Unit
             }

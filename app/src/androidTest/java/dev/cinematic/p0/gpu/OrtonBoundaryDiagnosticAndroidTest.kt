@@ -32,7 +32,10 @@ class OrtonBoundaryDiagnosticAndroidTest {
     @Test fun captureUnchangedBoundaryConditionWithoutRelaxingGate() = GlThread().use { thread ->
         thread.call {
             val context = InstrumentationRegistry.getInstrumentation().targetContext
-            val folder = File(context.filesDir, "orton-boundary-diagnostic")
+            // The non-debuggable diagnostic APK cannot use run-as. App-specific external storage
+            // makes only these synthetic, isolated-emulator artifacts retrievable with adb pull.
+            val root = checkNotNull(context.getExternalFilesDir("gpu-diagnostics")) { "Synthetic artifact storage unavailable" }
+            val folder = File(root, "orton-boundary-diagnostic")
             check(folder.mkdirs() || folder.isDirectory)
             val input = GpuReferenceImages.create(GpuReferenceImages.Kind.MIXED, GpuReferenceImages.Size(256, 192))
             val params = GpuRenderParams(.5, PhotoAdjustments(0.0, 1.0))
