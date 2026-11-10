@@ -18,7 +18,7 @@ internal class GpuMemoryLedger(val budgetBytes: Long = PREVIEW_BUDGET) {
         allocatedBytes -= bytes; textureCount--
     }
     companion object {
-        const val PREVIEW_BUDGET = 96L * 1024 * 1024
+        const val PREVIEW_BUDGET = 128L * 1024 * 1024
         const val EXPORT_BUDGET = 192L * 1024 * 1024
     }
 }

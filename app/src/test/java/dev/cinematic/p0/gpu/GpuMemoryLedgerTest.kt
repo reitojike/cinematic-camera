@@ -4,8 +4,8 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class GpuMemoryLedgerTest {
-    @Test fun previewBudgetIs96MiBAndExportBudgetStays192MiB() {
-        assertEquals(96L * 1024 * 1024, GpuMemoryLedger.PREVIEW_BUDGET)
+    @Test fun previewBudgetIs128MiBAndExportBudgetStays192MiB() {
+        assertEquals(128L * 1024 * 1024, GpuMemoryLedger.PREVIEW_BUDGET)
         assertEquals(192L * 1024 * 1024, GpuMemoryLedger.EXPORT_BUDGET)
         assertEquals(GpuMemoryLedger.PREVIEW_BUDGET, GpuMemoryLedger().budgetBytes)
     }

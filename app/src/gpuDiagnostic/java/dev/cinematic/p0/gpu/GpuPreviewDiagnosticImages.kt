@@ -13,7 +13,7 @@ internal object GpuPreviewDiagnosticImages {
     const val SEED = 20261110L
     data class Size(val width: Int, val height: Int)
     val FAST_SIZES = listOf(Size(64, 48), Size(256, 192))
-    val PREVIEW_SIZE = Size(1024, 769)
+    val PREVIEW_SIZE = Size(1024, 768)
     val EXPORT_SIZE = Size(1600, 1200)
     val LARGE_EXPORT_SIZE = Size(4000, 3000) // opt-in のみ
 

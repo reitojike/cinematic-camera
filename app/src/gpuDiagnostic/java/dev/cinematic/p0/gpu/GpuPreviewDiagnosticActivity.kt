@@ -1,10 +1,17 @@
 package dev.cinematic.p0.gpu
 
+import android.content.Context
+import android.net.Uri
+import android.os.CancellationSignal
+import android.os.OperationCanceledException
 import android.os.Bundle
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -35,13 +42,33 @@ import androidx.compose.ui.unit.dp
 import dev.cinematic.p0.gpu.preview.GpuPreviewFrame
 import dev.cinematic.p0.gpu.preview.GpuPreviewRenderer
 import dev.cinematic.p0.gpu.preview.GpuPreviewSurface
+import dev.cinematic.p0.gpu.preview.GpuSurfaceProbe
+import dev.cinematic.p0.gpu.preview.GpuInputReadinessTimeout
+import dev.cinematic.p0.gpu.preview.GpuInputWaitReason
+import dev.cinematic.p0.gpu.preview.GpuInputRequestDeadline
+import dev.cinematic.p0.gpu.preview.GpuInputPublication
+import dev.cinematic.p0.gpu.preview.GpuInputAdmissionRefused
+import dev.cinematic.p0.gpu.preview.GpuInputAdmissionResult
+import dev.cinematic.p0.gpu.preview.awaitGpuInputReadiness
+import dev.cinematic.p0.raw.LinearSrgbImage
 import dev.cinematic.p0.raw.PhotoAdjustments
+import dev.cinematic.p0.photoroll.DngInputProbe
+import dev.cinematic.p0.photoroll.PhotoRollResourceObserver
+import dev.cinematic.p0.rawcapture.AutoDevelopPolicy
+import dev.cinematic.p0.rawcapture.DevelopExecution
+import dev.cinematic.p0.rawcapture.DngVerificationStopped
+import java.util.concurrent.CancellationException
 import java.util.Locale
 import kotlin.math.ceil
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** 合成入力のみ。製品の写真選択・処理・保存には接続しない。 */
+/** 診断専用の合成入力と公開・合成DNG。製品の保存経路には接続しない。 */
 class GpuPreviewDiagnosticActivity : ComponentActivity() {
     internal lateinit var renderer: GpuPreviewRenderer
     private val measurement = PreviewMeasurement()
@@ -51,8 +78,203 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
     private var error by mutableStateOf<String?>(null)
     private var allocatedBytes by mutableStateOf(0L)
 
+    private lateinit var resourceObserver: PhotoRollResourceObserver
+    // Test-only resolver seam. The real Activity still owns all resource observations and rendering.
+    internal var inputContext: Context = this
+    private val resourcePublications = MutableStateFlow(GpuInputPublication())
+    @Volatile private var completedInputEpoch = -1L
+    internal data class DiagnosticState(val resumed: Boolean, val pending: Boolean, val loading: Boolean,
+        val epoch: Long, val completedEpoch: Long, val publishedReady: Boolean, val surfaceAttached: Boolean,
+        val inputResult: String, val gpuError: Boolean)
+    internal fun diagnosticState() = DiagnosticState(resumed, pendingDocument != null, dngLoading,
+        inputEpoch, completedInputEpoch, AutoDevelopPolicy.previewBlockers(resourcePublications.value.observation.conditions).isEmpty(),
+        renderer.hasSurface, when {
+            inputStatus.startsWith("DNG AS_SHOT入力:") -> "loaded"
+            inputStatus.startsWith("DNGを読み込めません") -> "load_error"
+            inputStatus.startsWith("DNGの準備待ちが上限") -> "readiness_timeout"
+            dngLoading -> "loading"
+            else -> "idle_or_interrupted"
+        }, error != null)
+
+    private fun trace(phase: String) = GpuSurfaceProbe.event(phase) { diagnosticState().toString() }
+    private var inputSignal: CancellationSignal? = null
+    private var inputWaitJob: Job? = null
+    private var inputRequest: GpuInputRequestDeadline? = null
+    private var inputEpoch = 0L
+    private var resumed = false
+    private var pendingDocument: Uri? = null
+    private var dngSelected by mutableStateOf(false)
+    private var dngLoading by mutableStateOf(false)
+    private var inputStatus by mutableStateOf("公開・合成の試験用DNGのみ。個人の写真は選ばないでください。")
+    // OpenDocument uses ACTION_OPEN_DOCUMENT. No persistable permission is taken.
+    // https://developer.android.com/training/data-storage/shared/documents-files
+    private val pickDng = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) acceptDiagnosticDocument(uri)
+    }
+
+    // Same picker callback path, also callable with a controlled test-only ContentResolver.
+    internal fun acceptDiagnosticDocument(uri: Uri) {
+        DngInputProbe.grant(this, uri, "gpu.picker_result")
+        pendingDocument = uri
+        trace("activity.input.received")
+        if (resumed) loadPendingDocument()
+    }
+
+    private fun cancelInput(reason: String, discardPending: Boolean = false) {
+        GpuSurfaceProbe.event("activity.input.cancel") {
+            "reason=$reason resumed=$resumed cancelEpoch=$inputEpoch activeSignal=${inputSignal != null} loading=$dngLoading"
+        }
+        inputEpoch++
+        val oldWait = inputWaitJob
+        val oldSignal = inputSignal
+        val oldRequest = inputRequest
+        inputWaitJob = null
+        inputRequest = null
+        inputSignal = null
+        // A picker result received while already paused belongs to the next resume, not old cleanup.
+        if (discardPending) pendingDocument = null
+        oldRequest?.cancel() // Short request guard only; CancellationSignal callbacks stay outside it.
+        oldWait?.cancel()
+        cancelInputSignal(oldSignal)
+        dngLoading = false
+    }
+
+    private fun loadPendingDocument() {
+        val uri = pendingDocument ?: return
+        pendingDocument = null
+        cancelInput("new_document")
+        stopMeasurement()
+        dngSelected = true
+        dngLoading = true
+        trace("activity.input.load_attempt")
+        // Keep a reported GPU failure and its retry control until a real frame succeeds.
+        inputStatus = "DNG原本を照合して入力を準備中…"
+        renderer.closePhoto()
+        // Explicit input selection may retry GPU failure, but never re-upload the old failed input.
+        // Both calls run in order on the same GL queue; the new input arrives after native decoding.
+        if (error != null) renderer.retry()
+        val epoch = inputEpoch
+        inputSignal = CancellationSignal()
+        val request = GpuInputRequestDeadline(nowMillis = SystemClock::elapsedRealtime).also { inputRequest = it }
+        // Non-immediate Main always dispatches out of observer/authority publication locks.
+        inputWaitJob = lifecycleScope.launch(Dispatchers.Main) {
+            try {
+                trace("activity.input.waiting")
+                awaitGpuInputReadiness(resourcePublications, renderer.surfaceAttached, request) {
+                    if (isDestroyed || !resumed || epoch != inputEpoch) throw CancellationException("GPU input superseded")
+                    cancelInputSignal(inputSignal) // Previous rejected attempt only; native ownership never retries.
+                    val signal = CancellationSignal().also { inputSignal = it }
+                    val admission = CompletableDeferred<GpuInputAdmissionResult>()
+                    trace("activity.input.ready")
+                    GpuDiagnosticDngInput.load(inputContext, uri, resourceObserver::snapshot, signal, request) { failure ->
+                        admission.complete(GpuInputAdmissionResult(failure))
+                    }.whenComplete { input, failure ->
+                        if (failure is GpuInputAdmissionRefused) {
+                            GpuSurfaceProbe.failure("activity.input.admission_refused", failure)
+                            logInputFailure(failure)
+                        } else if (failure == null || !admission.complete(
+                                GpuInputAdmissionResult(failure))) {
+                            completeInput(epoch, signal, input, failure)
+                        }
+                    }
+                    admission
+                }
+            } catch (cancelled: CancellationException) {
+                finishWaiting(epoch, cancelled)
+                throw cancelled
+            } catch (failure: Exception) {
+                finishWaiting(epoch, failure)
+            } finally {
+                if (epoch == inputEpoch) inputWaitJob = null
+            }
+        }
+    }
+
+    private fun finishWaiting(epoch: Long, failure: Throwable) {
+        if (epoch != inputEpoch) return
+        inputRequest?.cancel()
+        inputSignal?.let { signal ->
+            val cancelled = cancelInputForCleanup(signal, failure)
+            completeInput(epoch, signal, null, failure, cancelled)
+        }
+    }
+
+    private fun completeInput(epoch: Long, signal: CancellationSignal, input: LinearSrgbImage?, failure: Throwable?,
+        cancelledBeforeCleanup: Boolean? = null) {
+        if (failure != null) {
+            GpuSurfaceProbe.failure("activity.input.failure", failure)
+            logInputFailure(failure)
+        }
+        runOnUiThread {
+            GpuSurfaceProbe.event("activity.input.completion") {
+                "loadEpoch=$epoch currentEpoch=$inputEpoch resumed=$resumed canceled=${signal.isCanceled} failed=${failure != null}"
+            }
+            if (!isDestroyed && resumed && epoch == inputEpoch && inputSignal === signal) {
+                completedInputEpoch = epoch
+                inputSignal = null
+                inputRequest = null
+                dngLoading = false
+                if (failure is GpuInputReadinessTimeout) {
+                    val reason = when (failure.reason) {
+                        GpuInputWaitReason.CAMERA_IN_USE -> "カメラが使用中のため読み込めません。"
+                        GpuInputWaitReason.CAMERA_UNKNOWN -> "カメラの状態を確認できないため読み込めません。"
+                        GpuInputWaitReason.OTHER_PREPARATION -> "入力に必要な準備を確認できません。"
+                    }
+                    inputStatus = "DNGの準備待ちが上限の10秒を超えました。${reason}選び直してください。"
+                } else if (cancelledBeforeCleanup ?: inputWasCancelled(signal, failure)) {
+                    inputStatus = "DNG読み込みを中断しました。再開するには選び直してください。"
+                } else if (failure == null) {
+                    renderer.openPhoto(checkNotNull(input))
+                    inputStatus = "DNG AS_SHOT入力: ${input.width} × ${input.height}（長辺1024・786,432画素以下）"
+                } else {
+                    // Provider/native exception messages can contain names or URIs. Never display/log them.
+                    inputStatus = "DNGを読み込めません。内部ストレージの試験用DNGと端末の空き資源を確認し、選び直してください。"
+                }
+                trace("activity.input.displayed")
+            }
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        resourceObserver.start()
+        trace("activity.onStart")
+    }
+
+    override fun onResume() {
+        super.onResume()
+        resumed = true
+        resourceObserver.foreground(true)
+        trace("activity.onResume")
+        loadPendingDocument()
+    }
+
+    override fun onPause() {
+        resumed = false
+        trace("activity.onPause")
+        cancelInput("pause")
+        resourceObserver.foreground(false)
+        if (dngSelected) {
+            renderer.closePhoto()
+            inputStatus = "DNG表示を中断しました。再開するには選び直してください。"
+        }
+        if (dngSelected) GpuDiagnosticDngInput.release(this) // Same process-retained serial owner.
+        super.onPause()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        resourceObserver = PhotoRollResourceObserver(this, DevelopExecution::updateConditions, onPublication = { observation ->
+            // A GPU event for each existing publication, including equal facts after an IO refusal.
+            // No additional observer polling/notification or shared condition changes.
+            resourcePublications.update { GpuInputPublication(it.sequence + 1, observation) }
+            GpuSurfaceProbe.event("activity.resources.published") {
+                "previewBlockers=${AutoDevelopPolicy.previewBlockers(observation.conditions).map { it.name }.sorted().joinToString(",")} " +
+                    "camera=${observation.cameraState} initialComplete=${observation.initialCameraCallbacksComplete} " +
+                    "consistent=${observation.cameraSampleConsistent} resourceObserved=${observation.resourceObserved} " +
+                    "registration=${observation.registrationGeneration} foregroundEpoch=${observation.foregroundEpoch}"
+            }
+        })
         renderer = GpuPreviewRenderer(assets, onFrame = { frame ->
             // Renderer callbacks are on GL thread. Compose state and sample storage belong to main.
             runOnUiThread {
@@ -66,13 +288,15 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
                 }
             }
         }, onError = { failure ->
+            GpuSurfaceProbe.failure("activity.renderer.failure", failure)
             runOnUiThread {
                 if (!isDestroyed) {
                     error = failure.message ?: failure.javaClass.simpleName
+                    trace("activity.gpu_error.displayed")
                     stopMeasurement()
                 }
             }
-        })
+        }, engineFactory = { egl, ledger -> DefaultStageClearGpu(egl, ledger, GpuFrameMode.FULL_RECOMPUTE) })
         setContent {
             MaterialTheme {
                 Surface(Modifier.fillMaxSize()) { DiagnosticScreen() }
@@ -84,7 +308,7 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
         if (measuring) {
             measuring = false
             val thermal = getSystemService(PowerManager::class.java).currentThermalStatus
-            summary = measurement.summary() + "\n温度状態: $thermal"
+            summary = "frameMode=FULL_RECOMPUTE / 写真解析は初回のみ\n" + measurement.summary() + "\n温度状態: $thermal"
             Log.i("GpuPreview", "$summary\nGPU allocated bytes: $allocatedBytes")
         }
     }
@@ -92,15 +316,34 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
     override fun onStop() {
         // A background pause must not become an apparent slow render interval.
         stopMeasurement()
+        resourceObserver.stop()
+        trace("activity.onStop")
         super.onStop()
     }
 
     override fun onTrimMemory(level: Int) {
+        GpuSurfaceProbe.event("activity.onTrimMemory") {
+            "arrivalNs=${SystemClock.elapsedRealtimeNanos()} level=$level resumed=$resumed loadEpoch=$inputEpoch loading=$dngLoading"
+        }
         super.onTrimMemory(level)
+        // UI_HIDDEN may arrive after onResume. It belongs to the previous background interval,
+        // not the new foreground input. Do not enqueue renderer cleanup for that stale notice.
+        if (level == android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN && resumed) {
+            trace("activity.trim.ignored_after_resume")
+            return
+        }
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN && dngSelected) {
+            cancelInput("ui_hidden")
+            renderer.closePhoto()
+            inputStatus = "DNG表示を解放しました。再開するには選び直してください。"
+            GpuDiagnosticDngInput.release(this)
+        }
         if (::renderer.isInitialized) renderer.trimMemory(level)
     }
 
     override fun onDestroy() {
+        resumed = false
+        cancelInput("destroy", discardPending = true)
         // Activity owns renderer; Surface owns its surface/lifecycle attachment only.
         // https://developer.android.com/guide/components/activities/activity-lifecycle
         if (::renderer.isInitialized) renderer.close()
@@ -117,7 +360,8 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
         var fixtureName by rememberSaveable { mutableStateOf(GpuPreviewDiagnosticImages.Kind.MIXED.name) }
         var choosing by remember { mutableStateOf(false) }
         var loading by remember { mutableStateOf(true) }
-        LaunchedEffect(fixtureName) {
+        LaunchedEffect(fixtureName, dngSelected) {
+            if (dngSelected) { loading = false; return@LaunchedEffect }
             stopMeasurement()
             loading = true
             // Compose effect cancellation prevents a stale fixture from replacing a newer choice.
@@ -128,7 +372,7 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
                     GpuPreviewDiagnosticImages.PREVIEW_SIZE,
                 )
             }
-            renderer.openPhoto(input)
+            if (!dngSelected) renderer.openPhoto(input)
             loading = false
         }
         LaunchedEffect(strength, warmth, exposure, before, rotation) {
@@ -142,20 +386,29 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text("GPU 表示診断・製品未採用", style = MaterialTheme.typography.titleLarge)
-            Text("この段階は入力の表示のみです。スライダーは再描画を要求しますが、ルック処理は行いません。合成入力のみ・写真の読込や保存なし。")
+            Text("全工程再計算モード (FULL_RECOMPUTE): R7 → Glow → Mist → Finish を毎フレーム再計算。写真解析は初回のみ。BeforeはAS_SHOT入力。通常製品の再利用とは別の診断経路。保存なし。製品未採用。")
             GpuPreviewSurface(renderer, Modifier.fillMaxWidth().height(240.dp))
             Column {
                 Button(onClick = { choosing = true }) { Text("合成入力: $fixtureName") }
                 DropdownMenu(expanded = choosing, onDismissRequest = { choosing = false }) {
                     GpuPreviewDiagnosticImages.Kind.entries.forEach { kind ->
                         DropdownMenuItem(text = { Text(kind.name) }, onClick = {
+                            cancelInput("synthetic_selection", discardPending = true)
+                            stopMeasurement()
+                            dngSelected = false
                             fixtureName = kind.name
                             choosing = false
                         })
                     }
                 }
             }
-            Text(if (loading) "入力を生成中…" else "1024 × 769 / 固定seedの合成入力")
+            Button(onClick = {
+                cancelInput("picker_launch", discardPending = true)
+                stopMeasurement()
+                pickDng.launch(arrayOf("image/x-adobe-dng", "image/dng", "application/octet-stream"))
+            }) { Text("試験用DNGをFilesから選択") }
+            Text(if (dngSelected) inputStatus else if (loading) "入力を生成中…" else
+                "1024 × 768 / 固定seedの合成入力。公開・合成DNGのみ選択可。個人の写真は使用しないでください。")
             DiagnosticSlider("強度", strength, 0f..1f) { strength = it }
             DiagnosticSlider("暖かさ", warmth, -100f..100f) { warmth = it }
             DiagnosticSlider("露出 EV", exposure, -2f..2f) { exposure = it }
@@ -164,7 +417,7 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
                 Switch(checked = before, onCheckedChange = { before = it })
                 Button(onClick = { rotation = (rotation + 90) % 360 }) { Text("回転 $rotation°") }
             }
-            Button(enabled = !loading && error == null, onClick = {
+            Button(enabled = !loading && !dngLoading && error == null, onClick = {
                 if (measuring) stopMeasurement() else {
                     measurement.start()
                     sampleCount = 0
@@ -246,4 +499,36 @@ private class PreviewMeasurement {
     }
 
     companion object { const val MAX_SAMPLES = 10_000 }
+}
+
+/** Cleanup cancellation must not rewrite a true pre-admission failure as a user cancellation. */
+internal fun cancelInputForCleanup(signal: CancellationSignal, failure: Throwable): Boolean {
+    val cancelled = inputWasCancelled(signal, failure)
+    cancelInputSignal(signal)
+    return cancelled
+}
+
+private fun cancelInputSignal(signal: CancellationSignal?) {
+    try { signal?.cancel() } catch (cleanup: Throwable) { logInputFailure(cleanup) }
+}
+
+/** Completion wrappers do not turn cancellation into a read failure. */
+internal fun inputWasCancelled(signal: CancellationSignal, failure: Throwable?): Boolean {
+    if (signal.isCanceled) return true
+    return try {
+        generateSequence(failure) { it.cause?.takeUnless { cause -> cause === it } }.take(16)
+            .any { it is CancellationException || it is OperationCanceledException || it is DngVerificationStopped }
+    } catch (_: Throwable) { false } // A malformed failure must still complete as a failure.
+}
+
+/** No throwable/message overload: keep cleanup failures visible without leaking document metadata. */
+private fun logInputFailure(failure: Throwable) {
+    try {
+        Log.w("GpuPreview", DngInputProbe.failureSummary(failure))
+        generateSequence(failure) { it.cause?.takeUnless { cause -> cause === it } }.take(4).forEach { cause ->
+            cause.suppressed.take(4).forEach { cleanup ->
+                Log.w("GpuPreview", DngInputProbe.failureSummary(cleanup))
+            }
+        }
+    } catch (_: Throwable) { /* Logging must not replace the original completion. */ }
 }
