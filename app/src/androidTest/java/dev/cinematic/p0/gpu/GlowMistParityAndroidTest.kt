@@ -133,7 +133,7 @@ class GlowMistParityAndroidTest {
         assertTrue(ledger.peakAllocatedBytes <= GpuMemoryLedger.PREVIEW_BUDGET)
         assertEquals(0, ledger.textureCount)
         assertEquals(80, conditions)
-        Log.i(TAG, "conditions=$conditions; skin=20; glow=80; mist=80; counts=80; residentAS_SHOT included; default96MiB enforced; peakBytes=${ledger.peakAllocatedBytes}; marginBytes=${ledger.budgetBytes - ledger.peakAllocatedBytes}")
+        Log.i(TAG, "conditions=$conditions; skin=20; glow=80; mist=80; counts=80; residentAS_SHOT included; defaultPreviewBudget=${ledger.budgetBytes} enforced; peakBytes=${ledger.peakAllocatedBytes}; marginBytes=${ledger.budgetBytes - ledger.peakAllocatedBytes}")
     }
 
     @Test fun changingStrengthReusesAllPreparedFields() = gpu { egl, ledger ->

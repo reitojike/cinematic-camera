@@ -120,6 +120,10 @@ internal class GpuResample(
                 GLES32.glUniform1i(GLES32.glGetUniformLocation(program, "u_horizontal"), if (horizontal) 1 else 0)
             }
             if (filter == StageClearBlur.Filter.BOX) {
+                // Reused storage may still be sampled by earlier commands. Image stores are
+                // incoherent: wait for those reads before writing, in addition to the pass's
+                // existing post-dispatch barrier for subsequent readers.
+                if (output.pool != null) GLES32.glMemoryBarrier(GLES32.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT)
                 val path = if (input.format == GpuTexture.Format.R32F) "analysis/reduce_plane.comp" else "analysis/reduce_rgb.comp"
                 egl.passes().run(ComputePass(egl.shaders().compute(path), inputs,
                     groupsX = if (horizontal) output.height else output.width,

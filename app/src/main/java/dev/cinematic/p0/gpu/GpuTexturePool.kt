@@ -2,7 +2,7 @@ package dev.cinematic.p0.gpu
 
 /** Photo-local immutable GL storage reuse. Only closed leases may be reused or evicted.
  * Ledger counts real storage, including idle entries, not the number of active leases.
- * Commands on one GL context are ordered: a later writer may reuse an earlier reader's storage.
+ * Fragment writes use normal context ordering; imageStore users add a pre-write memory barrier.
  */
 internal class GpuTexturePool(private val egl: EglContexts, private val ledger: GpuMemoryLedger) : AutoCloseable {
     private val idle = mutableListOf<GpuTexture.Storage>()

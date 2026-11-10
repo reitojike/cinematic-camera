@@ -110,7 +110,7 @@ class PipelineMemoryDiagnosticAndroidTest {
             engine.renderForTest(photo, GpuRenderParams(strength, adjustments), Point.MIST)
         } }
         assertEquals(0L, ledger.allocatedBytes); assertEquals(0, ledger.textureCount)
-        assertTrue(ledger.peakAllocatedBytes <= 96L * 1024 * 1024)
+        assertTrue(ledger.peakAllocatedBytes <= GpuMemoryLedger.PREVIEW_BUDGET)
         ImageDiff.assertScalarWithin(reference.mistAutoStrength, checkNotNull(decisions).mistAutoStrength, .005, "Mist decision")
         rows.put(JSONObject().put("width", input.width).put("height", input.height).put("warmth", adjustments.warmth)
             .put("exposureEv", adjustments.exposureEv).put("strength", strength).put("stages", stages)
