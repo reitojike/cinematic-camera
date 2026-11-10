@@ -30,7 +30,7 @@ internal object R7Base {
         timing?.enter(R7StageTiming.Stage.PROFILE)
         var image = profile(input)
         checkpoint()
-        image = localTone(image, timing)
+        image = localTone(image, timing, ::checkpoint)
         checkpoint()
         timing?.enter(R7StageTiming.Stage.FOUNDATION)
         image = foundation(image, foundationSkinRoi, externalBaseEv, execution)
@@ -93,12 +93,13 @@ internal object R7Base {
         return StageClearBlur.resize(down, input.width, input.height, StageClearBlur.Filter.BICUBIC)
     }
 
-    private fun localTone(input: LinearSrgbImage, timing: R7StageTiming? = null): LinearSrgbImage {
+    private fun localTone(input: LinearSrgbImage, timing: R7StageTiming? = null,
+        checkpoint: () -> Unit = {}): LinearSrgbImage {
         val base = smoothLogLuma(input, timing)
         timing?.enter(R7StageTiming.Stage.LOCAL_QUANTILES)
-        val sorted = base.copyValues().also { it.sort() }
-        val high = percentile(sorted, .92)
-        val low = percentile(sorted, .5)
+        val values = base.copyValues()
+        val high = percentile(values, .92, checkpoint)
+        val low = percentile(values, .5, checkpoint)
         timing?.enter(R7StageTiming.Stage.LOCAL_APPLY)
         return pixels(input) { p, out ->
             val value = base[p].toDouble()
@@ -189,8 +190,10 @@ internal object R7Base {
         val t = unit(1 - abs((h - centre + 540) % 360 - 180) / half)
         return t * t * (3 - 2 * t)
     }
-    private fun percentile(sorted: FloatArray, q: Double): Double {
-        val rank = (sorted.size - 1) * q; val lo = floor(rank).toInt(); val hi = ceil(rank).toInt()
-        return sorted[lo].toDouble() + (sorted[hi].toDouble() - sorted[lo]) * (rank - lo)
+    private fun percentile(values: FloatArray, q: Double, checkpoint: () -> Unit): Double {
+        val rank = (values.size - 1) * q; val lo = floor(rank).toInt(); val hi = ceil(rank).toInt()
+        val lower = PreviewFloatSelection.select(values, lo, checkpoint)
+        val upper = if (hi == lo) lower else PreviewFloatSelection.select(values, hi, checkpoint)
+        return lower.toDouble() + (upper.toDouble() - lower) * (rank - lo)
     }
 }

@@ -44,6 +44,7 @@ class DiagnosticIoOwnerTest {
         val failed = owner.finish(true) { false }
         assertTrue(failed.quiescent)
         assertFalse(failed.sourceRemoved)
+        assertFalse(owner.finish(true) { throw IOException("Synthetic removal failure") }.sourceRemoved)
         var deleted = false
         val held = owner.finish(false) { deleted = true; true }
         assertFalse(held.quiescent)
