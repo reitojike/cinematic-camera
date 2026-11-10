@@ -26,7 +26,12 @@ internal class GpuResample(
     private val cache = mutableMapOf<Key, Weights>()
     private var closed = false
 
-    fun resize(input: GpuTexture, w: Int, h: Int, filter: StageClearBlur.Filter): GpuTexture {
+    fun resize(input: GpuTexture, w: Int, h: Int, filter: StageClearBlur.Filter): GpuTexture =
+        resizeImpl(input, w, h, filter, releaseInputAfterFirstAxis = false)
+
+    /** Only blur's owned reduced field may be released before the second axis. */
+    private fun resizeImpl(input: GpuTexture, w: Int, h: Int, filter: StageClearBlur.Filter,
+        releaseInputAfterFirstAxis: Boolean): GpuTexture {
         requireInput(input)
         require(w > 0 && h > 0 && w.toLong() * h <= Int.MAX_VALUE)
         if (input.width == w && input.height == h) return input
@@ -35,6 +40,9 @@ internal class GpuResample(
         val verticalFirst = heightCut > 0 && heightCut > 2 * widthCut
         val intermediate = if (verticalFirst) axis(input, h, false, filter) else axis(input, w, true, filter)
         try {
+            // The first pass has consumed the owned field. Keep only its Float32 axis result.
+            // A no-op first axis still aliases input and must remain alive for the second pass.
+            if (releaseInputAfterFirstAxis && intermediate !== input) input.close()
             val output = if (verticalFirst) axis(intermediate, w, true, filter) else axis(intermediate, h, false, filter)
             if (intermediate !== input && intermediate !== output) intermediate.close()
             return output
@@ -60,7 +68,8 @@ internal class GpuResample(
         requireInput(input)
         val (w, h) = StageClearBlur.reducedSize(input.width, input.height, radiusFraction)
         val reduced = reduce(input, w, h)
-        try { return upsampleFrom(reduced, input.width, input.height, StageClearBlur.Filter.BILINEAR) }
+        try { return resizeImpl(reduced, input.width, input.height, StageClearBlur.Filter.BILINEAR,
+            releaseInputAfterFirstAxis = reduced !== input) }
         finally { if (reduced !== input) reduced.close() }
     }
 

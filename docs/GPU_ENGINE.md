@@ -110,6 +110,30 @@ internal data class GpuDecisions(val mistAutoStrength: Double, val faceCutFactor
 - **メモリ**: `GpuTexture` がバイト数を記録し、合計を `GpuMemoryLedger` に報告する。目安はプレビュー 96MiB 以下、書き出し 192MiB 以下（12MP）。超える要求は失敗させる（黙って縮小しない）。`peakAllocatedBytes` は成功した予約の最大値を解放後も保持する。AS_SHOT を含む全工程の最大と予算との差を計測する。予算変更の判断と Gate 1 基準は [#276](https://github.com/reitojike/cinematic-camera/issues/276)・[#285](https://github.com/reitojike/cinematic-camera/issues/285) に記録する。
 - **解放**: 写真を閉じる、画面を離れる、`onTrimMemory`（`TRIM_MEMORY_UI_HIDDEN` 以上）で写真の GPU 状態を解放する。コンテキスト喪失（`EGL_CONTEXT_LOST`）は失敗として扱い、次の要求で作り直す。
 
+#### 承認4形状のメモリ観測
+
+#284接続候補87202fc / gpuDiagnosticの指定Androidで、4形状×2調整×2強さの16条件を完走し、
+Mesa実shaderのallocation監査と全最大値が一致した。R7_FINAL/Glow/Mistは固定工程基準内、
+全写真close後のallocatedBytes/textureCountは0。メモリにはOrton→Character→skin cap→shoulder→DISPLAY8の
+RGBA8画像生成まで含む。試験のMIST指定は読み戻す値の選択で、後半を省略しない。全16条件の後半5tap到達をJSONでも確認した。
+実Windowのpresent/swapとドライバ内部メモリはこの台帳測定外。
+テストのCPU参照保持寿命を切り、192MiB heapのOOMは再発しなかった。
+heap、96MiB GPU予算、数式は変更していない。
+
+| 入力寸法 | GPU台帳最大（bytes） | 96MiBへの余裕（bytes） |
+|---|---:|---:|
+| 1024×768 | 83,094,576 | 17,568,720 |
+| 768×1024 | 83,092,528 | 17,570,768 |
+| 1024×576 | 62,373,256 | 38,290,040 |
+| 886×886 | 82,968,592 | 17,694,704 |
+
+最大はOrton blurの縦拡大出力確保時。AS_SHOT/R7/bloom/MIST/bright/softの原寸RGBA32F6枚、
+skin/halationのR32F2枚と1024×62横軸中間が82,804,736B、重みcacheが289,840Bで計83,094,576B。
+blur-owned縮小画像は第1拡大軸後に解放済み。[全85テクスチャの名前・寸法・生成工程](https://github.com/reitojike/cinematic-camera/issues/276#issuecomment-6762284391)を記録した。
+一覧はshader実行の生成解放イベントを監査したもので、総量をAndroid台帳と照合している。ドライバ内部のメモリ一覧ではない。
+超過4形状はGPU allocation前に拒否され、peak0。旧1024×769は別baselineで履歴照合し、
+承認入力へ混ぜない。この限定メモリ試験だけを全工程画質・Gate1・実機の合格とは扱わない。
+
 ### 4.4 色と座標の約束
 
 - 入力・中間は線形 sRGB（D65）、シーン線形。クリップや転送は Kotlin が行う箇所だけで行う。
@@ -133,7 +157,7 @@ internal data class GpuDecisions(val mistAutoStrength: Double, val faceCutFactor
 根拠: [GLSL ES 3.20.8 §4.7.1](https://registry.khronos.org/OpenGL/specs/es/3.2/GLSL_ES_Specification_3.20.html) は、pow の精度要件を `exp2(y * log2(x))` から継承させ、三角関数の精度を同表で定義しない。subnormal の0へのflushも許す。powが必ずその式で実装されるという規定ではなく、Math.cbrt/atan2 と同じ丸めを保証するものでもない。
 今回の閾値は規格から得られる保証値ではなく、測定と利用者承認に基づく契約である。Newton後の往復最大差は Android 2.682209e-6 / Mesa 2.592802e-6、B2後のMesa色相最大差は約3.05176e-5度だった。最終の exact head を両環境で検証して記録する。
 
-**全工程の基準は変えない。** #276 の表示8bit最大差2・99.9パーセンタイル差1、Mist自動強度0.005、局所分位点1e-4を #284 の全工程で確認する。単体の表示差やエミュレーター成功を最終画質・実機速度の合格へ読み替えない。
+**全工程の基準は #276 §2.1 に従う。** 表示8bit最大差2・全RGBの99.9パーセンタイル差1を維持し、Orton入力の境界画素だけに下記§4.11の承認済み最大差例外を適用する。Mist自動強度0.005、局所分位点1e-4とOrton以外の工程判定は変更しない。単体の表示差やエミュレーター成功を最終画質・実機速度の合格へ読み替えない。
 ### 4.5 Pillow 互換のリサンプル（GPU）
 
 `StageClearBlur.resize` と `OriginalField` が真実の源。GPU 版は次の通りに実装する。
@@ -198,7 +222,11 @@ internal data class GpuDecisions(val mistAutoStrength: Double, val faceCutFactor
 
 ### 4.9 プレビュー（表示と操作）
 
-- **入力解像度**: Phase 0 は現行と同じ長辺 1024px（CPU 基準と同じ解像度で比べるため）。画面サイズへの拡大は表示パスで行う。長辺を画面サイズ（例: 1440px）に上げるかは Gate 1 の計測で判断する。
+- **入力解像度**: Phase 0 の GPU プレビューは **長辺 1024px 以下、かつ 786,432画素（1024×768）以下**。撮影で用いる4:3・16:9は従来どおり1024×768・1024×576（縦向きは転置）とし、近正方形だけ面積上限にも収まるよう縦横比を保つ。正方形の例は886×886。
+  - 寸法は入力縮小段階で `min(1, 1024/長辺, sqrt(786432/画素数))` の共通倍率と各辺floorで一度決定する。既に両上限内なら寸法を変えない。GPU用DNG入口は既存RGB16→BOX縮小へこの寸法を渡し、通常CPUプレビュー・書き出しの寸法規則は変更しない。
+  - rendererとStageClearGpu.openPhotoは、この寸法決定済み入力を受け取る。どちらかの上限を超えた場合は、既存checkと同じ明示失敗にし、GPU内部で再縮小しない。
+  - 理由: 長辺だけでは1024×1024も許容され、1024×769のメモリ計測から最大面積の安全性を保証できなかった。撮影の4:3/16:9を維持しつつ、ユーザー判断でGPUプレビューの面積も制限する。preview 96MiB、書き出し192MiB、ルックの式、画素差の基準は不変。
+  - 最大メモリの確認形状は1024×768、768×1024、1024×576、886×886。従来1024×769は上限外の履歴比較として旧診断候補でAndroid実測と照合し、現行入力の受け入れに含めない。画面サイズへの拡大は表示パスで行う。
 - **表示面**: Compose の `AndroidExternalSurface`（または `AndroidView` + `SurfaceView`）。EGLSurface は表示面の生成・破棄に合わせて作り直す。
 - **描画の流れ**: スライダーの値が変わる → `GpuRenderParams` を GlThread のキューに置き換え → 次のフレームで1回描画。
   - 強さだけの変更: R7 の結果と Glow の強さ非依存の場を再利用し、Glow 合成以降だけを計算する。
@@ -217,11 +245,35 @@ internal data class GpuDecisions(val mistAutoStrength: Double, val faceCutFactor
 
 | 種類 | 内容 | 場所 |
 |---|---|---|
-| 合成画像セット | 決まった乱数で作る合成画像（グラデーション、白飛び、肌色、彩度の高い色、暗部、ノイズ）。1024×769 と 256×192 | `androidTest`、`GpuReferenceImages.kt`（新規） |
+| 合成画像セット | 決まった乱数で作る合成画像（グラデーション、白飛び、肌色、彩度の高い色、暗部、ノイズ）。256×192 と公開入力上限内の1024×768。単体passの旧1024×769 fixtureは履歴比較として保持 | `androidTest`、`GpuReferenceImages.kt`（新規） |
 | 工程ごとの一致 | `GpuStageTap` で各工程の出力を読み戻し、Kotlin の同じ工程（`R7Base.stages()` など既存の関数）と比べる | `androidTest`（エミュレーター。GPU はソフトウェア実装だが正しさの確認には足りる） |
-| 最終出力の一致 | 表示 8bit で最大差 ≤2、99.9 パーセンタイル ≤1、平均差を記録 | 同上 |
+| 最終出力の一致 | 表示8bitで境界対象外の最大差≤2、**全RGB**の99.9パーセンタイル≤1。下記CPU-only境界画素の比率上限も必須。全画素最大・平均も記録 | 同上 |
 | 判定値の一致 | Mist 自動強度は差 ≤0.005、局所トーン p50/p92 は単精度の範囲で一致 | 同上 |
 | 実写 | ユーザーの写真で、手元だけで比較（非公開の比較ページ、タップで切り替え）。数値・写真は Git に入れない | 実機・PC |
+
+#### Orton の1.0境界に対する承認済み表示判定
+
+[#276 §2.1](https://github.com/reitojike/cinematic-camera/issues/276) と
+[#285 Gate 1 基準②](https://github.com/reitojike/cinematic-camera/issues/285) のユーザー判断に従う。
+対象は **Kotlin見本の `StageClearOrton.mixOrton` に渡すimage（MIST）だけ** から決める。
+いずれかのRGB成分について `abs(component.toDouble() - 1.0) <= 1e-5` の画素を対象とし、GPU値では選ばない。
+
+- 比率は比較画像ごとに対象画素数 / 全画素数 ≤0.01%。整数の `対象数 * 10000L <= 全画素数` で判定し、超えたら不合格。
+- 対象画素の全RGBを **最終表示8bitの最大差≤2だけ** から外す。99.9パーセンタイル≤1は対象を含む全RGBで計算する。分母や補間方法は変えない。
+- 毎条件、対象数・比率・全対象の位置・Kotlin/GPU入力RGB・Kotlin/GPU表示RGBと差を記録する。対象0でも要約を残し、判定失敗前に保存する。
+- Orton以外の工程判定、Mist自動強度差0.005、局所分位点差1e-4、float単体判定、式・shader・予算は変えない。float中間画像へこの例外を広げない。
+
+理由は既存Kotlin式 `if (image[j] > 1f) max(image[j], value) else value` の1.0での値の飛び。
+MIXED 256×192 / strength0.5 / warmth0 / userEV+1 の(248,102)赤では、Kotlin入力1.000000238418579に対し
+Mesaは0.9999969601631165、指定Androidエミュレーターは0.9999984502792358となり、反対側の分岐へ入った。
+表示は双方245対240で、旧全画素最大差は5、全RGB p99.9は0。
+Kotlinだけで選んだ対象は(248,102)と(142,121)の2/49,152画素（0.0040690104%）。
+対象外最大差1・全RGB p99.9=0で、この1条件は新基準を満たす。
+[Androidの入力/value/分岐直後/保護後の記録](https://github.com/reitojike/cinematic-camera/issues/282#issuecomment-6761721229) を参照。
+以前のCPU/GPU union対象除外後の分位点は診断値であり、この正式基準では使わない。
+この1条件の再評価と全行列を区別する。接続候補2e0a2aaでは新基準のMesa200/200条件がPASSし、
+対象外最大1、全RGB p99.9最大1、対象比率最大0.0081380208%を確認した。
+指定Android全行列と最終候補の受け入れは別途検証し、Gate1全体・実機の合格とは扱わない。
 
 許容範囲を超えた工程は、式の写し間違いとして直す。許容範囲そのものを後から広げない（広げる場合はユーザーの判断として記録する）。
 
