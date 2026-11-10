@@ -51,6 +51,8 @@ class PhotoRollDragPreviewAndroidTest {
 
     @Test fun continuousDragDisplaysCompletedFramesAndReleaseRejectsTheOldDraft() = screen { renderer, _ ->
         val initial = open(renderer)
+        val initialChecks = renderer.previewChecks.get()
+        assertTrue(initialChecks > 0)
         val drag = beginDrag()
         drag.move(48f)
         val first = renderer.next(draft = true)
@@ -67,6 +69,7 @@ class PhotoRollDragPreviewAndroidTest {
         val stale = renderer.next(draft = true)
         drag.move(180f)
         awaitColor(Color.GREEN)
+        assertEquals("Completed drafts must not recheck the provider", initialChecks, renderer.previewChecks.get())
         assertFalse("Close must not accept display-only pixels", action("目盛りを閉じる").isEnabled)
         assertFalse(action("JPEGを保存").isEnabled)
 
@@ -81,6 +84,7 @@ class PhotoRollDragPreviewAndroidTest {
         assertFalse(action("JPEGを保存").isEnabled)
         exact.complete(Color.CYAN)
         awaitColor(Color.CYAN)
+        assertTrue("Exact release must recheck the provider", renderer.previewChecks.get() > initialChecks)
         await("Old displayed pairs recycled") { initial.recycled() && first.recycled() && second.recycled() }
         assertTrue(action("目盛りを閉じる").isEnabled)
         assertEquals(0, renderer.saves.get())
@@ -362,6 +366,12 @@ class PhotoRollDragPreviewAndroidTest {
         val calls = CopyOnWriteArrayList<RenderCall>()
         val discards = AtomicInteger()
         val saves = AtomicInteger()
+        val previewChecks = AtomicInteger()
+        override fun verifyPreviewOriginal(repository: PhotoRollRepository, original: PhotoRollOriginal,
+            cancellation: CancellationSignal, shouldStop: () -> Boolean) {
+            previewChecks.incrementAndGet()
+            super.verifyPreviewOriginal(repository, original, cancellation, shouldStop)
+        }
         private val pending = LinkedBlockingQueue<RenderCall>()
         private val active = AtomicInteger()
         val maximumActive = AtomicInteger()

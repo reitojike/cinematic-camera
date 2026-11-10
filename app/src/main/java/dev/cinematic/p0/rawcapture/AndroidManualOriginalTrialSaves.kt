@@ -99,6 +99,7 @@ internal object AndroidManualOriginalTrialSaves {
         private val handles = mutableMapOf<Long, ManualOriginalTrialHandle>()
         private val preflightResources = DngIoResources()
         private var preflightFd: ParcelFileDescriptor? = null
+        private var preflightSnapshot: File? = null
         private var preflightSlot: AutoDevelopCoordinator.Attempt? = null
         private var geometry: Original24PreflightGeometry? = null
         private var currentRequest: Original24Request? = null // Same serialized metadata owner as publication.
@@ -128,7 +129,7 @@ internal object AndroidManualOriginalTrialSaves {
 
         fun prepare(queue: AutoDevelopQueue, strength: Double, adjustments: PhotoAdjustments,
             conditions: AutoDevelopConditions, stop: () -> Boolean): ManualOriginalTrialHandle {
-            if (preflightSlot != null) throw IOException("Trial preflight resources remain held")
+            if (preflightSlot != null) releasePreflight()
             if (source.fingerprint.bytes > 64L * 1024 * 1024) throw IOException("Original source byte limit")
             // Header admission precedes durable request allocation, so >24MP never creates a held generation.
             if (geometry == null) geometry = inspect(conditions, stop)
@@ -239,7 +240,7 @@ internal object AndroidManualOriginalTrialSaves {
                 if (!directory.isDirectory && !directory.mkdirs()) throw IOException("Trial preflight directory unavailable")
                 DngContentVerifier.copy(source.fingerprint, { preflightResources.input(readOriginal()) }, {
                     preflightResources.output(Files.newOutputStream(snapshot.toPath(), StandardOpenOption.CREATE_NEW,
-                        StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS))
+                        StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS).also { preflightSnapshot = snapshot })
                 }, stopped)
                 if (stopped()) throw IOException("Trial preflight stopped")
                 val descriptor = ParcelFileDescriptor.open(snapshot, ParcelFileDescriptor.MODE_READ_ONLY)
@@ -250,19 +251,24 @@ internal object AndroidManualOriginalTrialSaves {
                 }
             } catch (error: Throwable) { failure = error; throw error }
             finally {
-                var cleanup = preflightResources.releaseAll()
-                try { preflightFd?.close(); preflightFd = null }
-                catch (error: Throwable) { if (cleanup == null) cleanup = error else cleanup.addSuppressed(error) }
-                if (!preflightResources.hasOpenResources && preflightFd == null) {
-                    if (snapshot.exists() && !snapshot.delete()) {
-                        val error = IOException("Trial preflight snapshot removal failed")
-                        if (cleanup == null) cleanup = error else cleanup.addSuppressed(error)
-                    }
-                    DevelopExecution.completeAfterResourcesClosed(slot)
-                    preflightSlot = null
+                try { releasePreflight() } catch (cleanup: Throwable) {
+                    if (failure == null) throw cleanup else if (failure !== cleanup) failure.addSuppressed(cleanup)
                 }
-                cleanup?.let { if (failure == null) throw it else if (failure !== it) failure.addSuppressed(it) }
             }
+        }
+
+        private fun releasePreflight() {
+            var cleanup = preflightResources.releaseAll()
+            try { preflightFd?.close(); preflightFd = null }
+            catch (error: Throwable) { if (cleanup == null) cleanup = error else cleanup.addSuppressed(error) }
+            if (!preflightResources.hasOpenResources && preflightFd == null) {
+                try {
+                    preflightSnapshot?.let { Files.deleteIfExists(it.toPath()); preflightSnapshot = null }
+                    preflightSlot?.let(DevelopExecution::completeAfterResourcesClosed)
+                    preflightSlot = null
+                } catch (error: Throwable) { if (cleanup == null) cleanup = error else cleanup.addSuppressed(error) }
+            }
+            cleanup?.let { throw it }
         }
     }
 
@@ -273,8 +279,9 @@ internal object AndroidManualOriginalTrialSaves {
         private val app = context.applicationContext
         private val operation = AndroidRenderedJpegOperation.get(app, request.captureId, request.generation)
         @Volatile private var attempt: Original24Attempt? = null
+        private var outputCleanupPending = false
         private val stopped = AtomicBoolean(false)
-        override val hasUnreleasedResources get() = attempt?.hasUnreleasedResources == true
+        override val hasUnreleasedResources get() = attempt?.hasUnreleasedResources == true || outputCleanupPending
         fun requestStop() { stopped.set(true); attempt?.requestStop() }
         override fun readPublication() = journal(request).read()
         override fun render(stop: () -> Boolean): ManualOriginalTrialRender {
@@ -291,15 +298,26 @@ internal object AndroidManualOriginalTrialSaves {
             if (!directory.isDirectory && !directory.mkdirs()) throw IOException("Trial generation directory unavailable")
             // Only this production save opts in; low-level and diagnostic serial baselines stay explicit.
             val engine = Original24Attempt(app, request, io, File(directory, "original-work"),
-                parallelFoundationWorkers = 2).also { attempt = it }
+                parallelFoundationWorkers = 2, parallelGlowWorkers = 2,
+                parallelToneWorkers = 2, parallelMistWorkers = 2).also { attempt = it }
             if (stopped.get() || stop()) engine.requestStop()
-            val result = engine.render(stop)
-            engine.close()
-            if (engine.hasUnreleasedResources) throw IOException("Trial producer resources remain held")
-            if (result.observedGeometry != expectedGeometry) throw IOException("Original render geometry changed after preflight")
-            return ManualOriginalTrialRender(RenderedJpegRequest(request.captureId, request.generation, request.source,
-                request.recipe, result.output), result.geometry, result.fingerprint, request.strength, result.externalEv,
-                request.adjustments)
+            outputCleanupPending = true
+            try {
+                val result = engine.render(stop)
+                engine.close()
+                if (engine.hasUnreleasedResources) throw IOException("Trial producer resources remain held")
+                if (result.observedGeometry != expectedGeometry) throw IOException("Original render geometry changed after preflight")
+                val render = ManualOriginalTrialRender(RenderedJpegRequest(request.captureId, request.generation, request.source,
+                    request.recipe, result.output), result.geometry, result.fingerprint, request.strength, result.externalEv,
+                    request.adjustments)
+                outputCleanupPending = false // Valid output remains owned by the existing publication workflow.
+                return render
+            } catch (failure: Throwable) {
+                try { releaseResources() } catch (cleanup: Throwable) {
+                    if (cleanup !== failure) failure.addSuppressed(cleanup)
+                }
+                throw failure
+            }
         }
         override fun publisher(render: ManualOriginalTrialRender): ManualOriginalTrialPublication {
             val publisher = operation.publisher(render, setOf(ManualOriginalTrialRender.CONTRACT), isCurrent)
@@ -309,7 +327,13 @@ internal object AndroidManualOriginalTrialSaves {
                 override fun releaseResources() = publisher.releaseResources()
             }
         }
-        override fun releaseResources() { attempt?.close() }
+        override fun releaseResources() {
+            attempt?.close()
+            if (outputCleanupPending) {
+                operation.discardFailedOutput()
+                outputCleanupPending = false
+            }
+        }
     }
 
     internal class ManualOriginalTrialHandle internal constructor(

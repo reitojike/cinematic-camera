@@ -128,8 +128,8 @@ class OriginalR7ColorFusionAndroidTest {
                 else assertThrows(CancellationException::class.java) { action() }
                 assertTrue(reached.get())
                 assertFalse(attempt.hasUnreleasedResources)
-                // Failed attempts intentionally keep private scratch for the save owner.
-                assertTrue(scratch.isDirectory)
+                // All temporary photo copies are removed after owner release.
+                assertFalse(scratch.exists())
                 assertEquals(0, output.size())
                 DngContentVerifier.verify(fingerprint, { ByteArrayInputStream(source) })
             } finally {

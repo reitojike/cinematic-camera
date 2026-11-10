@@ -187,8 +187,8 @@ class OriginalOrtonParallelSafetyTest {
             assertOwnedWorkersStopped(workers)
             DngContentVerifier.verify(fingerprint, { input.inputStream() })
             assertFalse(output.exists())
-            // The attempt deliberately retains failed private scratch for its owner, not publication.
-            assertTrue(File(root, "scratch").isDirectory)
+            // Confirmed cancellation removes disposable photograph copies.
+            assertFalse(File(root, "scratch").exists())
             status("attempt-cancel", JSONObject().put("ownersClosed", true)
                 .put("originalUnchanged", true).put("outputAbsent", true))
         } finally { assertTrue(root.deleteRecursively()) }
@@ -249,13 +249,9 @@ class OriginalOrtonParallelSafetyTest {
             assertOwnedWorkersStopped(workers)
             DngContentVerifier.verify(fingerprint, { input.inputStream() })
             assertFalse(output.exists())
-            val fullBytes = 6000L * 4000 * 12
-            val partials = File(root, "scratch").listFiles().orEmpty().filter {
-                it.name.endsWith(".f32") && it.length() in 1L until fullBytes
-            }
-            assertTrue("Orton cancellation should leave a private partial raster for owner cleanup", partials.isNotEmpty())
+            assertFalse(File(root, "scratch").exists())
             status("24mp-attempt-cancel", JSONObject().put("elapsedMs", elapsed)
-                .put("partialRasterBytes", partials.maxOf { it.length() }).put("ownersClosed", true)
+                .put("retainedScratchBytes", 0).put("ownersClosed", true)
                 .put("originalUnchanged", true).put("outputAbsent", true))
         } finally { assertTrue(root.deleteRecursively()) }
     }
