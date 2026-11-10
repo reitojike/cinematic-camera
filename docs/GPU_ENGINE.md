@@ -110,6 +110,30 @@ internal data class GpuDecisions(val mistAutoStrength: Double, val faceCutFactor
 - **メモリ**: `GpuTexture` がバイト数を記録し、合計を `GpuMemoryLedger` に報告する。目安はプレビュー 96MiB 以下、書き出し 192MiB 以下（12MP）。超える要求は失敗させる（黙って縮小しない）。`peakAllocatedBytes` は成功した予約の最大値を解放後も保持する。AS_SHOT を含む全工程の最大と予算との差を計測する。予算変更の判断と Gate 1 基準は [#276](https://github.com/reitojike/cinematic-camera/issues/276)・[#285](https://github.com/reitojike/cinematic-camera/issues/285) に記録する。
 - **解放**: 写真を閉じる、画面を離れる、`onTrimMemory`（`TRIM_MEMORY_UI_HIDDEN` 以上）で写真の GPU 状態を解放する。コンテキスト喪失（`EGL_CONTEXT_LOST`）は失敗として扱い、次の要求で作り直す。
 
+#### 承認4形状のメモリ観測
+
+#284接続候補87202fc / gpuDiagnosticの指定Androidで、4形状×2調整×2強さの16条件を完走し、
+Mesa実shaderのallocation監査と全最大値が一致した。R7_FINAL/Glow/Mistは固定工程基準内、
+全写真close後のallocatedBytes/textureCountは0。メモリにはOrton→Character→skin cap→shoulder→DISPLAY8の
+RGBA8画像生成まで含む。試験のMIST指定は読み戻す値の選択で、後半を省略しない。全16条件の後半5tap到達をJSONでも確認した。
+実Windowのpresent/swapとドライバ内部メモリはこの台帳測定外。
+テストのCPU参照保持寿命を切り、192MiB heapのOOMは再発しなかった。
+heap、96MiB GPU予算、数式は変更していない。
+
+| 入力寸法 | GPU台帳最大（bytes） | 96MiBへの余裕（bytes） |
+|---|---:|---:|
+| 1024×768 | 83,094,576 | 17,568,720 |
+| 768×1024 | 83,092,528 | 17,570,768 |
+| 1024×576 | 62,373,256 | 38,290,040 |
+| 886×886 | 82,968,592 | 17,694,704 |
+
+最大はOrton blurの縦拡大出力確保時。AS_SHOT/R7/bloom/MIST/bright/softの原寸RGBA32F6枚、
+skin/halationのR32F2枚と1024×62横軸中間が82,804,736B、重みcacheが289,840Bで計83,094,576B。
+blur-owned縮小画像は第1拡大軸後に解放済み。[全85テクスチャの名前・寸法・生成工程](https://github.com/reitojike/cinematic-camera/issues/276#issuecomment-6762284391)を記録した。
+一覧はshader実行の生成解放イベントを監査したもので、総量をAndroid台帳と照合している。ドライバ内部のメモリ一覧ではない。
+超過4形状はGPU allocation前に拒否され、peak0。旧1024×769は別baselineで履歴照合し、
+承認入力へ混ぜない。この限定メモリ試験だけを全工程画質・Gate1・実機の合格とは扱わない。
+
 ### 4.4 色と座標の約束
 
 - 入力・中間は線形 sRGB（D65）、シーン線形。クリップや転送は Kotlin が行う箇所だけで行う。
@@ -247,7 +271,9 @@ Kotlinだけで選んだ対象は(248,102)と(142,121)の2/49,152画素（0.0040
 対象外最大差1・全RGB p99.9=0で、この1条件は新基準を満たす。
 [Androidの入力/value/分岐直後/保護後の記録](https://github.com/reitojike/cinematic-camera/issues/282#issuecomment-6761721229) を参照。
 以前のCPU/GPU union対象除外後の分位点は診断値であり、この正式基準では使わない。
-1条件の再評価を全工程200条件やGate 1全体の合格とは扱わず、最終候補で別途検証する。
+この1条件の再評価と全行列を区別する。接続候補2e0a2aaでは新基準のMesa200/200条件がPASSし、
+対象外最大1、全RGB p99.9最大1、対象比率最大0.0081380208%を確認した。
+指定Android全行列と最終候補の受け入れは別途検証し、Gate1全体・実機の合格とは扱わない。
 
 許容範囲を超えた工程は、式の写し間違いとして直す。許容範囲そのものを後から広げない（広げる場合はユーザーの判断として記録する）。
 
