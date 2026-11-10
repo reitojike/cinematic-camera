@@ -4,6 +4,7 @@ import android.opengl.GLES32
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import dev.cinematic.p0.gpu.diag.OrtonDisplayAcceptance
 import dev.cinematic.p0.gpu.diag.GpuStageTap
 import dev.cinematic.p0.gpu.diag.GpuStageTap.Point
 import dev.cinematic.p0.gpu.look.MistGpuResult
@@ -47,62 +48,80 @@ class GpuFinishAndroidTest {
         var conditions = 0
         for (size in listOf(GpuReferenceImages.Size(256, 192), GpuReferenceImages.PREVIEW_SIZE)) {
             for (kind in GpuReferenceImages.Kind.entries) {
-                val prepared = KotlinReference.prepare(GpuReferenceImages.create(kind, size), PhotoAdjustments())
-                for (strength in listOf(0.0, .25, .5, 1.0)) {
-                    val reference = KotlinReference.render(prepared, strength)
-                    val w = size.width; val h = size.height
-                    upload(egl, ledger, w, h, reference[Point.MIST].copyPixels(), true).use { mist ->
-                        upload(egl, ledger, w, h, FloatArray(w * h) { reference.skinWeight[it] }, false).use { skin ->
-                            upload(egl, ledger, w, h, FloatArray(w * h), false).use { faces ->
-                                StageClearFinishGpu(egl, ledger).use { finish ->
-                                    val seen = mutableListOf<Point>()
-                                    var last = System.nanoTime()
-                                    finish.render(MistGpuResult(mist, reference.lightAddingStrength, skin), strength, faces, tap = { point, texture ->
-                                        val actual = GpuStageTap.readRgb(egl, texture)
-                                        val elapsed = System.nanoTime() - last
-                                        val expected = reference[point]
-                                        repeat(expected.pixelCount * 3) { i ->
-                                            val ref = expected[i].toDouble(); val value = actual[i].toDouble()
-                                            val delta = abs(ref - value)
-                                            assertTrue("$kind $size strength=$strength $point channel=$i ref=$ref actual=$value", value.isFinite() && delta <= 1e-4 * maxOf(1.0, abs(ref)))
-                                        }
-                                        if (point == Point.ORTON && reference.lightAddingStrength == 0.0) assertSame(mist, texture)
-                                        seen += point
-                                        Log.i("GpuFinish", "$kind $size strength=$strength $point synchronizedNs=$elapsed")
-                                        last = System.nanoTime()
-                                    }).use { shoulder ->
-                                        finish.encode(shoulder).use { display ->
-                                            val bytes = ByteBuffer.allocateDirect(w * h * 4)
-                                            GpuFence(egl).use { it.await { false } }
-                                            GLES32.glBindFramebuffer(GLES32.GL_FRAMEBUFFER, display.framebufferId)
-                                            GLES32.glReadBuffer(GLES32.GL_COLOR_ATTACHMENT0)
-                                            GLES32.glBindBuffer(GLES32.GL_PIXEL_PACK_BUFFER, 0)
-                                            GLES32.glPixelStorei(GLES32.GL_PACK_ALIGNMENT, 1)
-                                            GLES32.glPixelStorei(GLES32.GL_PACK_ROW_LENGTH, 0)
-                                            GLES32.glPixelStorei(GLES32.GL_PACK_SKIP_PIXELS, 0)
-                                            GLES32.glPixelStorei(GLES32.GL_PACK_SKIP_ROWS, 0)
-                                            GLES32.glReadPixels(0, 0, w, h, GLES32.GL_RGBA, GLES32.GL_UNSIGNED_BYTE, bytes)
-                                            egl.checkGl("finish display readback")
-                                            val pixels = IntArray(w * h) { p ->
-                                                assertEquals(255, bytes.get(p * 4 + 3).toInt() and 255)
-                                                (255 shl 24) or ((bytes.get(p * 4).toInt() and 255) shl 16) or
-                                                    ((bytes.get(p * 4 + 1).toInt() and 255) shl 8) or (bytes.get(p * 4 + 2).toInt() and 255)
-                                            }
-                                            ImageDiff.display(reference.display8, pixels, w, h, "$kind $size strength=$strength DISPLAY8").assertDisplayWithin(1, 1.0)
-                                        }
-                                    }
-                                    assertEquals(listOf(Point.ORTON, Point.CHARACTER, Point.SKIN_CAP, Point.SHOULDER), seen)
-                                }
-                            }
-                        }
-                    }
-                    conditions++
-                }
+                checkImage(egl, ledger, size, kind)
+                conditions += 4
             }
         }
         assertEquals(80, conditions)
         Log.i("GpuFinish", "PASS conditions=$conditions floatStages=320 displayStages=80")
     }
+
+    // Return each image/strength stack frame before allocating the next CPU reference.
+    // This preserves the oracle while avoiding stale local roots on a 192MiB emulator heap.
+    private fun checkImage(egl: EglContexts, ledger: GpuMemoryLedger,
+        size: GpuReferenceImages.Size, kind: GpuReferenceImages.Kind) {
+        val prepared = KotlinReference.prepare(GpuReferenceImages.create(kind, size), PhotoAdjustments())
+        for (strength in listOf(0.0, .25, .5, 1.0)) checkStrength(egl, ledger, size, kind, prepared, strength)
+    }
+
+    private fun checkStrength(egl: EglContexts, ledger: GpuMemoryLedger,
+        size: GpuReferenceImages.Size, kind: GpuReferenceImages.Kind,
+        prepared: KotlinReference.Prepared, strength: Double) {
+        val reference = KotlinReference.render(prepared, strength)
+        val w = size.width; val h = size.height
+        upload(egl, ledger, w, h, reference[Point.MIST].copyPixels(), true).use { mist ->
+            upload(egl, ledger, w, h, FloatArray(w * h) { reference.skinWeight[it] }, false).use { skin ->
+                upload(egl, ledger, w, h, FloatArray(w * h), false).use { faces ->
+                    StageClearFinishGpu(egl, ledger).use { finish ->
+                        val seen = mutableListOf<Point>()
+                        var last = System.nanoTime()
+                        finish.render(MistGpuResult(mist, reference.lightAddingStrength, skin), strength, faces, tap = { point, texture ->
+                            val actual = GpuStageTap.readRgb(egl, texture)
+                            val elapsed = System.nanoTime() - last
+                            val expected = reference[point]
+                            repeat(expected.pixelCount * 3) { i ->
+                                val ref = expected[i].toDouble(); val value = actual[i].toDouble()
+                                val delta = abs(ref - value)
+                                assertTrue("$kind $size strength=$strength $point channel=$i ref=$ref actual=$value", value.isFinite() && delta <= 1e-4 * maxOf(1.0, abs(ref)))
+                            }
+                            if (point == Point.ORTON && reference.lightAddingStrength == 0.0) assertSame(mist, texture)
+                            seen += point
+                            Log.i("GpuFinish", "$kind $size strength=$strength $point synchronizedNs=$elapsed")
+                            last = System.nanoTime()
+                        }).use { shoulder ->
+                            finish.encode(shoulder).use { display ->
+                                val bytes = ByteBuffer.allocateDirect(w * h * 4)
+                                GpuFence(egl).use { it.await { false } }
+                                GLES32.glBindFramebuffer(GLES32.GL_FRAMEBUFFER, display.framebufferId)
+                                GLES32.glReadBuffer(GLES32.GL_COLOR_ATTACHMENT0)
+                                GLES32.glBindBuffer(GLES32.GL_PIXEL_PACK_BUFFER, 0)
+                                GLES32.glPixelStorei(GLES32.GL_PACK_ALIGNMENT, 1)
+                                GLES32.glPixelStorei(GLES32.GL_PACK_ROW_LENGTH, 0)
+                                GLES32.glPixelStorei(GLES32.GL_PACK_SKIP_PIXELS, 0)
+                                GLES32.glPixelStorei(GLES32.GL_PACK_SKIP_ROWS, 0)
+                                GLES32.glReadPixels(0, 0, w, h, GLES32.GL_RGBA, GLES32.GL_UNSIGNED_BYTE, bytes)
+                                egl.checkGl("finish display readback")
+                                val pixels = IntArray(w * h) { p ->
+                                    assertEquals(255, bytes.get(p * 4 + 3).toInt() and 255)
+                                    (255 shl 24) or ((bytes.get(p * 4).toInt() and 255) shl 16) or
+                                        ((bytes.get(p * 4 + 1).toInt() and 255) shl 8) or (bytes.get(p * 4 + 2).toInt() and 255)
+                                }
+                                // Formal boundary rule is additional; isolated same-input max1 stays stricter.
+                                val gpuMist = GpuStageTap.readRgb(egl, mist)
+                                val acceptance = OrtonDisplayAcceptance.evaluate(w, h,
+                                    { reference[Point.MIST][it] }, { gpuMist[it] }, reference.display8, pixels)
+                                acceptance.logLines().forEach { Log.i("GpuFinish", "$kind $size strength=$strength $it") }
+                                acceptance.assertPassed()
+                                ImageDiff.display(reference.display8, pixels, w, h, "$kind $size strength=$strength DISPLAY8").assertDisplayWithin(1, 1.0)
+                            }
+                        }
+                        assertEquals(listOf(Point.ORTON, Point.CHARACTER, Point.SKIN_CAP, Point.SHOULDER), seen)
+                    }
+                }
+            }
+        }
+    }
+
     @Test fun characterHueMatchesKotlinTruncatingRemainderAndCircularBoundaries() = gpu { egl, ledger ->
         val assets = InstrumentationRegistry.getInstrumentation().targetContext.assets
         val production = assets.open("gpu/look/character.frag").bufferedReader().use { it.readText() }
