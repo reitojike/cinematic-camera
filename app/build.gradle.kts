@@ -174,11 +174,17 @@ android {
         if (diagnosticLintInvocation) lintConfig = file("src/rawDiagnostic/lint.xml")
     }
     if (gpuMesa) {
-        sourceSets.getByName("test").java.apply {
-            srcDir("src/testGpuMesa/java")
-            // Compile the current comparison helpers in place, not a Mesa-specific copy.
-            srcDir("src/androidTest/java/dev/cinematic/p0/gpu/reference")
-            exclude("**/GpuReferenceImagesTest.kt", "**/KotlinReferenceTest.kt")
+        sourceSets.getByName("test").kotlin.srcDir("src/testGpuMesa/java")
+    }
+}
+if (gpuMesa) {
+    // AGP's AndroidSourceDirectorySet has no include/exclude API. Add only the
+    // three shared helpers to Kotlin's source inputs, in place and without copies.
+    tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+        if (name.endsWith("UnitTestKotlin")) {
+            source(fileTree("src/androidTest/java/dev/cinematic/p0/gpu/reference") {
+                include("GpuReferenceImages.kt", "GpuTolerances.kt", "ImageDiff.kt")
+            })
         }
     }
 }
