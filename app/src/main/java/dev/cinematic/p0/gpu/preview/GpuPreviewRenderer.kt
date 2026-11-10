@@ -10,17 +10,47 @@ import dev.cinematic.p0.raw.LinearSrgbImage
 import dev.cinematic.p0.raw.PhotoAdjustments
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 /** UI writes only the latest value; only the GL thread consumes/acknowledges frames. */
-internal class LatestPreviewFrame<T>(initial: T) {
-    private val latest = AtomicReference(initial)
-    private var rendered: T? = null
-    fun submit(value: T) { latest.set(value) }
-    fun next(): T? = latest.get().takeUnless { it == rendered }
-    fun rendered(value: T) { rendered = value }
-    fun invalidate() { rendered = null }
+internal class LatestPreviewFrame<T>(initial: T, private val nowNanos: () -> Long = System::nanoTime) {
+    data class Pending<T>(val value: T, val dirtySinceNanos: Long)
+    private data class State<T>(val value: T, val displayed: T?, val dirtySince: Long?)
+    private val state = AtomicReference(State(initial, null, nowNanos()))
+    fun submit(value: T) {
+        while (true) {
+            val old = state.get()
+            if (old.value == value) return
+            val since = if (old.displayed == value) null else old.dirtySince ?: nowNanos()
+            if (state.compareAndSet(old, State(value, old.displayed, since))) return
+        }
+    }
+    fun next(): T? = state.get().let { if (it.dirtySince == null) null else it.value }
+    /** Consume at frame start. New submissions during draw belong to the *next* frame. */
+    fun beginFrame(): Pending<T>? {
+        while (true) {
+            val old = state.get()
+            val since = old.dirtySince ?: return null
+            if (state.compareAndSet(old, State(old.value, old.value, null))) return Pending(old.value, since)
+        }
+    }
+    fun rendered(value: T) {
+        while (true) {
+            val old = state.get()
+            val since = if (old.value == value) null else old.dirtySince ?: nowNanos()
+            if (state.compareAndSet(old, State(old.value, value, since))) return
+        }
+    }
+    fun invalidate() {
+        while (true) {
+            val old = state.get()
+            if (state.compareAndSet(old, State(old.value, null, nowNanos()))) return
+        }
+    }
 }
 
 internal data class GpuPreviewFrame(
@@ -43,34 +73,39 @@ internal class GpuPreviewRenderer(
     private val onFrame: (GpuPreviewFrame) -> Unit = {},
     private val onError: (Throwable) -> Unit = {},
     private val draw: ((GpuPreviewPhoto, GpuRenderParams, GpuTexture) -> Unit)? = null,
+    private val destroyWindow: (EglContexts.WindowTarget) -> Unit = { it.close() },
 ) : AutoCloseable {
     private data class Request(val params: GpuRenderParams, val display: GpuDisplayOptions)
-    private class SurfaceLease(val surface: Surface, var width: Int, var height: Int) {
-        var valid = true
+    private class SurfaceLease(val surface: Surface, val width: Int, val height: Int) {
+        val valid = AtomicBoolean(true)
     }
     private val thread = GlThread()
-    private val gate = Any()
     private val enqueueLock = Any()
     private val closed = AtomicBoolean()
     private val wakeQueued = AtomicBoolean()
     private val latest = LatestPreviewFrame(Request(GpuRenderParams(0.0, PhotoAdjustments.NONE), GpuDisplayOptions(false, 0)))
-    // Surface lease/gate is shared solely to quiesce rendering before onDestroyed returns.
-    private var lease: SurfaceLease? = null
-    private var started = false
+    private val terminated = CountDownLatch(1)
+    private val shutdownFailure = AtomicReference<Throwable?>()
+    // A failed EGL destroy must never be hidden by an earlier ON_STOP/cleanup clearing the handle.
+    private val surfaceDestroyFailure = AtomicReference<Throwable?>()
+    private val lease = AtomicReference<SurfaceLease?>()
+    private val started = AtomicBoolean()
     private var egl: EglContexts? = null
     private val ledger = GpuMemoryLedger()
     private var photo: GpuPreviewPhoto? = null
     private var retainedInput: LinearSrgbImage? = null
     private var output: GpuTexture? = null
     private var window: EglContexts.WindowTarget? = null
+    private val liveWindows = AtomicInteger()
+    internal val activeWindowCount: Int get() = liveWindows.get()
     private var windowLease: SurfaceLease? = null
     private var choreographer: Choreographer? = null
     private var frameScheduled = false
     private var timer: PreviewGpuTimer? = null
+    private var linearFiltering = false
     private var frameIntervalNanos = 16_666_667L
     private var drawCount = 0L
     private var missedChangedFrames = 0L
-    private var pendingSinceNanos = 0L
     private var failed = false
     private var contextLost = false
     private val callback = Choreographer.FrameCallback { frameTime ->
@@ -127,11 +162,8 @@ internal class GpuPreviewRenderer(
 
     fun attachSurface(surface: Surface, width: Int, height: Int, refreshRate: Float = 60f) {
         require(width > 0 && height > 0)
-        synchronized(gate) {
-            if (closed.get()) return
-            lease?.valid = false
-            lease = SurfaceLease(surface, width, height)
-        }
+        if (closed.get()) return
+        lease.getAndSet(SurfaceLease(surface, width, height))?.valid?.set(false)
         post {
             val hz = refreshRate.takeIf { it.isFinite() && it > 0 } ?: 60f
             frameIntervalNanos = (1_000_000_000.0 / hz).toLong().coerceAtLeast(1L)
@@ -140,30 +172,53 @@ internal class GpuPreviewRenderer(
     }
 
     fun resizeSurface(surface: Surface, width: Int, height: Int) {
-        if (width <= 0 || height <= 0) return
-        synchronized(gate) {
-            val current = lease?.takeIf { it.surface === surface } ?: return
-            current.width = width; current.height = height
+        if (width <= 0 || height <= 0 || closed.get()) return
+        while (true) {
+            val current = lease.get()?.takeIf { it.surface === surface } ?: return
+            if (lease.compareAndSet(current, SurfaceLease(surface, width, height))) {
+                current.valid.set(false); break
+            }
         }
         post { releaseWindow(); latest.invalidate(); schedule() }
     }
 
     /**
-     * AndroidExternalSurface/SurfaceHolder requires no surface access after this returns.
-     * Do not replace this barrier with a fire-and-forget destroy, nor call GlThread.call on UI.
-     * The frame holds the same gate through create/makeCurrent/draw/swap. No GL work runs here.
+     * Match SurfaceHolder's destruction boundary: no rendering AND no EGL window remain when
+     * this returns normally. Only this lifecycle callback waits, never submit or GlThread.call.
+     * The barrier is queued behind any active frame, then destroys on the owning GL thread.
+     * A stalled driver fails explicitly after 2 seconds rather than claiming a safe detach.
      * https://developer.android.com/reference/kotlin/androidx/compose/foundation/SurfaceScope
      */
     fun detachSurface(surface: Surface) {
-        synchronized(gate) {
-            val current = lease?.takeIf { it.surface === surface } ?: return
-            current.valid = false; lease = null
+        while (true) {
+            val current = lease.get()?.takeIf { it.surface === surface } ?: break
+            current.valid.set(false)
+            if (lease.compareAndSet(current, null)) break
         }
-        post { cancelFrame(); releaseWindow(); latest.invalidate(); schedule() }
+        val destroyed = CountDownLatch(1)
+        val failure = AtomicReference<Throwable?>()
+        val completion = synchronized(enqueueLock) {
+            if (closed.get()) terminated else {
+                thread.post {
+                    try {
+                        cancelFrame()
+                        if (windowLease?.surface === surface) releaseWindow()
+                        latest.invalidate(); schedule()
+                    } catch (problem: Throwable) {
+                        failure.set(problem); failed = true; onError(problem)
+                    } finally { destroyed.countDown() }
+                }
+                destroyed
+            }
+        }
+        check(completion.await(2, TimeUnit.SECONDS)) { "Timed out destroying GPU preview EGL surface" }
+        (failure.get() ?: surfaceDestroyFailure.get() ?: if (completion === terminated) shutdownFailure.get() else null)?.let {
+            throw IllegalStateException("Could not destroy GPU preview EGL surface", it)
+        }
     }
 
     fun setStarted(value: Boolean) {
-        synchronized(gate) { started = value }
+        started.set(value)
         post {
             if (!value) { cancelFrame(); releaseWindow() }
             else if (photo == null && !failed) retainedInput?.let(::uploadPhoto)
@@ -173,7 +228,7 @@ internal class GpuPreviewRenderer(
 
     /** Tests/diagnostics: callback runs on GL, after previously accepted work. */
     fun snapshot(callback: (GpuPreviewSnapshot) -> Unit) = post {
-        callback(GpuPreviewSnapshot(ledger.allocatedBytes, if (window == null) 0 else 1, drawCount))
+        callback(GpuPreviewSnapshot(ledger.allocatedBytes, liveWindows.get(), drawCount))
     }
 
     private fun wake() {
@@ -217,6 +272,7 @@ internal class GpuPreviewRenderer(
         // Lost EGL objects can report teardown errors; EGL owns their GL names. Accounting still
         // has to be empty before starting again. Do not hide an actual ownership cleanup failure.
         check(ledger.allocatedBytes == 0L) { "Preview resources survived context reset" }
+        surfaceDestroyFailure.get()?.let { throw IllegalStateException("Previous EGL surface destruction failed", it) }
         failed = false; contextLost = false
         latest.invalidate()
         problem?.let { onError(it) }
@@ -226,6 +282,7 @@ internal class GpuPreviewRenderer(
         egl = context
         GlCapabilities.inspect(context).requireSupported()
         val extensions = GLES32.glGetString(GLES32.GL_EXTENSIONS).orEmpty().split(' ')
+        linearFiltering = "GL_OES_texture_float_linear" in extensions
         timer = PreviewGpuTimer(context, "GL_EXT_disjoint_timer_query" in extensions)
     }
 
@@ -233,31 +290,31 @@ internal class GpuPreviewRenderer(
         thread.requireCurrent()
         if (closed.get() || failed || frameScheduled || photo == null) return
         if (latest.next() == null && timer?.hasPending != true) return
-        synchronized(gate) { if (!started || lease?.valid != true) return }
+        if (!started.get() || lease.get()?.valid?.get() != true) return
         val clock = choreographer ?: Choreographer.getInstance().also { choreographer = it }
         frameScheduled = true
-        pendingSinceNanos = System.nanoTime()
         clock.postFrameCallback(callback)
     }
 
     private fun cancelFrame() {
         choreographer?.removeFrameCallback(callback)
         frameScheduled = false
-        pendingSinceNanos = 0L
     }
 
     private fun renderFrame(frameTime: Long) {
         if (closed.get() || failed) return
         timer?.poll()?.forEach(onFrame)
-        val request = latest.next()
-        if (request == null) { schedule(); return }
         val source = photo ?: return
-        synchronized(gate) {
-            val current = lease?.takeIf { it.valid && started } ?: return
+        val current = lease.get()?.takeIf { it.valid.get() && started.get() } ?: return
+        val pending = latest.beginFrame()
+        if (pending == null) { schedule(); return }
+        val request = pending.value
+        run {
             val context = context()
             if (windowLease !== current || window == null) {
                 releaseWindow()
                 window = context.createWindowTarget(current.surface); windowLease = current
+                liveWindows.incrementAndGet()
             }
             context.makeCurrent(checkNotNull(window))
             val cpuStart = System.nanoTime()
@@ -268,14 +325,15 @@ internal class GpuPreviewRenderer(
                     draw.invoke(source, request.params, result)
                     result
                 }
-                present(context, image, current.width, current.height, request.display.rotationDegrees)
+                present(context, image, current.width, current.height, request.display.rotationDegrees, linearFiltering = linearFiltering)
             } catch (failure: Throwable) { timer?.cancelActive(); throw failure }
             timer?.end()
             val cpuNanos = System.nanoTime() - cpuStart
             context.swapBuffers(checkNotNull(window))
             latest.rendered(request); drawCount++
-            // Count vsync slots missed while a changed request awaited this callback, not coalesced UI updates.
-            missedChangedFrames += ((frameTime - pendingSinceNanos).coerceAtLeast(0L) / frameIntervalNanos)
+            // Count from the first undrawn submit, including time spent in the previous slow draw.
+            // beginFrame clears that timestamp so submissions during this draw start the next one.
+            missedChangedFrames += ((frameTime - pending.dirtySinceNanos).coerceAtLeast(0L) / frameIntervalNanos)
             val frame = GpuPreviewFrame(GpuFrameStats(null, cpuNanos, GpuDecisions(0.0, 1.0)), frameTime, missedChangedFrames, ledger.allocatedBytes)
             // Complete the query around GPU work only (before swap); callbacks remain FIFO.
             timer?.complete(frame)?.forEach(onFrame) ?: onFrame(frame)
@@ -285,7 +343,10 @@ internal class GpuPreviewRenderer(
 
     private fun releaseWindow() {
         val old = window; window = null; windowLease = null
-        old?.close()
+        if (old != null) {
+            try { destroyWindow(old); liveWindows.decrementAndGet() }
+            catch (failure: Throwable) { surfaceDestroyFailure.compareAndSet(null, failure); throw failure }
+        }
     }
     private fun releasePhoto() {
         val oldOutput = output; val oldPhoto = photo
@@ -294,10 +355,10 @@ internal class GpuPreviewRenderer(
     }
 
     override fun close() {
-        synchronized(gate) {
-            synchronized(enqueueLock) { if (!closed.compareAndSet(false, true)) return }
-            lease?.valid = false; lease = null; started = false
-            // Cleanup is accepted before quitSafely; never join a rendering thread from the UI.
+        synchronized(enqueueLock) {
+            if (!closed.compareAndSet(false, true)) return
+            lease.getAndSet(null)?.valid?.set(false); started.set(false)
+            // Cleanup is accepted before quitSafely; no UI join. detachSurface can await terminated.
             thread.post {
                 try {
                     cancelFrame()
@@ -306,19 +367,20 @@ internal class GpuPreviewRenderer(
                             try { timer?.close() } finally { egl?.close() }
                         }
                     }
-                } catch (failure: Throwable) { onError(failure) }
-                finally { thread.close() }
+                } catch (failure: Throwable) { shutdownFailure.set(failure); onError(failure) }
+                finally { thread.close(); terminated.countDown() }
             }
         }
     }
+
 }
 
 /** Borrowed texture sampling state is restored even when drawing fails. */
-internal fun present(egl: EglContexts, image: GpuTexture, width: Int, height: Int, rotation: Int, target: GpuTexture? = null) {
+internal fun present(egl: EglContexts, image: GpuTexture, width: Int, height: Int, rotation: Int, target: GpuTexture? = null,
+    linearFiltering: Boolean = false) {
     egl.requireCurrent()
     // GL_LINEAR on RGBA32F needs OES_texture_float_linear; core ES uses the same four-tap
     // interpolation in the display shader instead of raising the engine's minimum capabilities.
-    val linearFiltering = "GL_OES_texture_float_linear" in GLES32.glGetString(GLES32.GL_EXTENSIONS).orEmpty().split(' ')
     val filtering = if (linearFiltering) GLES32.GL_LINEAR else GLES32.GL_NEAREST
     GLES32.glActiveTexture(GLES32.GL_TEXTURE0)
     GLES32.glBindTexture(GLES32.GL_TEXTURE_2D, image.textureId)

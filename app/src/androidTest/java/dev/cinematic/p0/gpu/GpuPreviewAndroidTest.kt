@@ -5,6 +5,7 @@ import android.media.ImageReader
 import android.opengl.GLES32
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.gpu.preview.GpuPreviewFrame
@@ -22,6 +23,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
@@ -139,6 +141,7 @@ class GpuPreviewAndroidTest {
                         assertEquals(stopped.drawCount + 1, snapshot(renderer, failure).drawCount)
                     } finally {
                         renderer.detachSurface(surface)
+                        assertEquals("EGL window must already be destroyed when detach returns", 0, renderer.activeWindowCount)
                         val detached = snapshot(renderer, failure)
                         assertEquals("cycle $cycle detached", 0, detached.windowCount)
                         renderer.submit(params, display)
@@ -223,9 +226,130 @@ class GpuPreviewAndroidTest {
                     assertEquals("No additional recovery errors", 1, errorCalls.get())
                 } finally {
                     renderer.detachSurface(surface)
+                    assertEquals("EGL window must already be destroyed when detach returns", 0, renderer.activeWindowCount)
                     assertEquals(0, snapshot(renderer, failure).windowCount)
                     renderer.closePhoto()
                     assertEquals(0L, snapshot(renderer, failure).allocatedBytes)
+                }
+            }
+        } finally {
+            renderer.close()
+            consumer.quitSafely()
+            consumer.join(5_000)
+            assertFalse("Image consumer did not stop", consumer.isAlive)
+        }
+    }
+
+    @Test fun slowDrawCountsVsyncsMissedByCoalescedUpdatesAndRendersFinalValue() {
+        val failure = AtomicReference<Throwable?>()
+        val frames = ArrayBlockingQueue<GpuPreviewFrame>(8)
+        val drawnStrengths = LinkedBlockingQueue<Double>()
+        val drawing = CountDownLatch(1)
+        val releaseDraw = CountDownLatch(1)
+        val drawCalls = AtomicInteger()
+        val renderer = GpuPreviewRenderer(instrumentation.targetContext.assets,
+            onFrame = { check(frames.offer(it)) },
+            onError = { failure.compareAndSet(null, it) },
+            draw = { photo, params, output ->
+                val context = photo.input.context
+                context.glThread.requireCurrent()
+                drawnStrengths.add(params.strength)
+                if (drawCalls.incrementAndGet() == 1) {
+                    drawing.countDown()
+                    check(releaseDraw.await(5, TimeUnit.SECONDS)) { "Test did not release slow draw" }
+                }
+                GLES32.glBindFramebuffer(GLES32.GL_FRAMEBUFFER, output.framebufferId)
+                GLES32.glDisable(GLES32.GL_SCISSOR_TEST)
+                GLES32.glClearColor(0.1f, 0.2f, 0.3f, 1f)
+                GLES32.glClear(GLES32.GL_COLOR_BUFFER_BIT)
+                context.checkGl("synthetic slow preview draw")
+            })
+        val consumer = HandlerThread("PreviewSlowDrawConsumer").apply { start() }
+        try {
+            ImageReader.newInstance(16, 16, PixelFormat.RGBA_8888, 2).use { reader ->
+                reader.setOnImageAvailableListener({ it.acquireLatestImage()?.close() }, Handler(consumer.looper))
+                val surface = reader.surface
+                try {
+                    val display = GpuDisplayOptions(false, 0)
+                    renderer.submit(GpuRenderParams(0.0, PhotoAdjustments.NONE), display)
+                    renderer.setStarted(true)
+                    renderer.openPhoto(LinearSrgbImage(4, 2, FloatArray(4 * 2 * 3) { 0.18f }))
+                    renderer.attachSurface(surface, 16, 16, 60f)
+                    assertTrue("First draw did not begin", drawing.await(5, TimeUnit.SECONDS))
+                    // Every update is submitted while GL is inside the same blocked draw.
+                    instrumentation.runOnMainSync {
+                        repeat(100) { update ->
+                            renderer.submit(GpuRenderParams((update + 1) / 100.0, PhotoAdjustments.NONE), display)
+                        }
+                    }
+                    SystemClock.sleep(80) // More than four nominal vsync periods after first dirty submit.
+                    releaseDraw.countDown()
+                    val first = frames.poll(5, TimeUnit.SECONDS)
+                    val finalFrame = frames.poll(5, TimeUnit.SECONDS)
+                    failure.get()?.let { throw AssertionError("Renderer failure", it) }
+                    assertNotNull("First frame statistics missing", first)
+                    assertNotNull("Final frame statistics missing", finalFrame)
+                    assertTrue("Coalesced updates must accrue missed changed frames",
+                        checkNotNull(finalFrame).missedChangedFrames > checkNotNull(first).missedChangedFrames)
+                    assertEquals(listOf(0.0, 1.0), drawnStrengths.toList())
+                    assertEquals(2L, snapshot(renderer, failure).drawCount)
+                } finally {
+                    releaseDraw.countDown()
+                    renderer.detachSurface(surface)
+                    assertEquals("EGL window must already be destroyed when detach returns", 0, renderer.activeWindowCount)
+                    assertEquals(0, snapshot(renderer, failure).windowCount)
+                    renderer.closePhoto()
+                    assertEquals(0L, snapshot(renderer, failure).allocatedBytes)
+                }
+            }
+        } finally {
+            releaseDraw.countDown()
+            renderer.close()
+            consumer.quitSafely()
+            consumer.join(5_000)
+            assertFalse("Image consumer did not stop", consumer.isAlive)
+        }
+    }
+
+    @Test fun stopTimeWindowDestructionFailureRemainsVisibleAtLaterDetachAndShutdown() {
+        val failure = AtomicReference<Throwable?>()
+        val frames = ArrayBlockingQueue<GpuPreviewFrame>(8)
+        val destructionFailed = CountDownLatch(1)
+        val injected = IllegalStateException("synthetic EGL window destruction failure")
+        val renderer = GpuPreviewRenderer(instrumentation.targetContext.assets,
+            onFrame = { check(frames.offer(it)) },
+            onError = { failure.compareAndSet(null, it); destructionFailed.countDown() },
+            destroyWindow = { throw injected })
+        val consumer = HandlerThread("PreviewDestroyFailureConsumer").apply { start() }
+        try {
+            ImageReader.newInstance(16, 16, PixelFormat.RGBA_8888, 2).use { reader ->
+                reader.setOnImageAvailableListener({ it.acquireLatestImage()?.close() }, Handler(consumer.looper))
+                val surface = reader.surface
+                try {
+                    renderer.setStarted(true)
+                    renderer.openPhoto(LinearSrgbImage(4, 2, FloatArray(4 * 2 * 3) { 0.18f }))
+                    renderer.attachSurface(surface, 16, 16)
+                    awaitFrame(frames, failure)
+                    assertEquals(1, renderer.activeWindowCount)
+
+                    // Failure originates in the earlier lifecycle stop, not detach's own barrier.
+                    renderer.setStarted(false)
+                    assertTrue("Stop did not report destruction failure", destructionFailed.await(5, TimeUnit.SECONDS))
+                    assertSame(injected, failure.get())
+                    assertEquals("Failed destruction must not claim the window was released", 1, renderer.activeWindowCount)
+                    val detachFailure = assertThrows(IllegalStateException::class.java) { renderer.detachSurface(surface) }
+                    assertTrue("Detach must preserve the earlier destruction failure",
+                        generateSequence<Throwable>(detachFailure) { it.cause }.any { it === injected })
+
+                    renderer.close()
+                    // This also waits for context shutdown, which closes the real target directly.
+                    val shutdownDetachFailure = assertThrows(IllegalStateException::class.java) { renderer.detachSurface(surface) }
+                    assertTrue("Shutdown must not erase the earlier destruction failure",
+                        generateSequence<Throwable>(shutdownDetachFailure) { it.cause }.any { it === injected })
+                } finally {
+                    renderer.close()
+                    // The injected failure remains expected; still wait for shutdown before reader.close.
+                    runCatching { renderer.detachSurface(surface) }
                 }
             }
         } finally {
