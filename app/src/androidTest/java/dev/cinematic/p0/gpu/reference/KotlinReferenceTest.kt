@@ -75,6 +75,12 @@ class KotlinReferenceTest {
             assertSame(full.skinWeight, compact.skinWeight)
             assertEquals(full.mistAutoStrength, compact.mistAutoStrength, 0.0)
             assertArrayEquals(full.display8, compact.display8)
+            val ortonInput = KotlinReference.render(prepared, .5, retainIntermediates = false, retainOrtonInput = true)
+            assertEquals(setOf(Point.MIST, Point.SHOULDER), ortonInput.images.keys)
+            assertBitsEqual(full[Point.MIST], ortonInput[Point.MIST], "$kind Orton input")
+            assertBitsEqual(full[Point.SHOULDER], ortonInput[Point.SHOULDER], kind.name)
+            assertEquals(full.mistAutoStrength, ortonInput.mistAutoStrength, 0.0)
+            assertArrayEquals(full.display8, ortonInput.display8)
         }
     }
 

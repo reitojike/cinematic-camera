@@ -61,10 +61,10 @@ internal object KotlinReference {
     fun render(input: LinearSrgbImage, params: GpuRenderParams): Result = render(prepare(input, params.adjustments), params.strength)
 
     /** 既定では全工程を保持。一致行列は保持を抑え、CPU 見本と中間画像を同時に積まない。 */
-    fun render(prepared: Prepared, strength: Double, retainIntermediates: Boolean = true): Result {
+    fun render(prepared: Prepared, strength: Double, retainIntermediates: Boolean = true, retainOrtonInput: Boolean = false): Result {
         val images = linkedMapOf<Point, LinearSrgbImage>()
         fun tap(point: Point, image: LinearSrgbImage): LinearSrgbImage {
-            if (retainIntermediates || point == Point.SHOULDER) images[point] = image
+            if (retainIntermediates || point == Point.SHOULDER || (retainOrtonInput && point == Point.MIST)) images[point] = image
             return image
         }
         tap(Point.INPUT, prepared.input)

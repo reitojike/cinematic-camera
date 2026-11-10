@@ -3,16 +3,13 @@ precision highp float;
 precision highp int;
 precision highp sampler2D;
 precision highp isampler2D;
+#include "common/color.glsl"
+#include "common/display.glsl"
 uniform sampler2D s_input;
 uniform vec2 u_surfaceSize;
 uniform int u_rotation;
 uniform bool u_linearFiltering;
 layout(location = 0) out vec4 o_color;
-// Temporary standalone copy of TrialDisplayPixels transfer. #284 shares this with encode.frag.
-float cs_presentEncode(float linearValue) {
-    float v = clamp(linearValue, 0.0, 1.0);
-    return v <= 0.0031308 ? 12.92 * v : 1.055 * pow(v, 1.0 / 2.4) - 0.055;
-}
 vec3 cs_presentSample(vec2 uv) {
     if (u_linearFiltering) return texture(s_input, uv).rgb;
     // RGBA32F filtering is optional in core ES. Four taps preserve linear display resampling
@@ -42,5 +39,5 @@ void main() {
     else if (u_rotation == 180) uv = vec2(1.0 - uv.x, 1.0 - uv.y);
     else if (u_rotation == 270) uv = vec2(1.0 - uv.y, uv.x);
     vec3 rgb = cs_presentSample(uv);
-    o_color = vec4(cs_presentEncode(rgb.r), cs_presentEncode(rgb.g), cs_presentEncode(rgb.b), 1.0);
+    o_color = vec4(cs_display8(rgb), 1.0);
 }

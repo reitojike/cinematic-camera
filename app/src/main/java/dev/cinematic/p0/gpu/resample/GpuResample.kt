@@ -6,6 +6,7 @@ import dev.cinematic.p0.gpu.EglContexts
 import dev.cinematic.p0.gpu.FragmentPass
 import dev.cinematic.p0.gpu.GpuMemoryLedger
 import dev.cinematic.p0.gpu.GpuTexture
+import dev.cinematic.p0.gpu.GpuTexturePool
 import dev.cinematic.p0.gpu.TextureInput
 import dev.cinematic.p0.raw.StageClearBlur
 import java.nio.ByteBuffer
@@ -18,15 +19,22 @@ import java.nio.ByteOrder
 internal class GpuResample(
     private val egl: EglContexts,
     private val ledger: GpuMemoryLedger,
+    private val pool: GpuTexturePool? = null,
 ) : AutoCloseable {
     private data class Key(val input: Int, val output: Int, val filter: StageClearBlur.Filter)
-    private class Weights(val values: GpuTexture, val first: GpuTexture) : AutoCloseable {
+    internal class Weights(val values: GpuTexture, val first: GpuTexture) : AutoCloseable {
         override fun close() { try { values.close() } finally { first.close() } }
     }
     private val cache = mutableMapOf<Key, Weights>()
     private var closed = false
+    internal val coefficientTableCount get() = cache.size
 
-    fun resize(input: GpuTexture, w: Int, h: Int, filter: StageClearBlur.Filter): GpuTexture {
+    fun resize(input: GpuTexture, w: Int, h: Int, filter: StageClearBlur.Filter): GpuTexture =
+        resizeImpl(input, w, h, filter, releaseInputAfterFirstAxis = false)
+
+    /** Only blur's owned reduced field may be released before the second axis. */
+    private fun resizeImpl(input: GpuTexture, w: Int, h: Int, filter: StageClearBlur.Filter,
+        releaseInputAfterFirstAxis: Boolean): GpuTexture {
         requireInput(input)
         require(w > 0 && h > 0 && w.toLong() * h <= Int.MAX_VALUE)
         if (input.width == w && input.height == h) return input
@@ -35,6 +43,9 @@ internal class GpuResample(
         val verticalFirst = heightCut > 0 && heightCut > 2 * widthCut
         val intermediate = if (verticalFirst) axis(input, h, false, filter) else axis(input, w, true, filter)
         try {
+            // The first pass has consumed the owned field. Keep only its Float32 axis result.
+            // A no-op first axis still aliases input and must remain alive for the second pass.
+            if (releaseInputAfterFirstAxis && intermediate !== input) input.close()
             val output = if (verticalFirst) axis(intermediate, w, true, filter) else axis(intermediate, h, false, filter)
             if (intermediate !== input && intermediate !== output) intermediate.close()
             return output
@@ -60,7 +71,8 @@ internal class GpuResample(
         requireInput(input)
         val (w, h) = StageClearBlur.reducedSize(input.width, input.height, radiusFraction)
         val reduced = reduce(input, w, h)
-        try { return upsampleFrom(reduced, input.width, input.height, StageClearBlur.Filter.BILINEAR) }
+        try { return resizeImpl(reduced, input.width, input.height, StageClearBlur.Filter.BILINEAR,
+            releaseInputAfterFirstAxis = reduced !== input) }
         finally { if (reduced !== input) reduced.close() }
     }
 
@@ -71,14 +83,14 @@ internal class GpuResample(
         require(input.format == GpuTexture.Format.R32F || input.format == GpuTexture.Format.RGBA32F)
     }
 
-    private fun weights(input: Int, output: Int, filter: StageClearBlur.Filter): Weights =
+    internal fun weights(input: Int, output: Int, filter: StageClearBlur.Filter): Weights =
         cache.getOrPut(Key(input, output, filter)) {
             val samples = StageClearBlur.samples(input, output, filter)
             val taps = samples.maxOf { it.weights.size }
-            val values = GpuTexture.create(egl, ledger, taps, output, GpuTexture.Format.R32F)
+            val values = GpuTexture.create(egl, ledger, taps, output, GpuTexture.Format.R32F, pool)
             var first: GpuTexture? = null
             try {
-                first = GpuTexture.create(egl, ledger, 1, output, GpuTexture.Format.R32I)
+                first = GpuTexture.create(egl, ledger, 1, output, GpuTexture.Format.R32I, pool)
                 val data = ByteBuffer.allocateDirect(Math.multiplyExact(Math.multiplyExact(taps, output), 4))
                     .order(ByteOrder.nativeOrder()).asFloatBuffer()
                 val starts = ByteBuffer.allocateDirect(Math.multiplyExact(output, 4)).order(ByteOrder.nativeOrder()).asIntBuffer()
@@ -99,7 +111,7 @@ internal class GpuResample(
         val oldSize = if (horizontal) input.width else input.height
         if (oldSize == size) return input
         val weights = weights(oldSize, size, filter)
-        val output = GpuTexture.create(egl, ledger,
+        val output = input.createSibling(
             if (horizontal) size else input.width, if (horizontal) input.height else size, input.format)
         try {
             val inputs = listOf(TextureInput("s_input", input, 0), TextureInput("s_weights", weights.values, 1),
@@ -108,6 +120,10 @@ internal class GpuResample(
                 GLES32.glUniform1i(GLES32.glGetUniformLocation(program, "u_horizontal"), if (horizontal) 1 else 0)
             }
             if (filter == StageClearBlur.Filter.BOX) {
+                // Reused storage may still be sampled by earlier commands. Image stores are
+                // incoherent: wait for those reads before writing, in addition to the pass's
+                // existing post-dispatch barrier for subsequent readers.
+                if (output.pool != null) GLES32.glMemoryBarrier(GLES32.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT)
                 val path = if (input.format == GpuTexture.Format.R32F) "analysis/reduce_plane.comp" else "analysis/reduce_rgb.comp"
                 egl.passes().run(ComputePass(egl.shaders().compute(path), inputs,
                     groupsX = if (horizontal) output.height else output.width,
