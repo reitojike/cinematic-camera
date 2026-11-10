@@ -18,6 +18,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /** UI writes only the latest value; only the GL thread consumes/acknowledges frames. */
 internal class LatestPreviewFrame<T>(initial: T, private val nowNanos: () -> Long = System::nanoTime) {
@@ -112,6 +114,9 @@ internal class GpuPreviewRenderer(
     // A failed EGL destroy must never be hidden by an earlier ON_STOP/cleanup clearing the handle.
     private val surfaceDestroyFailure = AtomicReference<Throwable?>()
     private val lease = AtomicReference<SurfaceLease?>()
+    private val attached = MutableStateFlow(false)
+    /** Actual surface lease only, not successful EGL/context initialization. */
+    internal val surfaceAttached = attached.asStateFlow()
     private val started = AtomicBoolean()
     private var egl: EglContexts? = null
     private val ledger = GpuMemoryLedger()
@@ -195,26 +200,30 @@ internal class GpuPreviewRenderer(
 
     fun attachSurface(surface: Surface, width: Int, height: Int, refreshRate: Float = 60f) {
         require(width > 0 && height > 0)
-        if (closed.get()) return
-        trace("surface.attach") { "surface=${System.identityHashCode(surface)} width=$width height=$height" }
-        lease.getAndSet(SurfaceLease(surface, width, height))?.valid?.set(false)
-        post {
-            val hz = refreshRate.takeIf { it.isFinite() && it > 0 } ?: 60f
-            frameIntervalNanos = (1_000_000_000.0 / hz).toLong().coerceAtLeast(1L)
-            releaseWindow(); latest.invalidate(); schedule()
+        synchronized(enqueueLock) {
+            if (closed.get()) return
+            trace("surface.attach") { "surface=${System.identityHashCode(surface)} width=$width height=$height" }
+            lease.getAndSet(SurfaceLease(surface, width, height))?.valid?.set(false)
+            attached.value = true
+            post {
+                val hz = refreshRate.takeIf { it.isFinite() && it > 0 } ?: 60f
+                frameIntervalNanos = (1_000_000_000.0 / hz).toLong().coerceAtLeast(1L)
+                releaseWindow(); latest.invalidate(); schedule()
+            }
         }
     }
 
     fun resizeSurface(surface: Surface, width: Int, height: Int) {
-        if (width <= 0 || height <= 0 || closed.get()) return
-        trace("surface.resize") { "surface=${System.identityHashCode(surface)} width=$width height=$height" }
-        while (true) {
+        if (width <= 0 || height <= 0) return
+        synchronized(enqueueLock) {
+            if (closed.get()) return
+            trace("surface.resize") { "surface=${System.identityHashCode(surface)} width=$width height=$height" }
             val current = lease.get()?.takeIf { it.surface === surface } ?: return
-            if (lease.compareAndSet(current, SurfaceLease(surface, width, height))) {
-                current.valid.set(false); break
-            }
+            lease.set(SurfaceLease(surface, width, height))
+            current.valid.set(false)
+            attached.value = true
+            post { releaseWindow(); latest.invalidate(); schedule() }
         }
-        post { releaseWindow(); latest.invalidate(); schedule() }
     }
 
     /**
@@ -227,14 +236,15 @@ internal class GpuPreviewRenderer(
     fun detachSurface(surface: Surface) {
         val detachStarted = SystemClock.elapsedRealtimeNanos()
         trace("surface.detach.begin") { "surface=${System.identityHashCode(surface)} timeoutMs=2000" }
-        while (true) {
-            val current = lease.get()?.takeIf { it.surface === surface } ?: break
-            current.valid.set(false)
-            if (lease.compareAndSet(current, null)) break
-        }
         val destroyed = CountDownLatch(1)
         val failure = AtomicReference<Throwable?>()
         val completion = synchronized(enqueueLock) {
+            lease.get()?.takeIf { it.surface === surface }?.let { current ->
+                current.valid.set(false)
+                lease.set(null)
+            }
+            // Publish with the lease mutation, never let an old detach hide a newer attachment.
+            attached.value = hasSurface
             if (closed.get()) terminated else {
                 thread.post {
                     try {
@@ -440,6 +450,7 @@ internal class GpuPreviewRenderer(
             if (!closed.compareAndSet(false, true)) return
             trace("renderer.close.begin")
             lease.getAndSet(null)?.valid?.set(false); started.set(false)
+            attached.value = false
             // Cleanup is accepted before quitSafely; no UI join. detachSurface can await terminated.
             thread.post {
                 try {

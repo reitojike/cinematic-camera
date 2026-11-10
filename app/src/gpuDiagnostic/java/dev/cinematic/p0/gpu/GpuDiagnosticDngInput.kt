@@ -5,6 +5,8 @@ import android.net.Uri
 import android.os.CancellationSignal
 import android.os.ParcelFileDescriptor
 import dev.cinematic.p0.gpu.preview.GpuSurfaceProbe
+import dev.cinematic.p0.gpu.preview.GpuInputAdmissionRefused
+import dev.cinematic.p0.gpu.preview.GpuInputRequestDeadline
 import dev.cinematic.p0.jpegrender.original.Original24Preflight
 import dev.cinematic.p0.jpegrender.original.Original24PreviewSession
 import dev.cinematic.p0.jpegrender.original.Original24Resources
@@ -32,16 +34,20 @@ import java.util.UUID
 internal object GpuDiagnosticDngInput {
     private var pending: Owner? = null // Access only from manualOriginalIo, including cleanup.
 
-    fun load(context: Context, uri: Uri, resources: () -> PhotoRollResources, signal: CancellationSignal) =
+    fun load(context: Context, uri: Uri, resources: () -> PhotoRollResources, signal: CancellationSignal,
+        request: GpuInputRequestDeadline? = null, onAdmission: (Throwable?) -> Unit = {}) =
         AndroidAutoDevelopQueue.get(context.applicationContext).manualOriginalIo {
             releasePending()
             signal.throwIfCanceled()
-            val admission = DevelopExecution.tryStartGpuDiagnosticPreviewObserved(resources().developConditions(true))
+            val observations = resources().developConditions(true)
+            lateinit var admission: AutoDevelopCoordinator.GpuDiagnosticPreviewAdmission
+            fun acquire() = DevelopExecution.tryStartGpuDiagnosticPreviewObserved(observations).also { admission = it }.attempt
+            val slot = if (request == null) acquire() else request.tryAdmit(::acquire)
             GpuSurfaceProbe.event("input.admission") {
                 "admitted=${admission.attempt != null} ${admission.snapshot}"
             }
-            val slot = admission.attempt
-                ?: throw IOException("Diagnostic input admission unavailable").also {
+            if (slot == null) throw GpuInputAdmissionRefused(admission.snapshot).also { refusal ->
+                    onAdmission(refusal) // Slot-before-owner only; caller records the current publication event.
                     // The decision has already failed. This optional extra read cannot admit/retry it.
                     DngInputProbe.readOnly(context.applicationContext, uri,
                         "gpu.after_admission_failure_observation sourceOpened=false", signal,
@@ -50,7 +56,11 @@ internal object GpuDiagnosticDngInput {
             val owner = Owner(context.applicationContext, slot, signal).also { pending = it }
             DevelopExecution.registerStop(slot, signal::cancel)
             var failure: Throwable? = null
-            try { owner.load(uri) }
+            try {
+                onAdmission(null) // The request guard has committed actual admission, not just a ready flag.
+                signal.throwIfCanceled()
+                owner.load(uri)
+            }
             catch (error: Throwable) { failure = error; throw error }
             finally {
                 try { releasePending() } catch (cleanup: Throwable) {

@@ -74,6 +74,23 @@ class GpuDiagnosticDngInputTest {
         assertTrue(inputWasCancelled(signal, null))
     }
 
+    @Test fun cleanupCancellationDoesNotReclassifyAReadFailure() {
+        val failedSignal = CancellationSignal()
+        assertFalse(cancelInputForCleanup(failedSignal, IOException("synthetic pre-admission failure")))
+        assertTrue(failedSignal.isCanceled)
+        val cancelledSignal = CancellationSignal()
+        assertTrue(cancelInputForCleanup(cancelledSignal, CancellationException()))
+        assertTrue(cancelledSignal.isCanceled)
+    }
+
+    @Test fun cleanupListenerFailureDoesNotReplaceTheOriginalReadFailure() {
+        val signal = CancellationSignal().apply {
+            setOnCancelListener { throw IOException("synthetic cleanup failure") }
+        }
+        assertFalse(cancelInputForCleanup(signal, IOException("synthetic original failure")))
+        assertTrue(signal.isCanceled)
+    }
+
     @Test fun nonLocalSelectionIsRejectedAndReleasesAdmissionForNextSelection() {
         // Rejection occurs in the existing local-files policy before querying any provider.
         repeat(2) {
