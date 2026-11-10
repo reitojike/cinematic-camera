@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.CancellationSignal
 import android.os.ParcelFileDescriptor
+import dev.cinematic.p0.gpu.preview.GpuSurfaceProbe
 import dev.cinematic.p0.jpegrender.original.Original24Preflight
 import dev.cinematic.p0.jpegrender.original.Original24PreviewSession
 import dev.cinematic.p0.jpegrender.original.Original24Resources
@@ -35,7 +36,11 @@ internal object GpuDiagnosticDngInput {
         AndroidAutoDevelopQueue.get(context.applicationContext).manualOriginalIo {
             releasePending()
             signal.throwIfCanceled()
-            val slot = DevelopExecution.tryStartPreviewObserved(resources().developConditions(true))
+            val admission = DevelopExecution.tryStartGpuDiagnosticPreviewObserved(resources().developConditions(true))
+            GpuSurfaceProbe.event("input.admission") {
+                "admitted=${admission.attempt != null} ${admission.snapshot}"
+            }
+            val slot = admission.attempt
                 ?: throw IOException("Diagnostic input admission unavailable").also {
                     // The decision has already failed. This optional extra read cannot admit/retry it.
                     DngInputProbe.readOnly(context.applicationContext, uri,
@@ -60,10 +65,23 @@ internal object GpuDiagnosticDngInput {
     }
 
     private fun releasePending() {
-        val owner = pending ?: return
-        owner.close()
-        DevelopExecution.completeAfterResourcesClosed(owner.slot)
-        pending = null
+        val owner = pending
+        GpuSurfaceProbe.event("input.release.begin") { "hasPendingOwner=${owner != null}" }
+        var closeCompleted = false
+        var completedAfterResourcesClosed: Boolean? = null
+        try {
+            if (owner == null) return
+            owner.close()
+            closeCompleted = true
+            completedAfterResourcesClosed = DevelopExecution.completeAfterResourcesClosed(owner.slot)
+            pending = null
+        } finally {
+            GpuSurfaceProbe.event("input.release.end") {
+                "hadPendingOwner=${owner != null} closeCompleted=$closeCompleted " +
+                    "completedAfterResourcesClosed=$completedAfterResourcesClosed " +
+                    "pendingCleared=${owner != null && pending == null} hasPendingOwner=${pending != null}"
+            }
+        }
     }
 
     private class Owner(val app: Context, val slot: AutoDevelopCoordinator.Attempt,

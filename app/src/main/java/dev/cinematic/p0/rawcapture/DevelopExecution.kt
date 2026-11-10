@@ -22,6 +22,8 @@ internal object DevelopExecution {
     }
     fun tryStartObserved(observations: AutoDevelopConditions) = coordinator.tryStartObserved(observations)
     fun tryStartPreviewObserved(observations: AutoDevelopConditions) = coordinator.tryStartPreviewObserved(observations)
+    fun tryStartGpuDiagnosticPreviewObserved(observations: AutoDevelopConditions) =
+        coordinator.tryStartGpuDiagnosticPreviewObserved(observations)
     fun reserveForegroundExport(owner: Any, observations: AutoDevelopConditions) = coordinator.reserveForegroundExport(owner, observations)
     fun tryStartForegroundExport(request: AutoDevelopCoordinator.ForegroundExportRequest, owner: Any,
         observations: AutoDevelopConditions) = coordinator.tryStartForegroundExport(request, owner, observations)
