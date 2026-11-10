@@ -107,7 +107,7 @@ internal data class GpuDecisions(val mistAutoStrength: Double, val faceCutFactor
 - **精度**: シェーダーは `precision highp float;`。中間テクスチャは RGBA32F（色）・R32F（平面）を既定とする。RGBA16F は Gate 1 の計測で差が基準内と確認できたものだけに使う。
 - **スレッド**: GL の呼び出しはすべて `GlThread` 上。UI スレッドからは要求をキューに積むだけ。要求は**最新の1件だけ**を残して合流する（Choreographer のフレームごとに1回描画）。
 - **コンテキスト**: 1つの共有コンテキストを持ち、プレビューの画面用サーフェスと書き出しのオフスクリーンで共有する。プレビューと書き出しが同時に走る場合、書き出しは帯ごとに区切って GlThread のキューに積み、プレビューのフレームを優先する。
-- **メモリ**: `GpuTexture` がバイト数を記録し、合計を `GpuMemoryLedger` に報告する。目安はプレビュー 64MiB 以下、書き出し 192MiB 以下（12MP）。超える要求は失敗させる（黙って縮小しない）。
+- **メモリ**: `GpuTexture` がバイト数を記録し、合計を `GpuMemoryLedger` に報告する。目安はプレビュー 96MiB 以下、書き出し 192MiB 以下（12MP）。超える要求は失敗させる（黙って縮小しない）。`peakAllocatedBytes` は成功した予約の最大値を解放後も保持する。AS_SHOT を含む全工程の最大と予算との差を計測する。予算変更の判断と Gate 1 基準は [#276](https://github.com/reitojike/cinematic-camera/issues/276)・[#285](https://github.com/reitojike/cinematic-camera/issues/285) に記録する。
 - **解放**: 写真を閉じる、画面を離れる、`onTrimMemory`（`TRIM_MEMORY_UI_HIDDEN` 以上）で写真の GPU 状態を解放する。コンテキスト喪失（`EGL_CONTEXT_LOST`）は失敗として扱い、次の要求で作り直す。
 
 ### 4.4 色と座標の約束
@@ -116,7 +116,8 @@ internal data class GpuDecisions(val mistAutoStrength: Double, val faceCutFactor
 - 画素中心は `(x + 0.5, y + 0.5)`。`texelFetch` の整数アドレスと Pillow の明示的な重みを使う。
 - 行列の乗加算順序と各軸間の Float 丸めを保つ。Kotlin の見本の計算は変更しない。
 - 2026-11-10 の利用者判断（#279 / PR #305）により、`cs_signedCbrt` は pow の seed に precise 付き Newton 法を1回適用する。有限極値で cube が overflow、または分母が0の場合は有限 seed を保持する。0は0を返す。
-- 同判断で色相補正 B2 を採用する。元の `atan(b, a)` を seed とし、方向 `(a,b)` を最大絶対値で正規化してから sin/cos の残差で1回補正する。正角度へ不要な360加算をせず、負角度だけ正規化する。符号付き両ゼロの規約を維持する。
+- 同判断で色相補正 B2 を採用する。元の `atan(b, a)` を seed とし、方向 `(a,b)` を `frexp` の仮数と共通指数の差による `ldexp` で正規化してから sin/cos の残差で1回補正する。正角度へ不要な360加算をせず、負角度だけ正規化する。符号付き両ゼロの規約を維持する。
+- MAX 値による除算は指定 Android で両成分が0となったため使わない。GLSL ES §8.3 は `ldexp` の指数>+128を未定義、指数<-126を0へflush可とするので、単純な `ldexp(x,-最大指数)` も使わない。仮数から共通指数との差（非正）で揃えれば支配成分の指数差は0となり、方向を失わない。ゼロ成分の指数0は共通指数の選択から除外し、正の指数差も0で抑える。
 - 色相の利用側は円周上の距離を使う。試験も `min(abs(ref-actual) % 360, 360 - abs(ref-actual) % 360)` で比較し、0°と360°を同じ角度とする。線形のULP距離は診断値であり、色相の合否には使わない。
 
 工程専用の許容差は利用者判断時に次の値で固定し、結果を見て追加緩和しない。正本の定数は `GpuTolerances` に置く。

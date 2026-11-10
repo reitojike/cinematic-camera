@@ -76,9 +76,14 @@ float cs_hueDeg(vec3 lab) {
     }
     // B2: refine the atan seed once. Normalize only the residual's direction
     // to avoid subnormal products and overflow at finite Float extremes.
-    precise float scale = max(abs(lab.y), abs(lab.z));
-    precise float a = lab.y / scale;
-    precise float b = lab.z / scale;
+    // Divide mantissas by a common power of two. A reciprocal of Float.MAX_VALUE
+    // may flush to zero; ldexp(x, -128) is also allowed to flush by GLSL ES 8.3.
+    ivec2 exponents;
+    precise vec2 mantissas = frexp(lab.yz, exponents);
+    int commonExponent = lab.y == 0.0 ? exponents.y :
+        (lab.z == 0.0 ? exponents.x : max(exponents.x, exponents.y));
+    precise float a = ldexp(mantissas.x, min(exponents.x - commonExponent, 0));
+    precise float b = ldexp(mantissas.y, min(exponents.y - commonExponent, 0));
     precise float theta = atan(lab.z, lab.y);
     precise float cosine = cos(theta);
     precise float sine = sin(theta);
