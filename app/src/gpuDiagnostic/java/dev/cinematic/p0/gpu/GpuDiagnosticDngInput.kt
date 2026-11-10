@@ -95,7 +95,7 @@ internal object GpuDiagnosticDngInput {
                 openOriginal = ::openOriginal).also { session = it }
             // CancellationSignal also interrupts an in-flight native decode, not only its checkpoints.
             signal.setOnCancelListener(inputSession::requestStop)
-            val input = inputSession.loadAsShotInput(stop)
+            val input = inputSession.loadGpuAsShotInput(stop)
             repository.verifyPreview(original, stop, readers = readers)
             checkpoint()
             return input

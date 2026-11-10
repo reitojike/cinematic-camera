@@ -32,7 +32,7 @@ class StageClearGpuPipelineAndroidTest {
                 PhotoAdjustments.NONE, PhotoAdjustments(60.0, 0.0),
                 PhotoAdjustments(0.0, 1.0), PhotoAdjustments(-60.0, -1.0),
             )),
-            Matrix(GpuReferenceImages.PREVIEW_SIZE, listOf(.5, 1.0), listOf(
+            Matrix(GpuReferenceImages.Size(1024, 768), listOf(.5, 1.0), listOf(
                 PhotoAdjustments.NONE, PhotoAdjustments(60.0, 1.0),
             )),
         )
@@ -94,7 +94,7 @@ class StageClearGpuPipelineAndroidTest {
     @Test fun strengthReusesBothCachesAndMatchesFreshRgbaBitsAtBothSizes() = gpu { egl ->
         var comparisons = 0
         var observedPeak = 0L
-        for (size in listOf(GpuReferenceImages.Size(256, 192), GpuReferenceImages.PREVIEW_SIZE)) {
+        for (size in listOf(GpuReferenceImages.Size(256, 192), GpuReferenceImages.Size(1024, 768))) {
             val label = "MIXED ${size.width}x${size.height}"
             val input = GpuReferenceImages.create(GpuReferenceImages.Kind.MIXED, size)
             val ledger = previewLedger()

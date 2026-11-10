@@ -102,7 +102,7 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
                     dngLoading = false
                     if (failure == null && !signal.isCanceled) {
                         renderer.openPhoto(input)
-                        inputStatus = "DNG AS_SHOT入力: ${input.width} × ${input.height}（長辺1024以下）"
+                        inputStatus = "DNG AS_SHOT入力: ${input.width} × ${input.height}（長辺1024・786,432画素以下）"
                     } else {
                         // Provider/native exception messages can contain names or URIs. Never display/log them.
                         inputStatus = "DNGを読み込めません。内部ストレージの試験用DNGと端末の空き資源を確認し、選び直してください。"
@@ -258,7 +258,7 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
                 pickDng.launch(arrayOf("image/x-adobe-dng", "image/dng", "application/octet-stream"))
             }) { Text("試験用DNGをFilesから選択") }
             Text(if (dngSelected) inputStatus else if (loading) "入力を生成中…" else
-                "1024 × 769 / 固定seedの合成入力。公開・合成DNGのみ選択可。個人の写真は使用しないでください。")
+                "1024 × 768 / 固定seedの合成入力。公開・合成DNGのみ選択可。個人の写真は使用しないでください。")
             DiagnosticSlider("強度", strength, 0f..1f) { strength = it }
             DiagnosticSlider("暖かさ", warmth, -100f..100f) { warmth = it }
             DiagnosticSlider("露出 EV", exposure, -2f..2f) { exposure = it }

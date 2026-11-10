@@ -58,9 +58,9 @@ class GpuDiagnosticPickerLifecycleTest {
         awaitText { it == "DNG原本を照合して入力を準備中…" }
         clickMatching { it.startsWith("合成入力:") }
         click("MIXED") // Same fixture must still switch the mode back from DNG.
-        awaitText { it.startsWith("1024 × 769 / 固定seedの合成入力") }
+        awaitText { it.startsWith("1024 × 768 / 固定seedの合成入力") }
         drain()
-        assertTrue(nodes().any { it.text?.toString()?.startsWith("1024 × 769 / 固定seedの合成入力") == true })
+        assertTrue(nodes().any { it.text?.toString()?.startsWith("1024 × 768 / 固定seedの合成入力") == true })
         assertTrue(nodes().none { it.text?.toString()?.startsWith("DNGを読み込めません") == true })
     }
 
@@ -79,7 +79,7 @@ class GpuDiagnosticPickerLifecycleTest {
         assertTrue(nodes().any { it.text?.toString() == "GPUを再作成して再試行" })
         clickMatching { it.startsWith("合成入力:") }
         click("MIXED")
-        awaitText { it.startsWith("1024 × 769 / 固定seedの合成入力") }
+        awaitText { it.startsWith("1024 × 768 / 固定seedの合成入力") }
         await("a real new frame clears the GPU failure") {
             nodes().none { it.text?.toString()?.startsWith("GPU診断エラー:") == true }
         }
@@ -103,7 +103,7 @@ class GpuDiagnosticPickerLifecycleTest {
         try {
             assertTrue("Existing IO owner did not start", entered.await(10, TimeUnit.SECONDS))
             ActivityScenario.launch(GpuPreviewDiagnosticActivity::class.java).use { scenario ->
-                awaitText { it.startsWith("1024 × 769 / 固定seedの合成入力") }
+                awaitText { it.startsWith("1024 × 768 / 固定seedの合成入力") }
                 test(scenario, monitor) {
                     release.countDown()
                     blocker.get(10, TimeUnit.SECONDS)

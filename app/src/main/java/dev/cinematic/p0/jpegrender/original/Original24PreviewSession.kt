@@ -5,6 +5,7 @@ import android.graphics.ColorSpace
 import android.os.CancellationSignal
 import android.os.Looper
 import android.os.ParcelFileDescriptor
+import dev.cinematic.p0.gpu.GpuPreviewInputSize
 import dev.cinematic.p0.raw.FloatPlane
 import dev.cinematic.p0.raw.StageClearDecisions
 import dev.cinematic.p0.raw.original.OriginalRaster
@@ -101,18 +102,19 @@ internal class Original24PreviewSession(
     fun requestStop() { stopped = true; signal.cancel() }
 
     /**
-     * #284 diagnostic input only. Reuse the exact snapshot/decode/RGB16/BOX path below; do not
+     * #284 GPU diagnostic input only. Reuse the exact snapshot/decode/RGB16/BOX path below; do not
      * calculate a CPU look or allocate a Bitmap. The caller owns this one-shot session and must
      * close it even after failure, so failed descriptor/file closes retain their existing owner.
      * The immutable returned image has no file/descriptor ownership and survives session.close().
+     * Select both GPU limits before the sole BOX reduction; normal CPU previews keep their old size.
      */
-    internal fun loadAsShotInput(shouldStop: () -> Boolean = { false }): LinearSrgbImage = exclusive {
+    internal fun loadGpuAsShotInput(shouldStop: () -> Boolean = { false }): LinearSrgbImage = exclusive {
         check(Looper.myLooper() != Looper.getMainLooper()) { "Original preview requires existing IO owner" }
         check(!closed && !failed && !stopped) { "Original preview session is unavailable" }
         val stop = { stopped || signal.isCanceled || shouldStop() }
         var failure: Throwable? = null
         try {
-            loadInput(stop)
+            loadInput(stop, GpuPreviewInputSize::fit)
         } catch (error: Throwable) {
             failed = true; clearInputs()
             failure = error
@@ -293,7 +295,11 @@ internal class Original24PreviewSession(
         }
     }
 
-    private fun loadInput(stop: () -> Boolean): LinearSrgbImage {
+    private fun loadInput(stop: () -> Boolean,
+        selectSize: (Int, Int) -> GpuPreviewInputSize.Size = { width, height ->
+            val scale = min(1.0, 1024.0 / max(width, height))
+            GpuPreviewInputSize.Size(floor(width * scale).toInt(), floor(height * scale).toInt())
+        }): LinearSrgbImage {
         if (decodeStarted) throw IOException("Original preview decode cannot be restarted")
         decodeStarted = true
         originalCheckpoint(stop)
@@ -326,8 +332,7 @@ internal class Original24PreviewSession(
             rasterFile.length() != width.toLong() * height * 6)
             throw IOException("Original preview raster observations differ")
         val rows = OriginalRasterFile(rasterFile, width, height, 2).also { raster = it }
-        val scale = min(1.0, 1024.0 / max(width, height))
-        val reducedWidth = floor(width * scale).toInt(); val reducedHeight = floor(height * scale).toInt()
+        val (reducedWidth, reducedHeight) = selectSize(width, height)
         if (reducedWidth < 4 || reducedHeight < 4) throw IOException("Original preview aspect is unsupported")
         resourceAdmission(Original24MemoryStage.BOUNDED_PREVIEW)
         val reduced = OriginalFields.reduce(rows, reducedWidth, reducedHeight, 3, stop) { rgb, output ->

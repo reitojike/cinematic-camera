@@ -94,6 +94,8 @@ internal class DefaultStageClearGpu(
 
     override fun openPhoto(input: LinearSrgbImage, stop: () -> Boolean): StageClearGpuPhoto {
         requireOpen()
+        // The input stage chooses dimensions. GPU never silently resizes an oversized image.
+        GpuPreviewInputSize.checkSupported(input.width, input.height)
         checkpoint(stop)
         if (!capabilitiesChecked) {
             GlCapabilities.inspect(egl).requireSupported()

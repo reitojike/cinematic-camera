@@ -74,9 +74,13 @@ class StageClearGpuAndroidTest {
             // Cancel after texture allocation, exercising upload-buffer preparation cleanup.
             assertThrows(CancellationException::class.java) { engine.openPhoto(input()) { ledger.allocatedBytes > 0 } }
             assertEquals(0L, ledger.allocatedBytes)
-            assertThrows(IllegalArgumentException::class.java) {
+            assertThrows(IllegalStateException::class.java) {
                 engine.openPhoto(LinearSrgbImage(1025, 4, FloatArray(1025 * 4 * 3))) { false }
             }
+            assertThrows(IllegalStateException::class.java) {
+                engine.openPhoto(LinearSrgbImage(1024, 769, FloatArray(1024 * 769 * 3))) { false }
+            }
+            assertEquals(0L, ledger.allocatedBytes)
         }
     }
 

@@ -128,7 +128,7 @@ internal class GpuPreviewRenderer(
     }
 
     fun openPhoto(input: LinearSrgbImage) = post {
-        check(maxOf(input.width, input.height) <= 1024) { "Phase 0 preview input must have long edge <= 1024" }
+        GpuPreviewInputSize.checkSupported(input.width, input.height)
         retainedInput = input
         if (contextLost) resetContext()
         uploadPhoto(input)
