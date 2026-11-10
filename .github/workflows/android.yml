@@ -41,6 +41,26 @@ jobs:
           cache-provider: basic
       - name: lint・unit・debug build
         run: ./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :rawprobe:lintNormalDebug :rawprobe:assembleNormalDebug :rawprobe:assembleNormalDebugAndroidTest :rawprobe:lintLargeHeapDebug :rawprobe:assembleLargeHeapDebug :rawprobe:assembleLargeHeapDebugAndroidTest --no-daemon
+      - name: Verify LWJGL is absent from normal APK and unit-test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p app/build/reports/gpuMesaIsolation
+          for configuration in debugRuntimeClasspath debugUnitTestRuntimeClasspath; do
+            ./gradlew :app:dependencies --configuration "$configuration" --console=plain --no-daemon > "app/build/reports/gpuMesaIsolation/$configuration.txt"
+            if grep -F 'org.lwjgl:' "app/build/reports/gpuMesaIsolation/$configuration.txt"; then
+              echo "LWJGL leaked into normal $configuration" >&2
+              exit 1
+            fi
+          done
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          unzip -Z1 "$apk" > app/build/reports/gpuMesaIsolation/apk-files.txt
+          "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" dex packages --defined-only "$apk" > app/build/reports/gpuMesaIsolation/apk-dex-packages.txt
+          if grep -i lwjgl app/build/reports/gpuMesaIsolation/apk-files.txt || grep -F 'org.lwjgl' app/build/reports/gpuMesaIsolation/apk-dex-packages.txt; then
+            echo 'LWJGL native or classes leaked into normal APK' >&2
+            exit 1
+          fi
+          echo 'GPU_MESA_ISOLATION PASS: no LWJGL in normal debug runtime, unit-test runtime, APK natives or DEX packages'
       - name: Mesa software EGL / GLES libraries
         run: |
           sudo apt-get update
@@ -84,6 +104,7 @@ jobs:
           path: |
             app/build/test-results/gpuMesa/
             app/build/reports/tests/gpuMesa/
+            app/build/reports/gpuMesaIsolation/
           if-no-files-found: warn
           retention-days: 7
       - name: RAW diagnostic lint・unit・build and release manifest

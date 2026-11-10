@@ -47,7 +47,7 @@ internal class MesaContext : AutoCloseable {
                 val version = checkNotNull(glGetString(GL_VERSION))
                 val renderer = checkNotNull(glGetString(GL_RENDERER))
                 val vendor = checkNotNull(glGetString(GL_VENDOR))
-                // LWJGL 3.3.6 has no generated MESA_query_driver binding. Resolve the
+                // LWJGL 3.4.3 has no generated MESA_query_driver binding. Resolve the
                 // official EGL extension entry point through LWJGL's function provider.
                 val driverFunction = EGL.getFunctionProvider().getFunctionAddress("eglGetDisplayDriverName")
                 check("EGL_MESA_query_driver" in eglQueryString(display, EGL_EXTENSIONS).orEmpty().split(' '))

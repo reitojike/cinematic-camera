@@ -138,6 +138,7 @@ android {
     testOptions {
         if (gpuMesa) {
             unitTests.all {
+                if (it.name != "testDebugUnitTest") return@all
                 it.systemProperty("gpu.mesa.assetRoot", file("src/main/assets/gpu").absolutePath)
                 it.systemProperty("gpu.mesa.testAssetRoot", file("src/androidTest/assets/gpu").absolutePath)
                 it.maxHeapSize = "3g"
@@ -174,14 +175,14 @@ android {
         if (diagnosticLintInvocation) lintConfig = file("src/rawDiagnostic/lint.xml")
     }
     if (gpuMesa) {
-        sourceSets.getByName("test").kotlin.srcDir("src/testGpuMesa/java")
+        sourceSets.getByName("testDebug").kotlin.srcDir("src/testGpuMesa/java")
     }
 }
 if (gpuMesa) {
     // AGP's AndroidSourceDirectorySet has no include/exclude API. Add only the
     // three shared helpers to Kotlin's source inputs, in place and without copies.
     tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
-        if (name.endsWith("UnitTestKotlin")) {
+        if (name == "compileDebugUnitTestKotlin") {
             source(fileTree("src/androidTest/java/dev/cinematic/p0/gpu/reference") {
                 include("GpuReferenceImages.kt", "GpuTolerances.kt", "ImageDiff.kt")
             })
@@ -202,12 +203,12 @@ dependencies {
     implementation("androidx.camera:camera-video:$cameraX")
     testImplementation("junit:junit:4.13.2")
     if (gpuMesa) {
-        val lwjgl = "3.3.6"
-        testImplementation("org.lwjgl:lwjgl:$lwjgl")
-        testImplementation("org.lwjgl:lwjgl-egl:$lwjgl")
-        testImplementation("org.lwjgl:lwjgl-opengles:$lwjgl")
-        testRuntimeOnly("org.lwjgl:lwjgl:$lwjgl:natives-linux")
-        testRuntimeOnly("org.lwjgl:lwjgl-opengles:$lwjgl:natives-linux")
+        val lwjgl = "3.4.3"
+        add("testDebugImplementation", "org.lwjgl:lwjgl:$lwjgl")
+        add("testDebugImplementation", "org.lwjgl:lwjgl-egl:$lwjgl")
+        add("testDebugImplementation", "org.lwjgl:lwjgl-opengles:$lwjgl")
+        add("testDebugRuntimeOnly", "org.lwjgl:lwjgl:$lwjgl:natives-linux")
+        add("testDebugRuntimeOnly", "org.lwjgl:lwjgl-opengles:$lwjgl:natives-linux")
     }
     implementation("androidx.exifinterface:exifinterface:1.4.2")
     androidTestImplementation("androidx.test:runner:1.7.0")

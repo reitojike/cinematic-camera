@@ -247,9 +247,13 @@ stage wrapperは実関数を呼ぶだけで、GLSLの計算式を持たない。
 R7・Glow/Mist・Orton/Character・全工程・書き出しの一致試験統合とLiving Spec更新は依存後の #290 残件である。
 この先行基盤だけで #290 全体完了、GPU製品採用、実機合格とはしない。
 
-JVM binding候補は **LWJGL 3.3.6** の `org.lwjgl:lwjgl`、`lwjgl-egl`、`lwjgl-opengles` と
-`lwjgl` / `lwjgl-opengles` の `natives-linux`。明示フラグ時のtest依存だけに隔離し、APK・製品依存・通常のJVM試験には加えない。
-依存名と版をPRへ記載し、**利用者の承認前はマージしない**。製品依存追加の許可へ広げない。
+JVM bindingは **LWJGL 3.4.3** の `org.lwjgl:lwjgl`、`lwjgl-egl`、`lwjgl-opengles` と
+`lwjgl` / `lwjgl-opengles` の `natives-linux`。明示フラグ時の `testDebugImplementation` / `testDebugRuntimeOnly` だけに隔離し、APK・製品依存・通常のJVM試験・他variantには加えない。
+ライセンスは [BSD-3-Clause](https://github.com/LWJGL/lwjgl3/blob/3.4.3/LICENSE.md)。この5座標の3.4.3だけを利用者が承認した。
+製品依存、他の構成・プラットフォームのnativeへの追加には承認を広げない。
+CIは通常の `debugRuntimeClasspath` / `debugUnitTestRuntimeClasspath` の依存レポートと、
+通常debug APKのnative一覧・DEX定義package一覧にLWJGLがないことを照合し、証拠をartifactへ保存する。
+追加や版変更時は依存名と版をPRへ記載し、**利用者の承認前はマージしない**。
 EGL/GLES bindingは [LWJGL公式](https://www.lwjgl.org/guide) と
 [EGL API](https://javadoc.lwjgl.org/org/lwjgl/egl/EGL15.html) を利用する。
 
