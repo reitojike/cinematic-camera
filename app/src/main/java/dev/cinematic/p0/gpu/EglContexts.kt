@@ -7,6 +7,7 @@ import android.opengl.EGLSurface
 import android.opengl.EGLExt
 import android.opengl.GLES32
 import android.view.Surface
+import dev.cinematic.p0.gpu.preview.GpuSurfaceProbe
 
 /** 1個の ES 3.2 context を pbuffer と表示面で共有する。全操作は GlThread 上。 */
 internal class EglContexts(val glThread: GlThread, private val assets: AssetManager? = null) : AutoCloseable {
@@ -104,6 +105,7 @@ internal class EglContexts(val glThread: GlThread, private val assets: AssetMana
     private fun eglCheck(ok: Boolean, operation: String) {
         if (ok) return
         val error = EGL14.eglGetError()
+        GpuSurfaceProbe.event("egl.failure") { "code=0x${error.toString(16)}" }
         if (error == EGL14.EGL_CONTEXT_LOST) {
             lost = true
             throw GpuContextLostException("$operation: EGL_CONTEXT_LOST")

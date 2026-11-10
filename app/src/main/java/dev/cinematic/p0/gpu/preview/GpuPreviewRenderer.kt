@@ -3,9 +3,12 @@ package dev.cinematic.p0.gpu.preview
 import android.content.ComponentCallbacks2
 import android.content.res.AssetManager
 import android.opengl.GLES32
+import android.os.SystemClock
+import android.util.Log
 import android.view.Choreographer
 import android.view.Surface
 import dev.cinematic.p0.gpu.*
+import dev.cinematic.p0.photoroll.DngInputProbe
 import dev.cinematic.p0.raw.LinearSrgbImage
 import dev.cinematic.p0.raw.PhotoAdjustments
 import java.nio.ByteBuffer
@@ -61,7 +64,23 @@ internal data class GpuPreviewFrame(
 )
 
 internal data class GpuPreviewPhoto(val input: GpuTexture)
-internal data class GpuPreviewSnapshot(val allocatedBytes: Long, val windowCount: Int, val drawCount: Long)
+internal data class GpuPreviewSnapshot(val allocatedBytes: Long, val windowCount: Int, val drawCount: Long,
+    val surfaceAttached: Boolean = false)
+
+/** Opt-in metadata only. Logging never consumes GL/EGL error state or changes failure handling. */
+internal object GpuSurfaceProbe {
+    private const val TAG = "GpuSurfaceProbe"
+    fun event(phase: String, detail: () -> String = { "" }) {
+        try {
+            if (Log.isLoggable(TAG, Log.DEBUG))
+                Log.d(TAG, "tNs=${SystemClock.elapsedRealtimeNanos()} thread=${Thread.currentThread().id} phase=$phase ${detail()}")
+        } catch (_: Throwable) { /* Observation must not change the outcome. */ }
+    }
+
+    fun failure(phase: String, error: Throwable) = event(phase) { failureSummary(error) }
+
+    internal fun failureSummary(error: Throwable): String = DngInputProbe.failureSummary(error)
+}
 
 /**
  * Phase 0 input presenter. The optional draw function owns no input/target texture; #284 can
@@ -104,6 +123,7 @@ internal class GpuPreviewRenderer(
     private var window: EglContexts.WindowTarget? = null
     private val liveWindows = AtomicInteger()
     internal val activeWindowCount: Int get() = liveWindows.get()
+    internal val hasSurface: Boolean get() = lease.get()?.valid?.get() == true
     private var windowLease: SurfaceLease? = null
     private var choreographer: Choreographer? = null
     private var frameScheduled = false
@@ -128,6 +148,7 @@ internal class GpuPreviewRenderer(
     }
 
     fun openPhoto(input: LinearSrgbImage) = post {
+        trace("photo.open") { "hasSurface=$hasSurface started=${started.get()}" }
         GpuPreviewInputSize.checkSupported(input.width, input.height)
         retainedInput = input
         if (contextLost) resetContext()
@@ -175,6 +196,7 @@ internal class GpuPreviewRenderer(
     fun attachSurface(surface: Surface, width: Int, height: Int, refreshRate: Float = 60f) {
         require(width > 0 && height > 0)
         if (closed.get()) return
+        trace("surface.attach") { "surface=${System.identityHashCode(surface)} width=$width height=$height" }
         lease.getAndSet(SurfaceLease(surface, width, height))?.valid?.set(false)
         post {
             val hz = refreshRate.takeIf { it.isFinite() && it > 0 } ?: 60f
@@ -185,6 +207,7 @@ internal class GpuPreviewRenderer(
 
     fun resizeSurface(surface: Surface, width: Int, height: Int) {
         if (width <= 0 || height <= 0 || closed.get()) return
+        trace("surface.resize") { "surface=${System.identityHashCode(surface)} width=$width height=$height" }
         while (true) {
             val current = lease.get()?.takeIf { it.surface === surface } ?: return
             if (lease.compareAndSet(current, SurfaceLease(surface, width, height))) {
@@ -202,6 +225,8 @@ internal class GpuPreviewRenderer(
      * https://developer.android.com/reference/kotlin/androidx/compose/foundation/SurfaceScope
      */
     fun detachSurface(surface: Surface) {
+        val detachStarted = SystemClock.elapsedRealtimeNanos()
+        trace("surface.detach.begin") { "surface=${System.identityHashCode(surface)} timeoutMs=2000" }
         while (true) {
             val current = lease.get()?.takeIf { it.surface === surface } ?: break
             current.valid.set(false)
@@ -217,19 +242,26 @@ internal class GpuPreviewRenderer(
                         if (windowLease?.surface === surface) releaseWindow()
                         latest.invalidate(); schedule()
                     } catch (problem: Throwable) {
+                        GpuSurfaceProbe.failure("surface.detach.failure", problem)
                         failure.set(problem); failed = true; onError(problem)
                     } finally { destroyed.countDown() }
                 }
                 destroyed
             }
         }
-        check(completion.await(2, TimeUnit.SECONDS)) { "Timed out destroying GPU preview EGL surface" }
+        val completed = completion.await(2, TimeUnit.SECONDS)
+        trace("surface.detach.await") {
+            "completed=$completed elapsedNs=${SystemClock.elapsedRealtimeNanos() - detachStarted} windows=${liveWindows.get()}"
+        }
+        check(completed) { "Timed out destroying GPU preview EGL surface" }
         (failure.get() ?: surfaceDestroyFailure.get() ?: if (completion === terminated) shutdownFailure.get() else null)?.let {
+            GpuSurfaceProbe.failure("surface.detach.retained_failure", it)
             throw IllegalStateException("Could not destroy GPU preview EGL surface", it)
         }
     }
 
     fun setStarted(value: Boolean) {
+        trace("lifecycle.started") { "value=$value hasSurface=$hasSurface" }
         started.set(value)
         post {
             if (!value) { cancelFrame(); releaseWindow() }
@@ -240,7 +272,7 @@ internal class GpuPreviewRenderer(
 
     /** Tests/diagnostics: callback runs on GL, after previously accepted work. */
     fun snapshot(callback: (GpuPreviewSnapshot) -> Unit) = post {
-        callback(GpuPreviewSnapshot(ledger.allocatedBytes, liveWindows.get(), drawCount))
+        callback(GpuPreviewSnapshot(ledger.allocatedBytes, liveWindows.get(), drawCount, hasSurface))
     }
 
     private fun wake() {
@@ -259,8 +291,13 @@ internal class GpuPreviewRenderer(
         }
     }
 
+    private fun trace(phase: String, detail: () -> String = { "" }) = GpuSurfaceProbe.event(phase) {
+        "renderer=${System.identityHashCode(this)} ${detail()}"
+    }
+
     private fun guarded(block: () -> Unit) {
         try { block() } catch (failure: Throwable) {
+            GpuSurfaceProbe.failure("renderer.failure", failure)
             failed = true
             contextLost = generateSequence(failure) { it.cause }.any { it is GpuContextLostException }
             cancelFrame()
@@ -270,6 +307,7 @@ internal class GpuPreviewRenderer(
     }
 
     private fun resetContext() {
+        trace("context.reset.begin") { "lost=$contextLost windows=${liveWindows.get()} drawCount=$drawCount" }
         cancelFrame()
         var problem: Throwable? = null
         fun cleanup(block: () -> Unit) {
@@ -288,22 +326,32 @@ internal class GpuPreviewRenderer(
         surfaceDestroyFailure.get()?.let { throw IllegalStateException("Previous EGL surface destruction failed", it) }
         failed = false; contextLost = false
         latest.invalidate()
+        trace("context.reset.end") { "cleanupFailure=${problem != null}" }
         problem?.let { onError(it) }
     }
 
-    private fun context(): EglContexts = egl ?: EglContexts(thread, assets).also { context ->
-        egl = context
-        GlCapabilities.inspect(context).requireSupported()
-        val extensions = GLES32.glGetString(GLES32.GL_EXTENSIONS).orEmpty().split(' ')
-        linearFiltering = "GL_OES_texture_float_linear" in extensions
-        timer = PreviewGpuTimer(context, "GL_EXT_disjoint_timer_query" in extensions)
+    private fun context(): EglContexts = egl ?: createContext()
+
+    private fun createContext(): EglContexts {
+        trace("context.create.begin")
+        return EglContexts(thread, assets).also { context ->
+            egl = context
+            GlCapabilities.inspect(context).requireSupported()
+            val extensions = GLES32.glGetString(GLES32.GL_EXTENSIONS).orEmpty().split(' ')
+            linearFiltering = "GL_OES_texture_float_linear" in extensions
+            timer = PreviewGpuTimer(context, "GL_EXT_disjoint_timer_query" in extensions)
+            trace("context.create.end")
+        }
     }
 
     private fun schedule() {
         thread.requireCurrent()
         if (closed.get() || failed || frameScheduled || (photo == null && enginePhoto == null)) return
         if (latest.next() == null && timer?.hasPending != true) return
-        if (!started.get() || lease.get()?.valid?.get() != true) return
+        if (!started.get() || lease.get()?.valid?.get() != true) {
+            trace("frame.deferred") { "started=${started.get()} hasSurface=$hasSurface drawCount=$drawCount" }
+            return
+        }
         val clock = choreographer ?: Choreographer.getInstance().also { choreographer = it }
         frameScheduled = true
         clock.postFrameCallback(callback)
@@ -328,8 +376,10 @@ internal class GpuPreviewRenderer(
             val context = context()
             if (windowLease !== current || window == null) {
                 releaseWindow()
+                trace("window.create.begin") { "surface=${System.identityHashCode(current.surface)} drawCount=$drawCount" }
                 window = context.createWindowTarget(current.surface); windowLease = current
                 liveWindows.incrementAndGet()
+                trace("window.create.end") { "windows=${liveWindows.get()}" }
             }
             context.makeCurrent(checkNotNull(window))
             val cpuStart = System.nanoTime()
@@ -354,6 +404,7 @@ internal class GpuPreviewRenderer(
             val cpuNanos = System.nanoTime() - cpuStart
             context.swapBuffers(checkNotNull(window))
             latest.rendered(request); drawCount++
+            trace("frame.drawn") { "drawCount=$drawCount windows=${liveWindows.get()}" }
             // Count from the first undrawn submit, including time spent in the previous slow draw.
             // beginFrame clears that timestamp so submissions during this draw start the next one.
             missedChangedFrames += ((frameTime - pending.dirtySinceNanos).coerceAtLeast(0L) / frameIntervalNanos)
@@ -367,8 +418,14 @@ internal class GpuPreviewRenderer(
     private fun releaseWindow() {
         val old = window; window = null; windowLease = null
         if (old != null) {
-            try { destroyWindow(old); liveWindows.decrementAndGet() }
-            catch (failure: Throwable) { surfaceDestroyFailure.compareAndSet(null, failure); throw failure }
+            trace("window.destroy.begin") { "windows=${liveWindows.get()} drawCount=$drawCount" }
+            try {
+                destroyWindow(old); liveWindows.decrementAndGet()
+                trace("window.destroy.end") { "windows=${liveWindows.get()}" }
+            } catch (failure: Throwable) {
+                GpuSurfaceProbe.failure("window.destroy.failure", failure)
+                surfaceDestroyFailure.compareAndSet(null, failure); throw failure
+            }
         }
     }
     private fun releasePhoto() {
@@ -381,6 +438,7 @@ internal class GpuPreviewRenderer(
     override fun close() {
         synchronized(enqueueLock) {
             if (!closed.compareAndSet(false, true)) return
+            trace("renderer.close.begin")
             lease.getAndSet(null)?.valid?.set(false); started.set(false)
             // Cleanup is accepted before quitSafely; no UI join. detachSurface can await terminated.
             thread.post {
@@ -393,8 +451,13 @@ internal class GpuPreviewRenderer(
                             }
                         }
                     }
-                } catch (failure: Throwable) { shutdownFailure.set(failure); onError(failure) }
-                finally { thread.close(); terminated.countDown() }
+                } catch (failure: Throwable) {
+                    GpuSurfaceProbe.failure("renderer.close.failure", failure)
+                    shutdownFailure.set(failure); onError(failure)
+                } finally {
+                    trace("renderer.close.end") { "windows=${liveWindows.get()} drawCount=$drawCount" }
+                    thread.close(); terminated.countDown()
+                }
             }
         }
     }

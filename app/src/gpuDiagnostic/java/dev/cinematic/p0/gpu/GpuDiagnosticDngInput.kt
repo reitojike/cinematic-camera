@@ -8,6 +8,7 @@ import dev.cinematic.p0.jpegrender.original.Original24Preflight
 import dev.cinematic.p0.jpegrender.original.Original24PreviewSession
 import dev.cinematic.p0.jpegrender.original.Original24Resources
 import dev.cinematic.p0.photoroll.PhotoRollReadResources
+import dev.cinematic.p0.photoroll.DngInputProbe
 import dev.cinematic.p0.photoroll.PhotoRollRepository
 import dev.cinematic.p0.photoroll.PhotoRollResources
 import dev.cinematic.p0.raw.LinearSrgbImage
@@ -35,7 +36,12 @@ internal object GpuDiagnosticDngInput {
             releasePending()
             signal.throwIfCanceled()
             val slot = DevelopExecution.tryStartPreviewObserved(resources().developConditions(true))
-                ?: throw IOException("Diagnostic input admission unavailable")
+                ?: throw IOException("Diagnostic input admission unavailable").also {
+                    // The decision has already failed. This optional extra read cannot admit/retry it.
+                    DngInputProbe.readOnly(context.applicationContext, uri,
+                        "gpu.after_admission_failure_observation sourceOpened=false", signal,
+                        { signal.isCanceled }, separateMimeProbe = true)
+                }
             val owner = Owner(context.applicationContext, slot, signal).also { pending = it }
             DevelopExecution.registerStop(slot, signal::cancel)
             var failure: Throwable? = null
@@ -70,6 +76,7 @@ internal object GpuDiagnosticDngInput {
         private val stop = { signal.isCanceled || DevelopExecution.shouldStop(slot) }
 
         fun load(uri: Uri): LinearSrgbImage {
+            DngInputProbe.readOnly(app, uri, "gpu.admitted_read", signal, stop, separateMimeProbe = true)
             val repository = PhotoRollRepository(app.contentResolver, app.packageName)
             val original = repository.check(uri, fromFiles = true, shouldStop = stop,
                 maxBytes = 64L * 1024 * 1024, readers = readers)

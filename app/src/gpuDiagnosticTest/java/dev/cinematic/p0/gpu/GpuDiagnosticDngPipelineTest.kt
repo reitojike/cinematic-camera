@@ -19,6 +19,7 @@ import dev.cinematic.p0.gpu.diag.GpuStageTap.Point
 import dev.cinematic.p0.gpu.reference.ImageDiff
 import dev.cinematic.p0.gpu.reference.KotlinReference
 import dev.cinematic.p0.photoroll.PhotoRollCameraSnapshot
+import dev.cinematic.p0.photoroll.DngInputProbe
 import dev.cinematic.p0.photoroll.PhotoRollResources
 import dev.cinematic.p0.raw.PhotoAdjustments
 import dev.cinematic.p0.rawcapture.AutoDevelopConditions
@@ -56,6 +57,7 @@ class GpuDiagnosticDngPipelineTest {
         DevelopExecution.updateConditions(available.developConditions(true))
         var succeeded = false
         try {
+            DngInputProbe.grant(app, provider.uri, "WRAPPED_PROVIDER.direct_call_not_picker_result")
             val input = GpuDiagnosticDngInput.load(app, provider.uri, { available }, CancellationSignal())
                 .get(60, TimeUnit.SECONDS)
             assertTrue(input.width in 1..1024 && input.height in 1..1024)
