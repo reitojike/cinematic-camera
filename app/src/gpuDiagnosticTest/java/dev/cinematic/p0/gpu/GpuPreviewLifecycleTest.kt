@@ -1,7 +1,9 @@
 package dev.cinematic.p0.gpu
 
 import android.content.ComponentCallbacks2
+import android.os.Bundle
 import android.os.SystemClock
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -52,6 +54,116 @@ class GpuPreviewLifecycleTest {
                 }
             }
         }
+    }
+
+    @Test fun diagnosticSlidersBeforeAndRotationReachRendererThroughAccessibilityActions() {
+        // Connect accessibility before Compose publishes the initial control tree.
+        InstrumentationRegistry.getInstrumentation().uiAutomation
+        ActivityScenario.launch(GpuPreviewDiagnosticActivity::class.java).use { scenario ->
+            val currentRenderer = renderer(scenario)
+            awaitSnapshot(currentRenderer, "diagnostic initial frame") {
+                it.drawCount > 0 && it.windowCount == 1 && it.allocatedBytes > 0
+            }
+            awaitControl("diagnostic slider tree ready") { it.rangeInfo != null }
+            // Exercise the actual Compose controls, not direct renderer.submit calls. These are
+            // accessibility interactions, not touch-drag latency or look/quality acceptance.
+            for ((minimum, maximum, target) in listOf(
+                Triple(0f, 1f, 0.25f), Triple(-100f, 100f, 25f), Triple(-2f, 2f, 0.5f),
+            )) {
+                val matchesRange: (AccessibilityNodeInfo) -> Boolean = { node ->
+                    node.rangeInfo?.let { it.min == minimum && it.max == maximum } == true
+                }
+                val slider = revealControl("slider $minimum..$maximum", matchesRange)
+                val baseline = settledSnapshot(currentRenderer)
+                assertTrue("Slider node became stale", slider.refresh())
+                assertTrue("Slider must accept ACTION_SET_PROGRESS", slider.performAction(
+                    AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.id,
+                    Bundle().apply { putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE, target) },
+                ))
+                awaitControl("slider value $target") {
+                    matchesRange(it) && kotlin.math.abs(checkNotNull(it.rangeInfo).current - target) < 0.001f
+                }
+                awaitSnapshot(currentRenderer, "slider update must draw") { it.drawCount > baseline.drawCount }
+            }
+
+            repeat(2) { toggle ->
+                val switch = revealControl("Before switch") { it.isCheckable && it.isClickable }
+                val wasChecked = switch.isChecked
+                val baseline = settledSnapshot(currentRenderer)
+                assertTrue("Before switch became stale", switch.refresh())
+                assertTrue("Before must accept click", switch.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+                awaitControl("Before toggle $toggle") { it.isCheckable && it.isChecked != wasChecked }
+                awaitSnapshot(currentRenderer, "Before update must draw") { it.drawCount > baseline.drawCount }
+            }
+
+            for (rotation in listOf(0, 90, 180, 270)) {
+                val button = revealControl("rotation $rotation") {
+                    it.text?.toString() == "回転 $rotation°"
+                }
+                val baseline = settledSnapshot(currentRenderer)
+                assertTrue("Rotation button became stale", button.refresh())
+                var clickable = button
+                while (!clickable.isClickable) clickable = checkNotNull(clickable.parent) { "Rotation has no clickable ancestor" }
+                assertTrue("Rotation must accept click", clickable.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+                val next = (rotation + 90) % 360
+                awaitControl("rotation label $next") { it.text?.toString() == "回転 $next°" }
+                awaitSnapshot(currentRenderer, "rotation update must draw") { it.drawCount > baseline.drawCount }
+            }
+        }
+    }
+
+    private fun accessibilityNodes(): List<AccessibilityNodeInfo> {
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        // Read current virtual-node text after Compose actions, not a cached pre-action label.
+        automation.clearCache()
+        val root = automation.rootInActiveWindow ?: return emptyList()
+        val nodes = mutableListOf<AccessibilityNodeInfo>()
+        fun visit(node: AccessibilityNodeInfo) {
+            nodes.add(node)
+            repeat(node.childCount) { node.getChild(it)?.let(::visit) }
+        }
+        visit(root)
+        // minSdk 33: AccessibilityNodeInfo pooling/recycle is deprecated and no longer needed.
+        return nodes
+    }
+
+    private fun revealControl(label: String, matches: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo {
+        val deadline = SystemClock.elapsedRealtime() + 10_000
+        do {
+            val nodes = accessibilityNodes()
+            nodes.firstOrNull(matches)?.let { node ->
+                node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+                return awaitControl(label, matches)
+            }
+            nodes.firstOrNull { it.isScrollable }?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+            SystemClock.sleep(150)
+        } while (SystemClock.elapsedRealtime() < deadline)
+        throw AssertionError("Accessibility control not found: $label")
+    }
+
+    private fun awaitControl(label: String, matches: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo {
+        val deadline = SystemClock.elapsedRealtime() + 5_000
+        do {
+            accessibilityNodes().firstOrNull(matches)?.let { return it }
+            SystemClock.sleep(50)
+        } while (SystemClock.elapsedRealtime() < deadline)
+        throw AssertionError("Accessibility state not observed: $label")
+    }
+
+    private fun settledSnapshot(renderer: GpuPreviewRenderer): GpuPreviewSnapshot {
+        // Exclude initial upload/surface-scroll redraws from the following control's assertion.
+        val deadline = SystemClock.elapsedRealtime() + 5_000
+        var previous = awaitSnapshot(renderer, "before control") { it.windowCount == 1 && it.drawCount > 0 }
+        var stable = 0
+        do {
+            SystemClock.sleep(100)
+            val current = awaitSnapshot(renderer, "settle control") { it.windowCount == 1 }
+            stable = if (current.drawCount == previous.drawCount) stable + 1 else 0
+            if (stable >= 3) return current
+            previous = current
+        } while (SystemClock.elapsedRealtime() < deadline)
+        throw AssertionError("Preview did not settle before control interaction")
     }
 
     private fun renderer(scenario: ActivityScenario<GpuPreviewDiagnosticActivity>): GpuPreviewRenderer {
