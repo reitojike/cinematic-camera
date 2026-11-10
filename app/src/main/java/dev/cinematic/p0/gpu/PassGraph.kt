@@ -37,9 +37,11 @@ internal class PassGraph(private val egl: EglContexts) : AutoCloseable {
         val id = program.id; GLES32.glUseProgram(id)
         for (input in inputs) {
             require(input.unit in 0 until maximum); input.texture.requireContext(egl)
+            val location = GLES32.glGetUniformLocation(id, input.uniformName)
+            require(location >= 0) { "Input sampler is missing or inactive: ${input.uniformName}" }
             GLES32.glActiveTexture(GLES32.GL_TEXTURE0 + input.unit)
             GLES32.glBindTexture(GLES32.GL_TEXTURE_2D, input.texture.textureId)
-            GLES32.glUniform1i(GLES32.glGetUniformLocation(id, input.uniformName), input.unit)
+            GLES32.glUniform1i(location, input.unit)
         }
         return id
     }
