@@ -43,6 +43,7 @@ class GpuGate1Part2DngLedgerTest {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val target get() = instrumentation.targetContext
     private val device get() = UiDevice.getInstance(instrumentation)
+    private var lastPhase = "setup"
 
     @Test fun measureSelectedDngLedgerAndRelease() {
         gate1Part2OptIn("dev.cinematic.p0.gpu.GpuGate1Part2DngLedgerTest#measureSelectedDngLedgerAndRelease", "dng-ledger-v1")
@@ -144,7 +145,7 @@ class GpuGate1Part2DngLedgerTest {
             report.put("originalUnchanged", true).put("outcome", "completed")
         } catch (caught: Throwable) {
             failure = caught
-            report.put("outcome", "failed_or_stopped").put("failureClass", caught.javaClass.simpleName)
+            report.put("outcome", "failed_or_stopped").put("failureClass", caught.javaClass.simpleName).put("failurePhase", lastPhase)
         } finally {
             try {
                 renderer?.let { render ->
@@ -276,7 +277,19 @@ class GpuGate1Part2DngLedgerTest {
         }
         find("scoped internal root", internalRoot).click()
         await("drawer closed") { !device.hasObject(rootsList) }
+        rewindDirectory(filesPackage)
         find("internal Download", By.pkg(filesPackage).text(Environment.DIRECTORY_DOWNLOADS), Direction.DOWN).click()
+        rewindDirectory(filesPackage)
+    }
+
+    /** DocumentsUI retains scroll position. Scope scrolling to the actual file list, not its outer
+     * ScrollView, and start at the top before searching. This never changes the picker result. */
+    private fun rewindDirectory(filesPackage: String) {
+        device.waitForIdle(1_000)
+        await("Files directory at start") {
+            val directory = device.findObject(By.res(filesPackage, "dir_list"))
+            directory != null && (!directory.isScrollable || !directory.scroll(Direction.UP, 0.8f))
+        }
     }
 
     private fun find(label: String, selector: BySelector, direction: Direction? = null): UiObject2 {
@@ -285,7 +298,8 @@ class GpuGate1Part2DngLedgerTest {
             result = device.findObject(selector)
             if (result != null) true else {
                 if (direction != null) device.currentPackageName?.let { packageName ->
-                    device.findObject(By.pkg(packageName).scrollable(true))?.scroll(direction, 0.5f)
+                    val directory = device.findObject(By.res(packageName, "dir_list").scrollable(true))
+                    (directory ?: device.findObject(By.pkg(packageName).scrollable(true)))?.scroll(direction, 0.5f)
                 }
                 false
             }
@@ -294,6 +308,7 @@ class GpuGate1Part2DngLedgerTest {
     }
 
     private fun await(label: String, timeoutMs: Long = 10_000, predicate: () -> Boolean) {
+        lastPhase = label
         val end = SystemClock.elapsedRealtime() + timeoutMs
         while (SystemClock.elapsedRealtime() < end) {
             if (predicate()) return
