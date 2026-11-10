@@ -67,6 +67,8 @@ internal data class GpuPreviewSnapshot(val allocatedBytes: Long, val windowCount
  * Phase 0 input presenter. The optional draw function owns no input/target texture; #284 can
  * replace its contents with the R7/look graph. Before always bypasses it. Nothing reads pixels back.
  * All public operations are nonblocking except the surface lifetime boundary (see detachSurface).
+ * #284 engineFactory replaces input ownership and drawing together, without a redundant output
+ * texture. The legacy draw hook remains for isolated presentation/lifecycle regression tests.
  */
 internal class GpuPreviewRenderer(
     private val assets: AssetManager,
@@ -74,7 +76,9 @@ internal class GpuPreviewRenderer(
     private val onError: (Throwable) -> Unit = {},
     private val draw: ((GpuPreviewPhoto, GpuRenderParams, GpuTexture) -> Unit)? = null,
     private val destroyWindow: (EglContexts.WindowTarget) -> Unit = { it.close() },
+    private val engineFactory: ((EglContexts, GpuMemoryLedger) -> StageClearGpu)? = null,
 ) : AutoCloseable {
+    init { require(draw == null || engineFactory == null) { "Choose one preview drawing owner" } }
     private data class Request(val params: GpuRenderParams, val display: GpuDisplayOptions)
     private class SurfaceLease(val surface: Surface, val width: Int, val height: Int) {
         val valid = AtomicBoolean(true)
@@ -93,6 +97,8 @@ internal class GpuPreviewRenderer(
     private var egl: EglContexts? = null
     private val ledger = GpuMemoryLedger()
     private var photo: GpuPreviewPhoto? = null
+    private var engine: StageClearGpu? = null
+    private var enginePhoto: StageClearGpuPhoto? = null
     private var retainedInput: LinearSrgbImage? = null
     private var output: GpuTexture? = null
     private var window: EglContexts.WindowTarget? = null
@@ -133,6 +139,12 @@ internal class GpuPreviewRenderer(
         releasePhoto()
         val context = context()
         context.makeOffscreenCurrent()
+        val factory = engineFactory
+        if (factory != null) {
+            val pipeline = engine ?: factory(context, ledger).also { engine = it }
+            enginePhoto = pipeline.openPhoto(input) { closed.get() }
+            return
+        }
         val texture = GpuTexture.create(context, ledger, input.width, input.height, GpuTexture.Format.RGBA32F)
         try {
             val bytes = ByteBuffer.allocateDirect(input.pixelCount * 16).order(ByteOrder.nativeOrder()).asFloatBuffer()
@@ -221,7 +233,7 @@ internal class GpuPreviewRenderer(
         started.set(value)
         post {
             if (!value) { cancelFrame(); releaseWindow() }
-            else if (photo == null && !failed) retainedInput?.let(::uploadPhoto)
+            else if (photo == null && enginePhoto == null && !failed) retainedInput?.let(::uploadPhoto)
             latest.invalidate(); schedule()
         }
     }
@@ -267,6 +279,7 @@ internal class GpuPreviewRenderer(
         }
         cleanup { releaseWindow() }
         cleanup { releasePhoto() }
+        cleanup { engine?.close(); engine = null }
         cleanup { timer?.close() }; timer = null
         cleanup { egl?.close() }; egl = null
         // Lost EGL objects can report teardown errors; EGL owns their GL names. Accounting still
@@ -288,7 +301,7 @@ internal class GpuPreviewRenderer(
 
     private fun schedule() {
         thread.requireCurrent()
-        if (closed.get() || failed || frameScheduled || photo == null) return
+        if (closed.get() || failed || frameScheduled || (photo == null && enginePhoto == null)) return
         if (latest.next() == null && timer?.hasPending != true) return
         if (!started.get() || lease.get()?.valid?.get() != true) return
         val clock = choreographer ?: Choreographer.getInstance().also { choreographer = it }
@@ -304,7 +317,9 @@ internal class GpuPreviewRenderer(
     private fun renderFrame(frameTime: Long) {
         if (closed.get() || failed) return
         timer?.poll()?.forEach(onFrame)
-        val source = photo ?: return
+        val source = photo
+        val fullPhoto = enginePhoto
+        if (source == null && fullPhoto == null) return
         val current = lease.get()?.takeIf { it.valid.get() && started.get() } ?: return
         val pending = latest.beginFrame()
         if (pending == null) { schedule(); return }
@@ -318,14 +333,22 @@ internal class GpuPreviewRenderer(
             }
             context.makeCurrent(checkNotNull(window))
             val cpuStart = System.nanoTime()
+            var decisions = GpuDecisions(0.0, 1.0)
             timer?.begin()
             try {
-                val image = if (request.display.showBefore || draw == null) source.input else {
-                    val result = output ?: GpuTexture.create(context, ledger, source.input.width, source.input.height, GpuTexture.Format.RGBA32F).also { output = it }
-                    draw.invoke(source, request.params, result)
-                    result
+                if (fullPhoto != null) {
+                    decisions = checkNotNull(engine).renderPreview(fullPhoto, request.params,
+                        StageClearGpuPreviewTarget(checkNotNull(window), current.width, current.height, linearFiltering),
+                        request.display).decisions
+                } else {
+                    val inputPhoto = checkNotNull(source)
+                    val image = if (request.display.showBefore || draw == null) inputPhoto.input else {
+                        val result = output ?: GpuTexture.create(context, ledger, inputPhoto.input.width, inputPhoto.input.height, GpuTexture.Format.RGBA32F).also { output = it }
+                        draw.invoke(inputPhoto, request.params, result)
+                        result
+                    }
+                    present(context, image, current.width, current.height, request.display.rotationDegrees, linearFiltering = linearFiltering)
                 }
-                present(context, image, current.width, current.height, request.display.rotationDegrees, linearFiltering = linearFiltering)
             } catch (failure: Throwable) { timer?.cancelActive(); throw failure }
             timer?.end()
             val cpuNanos = System.nanoTime() - cpuStart
@@ -334,7 +357,7 @@ internal class GpuPreviewRenderer(
             // Count from the first undrawn submit, including time spent in the previous slow draw.
             // beginFrame clears that timestamp so submissions during this draw start the next one.
             missedChangedFrames += ((frameTime - pending.dirtySinceNanos).coerceAtLeast(0L) / frameIntervalNanos)
-            val frame = GpuPreviewFrame(GpuFrameStats(null, cpuNanos, GpuDecisions(0.0, 1.0)), frameTime, missedChangedFrames, ledger.allocatedBytes)
+            val frame = GpuPreviewFrame(GpuFrameStats(null, cpuNanos, decisions), frameTime, missedChangedFrames, ledger.allocatedBytes)
             // Complete the query around GPU work only (before swap); callbacks remain FIFO.
             timer?.complete(frame)?.forEach(onFrame) ?: onFrame(frame)
         }
@@ -349,6 +372,7 @@ internal class GpuPreviewRenderer(
         }
     }
     private fun releasePhoto() {
+        enginePhoto?.close(); enginePhoto = null
         val oldOutput = output; val oldPhoto = photo
         output = null; photo = null
         try { oldOutput?.close() } finally { oldPhoto?.input?.close() }
@@ -364,7 +388,9 @@ internal class GpuPreviewRenderer(
                     cancelFrame()
                     try { releaseWindow() } finally {
                         try { retainedInput = null; releasePhoto() } finally {
-                            try { timer?.close() } finally { egl?.close() }
+                            try { engine?.close() } finally {
+                                try { timer?.close() } finally { egl?.close() }
+                            }
                         }
                     }
                 } catch (failure: Throwable) { shutdownFailure.set(failure); onError(failure) }
