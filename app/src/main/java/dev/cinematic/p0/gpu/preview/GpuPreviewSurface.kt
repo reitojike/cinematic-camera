@@ -1,3 +1,33 @@
 package dev.cinematic.p0.gpu.preview
 
-// #283: Compose の表示面。契約 PR1 では実装しない。
+import androidx.compose.foundation.AndroidExternalSurface
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+
+/** Renderer/photo ownership stays with the screen; this composable owns only the surface lease. */
+@Composable
+internal fun GpuPreviewSurface(renderer: GpuPreviewRenderer, modifier: Modifier = Modifier) {
+    val owner = LocalLifecycleOwner.current
+    val refreshRate = LocalView.current.display?.refreshRate ?: 60f
+    DisposableEffect(renderer, owner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_START) renderer.setStarted(true)
+            if (event == Lifecycle.Event.ON_STOP) renderer.setStarted(false)
+        }
+        owner.lifecycle.addObserver(observer)
+        renderer.setStarted(owner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
+        onDispose { owner.lifecycle.removeObserver(observer); renderer.setStarted(false) }
+    }
+    AndroidExternalSurface(modifier = modifier) {
+        onSurface { surface, width, height ->
+            renderer.attachSurface(surface, width, height, refreshRate)
+            surface.onChanged { w, h -> renderer.resizeSurface(this, w, h) }
+            surface.onDestroyed { renderer.detachSurface(this) }
+        }
+    }
+}
