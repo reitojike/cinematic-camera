@@ -13,12 +13,17 @@ import androidx.compose.ui.viewinterop.AndroidView
 import dev.cinematic.p0.BuildConfig
 import dev.cinematic.p0.CaptureDesign
 import dev.cinematic.p0.CapturePreferences
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 internal enum class DevelopEngine { CPU, GPU }
 
@@ -63,28 +68,54 @@ internal class DevelopEngineSetting(
 }
 
 /** UI thread から呼ばない。GL の照会・解放を #277 の専用threadに閉じ込める。 */
-internal fun inspectDevelopGpuAvailability(): GpuAvailability = try {
-    GlThread().use { thread ->
-        thread.call {
-            EglContexts(thread).use { egl ->
-                val result = GlCapabilities.inspect(egl)
-                if (result.supported) GpuAvailability.Available
-                else GpuAvailability.Unavailable("必須の GPU 能力が不足しています: ${result.missing.joinToString()}")
-            }
+private fun inspectDevelopGpuAvailability(): GpuAvailability = GlThread().use { thread ->
+    thread.call {
+        EglContexts(thread).use { egl ->
+            val result = GlCapabilities.inspect(egl)
+            if (result.supported) GpuAvailability.Available
+            else GpuAvailability.Unavailable("必須の GPU 能力が不足しています: ${result.missing.joinToString()}")
         }
     }
-} catch (failure: RuntimeException) {
-    // 例外messageやcauseは入力識別子を含み得るため、画面やログへ転記しない。
-    val policy = gpuFailurePolicy(failure)
-    GpuAvailability.Unavailable(policy?.reason ?: "GPU の能力を確認できません。再試行してください")
 }
+
+/** 完了した能力結果だけをプロセス内で共有し、明示再確認時に更新する。Context/GL資源は保持しない。 */
+internal class DevelopGpuAvailabilityCache(private val inspect: () -> GpuAvailability) {
+    private val mutex = Mutex()
+    private var cached: GpuAvailability? = null
+
+    suspend fun get(forceRefresh: Boolean = false): GpuAvailability = mutex.withLock {
+        currentCoroutineContext().ensureActive()
+        if (!forceRefresh) cached?.let { return@withLock it }
+        // 同時に設定画面を開いても検査は1本。取消済みの遅い検査は結果を保存しない。
+        val result = withContext(Dispatchers.IO) {
+            try {
+                inspect()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                // checked例外も扱う。message/causeは入力識別子を含み得るため転記しない。
+                val policy = gpuFailurePolicy(failure)
+                GpuAvailability.Unavailable(policy?.reason ?: "GPU の能力を確認できません。再試行してください")
+            }
+        }
+        currentCoroutineContext().ensureActive()
+        check(result != GpuAvailability.Checking) { "GPU inspection must return a completed result" }
+        cached = result
+        result
+    }
+}
+
+private val processDevelopGpuAvailability = DevelopGpuAvailabilityCache(::inspectDevelopGpuAvailability)
 
 /** debug設定と診断Hubで同じ項目を使う。検査中/不足時は GPU ボタンを無効化。 */
 internal class DevelopEngineSettingView(
     context: Context,
     private val setting: DevelopEngineSetting = DevelopEngineSetting(context),
-    private val inspect: () -> GpuAvailability = ::inspectDevelopGpuAvailability,
+    private val capabilities: DevelopGpuAvailabilityCache = processDevelopGpuAvailability,
 ) : LinearLayout(context) {
+    /** 合成試験は専用cacheを使い、プロセスの実能力結果を汚さない。 */
+    constructor(context: Context, setting: DevelopEngineSetting, inspect: () -> GpuAvailability) :
+        this(context, setting, DevelopGpuAvailabilityCache(inspect))
     private var availability: GpuAvailability = GpuAvailability.Checking
     private var scope: CoroutineScope? = null
     private var editingEnabled = true
@@ -118,7 +149,7 @@ internal class DevelopEngineSettingView(
         })
         cpu.setOnClickListener { select(DevelopEngine.CPU) }
         gpu.setOnClickListener { select(DevelopEngine.GPU) }
-        retry.setOnClickListener { checkCapabilities() }
+        retry.setOnClickListener { checkCapabilities(forceRefresh = true) }
         refresh()
     }
 
@@ -138,11 +169,11 @@ internal class DevelopEngineSettingView(
         super.onDetachedFromWindow()
     }
 
-    private fun checkCapabilities() {
+    private fun checkCapabilities(forceRefresh: Boolean = false) {
         availability = GpuAvailability.Checking
         refresh()
         scope?.launch {
-            availability = withContext(Dispatchers.IO) { inspect() }
+            availability = capabilities.get(forceRefresh)
             refresh()
         }
     }

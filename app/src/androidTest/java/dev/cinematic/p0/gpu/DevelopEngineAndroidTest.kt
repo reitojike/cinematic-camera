@@ -162,9 +162,10 @@ class DevelopEngineAndroidTest {
                     panel.removeView(view)
                     panel.addView(view)
                 }
-                awaitUi { descendants(view).filterIsInstance<TextView>().any { it.text.contains(freshReason) } }
+                // 取消済みの検査の解放後に次の照会へ進む。同時にGL資源を作らない。
                 releaseFirst.countDown()
                 assertTrue(firstExited.await(5, TimeUnit.SECONDS))
+                awaitUi { descendants(view).filterIsInstance<TextView>().any { it.text.contains(freshReason) } }
                 // Give any incorrectly retained continuation a chance to update the UI.
                 repeat(10) {
                     SystemClock.sleep(25)
@@ -178,6 +179,26 @@ class DevelopEngineAndroidTest {
             } finally { releaseFirst.countDown() }
         }
     }
+    @Test fun recreatedSettingsViewUsesTheSharedCapabilityResult() {
+        isolated()
+        val calls = java.util.concurrent.atomic.AtomicInteger()
+        val cache = DevelopGpuAvailabilityCache {
+            calls.incrementAndGet()
+            GpuAvailability.Available
+        }
+        lateinit var view: DevelopEngineSettingView
+        ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
+            repeat(2) {
+                scenario.onActivity { activity ->
+                    view = DevelopEngineSettingView(activity, DevelopEngineSetting({ "CPU" }, {}, true), cache)
+                    activity.setContentView(view)
+                }
+                awaitUi { descendants(view).filterIsInstance<Button>().single { it.text == "GPU" }.isEnabled }
+                assertEquals(1, calls.get())
+            }
+        }
+    }
+
     @Test fun contextLossShowsFailureAndRetryRecoversWithoutChangingEngine() {
         isolated()
         var value = "GPU"
