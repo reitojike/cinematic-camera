@@ -159,7 +159,7 @@ class Original24ManualSaveInstrumentationTest {
             assertFalse(save.hasUnreleasedResources)
             AndroidManualOriginalTrialSaves.discardPreview(app).get(30, TimeUnit.SECONDS)
 
-            // The real save factory selects two Foundation workers. Compare its public JPEG with
+            // The real save factory selects Foundation/Glow/tone/Mist=2. Compare its public JPEG with
             // the explicit serial baseline, after the save has returned its coordinator admission.
             // This extra attempt is synthetic-only and cannot insert or publish a MediaStore row.
             val serialBytes = ByteArrayOutputStream()
@@ -171,7 +171,7 @@ class Original24ManualSaveInstrumentationTest {
             }
             val serialScratch = File(app.cacheDir, "synthetic-original24-serial-${UUID.randomUUID()}")
             val serialAttempt = Original24Attempt(app, save.request, serialIo, serialScratch,
-                parallelFoundationWorkers = 1, parallelGlowWorkers = 1)
+                parallelFoundationWorkers = 1, parallelGlowWorkers = 1, parallelToneWorkers = 1, parallelMistWorkers = 1)
             val serialResult = serialAttempt.use { it.render { false } }
             assertFalse(serialAttempt.hasUnreleasedResources)
             assertFalse(serialScratch.exists())
