@@ -97,7 +97,7 @@ class GlowBloomAndroidTest {
         assertEquals(0L, ledger.allocatedBytes)
     }
 
-    @Test fun isolatedBloomPeakFits64MiBAndReleasesEachKernelBeforeTheNext() = gpu { egl ->
+    @Test fun isolatedBloomPeakFitsPreviewBudgetAndReleasesEachKernelBeforeTheNext() = gpu { egl ->
         val ledger = GpuMemoryLedger()
         val width = 1024; val height = 769
         var peak = 0L

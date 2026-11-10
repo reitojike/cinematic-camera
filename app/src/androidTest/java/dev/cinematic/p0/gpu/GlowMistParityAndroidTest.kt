@@ -56,7 +56,7 @@ class GlowMistParityAndroidTest {
             val value = actual[i].toDouble()
             assertTrue("$label non-finite at $i", value.isFinite())
             val error = abs(expected - value)
-            val limit = if (abs(expected) <= 1.0) 1e-4 else abs(expected) * 1e-4
+            val limit = if (expected <= 1.0) 1e-4 else abs(expected) * 1e-4
             if (error > limit) fail("$label channel=$i expected=$expected actual=$value error=$error limit=$limit")
             worst = maxOf(worst, error)
         }
@@ -80,48 +80,60 @@ class GlowMistParityAndroidTest {
         val sizes = listOf(GpuReferenceImages.Size(256, 192), GpuReferenceImages.PREVIEW_SIZE)
         for (size in sizes) for (kind in GpuReferenceImages.Kind.entries) {
             val reference = KotlinReference.prepare(GpuReferenceImages.create(kind, size), PhotoAdjustments())
-            upload(egl, ledger, reference.r7Final).use { base ->
-                GpuResample(egl, ledger).use { resample ->
-                    StageClearGlowGpu.prepare(base, resample).use { prepared ->
-                        val skin = GpuStageTap.readPlane(egl, prepared.skinWeight)
-                        val skinDiff = ImageDiff.linear(reference.skinWeight, skin, "$kind $size SKIN_WEIGHT")
-                        assertTrue(skinDiff.toString(), skinDiff.maxAbsolute <= 1e-4)
-                        for (strength in listOf(0.0, .25, .5, 1.0)) {
-                            val start = System.nanoTime()
-                            val expectedGlow = StageClearGlow.render(reference.r7Final, strength, reference.skinWeight)
-                            val expectedMist = StageClearMist.render(expectedGlow, reference.skinWeight, strength)
-                            val glowed = prepared.render(strength)
-                            try {
-                                val actualGlow = GpuStageTap.readRgb(egl, glowed)
-                                rgbMatches(expectedGlow, actualGlow, "$kind $size $strength GLOW")
-                                assertEquals("same input near-white count", count(actualGlow),
-                                    GpuAnalysis.nearWhiteCount(glowed, glowed.width, glowed.height))
-                                val mist = StageClearMistGpu.render(glowed, prepared.skinWeight, strength, resample)
+            // The complete engine keeps its immutable AS_SHOT resident throughout the look.
+            upload(egl, ledger, reference.input).use { asShot ->
+                upload(egl, ledger, reference.r7Final).use { base ->
+                    GpuResample(egl, ledger).use { resample ->
+                        StageClearGlowGpu.prepare(base, resample).use { prepared ->
+                            val skin = GpuStageTap.readPlane(egl, prepared.skinWeight)
+                            val skinDiff = ImageDiff.linear(reference.skinWeight, skin, "$kind $size SKIN_WEIGHT")
+                            assertTrue(skinDiff.toString(), skinDiff.maxAbsolute <= 1e-4)
+                            for (strength in listOf(0.0, .25, .5, 1.0)) {
+                                val start = System.nanoTime()
+                                val expectedGlow = StageClearGlow.render(reference.r7Final, strength, reference.skinWeight)
+                                val expectedMist = StageClearMist.render(expectedGlow, reference.skinWeight, strength)
+                                val glowed = prepared.render(strength)
                                 try {
-                                    if (strength == 0.0) {
-                                        assertSame(base, glowed); assertSame(base, mist.image)
-                                        repeat(reference.r7Final.pixelCount * 3) { i ->
-                                            assertEquals(reference.r7Final[i].toRawBits(), actualGlow[i].toRawBits())
+                                    val actualGlow = GpuStageTap.readRgb(egl, glowed)
+                                    rgbMatches(expectedGlow, actualGlow, "$kind $size $strength GLOW")
+                                    assertEquals("same input near-white count", count(actualGlow),
+                                        GpuAnalysis.nearWhiteCount(glowed, glowed.width, glowed.height))
+                                    val auto = StageClearMistGpu.autoStrength(glowed)
+                                    ImageDiff.assertScalarWithin(StageClearMist.autoStrength(expectedGlow), auto,
+                                        GpuTolerances.MIST_AUTO_STRENGTH, "$kind $size $strength Mist auto")
+                                    // Exercise both the integration override and the default measurement path.
+                                    val mist = if (strength == 0.0)
+                                        StageClearMistGpu.render(glowed, prepared.skinWeight, strength, resample)
+                                    else StageClearMistGpu.render(glowed, prepared.skinWeight, strength, resample, auto)
+                                    try {
+                                        if (strength == 0.0) {
+                                            assertSame(base, glowed); assertSame(base, mist.image)
+                                            repeat(reference.r7Final.pixelCount * 3) { i ->
+                                                assertEquals(reference.r7Final[i].toRawBits(), actualGlow[i].toRawBits())
+                                            }
                                         }
-                                    }
-                                    rgbMatches(expectedMist.image, GpuStageTap.readRgb(egl, mist.image), "$kind $size $strength MIST")
-                                    ImageDiff.assertScalarWithin(expectedMist.lightAddingStrength,
-                                        mist.lightAddingStrength, GpuTolerances.MIST_AUTO_STRENGTH,
-                                        "$kind $size $strength Mist amount")
-                                    if (strength != 0.0) ImageDiff.assertScalarWithin(StageClearMist.autoStrength(expectedGlow),
-                                        mist.lightAddingStrength / strength, GpuTolerances.MIST_AUTO_STRENGTH, "Mist auto")
-                                } finally { if (mist.image !== glowed) mist.image.close() }
-                            } finally { if (glowed !== base) glowed.close() }
-                            Log.i(TAG, "$kind $size strength=$strength elapsedMs=${(System.nanoTime() - start) / 1e6}; ledger=${ledger.allocatedBytes}")
-                            conditions++
+                                        rgbMatches(expectedMist.image, GpuStageTap.readRgb(egl, mist.image), "$kind $size $strength MIST")
+                                        ImageDiff.assertScalarWithin(expectedMist.lightAddingStrength,
+                                            mist.lightAddingStrength, GpuTolerances.MIST_AUTO_STRENGTH,
+                                            "$kind $size $strength Mist amount")
+                                    } finally { if (mist.image !== glowed) mist.image.close() }
+                                } finally { if (glowed !== base) glowed.close() }
+                                Log.i(TAG, "$kind $size strength=$strength elapsedMs=${(System.nanoTime() - start) / 1e6}; ledger=${ledger.allocatedBytes}")
+                                conditions++
+                            }
                         }
                     }
                 }
+                asShot.requireOpen()
+                val original = GpuStageTap.readRgb(egl, asShot)
+                repeat(original.pixelCount * 3) { i -> assertEquals(reference.input[i].toRawBits(), original[i].toRawBits()) }
             }
             assertEquals(0L, ledger.allocatedBytes)
         }
+        assertTrue(ledger.peakAllocatedBytes <= GpuMemoryLedger.PREVIEW_BUDGET)
+        assertEquals(0, ledger.textureCount)
         assertEquals(80, conditions)
-        Log.i(TAG, "conditions=$conditions; skin=20; glow=80; mist=80; counts=80; default64MiB enforced")
+        Log.i(TAG, "conditions=$conditions; skin=20; glow=80; mist=80; counts=80; residentAS_SHOT included; default96MiB enforced; peakBytes=${ledger.peakAllocatedBytes}; marginBytes=${ledger.budgetBytes - ledger.peakAllocatedBytes}")
     }
 
     @Test fun changingStrengthReusesAllPreparedFields() = gpu { egl, ledger ->
@@ -137,6 +149,11 @@ class GlowMistParityAndroidTest {
                     assertEquals(preparedCalls, calls.filter { it != "diffusion" })
                     assertEquals(2, calls.count { it == "diffusion" })
                     assertSame(base, prepared.render(0.0))
+                    for (invalid in listOf(-.01, 1.01, Double.NaN, Double.POSITIVE_INFINITY)) {
+                        assertThrows(IllegalArgumentException::class.java) {
+                            StageClearMistGpu.render(base, prepared.skinWeight, .5, resample, invalid)
+                        }
+                    }
                 }
                 base.requireOpen()
             }

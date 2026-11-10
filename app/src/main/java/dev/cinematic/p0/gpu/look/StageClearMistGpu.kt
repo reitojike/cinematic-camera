@@ -13,17 +13,25 @@ import java.nio.ByteOrder
 
 /** #281: borrowed inputs; only a nonzero-strength result image is caller-owned. */
 internal object StageClearMistGpu {
+    /** Kotlin と同じ写真の判定値。strength=0 でも独立して求められる。 */
+    fun autoStrength(glowed: GpuTexture): Double {
+        glowed.requireOpen()
+        require(glowed.format == GpuTexture.Format.RGBA32F)
+        val fraction = GpuAnalysis.nearWhiteCount(glowed, glowed.width, glowed.height).toDouble() /
+            (glowed.width.toLong() * glowed.height)
+        val ratio = ((fraction - StageClearMistV1.AUTO_START) / StageClearMistV1.AUTO_SPAN).coerceIn(0.0, 1.0)
+        return 1 - StageClearMistV1.AUTO_REDUCTION * ratio
+    }
+
     fun render(glowed: GpuTexture, skinWeight: GpuTexture, strength: Double,
-        resample: GpuResample): MistGpuResult {
+        resample: GpuResample, autoStrength: Double = autoStrength(glowed)): MistGpuResult {
         glowed.requireOpen(); skinWeight.requireContext(glowed.context)
         require(glowed.format == GpuTexture.Format.RGBA32F && skinWeight.format == GpuTexture.Format.R32F)
         require(skinWeight.width == glowed.width && skinWeight.height == glowed.height)
         require(skinWeight.memoryLedger === glowed.memoryLedger)
         require(strength.isFinite() && strength in 0.0..1.0)
-        val fraction = GpuAnalysis.nearWhiteCount(glowed, glowed.width, glowed.height).toDouble() /
-            (glowed.width.toLong() * glowed.height)
-        val ratio = ((fraction - StageClearMistV1.AUTO_START) / StageClearMistV1.AUTO_SPAN).coerceIn(0.0, 1.0)
-        val amount = (1 - StageClearMistV1.AUTO_REDUCTION * ratio) * strength
+        require(autoStrength.isFinite() && autoStrength in 0.0..1.0)
+        val amount = autoStrength * strength
         if (strength == 0.0) return MistGpuResult(glowed, amount, skinWeight)
         val halos = mutableListOf<Halo>()
         try {
