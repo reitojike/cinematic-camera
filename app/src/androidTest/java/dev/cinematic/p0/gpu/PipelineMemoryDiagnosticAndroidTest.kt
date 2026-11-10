@@ -37,50 +37,9 @@ class PipelineMemoryDiagnosticAndroidTest {
                 GlCapabilities.inspect(egl).requireSupported()
                 val sizes = listOf(GpuReferenceImages.Size(1024, 768), GpuReferenceImages.Size(768, 1024),
                     GpuReferenceImages.Size(1024, 576), GpuReferenceImages.Size(886, 886))
-                for (size in sizes) {
-                    val input = GpuReferenceImages.create(GpuReferenceImages.Kind.MIXED, size)
-                    for (adjustments in listOf(PhotoAdjustments.NONE, PhotoAdjustments(60.0, 1.0))) {
-                        val prepared = KotlinReference.prepare(input, adjustments)
-                        for (strength in listOf(.5, 1.0)) {
-                            val reference = KotlinReference.render(prepared, strength)
-                            val stages = JSONArray()
-                            val ledger = GpuMemoryLedger()
-                            var decisions: GpuDecisions? = null
-                            DefaultStageClearGpu(egl, ledger) { texture, analysis ->
-                                val connected = ConnectedStageClearGpuPipeline(texture, analysis)
-                                object : StageClearGpuPipeline {
-                                    override fun render(params: GpuRenderParams, tap: ((Point, GpuTexture) -> Unit)?,
-                                        consume: (GpuTexture, GpuDecisions) -> Unit) = connected.render(params, { point, image ->
-                                        val stage = JSONObject().put("point", point.name).put("liveBytes", ledger.allocatedBytes)
-                                            .put("peakBytesSoFar", ledger.peakAllocatedBytes).put("textureCount", ledger.textureCount)
-                                        if (point in setOf(Point.R7_FINAL, Point.GLOW, Point.MIST)) {
-                                            val actual = GpuStageTap.readRgb(egl, image)
-                                            assertLinear(point.name, reference[point], actual)
-                                            stage.put("maxAbsolute", ImageDiff.linear(reference[point], actual, point.name).maxAbsolute)
-                                            stage.put("linearPass", true)
-                                        }
-                                        stages.put(stage); tap?.invoke(point, image)
-                                    }) { output, value -> decisions = value; consume(output, value) }
-                                    override fun close() = connected.close()
-                                }
-                            }.use { engine -> engine.openPhoto(input) { false }.use { photo ->
-                                engine.renderForTest(photo, GpuRenderParams(strength, adjustments), Point.MIST)
-                            } }
-                            assertEquals(0L, ledger.allocatedBytes); assertEquals(0, ledger.textureCount)
-                            assertTrue(ledger.peakAllocatedBytes <= 96L * 1024 * 1024)
-                            ImageDiff.assertScalarWithin(reference.mistAutoStrength, checkNotNull(decisions).mistAutoStrength, .005, "Mist decision")
-                            rows.put(JSONObject().put("width", input.width).put("height", input.height).put("warmth", adjustments.warmth)
-                                .put("exposureEv", adjustments.exposureEv).put("strength", strength).put("stages", stages)
-                                .put("peakBytes", ledger.peakAllocatedBytes).put("headroomBytes", ledger.budgetBytes - ledger.peakAllocatedBytes)
-                                .put("closedBytes", ledger.allocatedBytes).put("closedTextures", ledger.textureCount)
-                                .put("ortonAndLaterParity", "HOLD; not evaluated"))
-                            file.writeText(JSONObject().put("scope", "Four approved input shapes, 16 memory conditions, not full matrix acceptance")
-                                .put("conditions", rows).toString(2))
-                            Log.i("PipelineMemory", "PRE-FINISH PASS strength=$strength adjustments=$adjustments peak=${ledger.peakAllocatedBytes} " +
-                                "headroom=${ledger.budgetBytes-ledger.peakAllocatedBytes} closed=0; Orton parity HOLD")
-                        }
-                    }
-                }
+                // Each image/adjustment/strength owns a separate stack frame. The next CPU
+                // prepare must not overlap the previous Prepared/Result's retained full-size arrays.
+                for (size in sizes) measureSize(egl, size, rows, file)
             }
         }
     }
@@ -108,6 +67,59 @@ class PipelineMemoryDiagnosticAndroidTest {
                 Unit
             }
         }
+    }
+
+    private fun measureSize(egl: EglContexts, size: GpuReferenceImages.Size, rows: JSONArray, file: File) {
+        val input = GpuReferenceImages.create(GpuReferenceImages.Kind.MIXED, size)
+        for (adjustments in listOf(PhotoAdjustments.NONE, PhotoAdjustments(60.0, 1.0))) {
+            measureAdjustments(egl, input, adjustments, rows, file)
+        }
+    }
+
+    private fun measureAdjustments(egl: EglContexts, input: LinearSrgbImage, adjustments: PhotoAdjustments,
+        rows: JSONArray, file: File) {
+        val prepared = KotlinReference.prepare(input, adjustments)
+        for (strength in listOf(.5, 1.0)) measureCondition(egl, input, adjustments, prepared, strength, rows, file)
+    }
+
+    private fun measureCondition(egl: EglContexts, input: LinearSrgbImage, adjustments: PhotoAdjustments,
+        prepared: KotlinReference.Prepared, strength: Double, rows: JSONArray, file: File) {
+        val reference = KotlinReference.render(prepared, strength)
+        val stages = JSONArray()
+        val ledger = GpuMemoryLedger()
+        var decisions: GpuDecisions? = null
+        DefaultStageClearGpu(egl, ledger) { texture, analysis ->
+            val connected = ConnectedStageClearGpuPipeline(texture, analysis)
+            object : StageClearGpuPipeline {
+                override fun render(params: GpuRenderParams, tap: ((Point, GpuTexture) -> Unit)?,
+                    consume: (GpuTexture, GpuDecisions) -> Unit) = connected.render(params, { point, image ->
+                    val stage = JSONObject().put("point", point.name).put("liveBytes", ledger.allocatedBytes)
+                        .put("peakBytesSoFar", ledger.peakAllocatedBytes).put("textureCount", ledger.textureCount)
+                    if (point in setOf(Point.R7_FINAL, Point.GLOW, Point.MIST)) {
+                        val actual = GpuStageTap.readRgb(egl, image)
+                        assertLinear(point.name, reference[point], actual)
+                        stage.put("maxAbsolute", ImageDiff.linear(reference[point], actual, point.name).maxAbsolute)
+                        stage.put("linearPass", true)
+                    }
+                    stages.put(stage); tap?.invoke(point, image)
+                }) { output, value -> decisions = value; consume(output, value) }
+                override fun close() = connected.close()
+            }
+        }.use { engine -> engine.openPhoto(input) { false }.use { photo ->
+            engine.renderForTest(photo, GpuRenderParams(strength, adjustments), Point.MIST)
+        } }
+        assertEquals(0L, ledger.allocatedBytes); assertEquals(0, ledger.textureCount)
+        assertTrue(ledger.peakAllocatedBytes <= 96L * 1024 * 1024)
+        ImageDiff.assertScalarWithin(reference.mistAutoStrength, checkNotNull(decisions).mistAutoStrength, .005, "Mist decision")
+        rows.put(JSONObject().put("width", input.width).put("height", input.height).put("warmth", adjustments.warmth)
+            .put("exposureEv", adjustments.exposureEv).put("strength", strength).put("stages", stages)
+            .put("peakBytes", ledger.peakAllocatedBytes).put("headroomBytes", ledger.budgetBytes - ledger.peakAllocatedBytes)
+            .put("closedBytes", ledger.allocatedBytes).put("closedTextures", ledger.textureCount)
+            .put("ortonAndLaterParity", "HOLD; not evaluated"))
+        file.writeText(JSONObject().put("scope", "Four approved input shapes, 16 memory conditions, not full matrix acceptance")
+            .put("conditions", rows).toString(2))
+        Log.i("PipelineMemory", "PRE-FINISH PASS strength=$strength adjustments=$adjustments peak=${ledger.peakAllocatedBytes} " +
+            "headroom=${ledger.budgetBytes-ledger.peakAllocatedBytes} closed=0; Orton parity HOLD")
     }
 
     private fun assertLinear(label: String, expected: LinearSrgbImage, actual: LinearSrgbImage) {
