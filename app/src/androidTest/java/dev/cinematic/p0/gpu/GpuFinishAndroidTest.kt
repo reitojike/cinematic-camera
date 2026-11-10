@@ -164,6 +164,38 @@ class GpuFinishAndroidTest {
             }
         }
     }
+    @Test fun finishFitsPreviewBudgetWithAsShotR7AndGlowCachesRetained() = gpu { egl, ledger ->
+        val w = 1024; val h = 769
+        // Same ownership as #284: AS_SHOT, R7_FINAL, combined bloom, skin and halation.
+        // R7/Glow weight caches are measured by the full-pipeline acceptance, not simulated here.
+        val outerRgb = mutableListOf<GpuTexture>()
+        try {
+            repeat(3) { outerRgb += GpuTexture.create(egl, ledger, w, h, GpuTexture.Format.RGBA32F) }
+            upload(egl, ledger, w, h, FloatArray(w * h), false).use { skin ->
+                GpuTexture.create(egl, ledger, w, h, GpuTexture.Format.R32F).use { halation ->
+                    assertEquals(44_097_536L, ledger.allocatedBytes)
+                    upload(egl, ledger, w, h, FloatArray(w * h * 3) { (it % 17) / 16f }, true).use { input ->
+                        assertEquals(56_696_832L, ledger.allocatedBytes)
+                        StageClearFinishGpu(egl, ledger).use { finish ->
+                            finish.render(MistGpuResult(input, .5, skin), .5).use { shoulder ->
+                                assertNotSame(input, shoulder)
+                                finish.encode(shoulder).use { display ->
+                                    GpuFence(egl).use { it.await() }
+                                    assertEquals(GpuTexture.Format.RGBA8, display.format)
+                                    assertTrue(ledger.allocatedBytes <= ledger.budgetBytes)
+                                }
+                            }
+                            assertEquals(83_040_972L, ledger.peakAllocatedBytes)
+                            Log.i("GpuFinish", "Retained-cache peak=${ledger.peakAllocatedBytes}; budget=${ledger.budgetBytes}; headroom=${ledger.budgetBytes - ledger.peakAllocatedBytes}")
+                            input.requireContext(egl); skin.requireContext(egl); halation.requireContext(egl)
+                            outerRgb.forEach { it.requireContext(egl) }
+                        }
+                        assertEquals(56_696_832L, ledger.allocatedBytes)
+                    }
+                }
+            }
+        } finally { outerRgb.asReversed().forEach { it.close() } }
+    }
     @Test fun absentFaceMaskMatchesExplicitZeroAndNonzeroOrtonKeepsInputsOpen() = gpu { egl, ledger ->
         val w = 32; val h = 24
         upload(egl, ledger, w, h, FloatArray(w * h * 3) { (it % 17) / 16f }, true).use { input ->
