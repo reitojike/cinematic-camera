@@ -107,7 +107,7 @@ internal data class GpuDecisions(val mistAutoStrength: Double, val faceCutFactor
 - **精度**: シェーダーは `precision highp float;`。中間テクスチャは RGBA32F（色）・R32F（平面）を既定とする。RGBA16F は Gate 1 の計測で差が基準内と確認できたものだけに使う。
 - **スレッド**: GL の呼び出しはすべて `GlThread` 上。UI スレッドからは要求をキューに積むだけ。要求は**最新の1件だけ**を残して合流する（Choreographer のフレームごとに1回描画）。
 - **コンテキスト**: 1つの共有コンテキストを持ち、プレビューの画面用サーフェスと書き出しのオフスクリーンで共有する。プレビューと書き出しが同時に走る場合、書き出しは帯ごとに区切って GlThread のキューに積み、プレビューのフレームを優先する。
-- **メモリ**: `GpuTexture` がバイト数を記録し、合計を `GpuMemoryLedger` に報告する。目安はプレビュー 64MiB 以下、書き出し 192MiB 以下（12MP）。超える要求は失敗させる（黙って縮小しない）。
+- **メモリ**: `GpuTexture` がバイト数を記録し、合計を `GpuMemoryLedger` に報告する。目安はプレビュー 96MiB 以下、書き出し 192MiB 以下（12MP）。超える要求は失敗させる（黙って縮小しない）。`peakAllocatedBytes` は成功した予約の最大値を解放後も保持する。AS_SHOT を含む全工程の最大と予算との差を計測する。予算変更の判断と Gate 1 基準は [#276](https://github.com/reitojike/cinematic-camera/issues/276)・[#285](https://github.com/reitojike/cinematic-camera/issues/285) に記録する。
 - **解放**: 写真を閉じる、画面を離れる、`onTrimMemory`（`TRIM_MEMORY_UI_HIDDEN` 以上）で写真の GPU 状態を解放する。コンテキスト喪失（`EGL_CONTEXT_LOST`）は失敗として扱い、次の要求で作り直す。
 
 ### 4.4 色と座標の約束
