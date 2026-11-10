@@ -1,0 +1,15 @@
+#version 320 es
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp isampler2D;
+
+#include "common/color.glsl"
+#include "experimental/compute/planes.glsl"
+
+uniform sampler2D s_input;
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(pixel, imageSize(u_red)))) return;
+    cs_store(pixel, texelFetch(s_input, pixel, 0).rgb);
+}

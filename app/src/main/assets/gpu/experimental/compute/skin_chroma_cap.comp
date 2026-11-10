@@ -1,0 +1,38 @@
+#version 320 es
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp isampler2D;
+
+#include "common/color.glsl"
+#include "experimental/compute/planes.glsl"
+
+
+// Phase 0: absent face mask is zero; keep the complete Lab/polar round trip.
+
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(pixel, imageSize(u_red)))) return;
+    vec3 lab = cs_linearToLab(cs_load(pixel));
+    float lightness = lab.x;
+    float chroma = length(lab.yz);
+    float wrappedHue = cs_hueDeg(lab);
+    // The red-hue lift uses the signed angle, while skin/band use [0, 360).
+    float hue = wrappedHue > 180.0 ? wrappedHue - 360.0 : wrappedHue;
+    float skin = cs_skinWeight(lightness, chroma, wrappedHue);
+    precise float red = cs_band(wrappedHue, 10.0, 30.0) * clamp((chroma - 0.015) / 0.025, 0.0, 1.0) *
+        clamp(1.0 - (chroma - SC_STAGECLEAR_SKIN_VIVID) / 0.06, 0.0, 1.0) *
+        clamp((lightness - 0.3) / 0.15, 0.0, 1.0);
+    float weight = max(skin, red) * 0.0;
+    precise float capped = chroma > SC_STAGECLEAR_SKIN_KNEE ?
+        SC_STAGECLEAR_SKIN_KNEE + (chroma - SC_STAGECLEAR_SKIN_KNEE) * SC_STAGECLEAR_SKIN_SLOPE : chroma;
+    precise float newChroma = chroma * (1.0 + weight * (capped / max(chroma, 1e-6) - 1.0));
+    precise float newHue = hue < SC_STAGECLEAR_RED_TARGET && hue > -40.0 ?
+        hue + SC_STAGECLEAR_SKIN_HUE_LIFT * weight * (SC_STAGECLEAR_RED_TARGET - hue) : hue;
+    float angle = radians(newHue);
+    lab.y = newChroma * cos(angle);
+    lab.z = newChroma * sin(angle);
+    // Do not bypass this Lab/polar/RGB round trip when the face mask is zero.
+    cs_store(pixel, cs_labToLinear(lab));
+}
