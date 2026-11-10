@@ -4,15 +4,10 @@ precision highp int;
 precision highp sampler2D;
 precision highp isampler2D;
 
-#if SC_GLOW_BLOOM_KERNELS_COUNT != 3
-#error Glow composition must follow every Kotlin bloom kernel in order.
-#endif
-
 uniform sampler2D s_base;
 uniform sampler2D s_skinWeight;
-uniform sampler2D s_bloom0;
-uniform sampler2D s_bloom1;
-uniform sampler2D s_bloom2;
+// The completed ping-pong sum, not three simultaneously retained full-size blurs.
+uniform sampler2D s_bloom;
 uniform sampler2D s_halation;
 // Calculate (StageClearGlowV1 coefficient * strength).toFloat() on the CPU,
 // preserving Kotlin's Double multiply before its explicit Float conversion.
@@ -24,11 +19,7 @@ void main() {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
     vec3 base = texelFetch(s_base, pixel, 0).rgb;
     float skin = texelFetch(s_skinWeight, pixel, 0).r;
-    // StageClearGlow.addLight accumulates these in declaration order.
-    precise vec3 bloom = vec3(0.0);
-    bloom += SC_GLOW_BLOOM_KERNELS_0_WEIGHT * texelFetch(s_bloom0, pixel, 0).rgb;
-    bloom += SC_GLOW_BLOOM_KERNELS_1_WEIGHT * texelFetch(s_bloom1, pixel, 0).rgb;
-    bloom += SC_GLOW_BLOOM_KERNELS_2_WEIGHT * texelFetch(s_bloom2, pixel, 0).rgb;
+    vec3 bloom = texelFetch(s_bloom, pixel, 0).rgb;
     precise vec3 warm = texelFetch(s_halation, pixel, 0).r *
         vec3(SC_GLOW_HALATION_TINT_0, SC_GLOW_HALATION_TINT_1, SC_GLOW_HALATION_TINT_2);
     precise float protect = 1.0 - SC_GLOW_SKIN_PROTECT * skin;
