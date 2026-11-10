@@ -57,7 +57,7 @@ package dev.cinematic.p0.gpu
 internal interface StageClearGpuPhoto : AutoCloseable {
     val width: Int            // 入力（AS_SHOT）の幅
     val height: Int
-    /** 写真ごとに1回求める値。プレビューの描画中は固定。 */
+    /** 写真解析の最新値。全工程frameでは同じAS_SHOTから再計算する。 */
     val analysis: GpuPhotoAnalysis
 }
 
@@ -110,7 +110,43 @@ internal data class GpuDecisions(val mistAutoStrength: Double, val faceCutFactor
 - **メモリ**: `GpuTexture` がバイト数を記録し、合計を `GpuMemoryLedger` に報告する。目安はプレビュー 96MiB 以下、書き出し 192MiB 以下（12MP）。超える要求は失敗させる（黙って縮小しない）。`peakAllocatedBytes` は成功した予約の最大値を解放後も保持する。AS_SHOT を含む全工程の最大と予算との差を計測する。予算変更の判断と Gate 1 基準は [#276](https://github.com/reitojike/cinematic-camera/issues/276)・[#285](https://github.com/reitojike/cinematic-camera/issues/285) に記録する。
 - **解放**: 写真を閉じる、画面を離れる、`onTrimMemory`（`TRIM_MEMORY_UI_HIDDEN` 以上）で写真の GPU 状態を解放する。コンテキスト喪失（`EGL_CONTEXT_LOST`）は失敗として扱い、次の要求で作り直す。
 
-#### 承認4形状のメモリ観測
+#### 計算結果を保持しない資源再利用（#323）
+
+Gate 1第1部を見た後の利用者判断に基づく変更。全工程frameはR7・Glow・Mist・Orton・Character・
+肌保護・shoulder・表示を再計算し、画像・場・R7分位点・Mist判定を前frameから使わない。
+写真由来の自動露出p97/base EVも既存 `R7PreviewInputs.prepare` で毎frame再計算する。
+このCPU解析は `renderPreview` のCPU投入時間内に含む。AS_SHOT入力データとGL保存領域は保持する。
+Before/INPUT tapは従来どおりルックの全工程frameではない。
+
+`GpuTexturePool` は写真所有の同一GL thread/contextに限定し、同寸法・形式で寿命の重ならない
+storageとFBOだけを再利用する。毎回新しいleaseを返し、close済みleaseを再び有効にしない。
+idle storageも実allocationとして台帳に残し、新規確保が96MiBを超える前に古いidleだけを削除する。
+計算結果は新しいproducerが全面上書きする。新context/global/ThreadLocalは導入しない。
+公式の [immutable texture storage](https://registry.khronos.org/OpenGL-Refpages/es3/html/glTexStorage2D.xhtml)
+と同一contextの命令順序を使用し、shader式・Float境界・判定許容差は変えない。
+
+R7/Glow/Mist/Finishは写真ごとの `GpuResample` を借用する。`inputSize/outputSize/filter` のtableを
+共有し、Mistの最終縦補間も同じtableを借用する。table以外の場・結果・判定は共有しない。
+写真close、trim、現在のsurface喪失、context lossでpoolを解放し、次surfaceでは保持AS_SHOTから作り直す。
+新surfaceが既にあるときの古いdetachは新写真を解放しない。
+
+#319の44a12b9と変更後の実Kotlin経路をMesa GLES3.2へ接続した200条件で、全13tapの
+SHA-256は一致した。4形状・連続5frameのMesa予備検証は以下。Androidのdriver/lifecycle、
+実機性能、Gate判定を意味しない。最終headのAndroid・CI・reviewが揃うまで採用HOLD。
+
+| 入力寸法 | 台帳peak（bytes） | frame間persistent最大（bytes） | 写真close後 |
+|---|---:|---:|---:|
+| 1024×768 | 100,586,364 | 100,043,596 | 0 |
+| 768×1024 | 100,574,076 | 100,047,692 | 0 |
+| 1024×576 | 77,473,076 | 77,473,076 | 0 |
+| 886×886 | 100,660,184 | 99,866,896 | 0 |
+
+予算96MiB=100,663,296B。persistentには入力・係数・未使用storageを含む。256×192と1024×768の
+10fixture×計200条件も予算内。小さい一時形状は予算内でevictされるので確保回数0は保証しない。
+速度の改善は実機で別に測る。第2部APK固定時に一致・4形状予算・解放0・CI/canonicalの4条件が
+揃わなければ本変更を待たず、#319の現エンジンで第2部を開始する。
+
+#### 資源再利用前の承認4形状のメモリ観測
 
 #284接続候補87202fc / gpuDiagnosticの指定Androidで、4形状×2調整×2強さの16条件を完走し、
 Mesa実shaderのallocation監査と全最大値が一致した。R7_FINAL/Glow/Mistは固定工程基準内、
@@ -180,7 +216,7 @@ blur-owned縮小画像は第1拡大軸後に解放済み。[全85テクスチャ
 | R7 foundation | `R7Base.foundation` | 1パス | ROI は空（全 0）。製品でも楕円なし |
 | R7 vibrance・crisp・skin | 同名関数 | 1パスに融合 | 融合しても式は工程ごとに順に適用 |
 | 肌の重み | `StageClearGlow.skinWeight`（`StageClearColor.skinWeight` → 半径 SKIN_RADIUS のぼかし → 0..1） | 1パス＋ぼかし | |
-| Glow | `StageClearGlow.addLight`・`renderNonzero` | source → bloom 3半径＋halation のぼかし → 合成 → diffusion のぼかし → 合成 | 強さ非依存の場（skin・halo・bloom）は写真×調整値ごとにキャッシュ（`PreparedStageClearGlow` と同じ範囲） |
+| Glow | `StageClearGlow.addLight`・`renderNonzero` | source → bloom 3半径＋halation のぼかし → 合成 → diffusion のぼかし → 合成 | 統合プレビューは場も毎frame再計算。寸法/filter係数と保存領域だけを写真単位で保持（#323） |
 | Mist 自動強度 | `StageClearMist.nearWhiteFraction`・`autoStrength` | 数え上げ（Compute、§4.7） | プレビューは描画解像度で求める |
 | Mist | `StageClearMist.applyMist`・`render` | source → 2半径のぼかし → 合成 | |
 | Orton | `StageClearOrton.mixOrton`・`applyOrton`・`render` | encode/bright → ぼかし → mix → 彩度保護 → 強さで混合 | |
@@ -194,7 +230,7 @@ blur-owned縮小画像は第1拡大軸後に解放済み。[全85テクスチャ
 
 | 値 | 現行の定義 | GPU 版の方法 | 結果の扱い |
 |---|---|---|---|
-| 自動露出 p97 | 中央 1/2×1/2 の輝度、NumPy float32 linear（近い端点から補間） | 入力は CPU にもあるので、**CPU で求める**（`R7PreviewInputs.prepare` をそのまま呼ぶ） | 写真ごとに1回。現行と完全一致 |
+| 自動露出 p97 | 中央 1/2×1/2 の輝度、NumPy float32 linear（近い端点から補間） | 入力は CPU にもあるので、**CPU で求める**（`R7PreviewInputs.prepare` をそのまま呼ぶ） | 統合プレビューの全工程frameごとに再計算。式は不変（#323） |
 | 局所トーン p50/p92 | 原寸に拡大した平滑 log 輝度の全画素 | Compute シェーダーで `OriginalQuantiles` と同じ2段の基数ヒストグラム（上位16bit → 該当バケット内の下位16bit）を作り、厳密に選ぶ | 描画のたびではなく、R7 の入力（warmth・EV）が変わったときだけ。厳密に一致させる |
 | 白に近い画素の割合 | Glow 後の線形輝度 > NEAR_WHITE の画素数 | Compute シェーダーで原子的に数える | 強さ・調整値が変わるたび。厳密に一致させる |
 

@@ -49,7 +49,7 @@ class StageClearGpuR7IntegrationAndroidTest {
         }
     }
 
-    @Test fun strengthReusesR7AndAdjustmentInvalidatesItInsidePhotoPipeline() = gpu { egl, ledger ->
+    @Test fun strengthAndAdjustmentBothRecomputeR7InsidePhotoPipeline() = gpu { egl, ledger ->
         var pipeline: ConnectedStageClearGpuPipeline? = null
         val input = GpuReferenceImages.create(GpuReferenceImages.Kind.MIXED, GpuReferenceImages.Size(256, 192))
         DefaultStageClearGpu(egl, ledger) { texture, analysis ->
@@ -61,7 +61,7 @@ class StageClearGpuR7IntegrationAndroidTest {
                 val passes = checkNotNull(pipeline)
                 val initialCount = passes.r7FragmentPassCount
                 passes.render(params.copy(strength = .75)) { output, _ -> output.requireOpen() }
-                assertEquals(initialCount, passes.r7FragmentPassCount)
+                assertTrue(passes.r7FragmentPassCount > initialCount)
                 val second = engine.renderForTest(photo, params.copy(strength = .75), Point.R7_FINAL)
                 repeat(first.pixelCount * 3) { assertEquals(first[it].toRawBits(), second[it].toRawBits()) }
                 val afterTap = passes.r7FragmentPassCount

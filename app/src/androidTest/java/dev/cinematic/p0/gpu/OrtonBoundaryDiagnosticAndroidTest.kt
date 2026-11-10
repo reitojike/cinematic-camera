@@ -77,7 +77,8 @@ class OrtonBoundaryDiagnosticAndroidTest {
                             }
                             tap?.invoke(point, image)
                         }) { output, value -> decisions = value; consume(output, value) }
-                        override fun close() = connected.close()
+                        override fun beginFrame(analysis: GpuPhotoAnalysis) = connected.beginFrame(analysis)
+                override fun close() = connected.close()
                     }
                 }.use { engine ->
                     engine.openPhoto(input) { false }.use { photo ->

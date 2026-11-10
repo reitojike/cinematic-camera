@@ -287,6 +287,43 @@ class StageClearGpuAndroidTest {
         assertFalse(consumer.isAlive)
     }
 
+    @Test fun pooledPipelineReleasesOnSurfaceLossTrimAndPhotoClose() {
+        val errors = AtomicReference<Throwable?>()
+        val frames = LinkedBlockingQueue<GpuPreviewFrame>()
+        val renderer = GpuPreviewRenderer(instrumentation.targetContext.assets,
+            onFrame = { frames.offer(it) }, onError = { errors.compareAndSet(null, it) },
+            engineFactory = { egl, ledger -> DefaultStageClearGpu(egl, ledger) })
+        val consumer = HandlerThread("GpuResourceReuseConsumer").apply { start() }
+        try {
+            ImageReader.newInstance(64, 48, PixelFormat.RGBA_8888, 2).use { reader ->
+                reader.setOnImageAvailableListener({ it.acquireLatestImage()?.close() }, Handler(consumer.looper))
+                val image = LinearSrgbImage(64, 48, FloatArray(64 * 48 * 3) { (it % 127) / 63f })
+                renderer.submit(params, GpuDisplayOptions(false, 0))
+                renderer.openPhoto(image); renderer.setStarted(true)
+                renderer.attachSurface(reader.surface, 64, 48)
+                try {
+                    assertNotNull(frames.poll(30, TimeUnit.SECONDS))
+                    assertTrue(snapshot(renderer).allocatedBytes > image.pixelCount * 16L)
+                    renderer.detachSurface(reader.surface)
+                    assertEquals(0L, snapshot(renderer).allocatedBytes)
+                    frames.clear()
+                    renderer.attachSurface(reader.surface, 64, 48)
+                    assertNotNull(frames.poll(30, TimeUnit.SECONDS))
+                    assertTrue(snapshot(renderer).allocatedBytes > image.pixelCount * 16L)
+                    @Suppress("DEPRECATION")
+                    renderer.trimMemory(ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN)
+                    assertEquals(0L, snapshot(renderer).allocatedBytes)
+                    frames.clear(); renderer.setStarted(true)
+                    assertNotNull(frames.poll(30, TimeUnit.SECONDS))
+                    renderer.closePhoto()
+                    assertEquals(0L, snapshot(renderer).allocatedBytes)
+                    assertNull(errors.get())
+                } finally { renderer.detachSurface(reader.surface) }
+            }
+        } finally { renderer.close(); consumer.quitSafely(); consumer.join(5000) }
+        assertFalse(consumer.isAlive)
+    }
+
     private fun snapshot(renderer: GpuPreviewRenderer): GpuPreviewSnapshot {
         val queue = LinkedBlockingQueue<GpuPreviewSnapshot>()
         renderer.snapshot { queue.offer(it) }

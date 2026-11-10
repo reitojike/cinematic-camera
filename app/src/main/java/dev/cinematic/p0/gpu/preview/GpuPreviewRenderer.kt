@@ -208,7 +208,9 @@ internal class GpuPreviewRenderer(
             post {
                 val hz = refreshRate.takeIf { it.isFinite() && it > 0 } ?: 60f
                 frameIntervalNanos = (1_000_000_000.0 / hz).toLong().coerceAtLeast(1L)
-                releaseWindow(); latest.invalidate(); schedule()
+                releaseWindow()
+                if (photo == null && enginePhoto == null && !failed) retainedInput?.let(::uploadPhoto)
+                latest.invalidate(); schedule()
             }
         }
     }
@@ -250,6 +252,9 @@ internal class GpuPreviewRenderer(
                     try {
                         cancelFrame()
                         if (windowLease?.surface === surface) releaseWindow()
+                        // A stale detach must not release a newer attachment's photo.
+                        // Keep only CPU AS_SHOT for the next surface; pooled GL storage must reach zero.
+                        if (!hasSurface) releasePhoto()
                         latest.invalidate(); schedule()
                     } catch (problem: Throwable) {
                         GpuSurfaceProbe.failure("surface.detach.failure", problem)
@@ -312,6 +317,7 @@ internal class GpuPreviewRenderer(
             contextLost = generateSequence(failure) { it.cause }.any { it is GpuContextLostException }
             cancelFrame()
             runCatching { releaseWindow() }.exceptionOrNull()?.let(failure::addSuppressed)
+            if (contextLost) runCatching { releasePhoto() }.exceptionOrNull()?.let(failure::addSuppressed)
             onError(failure)
         }
     }
