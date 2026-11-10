@@ -141,7 +141,7 @@ class GpuColorResampleAndroidTest {
                             val label = "$size radius=$radius"
                             resample.blurPlane(single, radius).use { output ->
                                 val reference = StageClearBlur.plane(plane, radius)
-                                val actual = FloatPlane(size.width, size.height, GpuStageTap.readPlane(egl, output))
+                                val actual = GpuStageTap.readPlane(egl, output)
                                 val diff = ImageDiff.linear(reference, actual, "plane $label")
                                 assertTrue(diff.toString(), diff.maxAbsolute <= 1e-5)
                                 assertDisplayPlane(reference, actual, "plane $label")
@@ -149,7 +149,7 @@ class GpuColorResampleAndroidTest {
                             }
                             resample.blurRgb(rgb, radius).use { output ->
                                 val reference = StageClearBlur.rgb(image, radius)
-                                val actual = LinearSrgbImage(size.width, size.height, GpuStageTap.readRgb(egl, output))
+                                val actual = GpuStageTap.readRgb(egl, output)
                                 val diff = ImageDiff.linear(reference, actual, "rgb $label")
                                 assertTrue(diff.toString(), diff.maxAbsolute <= 1e-5)
                                 ImageDiff.display(reference, actual, label).assertDisplayWithin(maxDiff = 1)
@@ -182,7 +182,7 @@ class GpuColorResampleAndroidTest {
                 upload(egl, ledger, size.width, size.height, log.copyValues(), false).use { input ->
                     resample.reduce(input, w, h).use { down ->
                         resample.upsampleFrom(down, size.width, size.height, StageClearBlur.Filter.BICUBIC).use { output ->
-                            val diff = ImageDiff.linear(reference, FloatPlane(size.width, size.height, GpuStageTap.readPlane(egl, output)), "log2 bicubic $size")
+                            val diff = ImageDiff.linear(reference, GpuStageTap.readPlane(egl, output), "log2 bicubic $size")
                             assertTrue(diff.toString(), diff.maxAbsolute <= 1e-4)
                             Log.i(TAG, "PASS $diff")
                         }
@@ -195,7 +195,7 @@ class GpuColorResampleAndroidTest {
         for (filter in StageClearBlur.Filter.entries) GpuResample(egl, ledger).use { resample ->
             upload(egl, ledger, 64, 1024, plane.copyValues(), false).use { input ->
                 resample.resize(input, 60, 200, filter).use { output ->
-                    val diff = ImageDiff.linear(StageClearBlur.resize(plane, 60, 200, filter), FloatPlane(60, 200, GpuStageTap.readPlane(egl, output)), "verticalFirst $filter")
+                    val diff = ImageDiff.linear(StageClearBlur.resize(plane, 60, 200, filter), GpuStageTap.readPlane(egl, output), "verticalFirst $filter")
                     assertTrue(diff.toString(), diff.maxAbsolute <= 1e-5)
                     Log.i(TAG, "PASS $diff")
                 }
