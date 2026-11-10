@@ -13,7 +13,7 @@ def verify(path: Path, diagnostic: bool) -> None:
     if not diagnostic:
         assert app.find("profileable") is None, path
         for node in app:
-            assert not any(name in node.get(A + "name", "") for name in ("GpuDiagnostic", "DiagnosticHub", "PreviewParallelDiagnostic")), path
+            assert not any(name in node.get(A + "name", "") for name in ("GpuDiagnostic", "DiagnosticHub", "PreviewParallelDiagnostic", "GpuPreviewDiagnostic")), path
         return
     assert root.get("package") == "dev.cinematic.p0.gpudiagnostic"
     assert app.get(A + "debuggable", "false") == "false"
@@ -31,13 +31,27 @@ def verify(path: Path, diagnostic: bool) -> None:
     activities = app.findall("activity")
     assert {n.get(A + "name") for n in activities} == {
         "dev.cinematic.p0.raw.DiagnosticHubActivity",
+        "dev.cinematic.p0.gpu.GpuPreviewDiagnosticActivity",
         "dev.cinematic.p0.raw.GpuDiagnosticActivity",
         "dev.cinematic.p0.raw.PreviewParallelDiagnosticActivity",
         "dev.cinematic.p0.rawdiagnostic.RawDiagnosticActivity",
         "dev.cinematic.p0.photoroll.PhotoRollActivity",
     }
+    launchers = {
+        "dev.cinematic.p0.raw.DiagnosticHubActivity",
+        "dev.cinematic.p0.gpu.GpuPreviewDiagnosticActivity",
+    }
     for activity in activities:
-        assert activity.get(A + "exported") == ("true" if activity.get(A + "name").endswith(".DiagnosticHubActivity") else "false")
+        is_launcher = activity.get(A + "name") in launchers
+        assert activity.get(A + "exported") == ("true" if is_launcher else "false")
+        filters = activity.findall("intent-filter")
+        assert len(filters) == (1 if is_launcher else 0)
+        if is_launcher:
+            assert {n.get(A + "name") for n in filters[0].findall("action")} == {"android.intent.action.MAIN"}
+            assert {n.get(A + "name") for n in filters[0].findall("category")} == {"android.intent.category.LAUNCHER"}
+            assert not filters[0].findall("data")
+        if activity.get(A + "name") == "dev.cinematic.p0.gpu.GpuPreviewDiagnosticActivity":
+            assert activity.get(A + "label") == "GPU 表示診断"
     services = app.findall("service")
     assert {n.get(A + "name") for n in services} == {
         "dev.cinematic.p0.raw.GpuDiagnosticService",

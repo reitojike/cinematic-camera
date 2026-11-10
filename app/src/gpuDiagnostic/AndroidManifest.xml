@@ -23,6 +23,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- #283 は統合診断ハブとは独立した合成入力専用入口。 -->
+        <activity android:name=".gpu.GpuPreviewDiagnosticActivity" android:exported="true" android:label="GPU 表示診断">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
         <activity android:name=".raw.PreviewParallelDiagnosticActivity" android:exported="false" />
         <activity android:name=".raw.GpuDiagnosticActivity" android:exported="false" />
         <activity android:name=".rawdiagnostic.RawDiagnosticActivity" android:exported="false" />
