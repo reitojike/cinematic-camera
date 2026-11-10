@@ -25,7 +25,7 @@ internal object StageClearGlowGpu {
         val buffers = mutableListOf<GpuTexture>()
         var retained: GpuTexture? = null
         try {
-            buffers += GpuTexture.create(egl, source.memoryLedger, source.width, source.height,
+            buffers += source.createSibling(format =
                 GpuTexture.Format.RGBA32F)
             var previous = buffers[0]
             // The second accumulator is not needed while the first blur is being built.
@@ -44,8 +44,7 @@ internal object StageClearGlowGpu {
                 blurred.use {
                     require(it.width == source.width && it.height == source.height &&
                         it.format == GpuTexture.Format.RGBA32F) { "Bloom blur dimensions/format differ" }
-                    val target = destination ?: GpuTexture.create(egl, source.memoryLedger,
-                        source.width, source.height, GpuTexture.Format.RGBA32F).also(buffers::add)
+                    val target = destination ?: source.createSibling(format = GpuTexture.Format.RGBA32F).also(buffers::add)
                     graph.run(FragmentPass(program,
                         listOf(TextureInput("s_previous", previous, 0), TextureInput("s_blurred", it, 1)),
                         target, uniforms = { GLES32.glUniform1f(weightLocation, weight) }))
@@ -140,7 +139,7 @@ internal object StageClearGlowGpu {
     }
 
     private fun copyOwned(source: GpuTexture): GpuTexture {
-        val output = GpuTexture.create(source.context, source.memoryLedger, source.width, source.height, source.format)
+        val output = source.createSibling()
         try {
             GLES32.glCopyImageSubData(source.textureId, GLES32.GL_TEXTURE_2D, 0, 0, 0, 0,
                 output.textureId, GLES32.GL_TEXTURE_2D, 0, 0, 0, 0, source.width, source.height, 1)
@@ -157,7 +156,7 @@ internal object StageClearGlowGpu {
     private fun draw(base: GpuTexture, shader: String, inputs: List<Pair<String, GpuTexture>>,
         format: GpuTexture.Format = GpuTexture.Format.RGBA32F, uniforms: (Int) -> Unit = {}): GpuTexture {
         val egl = base.context
-        val output = GpuTexture.create(egl, base.memoryLedger, base.width, base.height, format)
+        val output = base.createSibling(format = format)
         try {
             egl.passes().run(FragmentPass(egl.shaders().fragment(shader),
                 inputs.mapIndexed { unit, (name, texture) -> TextureInput(name, texture, unit) },

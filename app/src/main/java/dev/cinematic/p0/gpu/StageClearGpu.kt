@@ -20,7 +20,7 @@ import java.util.concurrent.CancellationException
 internal interface StageClearGpuPhoto : AutoCloseable {
     val width: Int            // 入力（AS_SHOT）の幅
     val height: Int
-    /** 写真ごとに1回求める値。プレビューの描画中は固定。 */
+    /** 写真を開いたとき一度だけ求める、スライダー値に依存しない解析。 */
     val analysis: GpuPhotoAnalysis
 }
 
@@ -34,6 +34,9 @@ internal data class GpuRenderParams(
     val strength: Double,             // 0..1
     val adjustments: PhotoAdjustments // warmth -100..100、exposureEv -2..2（既存型をそのまま使う）
 )
+
+/** 製品の通常描画と、基準①の全工程計測を明示的に分ける。写真解析はいずれも初回だけ。 */
+internal enum class GpuFrameMode { NORMAL, FULL_RECOMPUTE }
 
 internal interface StageClearGpu : AutoCloseable {
     /** AS_SHOT の線形 sRGB（D65）入力をアップロードし、写真ごとの解析を行う。 */
@@ -68,9 +71,9 @@ internal data class StageClearGpuPreviewTarget(
 }
 
 /**
- * 写真ごとの R7/Glow 保持と一時出力を所有する接続点。入力は借用し、close しない。
+ * 写真ごとの資源と一時出力を所有する接続点。入力は借用し、close しない。
  * tap/consume は同じ GL thread 上の同期 callback。渡す texture は callback 中だけ借用する。
- * 診断のtap指定は全工程を再計算する。通常描画の強さ変更ではR7/Glowの保持を使う。
+ * 通常描画は R7/Glow の結果を再利用。全工程計測では資源と寸法/filter係数だけを再利用。
  */
 internal interface StageClearGpuPipeline : AutoCloseable {
     fun render(params: GpuRenderParams, tap: ((GpuStageTap.Point, GpuTexture) -> Unit)? = null,
@@ -84,13 +87,15 @@ internal interface StageClearGpuPipeline : AutoCloseable {
 internal class DefaultStageClearGpu(
     private val egl: EglContexts,
     private val ledger: GpuMemoryLedger,
+    frameMode: GpuFrameMode = GpuFrameMode.NORMAL,
     private val createPipeline: (GpuTexture, GpuPhotoAnalysis) -> StageClearGpuPipeline = { input, analysis ->
-        ConnectedStageClearGpuPipeline(input, analysis)
+        ConnectedStageClearGpuPipeline(input, analysis, frameMode)
     },
 ) : StageClearGpu {
     private val photos = mutableSetOf<Photo>()
     private var closed = false
     private var capabilitiesChecked = false
+    internal var photoAnalysisCount = 0; private set
 
     override fun openPhoto(input: LinearSrgbImage, stop: () -> Boolean): StageClearGpuPhoto {
         requireOpen()
@@ -101,12 +106,14 @@ internal class DefaultStageClearGpu(
             GlCapabilities.inspect(egl).requireSupported()
             capabilitiesChecked = true
         }
-        // Meter the unmodified AS_SHOT exactly once, before warmth and user EV.
+        // Initial preparation is excluded from criterion ①. Neither mode re-meters this photo.
         val prepared = R7PreviewInputs.prepare(R7PreviewInputs.AsShotInput(input,
             R7PreviewInputs.Source.LIBRAW_PRELIMINARY_AS_SHOT), emptyList(), stop)
         val analysis = GpuPhotoAnalysis(prepared.exposure.externalBaseEv, prepared.exposure.centralP97)
+        photoAnalysisCount++
         checkpoint(stop)
-        val texture = GpuTexture.create(egl, ledger, input.width, input.height, GpuTexture.Format.RGBA32F)
+        val pool = GpuTexturePool(egl, ledger)
+        val texture = GpuTexture.create(egl, ledger, input.width, input.height, GpuTexture.Format.RGBA32F, pool)
         try {
             val rgba = ByteBuffer.allocateDirect(Math.multiplyExact(input.pixelCount, 16))
                 .order(ByteOrder.nativeOrder()).asFloatBuffer()
@@ -119,9 +126,9 @@ internal class DefaultStageClearGpu(
             }
             rgba.flip(); texture.upload(rgba)
             checkpoint(stop)
-            return Photo(texture, analysis).also { photos += it }
+            return Photo(texture, analysis, pool).also { photos += it }
         } catch (failure: Throwable) {
-            runCatching { texture.close() }.exceptionOrNull()?.let(failure::addSuppressed)
+            runCatching { texture.close(); pool.close() }.exceptionOrNull()?.let(failure::addSuppressed)
             throw failure
         }
     }
@@ -205,7 +212,8 @@ internal class DefaultStageClearGpu(
         else -> error("Unsupported stage tap format: ${texture.format}")
     }
 
-    private inner class Photo(val input: GpuTexture, override val analysis: GpuPhotoAnalysis) : StageClearGpuPhoto {
+    private inner class Photo(val input: GpuTexture,
+        override val analysis: GpuPhotoAnalysis, val pool: GpuTexturePool) : StageClearGpuPhoto {
         override val width = input.width
         override val height = input.height
         // Before bypasses the look; retain the last computed decision rather than evaluating it.
@@ -223,7 +231,7 @@ internal class DefaultStageClearGpu(
             // Preserve failed owners for an explicit cleanup retry. Never release borrowed input
             // while its pipeline still has an unconfirmed close.
             passes?.close(); passes = null
-            input.close()
+            input.close(); pool.close()
             photoClosed = true; photos.remove(this)
         }
     }
@@ -256,20 +264,24 @@ internal class DefaultStageClearGpu(
     }
 }
 
-/** Photo-local connections. Cache owners outlive frames; frame outputs never outlive consume. */
+/** Photo-local resources survive frames. Only NORMAL may also reuse the R7/Glow results. */
 internal class ConnectedStageClearGpuPipeline(
     private val input: GpuTexture,
     private val analysis: GpuPhotoAnalysis,
+    private val frameMode: GpuFrameMode = GpuFrameMode.NORMAL,
 ) : StageClearGpuPipeline {
     private val egl = input.context
     private val ledger = input.memoryLedger
-    private val r7 = R7Gpu(egl, ledger)
-    private val resample = GpuResample(egl, ledger)
-    private val finish = StageClearFinishGpu(egl, ledger)
+    private val resample = GpuResample(egl, ledger, input.pool)
+    private val r7 = R7Gpu(egl, ledger, resample, ownsResample = false)
+    private val finish = StageClearFinishGpu(egl, ledger, resample, ownsResample = false)
     private var glow: StageClearGlowGpu.Prepared? = null
     private var adjustments: PhotoAdjustments? = null
     private val transient = linkedSetOf<GpuTexture>()
     private var closed = false
+    internal val resourceAllocationCount get() = input.pool?.allocationCount ?: 0
+    internal val resourceReuseCount get() = input.pool?.reuseCount ?: 0
+    internal val coefficientTableCount get() = resample.coefficientTableCount
     internal val r7FragmentPassCount get() = r7.fragmentPassCount
     internal var glowPreparationCount = 0; private set
     internal var lastDecisions = GpuDecisions(0.0, 1.0); private set
@@ -279,12 +291,13 @@ internal class ConnectedStageClearGpuPipeline(
         input.requireOpen(); check(!closed) { "Stage Clear pipeline is closed" }
         require(params.strength.isFinite() && params.strength in 0.0..1.0)
         releaseTransient()
-        // Glow borrows R7_FINAL. Release it BEFORE any R7 recomputation, including diagnostic taps.
-        if (adjustments != params.adjustments || tap != null) {
+        val recompute = frameMode == GpuFrameMode.FULL_RECOMPUTE
+        // Glow borrows R7_FINAL: release it BEFORE any R7 recomputation, including diagnostic taps.
+        if (recompute || adjustments != params.adjustments || tap != null) {
             glow?.close(); glow = null; adjustments = null
         }
         val base = r7.render(input, params.adjustments.warmth,
-            analysis.meteredBaseEv + params.adjustments.exposureEv, foundationRoi = null, tap = tap)
+            analysis.meteredBaseEv + params.adjustments.exposureEv, foundationRoi = null, tap = tap, recompute = recompute)
         val prepared = glow ?: StageClearGlowGpu.prepare(base, resample).also {
             glow = it; adjustments = params.adjustments; glowPreparationCount++
         }
@@ -315,7 +328,12 @@ internal class ConnectedStageClearGpuPipeline(
             failure = problem
             throw problem
         } finally {
-            try { releaseTransient() } catch (cleanup: Throwable) {
+            try {
+                releaseTransient()
+                if (recompute) {
+                    glow?.close(); glow = null; adjustments = null; r7.discardResult()
+                }
+            } catch (cleanup: Throwable) {
                 if (failure == null) throw cleanup
                 if (failure !== cleanup) failure.addSuppressed(cleanup)
             }
@@ -340,7 +358,7 @@ internal class ConnectedStageClearGpuPipeline(
         // Keep an owner if close fails, so the photo/engine can explicitly retry cleanup.
         releaseTransient()
         glow?.close(); glow = null; adjustments = null
-        finish.close(); resample.close(); r7.close()
+        finish.close(); r7.close(); resample.close()
         closed = true
     }
 }

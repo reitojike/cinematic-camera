@@ -12,9 +12,10 @@ import kotlin.math.pow
 import kotlin.math.round
 
 /** 写真ごとに所有するR7。入力/ROIは借用かつ不変。中間は即時解放し、最終出力だけを保持する。 */
-internal class R7Gpu(private val egl: EglContexts, private val ledger: GpuMemoryLedger) : AutoCloseable {
+internal class R7Gpu(private val egl: EglContexts, private val ledger: GpuMemoryLedger,
+    private val resample: GpuResample = GpuResample(egl, ledger),
+    private val ownsResample: Boolean = true) : AutoCloseable {
     private data class Key(val input: GpuTexture, val warmth: Double, val ev: Double, val roi: GpuTexture?)
-    private val resample = GpuResample(egl, ledger)
     private var key: Key? = null
     private var result: GpuTexture? = null
     private var closed = false
@@ -27,7 +28,8 @@ internal class R7Gpu(private val egl: EglContexts, private val ledger: GpuMemory
      */
     fun render(input: GpuTexture, warmth: Double, externalBaseEv: Double, foundationRoi: GpuTexture? = null,
         tap: ((Point, GpuTexture) -> Unit)? = null,
-        smoothLogTap: ((GpuTexture, DoubleArray) -> Unit)? = null): GpuTexture {
+        smoothLogTap: ((GpuTexture, DoubleArray) -> Unit)? = null,
+        recompute: Boolean = false): GpuTexture {
         egl.requireCurrent(); check(!closed) { "R7 is closed" }
         input.requireContext(egl)
         require(input.memoryLedger === ledger && input.format == GpuTexture.Format.RGBA32F)
@@ -40,11 +42,11 @@ internal class R7Gpu(private val egl: EglContexts, private val ledger: GpuMemory
             require(it.width == input.width && it.height == input.height)
         }
         val next = Key(input, warmth, externalBaseEv, foundationRoi)
-        if (next == key && tap == null && smoothLogTap == null) return checkNotNull(result).also { it.requireOpen() }
+        if (!recompute && next == key && tap == null && smoothLogTap == null) return checkNotNull(result).also { it.requireOpen() }
         result?.close(); result = null; key = null
         val owned = mutableSetOf<GpuTexture>()
         fun create(format: GpuTexture.Format = GpuTexture.Format.RGBA32F) =
-            GpuTexture.create(egl, ledger, input.width, input.height, format).also { owned += it }
+            input.createSibling(format = format).also { owned += it }
         fun release(texture: GpuTexture) { if (owned.remove(texture)) texture.close() }
         fun pass(path: String, inputs: List<TextureInput>, output: GpuTexture, uniforms: (Int) -> Unit = {}) {
             egl.passes().run(FragmentPass(egl.shaders().fragment(path), inputs, output, uniforms = uniforms)); fragmentPassCount++
@@ -95,9 +97,13 @@ internal class R7Gpu(private val egl: EglContexts, private val ledger: GpuMemory
             return final
         } finally { owned.forEach { it.close() } }
     }
+    fun discardResult() {
+        result?.close(); result = null; key = null
+    }
+
     override fun close() {
         egl.glThread.requireCurrent()
         if (closed) return
-        result?.close(); result = null; key = null; resample.close(); closed = true
+        discardResult(); if (ownsResample) resample.close(); closed = true
     }
 }

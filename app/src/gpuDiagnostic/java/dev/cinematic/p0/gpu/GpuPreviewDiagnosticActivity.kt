@@ -296,7 +296,7 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
                     stopMeasurement()
                 }
             }
-        }, engineFactory = { egl, ledger -> DefaultStageClearGpu(egl, ledger) })
+        }, engineFactory = { egl, ledger -> DefaultStageClearGpu(egl, ledger, GpuFrameMode.FULL_RECOMPUTE) })
         setContent {
             MaterialTheme {
                 Surface(Modifier.fillMaxSize()) { DiagnosticScreen() }
@@ -308,7 +308,7 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
         if (measuring) {
             measuring = false
             val thermal = getSystemService(PowerManager::class.java).currentThermalStatus
-            summary = measurement.summary() + "\n温度状態: $thermal"
+            summary = "frameMode=FULL_RECOMPUTE / 写真解析は初回のみ\n" + measurement.summary() + "\n温度状態: $thermal"
             Log.i("GpuPreview", "$summary\nGPU allocated bytes: $allocatedBytes")
         }
     }
@@ -386,7 +386,7 @@ class GpuPreviewDiagnosticActivity : ComponentActivity() {
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text("GPU 表示診断・製品未採用", style = MaterialTheme.typography.titleLarge)
-            Text("R7 → Glow → Mist → Finish の全工程GPUプレビュー。BeforeはAS_SHOT入力です。保存なし。製品未採用。")
+            Text("全工程再計算モード (FULL_RECOMPUTE): R7 → Glow → Mist → Finish を毎フレーム再計算。写真解析は初回のみ。BeforeはAS_SHOT入力。通常製品の再利用とは別の診断経路。保存なし。製品未採用。")
             GpuPreviewSurface(renderer, Modifier.fillMaxWidth().height(240.dp))
             Column {
                 Button(onClick = { choosing = true }) { Text("合成入力: $fixtureName") }

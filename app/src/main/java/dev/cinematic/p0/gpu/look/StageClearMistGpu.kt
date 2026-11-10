@@ -8,8 +8,6 @@ import dev.cinematic.p0.gpu.analysis.GpuAnalysis
 import dev.cinematic.p0.gpu.resample.GpuResample
 import dev.cinematic.p0.raw.StageClearBlur
 import dev.cinematic.p0.raw.StageClearMistV1
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 
 /** #281: borrowed inputs; only a nonzero-strength result image is caller-owned. */
 internal object StageClearMistGpu {
@@ -57,7 +55,7 @@ internal object StageClearMistGpu {
 
     private class Halo(val horizontal: GpuTexture, val weights: GpuTexture, val first: GpuTexture) : AutoCloseable {
         override fun close() {
-            try { horizontal.close() } finally { try { weights.close() } finally { first.close() } }
+            horizontal.close() // Coefficients are borrowed from the photo-local resampler.
         }
     }
 
@@ -69,41 +67,28 @@ internal object StageClearMistGpu {
         val (w, h) = StageClearBlur.reducedSize(source.width, source.height, radius)
         val reduced = resample.reduce(source, w, h)
         var horizontal: GpuTexture? = null
-        var weights: GpuTexture? = null
-        var first: GpuTexture? = null
         try {
             val resized = resample.resize(reduced, source.width, h, StageClearBlur.Filter.BILINEAR)
             horizontal = if (resized !== source) resized else {
                 // Tiny dimensions can alias. Own a copy before the source scope ends.
-                GpuTexture.create(source.context, source.memoryLedger, source.width, source.height, source.format).also {
+                source.createSibling().also {
                     try { GLES32.glCopyImageSubData(source.textureId, GLES32.GL_TEXTURE_2D, 0, 0, 0, 0,
                         it.textureId, GLES32.GL_TEXTURE_2D, 0, 0, 0, 0, source.width, source.height, 1)
                     source.context.checkGl("copy aliased Mist halo")
                     } catch (failure: Throwable) { it.close(); throw failure }
                 }
             }
-            val samples = StageClearBlur.samples(h, source.height, StageClearBlur.Filter.BILINEAR)
-            val taps = samples.maxOf { it.weights.size }
-            weights = GpuTexture.create(source.context, source.memoryLedger, taps, source.height, GpuTexture.Format.R32F)
-            first = GpuTexture.create(source.context, source.memoryLedger, 1, source.height, GpuTexture.Format.R32I)
-            val values = ByteBuffer.allocateDirect(taps * source.height * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
-            val starts = ByteBuffer.allocateDirect(source.height * 4).order(ByteOrder.nativeOrder()).asIntBuffer()
-            samples.forEach { sample ->
-                starts.put(sample.first)
-                repeat(taps) { values.put(if (it < sample.weights.size) sample.weights[it].toFloat() else 0f) }
-            }
-            values.flip(); starts.flip(); weights.upload(values); first.upload(starts)
-            return Halo(horizontal, weights, first)
+            val weights = resample.weights(h, source.height, StageClearBlur.Filter.BILINEAR)
+            return Halo(horizontal, weights.values, weights.first)
         } catch (failure: Throwable) {
-            first?.close(); weights?.close(); horizontal?.close()
+            horizontal?.close()
             throw failure
         } finally { if (reduced !== source && reduced !== horizontal) reduced.close() }
     }
 
     private fun draw(source: GpuTexture, path: String, inputs: List<TextureInput>,
         uniforms: (Int) -> Unit = {}): GpuTexture {
-        val output = GpuTexture.create(source.context, source.memoryLedger,
-            source.width, source.height, GpuTexture.Format.RGBA32F)
+        val output = source.createSibling(format = GpuTexture.Format.RGBA32F)
         try {
             source.context.passes().run(FragmentPass(source.context.shaders().fragment(path), inputs, output, uniforms = uniforms))
             return output

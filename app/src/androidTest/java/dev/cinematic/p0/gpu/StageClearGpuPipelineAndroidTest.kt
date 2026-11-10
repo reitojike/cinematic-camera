@@ -64,7 +64,7 @@ class StageClearGpuPipelineAndroidTest {
         var captured: MatrixPipeline? = null
         DefaultStageClearGpu(egl, ledger) { texture, analysis ->
             assertOwner(label, egl, ledger, texture)
-            MatrixPipeline(egl, ConnectedStageClearGpuPipeline(texture, analysis)).also { captured = it }
+            MatrixPipeline(egl, ConnectedStageClearGpuPipeline(texture, analysis, GpuFrameMode.FULL_RECOMPUTE)).also { captured = it }
         }.use { engine ->
             val baseline = memory(ledger)
             val peakBeforeClose = engine.openPhoto(input) { false }.use { photo ->
@@ -168,12 +168,10 @@ class StageClearGpuPipelineAndroidTest {
                             val condition = "$label strength=$strength adjustments=$adjustments"
                             val beforeR7 = pipeline.r7FragmentPassCount
                             val beforeGlow = pipeline.glowPreparationCount
-                            val beforeMemory = memory(ledger)
                             val cached = shoulderBits(condition, egl, ledger, pipeline, params, forceFresh = false)
                             if (adjustments == previousAdjustments) {
                                 assertEquals("$condition R7 reused", beforeR7, pipeline.r7FragmentPassCount)
                                 assertEquals("$condition Glow reused", beforeGlow, pipeline.glowPreparationCount)
-                                assertEquals("$condition cached frame releases temporary textures", beforeMemory, memory(ledger))
                             } else {
                                 assertTrue("$condition R7 invalidated", pipeline.r7FragmentPassCount > beforeR7)
                                 assertEquals("$condition Glow invalidated", beforeGlow + 1, pipeline.glowPreparationCount)
@@ -182,13 +180,11 @@ class StageClearGpuPipelineAndroidTest {
                             val cachedDecision = pipeline.lastDecisions
                             val cachedR7 = pipeline.r7FragmentPassCount
                             val cachedGlow = pipeline.glowPreparationCount
-                            val cachedMemory = memory(ledger)
                             val fresh = shoulderBits(condition, egl, ledger, pipeline, params, forceFresh = true)
                             assertTrue("$condition forced R7 recomputation", pipeline.r7FragmentPassCount > cachedR7)
                             assertEquals("$condition forced Glow recomputation", cachedGlow + 1, pipeline.glowPreparationCount)
                             assertArrayEquals("$condition cached/fresh RGBA32F SHOULDER bits", fresh, cached)
                             assertEquals("$condition cached/fresh decisions", cachedDecision, pipeline.lastDecisions)
-                            assertEquals("$condition fresh frame releases temporary textures", cachedMemory, memory(ledger))
                             assertWithinBudget(condition, ledger)
                             comparisons++
                         }

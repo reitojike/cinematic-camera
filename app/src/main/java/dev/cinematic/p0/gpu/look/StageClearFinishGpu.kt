@@ -12,8 +12,9 @@ import kotlin.math.min
 /** Photo-local finishing passes. Inputs and synchronous tap textures are borrowed.
  * render/encode return a new caller-owned texture; intermediates are released eagerly.
  */
-internal class StageClearFinishGpu(private val egl: EglContexts, private val ledger: GpuMemoryLedger) : AutoCloseable {
-    private val resample = GpuResample(egl, ledger)
+internal class StageClearFinishGpu(private val egl: EglContexts, private val ledger: GpuMemoryLedger,
+    private val resample: GpuResample = GpuResample(egl, ledger),
+    private val ownsResample: Boolean = true) : AutoCloseable {
     private var closed = false
 
     fun render(mist: MistGpuResult, strength: Double, faceMask: GpuTexture? = null,
@@ -77,7 +78,7 @@ internal class StageClearFinishGpu(private val egl: EglContexts, private val led
     }
     private fun pass(path: String, size: GpuTexture, inputs: List<TextureInput>,
         format: GpuTexture.Format = GpuTexture.Format.RGBA32F, uniforms: (Int) -> Unit = {}): GpuTexture {
-        val output = GpuTexture.create(egl, ledger, size.width, size.height, format)
+        val output = size.createSibling(format = format)
         try {
             egl.passes().run(FragmentPass(egl.shaders().fragment(path), inputs, output, uniforms = uniforms))
             return output
@@ -93,6 +94,6 @@ internal class StageClearFinishGpu(private val egl: EglContexts, private val led
     override fun close() {
         egl.glThread.requireCurrent()
         if (closed) return
-        resample.close(); closed = true
+        if (ownsResample) resample.close(); closed = true
     }
 }

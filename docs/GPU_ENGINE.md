@@ -57,7 +57,7 @@ package dev.cinematic.p0.gpu
 internal interface StageClearGpuPhoto : AutoCloseable {
     val width: Int            // 入力（AS_SHOT）の幅
     val height: Int
-    /** 写真ごとに1回求める値。プレビューの描画中は固定。 */
+    /** 写真を開いたとき一度だけ求める、スライダー値に依存しない解析。 */
     val analysis: GpuPhotoAnalysis
 }
 
@@ -110,16 +110,82 @@ internal data class GpuDecisions(val mistAutoStrength: Double, val faceCutFactor
 - **メモリ**: `GpuTexture` がバイト数を記録し、合計を `GpuMemoryLedger` に報告する。上限はプレビュー 128MiB 以下、書き出し 192MiB 以下（12MP）。超える要求は失敗させる（黙って縮小しない）。`peakAllocatedBytes` は成功した予約の最大値を解放後も保持する。AS_SHOT を含む全工程の最大と予算との差を計測する。予算変更の判断と Gate 1 基準は [#276](https://github.com/reitojike/cinematic-camera/issues/276)・[#285](https://github.com/reitojike/cinematic-camera/issues/285) に記録する。
 - **解放**: 写真を閉じる、画面を離れる、`onTrimMemory`（`TRIM_MEMORY_UI_HIDDEN` 以上）で写真の GPU 状態を解放する。コンテキスト喪失（`EGL_CONTEXT_LOST`）は失敗として扱い、次の要求で作り直す。
 
-#### プレビュー予算の事後変更（#323）
+#### 資源再利用と全工程計測モード（#323）
 
-利用者は第1部の結果と資源再利用案のMesa結果を見た後、基準④を96MiBから128MiB以下へ変更した。
-資源持越時のpeakが約96MiBに達し余裕がほぼ無かったことと、Pixel 9aのメモリ量に対して128MiBは
-無理のない量との判断による。`GpuMemoryLedger.PREVIEW_BUDGET`を134,217,728Bへ合わせる。
-①〜③・書き出し192MiBは不変。以下の旧96MiB実測は履歴のまま維持する。
-資源再利用の実装・全工程毎frame計算・新しい4形状測定とrelease確認は別差分であり、
-この予算変更だけでBの第2部採用条件を満たしたとは扱わない。Bを待って第2部を遅らせない。
+**予算の事後変更**: 利用者は第1部の結果と資源再利用案のMesa結果を見た後、
+プレビュー上限を96MiBから128MiB（134,217,728B）へ変更した。資源持越時のpeakが約96MiBに
+達し余裕がほぼ無かったことと、Pixel 9aのメモリ量に対して128MiBは無理のない量との判断による。
+Gate 1基準④と `GpuMemoryLedger.PREVIEW_BUDGET` を合わせ、①〜③・書き出し192MiBは不変。
+旧96MiB実測は履歴として残す。新128MiBでの4形状peak/persistent/余裕を別に記録し、
+Mesa/Android一致・解放0・CI/canonicalが揃うまで第2部に含めない。B待ちで第2部を遅らせない。
 
-#### 承認4形状のメモリ観測
+製品の通常描画 `GpuFrameMode.NORMAL` は #319 と同じく、強さだけを変えたときにR7とGlowの
+準備済み結果を再利用する。warmth/EV変更やstage tapでは、借用するGlowを先に解放してからR7を
+計算し直す。①計測用の `FULL_RECOMPUTE` は別に設け、stage tapの有無に依存せずR7・Glow・Mist・
+Orton・Character・肌保護・shoulder・表示を再計算する。画像・場・R7局所トーン分位点・Mist判定を
+前frameから使わず、frame終了時に結果leaseを返す。係数・GL保存領域・programは再利用できる。
+
+写真由来のp97/base EVは両モードとも `openPhoto` で `R7PreviewInputs.prepare` を一度だけ呼ぶ。
+これは初回準備で、基準①の計測外。エンジンは再解析のためのCPU写真コピーを保持しない。
+rendererがsurface再生成/trim復帰用に保持する元入力は既存どおり。Before/INPUT tapはルックを通さない。
+`DefaultStageClearGpu(egl, ledger, GpuFrameMode.FULL_RECOMPUTE)` が標準の明示選択。
+独自pipeline factoryでは `ConnectedStageClearGpuPipeline(input, analysis, GpuFrameMode.FULL_RECOMPUTE)`
+を渡す。GPU表示診断・DNG試験・一致/メモリ診断はこのモードを明示し、診断画面/計測ログにも表示する。
+通常cacheの回帰試験は意図的にNORMALを使う。GPU timerだけで①のwall判定を代用しない。
+
+`GpuTexturePool` は写真所有の同一GL thread/contextに限定し、同寸法・形式で寿命の重ならない
+storageとFBOだけを再利用する。毎回新しいleaseを返し、close済みleaseを再び有効にしない。
+idle storageも実allocationとして台帳に残し、新規確保が128MiBを超える前に古いidleだけを削除する。
+計算結果は新しいproducerが全面上書きする。新context/global/ThreadLocalは導入しない。
+公式の [immutable texture storage](https://registry.khronos.org/OpenGL-Refpages/es3/html/glTexStorage2D.xhtml)
+を使用する。fragmentは同一contextの命令順序に従い、BOXのimageStoreは再利用先を先行する
+texture fetchから守るため、dispatch前に `GL_SHADER_IMAGE_ACCESS_BARRIER_BIT` を入れる。
+既存のdispatch後barrierは後続の読取りを保護する。shader式・Float境界・判定許容差は変えない。
+
+R7/Glow/Mist/Finishは写真ごとの `GpuResample` を借用する。`inputSize/outputSize/filter` のtableを
+共有し、Mistの最終縦補間も同じtableを借用する。FULL_RECOMPUTEではtable以外の場・結果・判定は持ち越さない。
+写真close、trim、現在のsurface喪失、context lossでpoolを解放し、次surfaceでは保持AS_SHOTから作り直す。
+新surfaceが既にあるときの古いdetachは新写真を解放しない。
+
+修正版128MiBの4形状・連続5frame（強さ0.5/0.5/1/0/0.5）は、tapなしのNORMALとFULL_RECOMPUTEを
+別photo/ledgerで測り、各frame最終出力raw-bit hashが一致。初回後のtexture新規確保0、係数table数不変、
+写真解析は各photo1回。NORMALはR7 pass累計5/Glow準備1のまま、FULLは各frameでR7を5pass・Glowを1回追加。
+closeは全8組で台帳0。表示encodeを追加するstage tapと、通常のSHOULDER消費は別に記録する。
+
+| 入力寸法 | モード | 台帳peak（bytes） | persistent最大（bytes） | 128MiBへの余裕（bytes） |
+|---|---|---:|---:|---:|
+| 1024×768 | NORMAL | 100,103,036 | 100,103,036 | 34,114,692 |
+| 1024×768 | FULL_RECOMPUTE | 100,103,036 | 100,103,036 | 34,114,692 |
+| 768×1024 | NORMAL | 100,103,036 | 100,103,036 | 34,114,692 |
+| 768×1024 | FULL_RECOMPUTE | 100,103,036 | 100,103,036 | 34,114,692 |
+| 1024×576 | NORMAL | 75,113,780 | 75,113,780 | 59,103,948 |
+| 1024×576 | FULL_RECOMPUTE | 75,113,780 | 75,113,780 | 59,103,948 |
+| 886×886 | NORMAL | 101,703,136 | 101,703,136 | 32,514,592 |
+| 886×886 | FULL_RECOMPUTE | 101,703,136 | 101,703,136 | 32,514,592 |
+
+通常cache対stage tapの32条件もSHOULDER RGBA32F rawbits/判定が一致し、warmth/EV/戻しでcache無効化を確認。
+旧c11ec862の128MiB表（103,248,764 / 103,248,764 / 77,473,076 / 104,843,120B）はtapありで
+写真解析まで毎frame再計算していた旧候補の履歴。新仕様の受入証拠として再利用しない。
+
+これはMesa上の実Kotlin/GLES経路。Android実rendererのtrim/surface loss試験は別に必要。
+
+#319の44a12b9と変更後の実Kotlin経路をMesa GLES3.2へ接続した200条件で、全13tapの
+SHA-256は一致した。旧96MiB時の4形状・連続5frameのMesa予備検証は以下。Androidのdriver/lifecycle、
+実機性能、Gate判定を意味しない。最終headのAndroid・CI・reviewが揃うまで採用HOLD。
+
+| 入力寸法 | 台帳peak（bytes） | frame間persistent最大（bytes） | 写真close後 |
+|---|---:|---:|---:|
+| 1024×768 | 100,586,364 | 100,043,596 | 0 |
+| 768×1024 | 100,574,076 | 100,047,692 | 0 |
+| 1024×576 | 77,473,076 | 77,473,076 | 0 |
+| 886×886 | 100,660,184 | 99,866,896 | 0 |
+
+この履歴の予算96MiB=100,663,296B。persistentには入力・係数・未使用storageを含む。256×192と1024×768の
+10fixture×計200条件も予算内。小さい一時形状は予算内でevictされるので確保回数0は保証しない。
+速度の改善は実機で別に測る。第2部APK固定時に一致・4形状128MiB予算・解放0・CI/canonicalの4条件が
+揃わなければ本変更を待たず、#319の現エンジンで第2部を開始する。
+
+#### 資源再利用前の承認4形状のメモリ観測
 
 #284接続候補87202fc / gpuDiagnosticの指定Androidで、4形状×2調整×2強さの16条件を完走し、
 Mesa実shaderのallocation監査と全最大値が一致した。R7_FINAL/Glow/Mistは固定工程基準内、
@@ -189,7 +255,7 @@ blur-owned縮小画像は第1拡大軸後に解放済み。[全85テクスチャ
 | R7 foundation | `R7Base.foundation` | 1パス | ROI は空（全 0）。製品でも楕円なし |
 | R7 vibrance・crisp・skin | 同名関数 | 1パスに融合 | 融合しても式は工程ごとに順に適用 |
 | 肌の重み | `StageClearGlow.skinWeight`（`StageClearColor.skinWeight` → 半径 SKIN_RADIUS のぼかし → 0..1） | 1パス＋ぼかし | |
-| Glow | `StageClearGlow.addLight`・`renderNonzero` | source → bloom 3半径＋halation のぼかし → 合成 → diffusion のぼかし → 合成 | 強さ非依存の場（skin・halo・bloom）は写真×調整値ごとにキャッシュ（`PreparedStageClearGlow` と同じ範囲） |
+| Glow | `StageClearGlow.addLight`・`renderNonzero` | source → bloom 3半径＋halation のぼかし → 合成 → diffusion のぼかし → 合成 | NORMALは強さ変更で準備結果を再利用。FULL_RECOMPUTEは場も毎frame再計算（#323） |
 | Mist 自動強度 | `StageClearMist.nearWhiteFraction`・`autoStrength` | 数え上げ（Compute、§4.7） | プレビューは描画解像度で求める |
 | Mist | `StageClearMist.applyMist`・`render` | source → 2半径のぼかし → 合成 | |
 | Orton | `StageClearOrton.mixOrton`・`applyOrton`・`render` | encode/bright → ぼかし → mix → 彩度保護 → 強さで混合 | |
@@ -203,8 +269,8 @@ blur-owned縮小画像は第1拡大軸後に解放済み。[全85テクスチャ
 
 | 値 | 現行の定義 | GPU 版の方法 | 結果の扱い |
 |---|---|---|---|
-| 自動露出 p97 | 中央 1/2×1/2 の輝度、NumPy float32 linear（近い端点から補間） | 入力は CPU にもあるので、**CPU で求める**（`R7PreviewInputs.prepare` をそのまま呼ぶ） | 写真ごとに1回。現行と完全一致 |
-| 局所トーン p50/p92 | 原寸に拡大した平滑 log 輝度の全画素 | Compute シェーダーで `OriginalQuantiles` と同じ2段の基数ヒストグラム（上位16bit → 該当バケット内の下位16bit）を作り、厳密に選ぶ | 描画のたびではなく、R7 の入力（warmth・EV）が変わったときだけ。厳密に一致させる |
+| 自動露出 p97 | 中央 1/2×1/2 の輝度、NumPy float32 linear（近い端点から補間） | 入力は CPU にもあるので、**CPU で求める**（`R7PreviewInputs.prepare` をそのまま呼ぶ） | 両モードとも写真open時に1回。初回準備として①から除外（#323） |
+| 局所トーン p50/p92 | 原寸に拡大した平滑 log 輝度の全画素 | Compute シェーダーで `OriginalQuantiles` と同じ2段の基数ヒストグラム（上位16bit → 該当バケット内の下位16bit）を作り、厳密に選ぶ | FULL_RECOMPUTEは毎frame。NORMALはR7の既存cache条件に従う。式/許容差不変（#323） |
 | 白に近い画素の割合 | Glow 後の線形輝度 > NEAR_WHITE の画素数 | Compute シェーダーで原子的に数える | 強さ・調整値が変わるたび。厳密に一致させる |
 
 ### 4.8 書き出し（帯ごとの計算と「場の境界」）
@@ -234,12 +300,11 @@ blur-owned縮小画像は第1拡大軸後に解放済み。[全85テクスチャ
 - **入力解像度**: Phase 0 の GPU プレビューは **長辺 1024px 以下、かつ 786,432画素（1024×768）以下**。撮影で用いる4:3・16:9は従来どおり1024×768・1024×576（縦向きは転置）とし、近正方形だけ面積上限にも収まるよう縦横比を保つ。正方形の例は886×886。
   - 寸法は入力縮小段階で `min(1, 1024/長辺, sqrt(786432/画素数))` の共通倍率と各辺floorで一度決定する。既に両上限内なら寸法を変えない。GPU用DNG入口は既存RGB16→BOX縮小へこの寸法を渡し、通常CPUプレビュー・書き出しの寸法規則は変更しない。
   - rendererとStageClearGpu.openPhotoは、この寸法決定済み入力を受け取る。どちらかの上限を超えた場合は、既存checkと同じ明示失敗にし、GPU内部で再縮小しない。
-  - 理由: 長辺だけでは1024×1024も許容され、1024×769のメモリ計測から最大面積の安全性を保証できなかった。撮影の4:3/16:9を維持しつつ、ユーザー判断でGPUプレビューの面積も制限する。preview 96MiB、書き出し192MiB、ルックの式、画素差の基準は不変。
+  - 理由: 長辺だけでは1024×1024も許容され、1024×769のメモリ計測から最大面積の安全性を保証できなかった。撮影の4:3/16:9を維持しつつ、ユーザー判断でGPUプレビューの面積も制限する。当時のpreview 96MiB（#323で128MiBへ事後変更）、書き出し192MiB、ルックの式、画素差の基準は不変。
   - 最大メモリの確認形状は1024×768、768×1024、1024×576、886×886。従来1024×769は上限外の履歴比較として旧診断候補でAndroid実測と照合し、現行入力の受け入れに含めない。画面サイズへの拡大は表示パスで行う。
 - **表示面**: Compose の `AndroidExternalSurface`（または `AndroidView` + `SurfaceView`）。EGLSurface は表示面の生成・破棄に合わせて作り直す。
 - **描画の流れ**: スライダーの値が変わる → `GpuRenderParams` を GlThread のキューに置き換え → 次のフレームで1回描画。
-  - 強さだけの変更: R7 の結果と Glow の強さ非依存の場を再利用し、Glow 合成以降だけを計算する。
-  - 色温度・明るさの変更: R7 から計算し直す（局所トーンの分位点も求め直す）。
+  - NORMALは強さ変更時にR7/Glowを保持し、色温度/明るさで無効化。FULL_RECOMPUTEはR7分位点・Glowの場・Mist判定・最終表示まで毎frame再計算する。写真の自動露出は両モードで初回のみ（#323）。
 - **二段構えはなくす**: ドラッグ中も指を離した後も同じ正確な描画。256px の粗い描画、古い要求の破棄・取消の仕組みは、GPU 経路では使わない（CPU 経路には残す）。
 - **比較表示**: `showBefore = true` のときは AS_SHOT 入力をそのまま sRGB 表示する（現行の比較画像の定義と同じ）。
 - **原本の照合**: 写真を開くときと保存の前後で行う（#268 の境界のまま）。フレームごとには行わない（入力は GPU に常駐し、ファイルを読まないため）。
