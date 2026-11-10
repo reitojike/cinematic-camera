@@ -100,6 +100,35 @@ internal class Original24PreviewSession(
     /** Terminal cancellation; a replacement session is a separate factory admission decision. */
     fun requestStop() { stopped = true; signal.cancel() }
 
+    /**
+     * #284 diagnostic input only. Reuse the exact snapshot/decode/RGB16/BOX path below; do not
+     * calculate a CPU look or allocate a Bitmap. The caller owns this one-shot session and must
+     * close it even after failure, so failed descriptor/file closes retain their existing owner.
+     * The immutable returned image has no file/descriptor ownership and survives session.close().
+     */
+    internal fun loadAsShotInput(shouldStop: () -> Boolean = { false }): LinearSrgbImage = exclusive {
+        check(Looper.myLooper() != Looper.getMainLooper()) { "Original preview requires existing IO owner" }
+        check(!closed && !failed && !stopped) { "Original preview session is unavailable" }
+        val stop = { stopped || signal.isCanceled || shouldStop() }
+        var failure: Throwable? = null
+        try {
+            loadInput(stop)
+        } catch (error: Throwable) {
+            failed = true; clearInputs()
+            failure = error
+            if (error is OutOfMemoryError) throw Original24MemoryUnavailable(error)
+            throw error
+        } finally {
+            try { releaseTransient() }
+            catch (cleanup: Throwable) {
+                failed = true; clearInputs()
+                val primary = failure
+                if (primary == null) throw cleanup
+                if (primary !== cleanup) primary.addSuppressed(cleanup)
+            }
+        }
+    }
+
     fun render(strength: Double, adjustments: PhotoAdjustments = PhotoAdjustments.NONE,
         shouldStop: () -> Boolean = { false }): Bitmap = requireNotNull(renderInternal(strength, adjustments, false, null, shouldStop))
 

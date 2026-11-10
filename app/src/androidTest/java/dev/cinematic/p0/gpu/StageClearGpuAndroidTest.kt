@@ -23,6 +23,7 @@ import org.junit.runner.RunWith
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.CancellationException
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -140,6 +141,98 @@ class StageClearGpuAndroidTest {
                 assertEquals(16 * 16 * 16L, ledger.allocatedBytes)
             }
         }
+    }
+
+    @Test fun failedPipelineCloseRetainsOwnersAndEngineCloseRetriesAllPhotos() = gpu { egl, ledger ->
+        var closes = 0
+        val engine = DefaultStageClearGpu(egl, ledger) { texture, _ ->
+            val held = GpuTexture.create(egl, ledger, texture.width, texture.height, GpuTexture.Format.RGBA32F)
+            object : StageClearGpuPipeline {
+                override fun render(params: GpuRenderParams, tap: ((GpuStageTap.Point, GpuTexture) -> Unit)?,
+                    consume: (GpuTexture, GpuDecisions) -> Unit) {
+                    tap?.invoke(GpuStageTap.Point.R7_FINAL, texture)
+                    consume(texture, GpuDecisions(0.0, 1.0))
+                }
+                override fun close() {
+                    if (++closes == 1) error("synthetic close failure")
+                    held.close()
+                }
+            }
+        }
+        try {
+            val first = engine.openPhoto(input()) { false }
+            val second = engine.openPhoto(input()) { false }
+            engine.renderForTest(first, params, GpuStageTap.Point.R7_FINAL)
+            assertEquals(3 * 4 * 4 * 16L, ledger.allocatedBytes)
+            assertThrows(IllegalStateException::class.java) { first.close() }
+            assertEquals("Failed pipeline still owns its input", 3 * 4 * 4 * 16L, ledger.allocatedBytes)
+            engine.close()
+            assertEquals(0L, ledger.allocatedBytes)
+            first.close(); second.close(); engine.close()
+            assertEquals(2, closes)
+        } finally { engine.close() }
+    }
+
+    @Test fun budgetFailureAndForeignPhotoKeepExistingPhotoValid() = gpu { egl, _ ->
+        val ledger = GpuMemoryLedger(4 * 4 * 16L)
+        DefaultStageClearGpu(egl, ledger).use { engine ->
+            val first = engine.openPhoto(input()) { false }
+            assertThrows(GpuMemoryBudgetException::class.java) { engine.openPhoto(input()) { false } }
+            assertEquals(4 * 4 * 16L, ledger.allocatedBytes)
+            DefaultStageClearGpu(egl, GpuMemoryLedger()).use { foreign ->
+                assertThrows(IllegalStateException::class.java) { foreign.renderForTest(first, params, GpuStageTap.Point.INPUT) }
+            }
+            assertEquals(4, engine.renderForTest(first, params, GpuStageTap.Point.INPUT).width)
+            first.close()
+        }
+        assertEquals(0L, ledger.allocatedBytes)
+    }
+
+    @Test fun rendererRecreatesEngineAndPhotoAfterContextLossOnNextSubmit() {
+        val errors = AtomicReference<Throwable?>()
+        val lost = CountDownLatch(1)
+        val frames = LinkedBlockingQueue<GpuPreviewFrame>()
+        val creations = AtomicInteger()
+        val closes = AtomicInteger()
+        val injected = GpuContextLostException("synthetic engine context loss")
+        val renderer = GpuPreviewRenderer(instrumentation.targetContext.assets,
+            onFrame = { frames.offer(it) }, onError = { if (it === injected) lost.countDown() else errors.compareAndSet(null, it) },
+            engineFactory = { egl, ledger ->
+                val generation = creations.incrementAndGet()
+                DefaultStageClearGpu(egl, ledger) { texture, _ ->
+                    object : StageClearGpuPipeline {
+                        override fun render(params: GpuRenderParams, tap: ((GpuStageTap.Point, GpuTexture) -> Unit)?,
+                            consume: (GpuTexture, GpuDecisions) -> Unit) {
+                            if (generation == 1) throw injected
+                            consume(texture, GpuDecisions(.5, 1.0))
+                        }
+                        override fun close() { closes.incrementAndGet() }
+                    }
+                }
+            })
+        val consumer = HandlerThread("StageClearGpuRecoveryConsumer").apply { start() }
+        try {
+            ImageReader.newInstance(16, 16, PixelFormat.RGBA_8888, 2).use { reader ->
+                reader.setOnImageAvailableListener({ it.acquireLatestImage()?.close() }, Handler(consumer.looper))
+                renderer.submit(params, GpuDisplayOptions(false, 0))
+                renderer.openPhoto(input()); renderer.setStarted(true)
+                renderer.attachSurface(reader.surface, 16, 16)
+                try {
+                    assertTrue(lost.await(10, TimeUnit.SECONDS))
+                    renderer.submit(params, GpuDisplayOptions(false, 0))
+                    val recovered = requireNotNull(frames.poll(10, TimeUnit.SECONDS))
+                    assertEquals(.5, recovered.stats.decisions.mistAutoStrength, 0.0)
+                    assertEquals(2, creations.get())
+                    assertEquals(1, closes.get())
+                    assertEquals(4 * 4 * 16L, snapshot(renderer).allocatedBytes)
+                    renderer.closePhoto()
+                    assertEquals(0L, snapshot(renderer).allocatedBytes)
+                    assertEquals(2, closes.get())
+                    assertNull(errors.get())
+                } finally { renderer.detachSurface(reader.surface) }
+            }
+        } finally { renderer.close(); consumer.quitSafely(); consumer.join(5000) }
+        assertFalse(consumer.isAlive)
     }
 
     @Test fun rendererConnectsEngineWithoutExtraOutputAndReleasesItOnTrim() {
