@@ -103,6 +103,67 @@ class GpuFinishAndroidTest {
         assertEquals(80, conditions)
         Log.i("GpuFinish", "PASS conditions=$conditions floatStages=320 displayStages=80")
     }
+    @Test fun characterHueMatchesKotlinTruncatingRemainderAndCircularBoundaries() = gpu { egl, ledger ->
+        val assets = InstrumentationRegistry.getInstrumentation().targetContext.assets
+        val production = assets.open("gpu/look/character.frag").bufferedReader().use { it.readText() }
+        // Execute the production helpers, not a test-only copy of their formulas.
+        val prefix = production.substringBefore("void main()")
+        val directions = mutableListOf<Pair<Float, Float>>()
+        for (a in floatArrayOf(0f, -0f)) for (b in floatArrayOf(0f, -0f)) directions += a to b
+        for (a in floatArrayOf(-1f, 1f)) for (b in floatArrayOf(0f, -0f)) directions += a to b
+        for (a in floatArrayOf(0f, -0f)) for (b in floatArrayOf(-1f, 1f)) directions += a to b
+        for (epsilon in floatArrayOf(1e-8f, 1e-7f, 1e-6f, 1e-5f, 1e-4f, .01f)) {
+            for (sign in floatArrayOf(-1f, 1f)) directions += 1f to sign * epsilon
+        }
+        for (degrees in floatArrayOf(10f, 50f, 90f, 130f, 180f, 230f, 270f, 310f, 350f)) {
+            val angle = Math.toRadians(degrees.toDouble())
+            directions += kotlin.math.cos(angle).toFloat() to kotlin.math.sin(angle).toFloat()
+        }
+        val rawAngles = floatArrayOf(-720f, -540f, -360f, -230f, -180f, -50f, -0.00001f, -0f,
+            0f, .00001f, 50f, 180f, 230f, 359.99997f, 360f, 540f, 720f)
+        for (raw in listOf(true, false)) {
+            val input = if (raw) FloatArray(rawAngles.size * 3) { rawAngles[it / 3] }
+                else FloatArray(directions.size * 3) { i -> when (i % 3) { 0 -> .5f; 1 -> directions[i / 3].first; else -> directions[i / 3].second } }
+            val body = if (raw) """
+                float angle = texelFetch(s_orton, ivec2(gl_FragCoord.xy), 0).r;
+                float remainder = cs_characterRemainder(angle, 360.0);
+                float hue = cs_characterRemainder(remainder + 360.0, 360.0);
+                o_color = vec4(remainder, hue, abs(cs_characterRemainder(hue - 50.0 + 180.0, 360.0) - 180.0), 1.0);
+            """ else """
+                float hue = cs_characterHue(texelFetch(s_orton, ivec2(gl_FragCoord.xy), 0).rgb);
+                float distance = abs(cs_characterRemainder(hue - 50.0 + 180.0, 360.0) - 180.0);
+                float t = clamp(1.0 - distance / 40.0, 0.0, 1.0);
+                o_color = vec4(hue, distance, t * t * (3.0 - 2.0 * t), 1.0);
+            """
+            val shader = prefix + "void main() {\n" + body + "\n}"
+            val expanded = ShaderSource({ path -> if (path == "hue-test.frag") shader else
+                assets.open("gpu/$path").bufferedReader().use { it.readText() } }).expand("hue-test.frag")
+            egl.shaders().fragmentSource("character-hue-$raw", expanded).use { program ->
+                upload(egl, ledger, input.size / 3, 1, input, true).use { texture ->
+                    GpuTexture.create(egl, ledger, input.size / 3, 1, GpuTexture.Format.RGBA32F).use { output ->
+                        egl.passes().run(FragmentPass(program, listOf(TextureInput("s_orton", texture, 0)), output))
+                        val actual = GpuStageTap.readRgb(egl, output)
+                        repeat(input.size / 3) { p ->
+                            val angle = if (raw) rawAngles[p] else kotlin.math.atan2(input[p * 3 + 2], input[p * 3 + 1]) * (180f / Math.PI.toFloat())
+                            val remainder = angle % 360f
+                            val hue = (remainder + 360f) % 360f
+                            val distance = abs((hue - 50f + 180f) % 360f - 180f)
+                            val t = (1f - distance / 40f).coerceIn(0f, 1f)
+                            val expected = if (raw) floatArrayOf(remainder, hue, distance) else floatArrayOf(hue, distance, t * t * (3f - 2f * t))
+                            repeat(3) { c ->
+                                val ref = expected[c]; val value = actual[p * 3 + c]
+                                val delta = if (!raw && c == 0) dev.cinematic.p0.gpu.reference.GpuTolerances.circularHueDifference(ref, value) else abs(ref.toDouble() - value)
+                                assertTrue("raw=$raw p=$p c=$c input=${input.slice(p * 3..p * 3 + 2)} Kotlin=$ref GPU=$value delta=$delta", value.isFinite() && delta <= if (raw) 0.0 else 1e-4)
+                            }
+                            val actualHue = actual[p * 3 + if (raw) 1 else 0]
+                            assertTrue(actualHue >= 0f && actualHue < 360f)
+                        }
+                        Log.i("GpuFinish", "Character hue boundary PASS raw=$raw cases=${input.size / 3}")
+                    }
+                }
+            }
+        }
+    }
     @Test fun absentFaceMaskMatchesExplicitZeroAndNonzeroOrtonKeepsInputsOpen() = gpu { egl, ledger ->
         val w = 32; val h = 24
         upload(egl, ledger, w, h, FloatArray(w * h * 3) { (it % 17) / 16f }, true).use { input ->

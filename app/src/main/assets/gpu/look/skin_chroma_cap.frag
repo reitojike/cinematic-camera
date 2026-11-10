@@ -18,8 +18,9 @@ void main() {
     vec3 lab = cs_linearToLab(texelFetch(s_character, pixel, 0).rgb);
     float lightness = lab.x;
     float chroma = length(lab.yz);
-    float hue = lab.y == 0.0 && lab.z == 0.0 ? 0.0 : degrees(atan(lab.z, lab.y));
-    float wrappedHue = mod(hue + 360.0, 360.0);
+    float wrappedHue = cs_hueDeg(lab);
+    // The red-hue lift uses the signed angle, while skin/band use [0, 360).
+    float hue = wrappedHue > 180.0 ? wrappedHue - 360.0 : wrappedHue;
     float skin = cs_skinWeight(lightness, chroma, wrappedHue);
     precise float red = cs_band(wrappedHue, 10.0, 30.0) * clamp((chroma - 0.015) / 0.025, 0.0, 1.0) *
         clamp(1.0 - (chroma - SC_STAGECLEAR_SKIN_VIVID) / 0.06, 0.0, 1.0) *

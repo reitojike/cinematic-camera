@@ -22,6 +22,14 @@ float cs_characterRemainder(float value, float divisor) {
     return value - trunc(value / divisor) * divisor;
 }
 
+// Reconstruct the signed angle before Kotlin's two truncating wraps. Adding 360
+// directly to an already-wrapped angle would introduce an extra float rounding.
+float cs_characterHue(vec3 lab) {
+    float wrapped = cs_hueDeg(lab);
+    float angle = wrapped > 180.0 ? wrapped - 360.0 : wrapped;
+    return cs_characterRemainder(cs_characterRemainder(angle, 360.0) + 360.0, 360.0);
+}
+
 void main() {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
     vec2 centre = vec2(pixel + u_origin) + vec2(0.5);
@@ -36,9 +44,7 @@ void main() {
     vec3 lab = cs_linearToLab(vignette);
     float lightness = lab.x;
     float chroma = length(lab.yz);
-    // atan(0, 0) is undefined in GLSL. Kotlin atan2 is finite, even for black.
-    float angle = lab.y == 0.0 && lab.z == 0.0 ? 0.0 : degrees(atan(lab.z, lab.y));
-    float hue = cs_characterRemainder(cs_characterRemainder(angle, 360.0) + 360.0, 360.0);
+    float hue = cs_characterHue(lab);
     float hueDistance = abs(cs_characterRemainder(hue - 50.0 + 180.0, 360.0) - 180.0);
     t = clamp(1.0 - hueDistance / 40.0, 0.0, 1.0);
     precise float band = t * t * (3.0 - 2.0 * t);
