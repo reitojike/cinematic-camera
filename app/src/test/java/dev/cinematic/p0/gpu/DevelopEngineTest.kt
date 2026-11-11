@@ -158,7 +158,12 @@ class DevelopEngineTest {
         try {
             cache.get()
             fail("Cancellation must not become unavailable")
-        } catch (actual: CancellationException) { assertSame(cancelled, actual) }
+        } catch (actual: CancellationException) {
+            assertEquals(cancelled.javaClass, actual.javaClass)
+            // Coroutine stacktrace recovery may copy the exception across withContext.
+            // Require the original exception itself or its identity as the recovered copy's cause.
+            assertSame(cancelled, if (actual === cancelled) actual else actual.cause)
+        }
         assertEquals(GpuAvailability.Available, cache.get())
         assertEquals(2, calls)
     }
