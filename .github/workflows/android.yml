@@ -13,20 +13,18 @@ concurrency:
   group: android-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# All variants use the same run identity; each job has an isolated build directory.
+env:
+  CINEMATIC_VERSION_NAME: 0.0.10-p05.ci.${{ github.run_number }}
+  CINEMATIC_VERSION_CODE: ${{ github.run_number }}
+
 jobs:
-  android:
-    name: lint・unit・build
+  product:
+    name: 製品 lint・unit・build
     if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-26.04
-    env:
-      CINEMATIC_VERSION_NAME: 0.0.10-p05.ci.${{ github.run_number }}
-      CINEMATIC_VERSION_CODE: ${{ github.run_number }}
     steps:
       - uses: actions/checkout@v7
-      - name: RAW4 diagnostic judgement unit tests
-        run: python3 -B -m unittest discover -s tools/raw-diagnostic -v
-      - name: Preview timing summary unit tests
-        run: python3 -B -m unittest discover -s tools/preview-timing -v
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
@@ -39,8 +37,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
+      - name: Preview timing summary unit tests
+        run: python3 -B -m unittest discover -s tools/preview-timing -v
       - name: lint・unit・debug build
-        run: ./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :rawprobe:lintNormalDebug :rawprobe:assembleNormalDebug :rawprobe:assembleNormalDebugAndroidTest :rawprobe:lintLargeHeapDebug :rawprobe:assembleLargeHeapDebug :rawprobe:assembleLargeHeapDebugAndroidTest --no-daemon
+        run: ./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
       - name: Verify LWJGL is absent from normal APK and unit-test dependencies
         shell: bash
         run: |
@@ -61,60 +61,103 @@ jobs:
             exit 1
           fi
           echo 'GPU_MESA_ISOLATION PASS: no LWJGL in normal debug runtime, unit-test runtime, APK natives or DEX packages'
-      - name: Mesa software EGL / GLES libraries
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libegl1-mesa-dev libgles2-mesa-dev libgl1-mesa-dri
-          dpkg-query -W libegl-mesa0 libgl1-mesa-dri libgles2
-      - name: Mesa GLES 3.2 shader / pixel regression (not Android acceptance)
-        env:
-          EGL_PLATFORM: surfaceless
-          LIBGL_ALWAYS_SOFTWARE: '1'
-          MESA_LOADER_DRIVER_OVERRIDE: llvmpipe
-          LP_NUM_THREADS: '2'
+      - name: DNG test runner登録を確認
         shell: bash
         run: |
           set -euo pipefail
-          started=$SECONDS
-          ./gradlew :app:testDebugUnitTest -PcinematicGpuMesa=true --tests 'dev.cinematic.p0.gpu.mesa.*' --no-daemon --max-workers=2
-          echo "GPU_MESA_GRADLE_SECONDS=$((SECONDS - started))"
-      - name: Mesa test counts (zero tests or any skip is a failure)
-        if: ${{ !cancelled() }}
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump xmltree app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk AndroidManifest.xml > "$RUNNER_TEMP/cinematic-test-manifest.txt"
+          grep -F '"androidx.test.runner.AndroidJUnitRunner"' "$RUNNER_TEMP/cinematic-test-manifest.txt"
+          grep -F '"dev.cinematic.p0.rawcapture.DngHandoffInstrumentation"' "$RUNNER_TEMP/cinematic-test-manifest.txt"
+      - name: APKの署名・識別子・ハッシュを記録
+        shell: bash
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import xml.etree.ElementTree as ET
-          reports = list(Path('app/build/test-results/gpuMesa/testDebugUnitTest').glob('TEST-*.xml'))
-          assert reports, 'Mesa tests did not produce JUnit reports'
-          totals = dict.fromkeys(('tests', 'failures', 'errors', 'skipped'), 0)
-          seconds = 0.0
-          for path in reports:
-              suite = ET.parse(path).getroot()
-              for key in totals:
-                  totals[key] += int(suite.get(key, '0'))
-              seconds += float(suite.get('time', '0'))
-          print(f'GPU_MESA_JUNIT {totals} seconds={seconds:.3f}', flush=True)
-          assert totals['tests'] > 0 and not any(totals[key] for key in ('failures', 'errors', 'skipped')), totals
-          PY
-      - name: Mesa shader regression reports
+          set -euo pipefail
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$apk"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" | grep -E "^package: name='dev\.cinematic\.p0' versionCode='${CINEMATIC_VERSION_CODE}'"
+          sha256sum "$apk" | tee app/build/outputs/apk/debug/SHA256SUMS.txt
+      - name: 一時署名のP0 APKを保存
+        uses: actions/upload-artifact@v7
+        with:
+          name: cinematic-camera-p0-debug-apk-ephemeral
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/debug/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
+      - name: テスト・lintレポートを保存
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: cinematic-gpu-mesa-reports
+          name: cinematic-camera-p0-check-reports
           path: |
-            app/build/test-results/gpuMesa/
-            app/build/reports/tests/gpuMesa/
+            app/build/reports/tests/testDebugUnitTest/
+            app/build/test-results/testDebugUnitTest/
+            app/build/reports/lint-results-debug.*
             app/build/reports/gpuMesaIsolation/
           if-no-files-found: warn
           retention-days: 7
-      - name: RAW diagnostic lint・unit・build and release manifest
-        run: ./gradlew :app:lintRawDiagnostic :app:testRawDiagnosticUnitTest :app:assembleRawDiagnostic :app:processReleaseMainManifest -PcinematicRawDiagnostic=true -Pandroid.onlyEnableUnitTestForTheTestedBuildType=false --no-daemon
-      - name: Compile synthetic RAW diagnostic instrumentation
-        run: ./gradlew :app:assembleRawDiagnosticAndroidTest -PcinematicRawDiagnostic=true -PcinematicRawDiagnosticTests=true --no-daemon
+
+  gpu-diagnostic:
+    name: GPU 診断 unit・build
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: android-actions/setup-android@v4
+        with:
+          log-accepted-android-sdk-licenses: false
+      - name: Android SDK 37 and pinned native tools
+        run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0" "ndk;29.0.14206865" "cmake;3.22.1"
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
       - name: GPU合成診断をコンパイル（GPU試験は実行しない）
-        run: ./gradlew :app:lintGpuDiagnostic :app:testGpuDiagnosticUnitTest :app:assembleGpuDiagnostic :app:assembleGpuDiagnosticAndroidTest -PcinematicGpuDiagnostic=true -PcinematicGpuDiagnosticTests=true --no-daemon
+        run: ./gradlew :app:testGpuDiagnosticUnitTest :app:assembleGpuDiagnostic :app:assembleGpuDiagnosticAndroidTest :app:processDebugMainManifest :app:processReleaseMainManifest -PcinematicGpuDiagnostic=true -PcinematicGpuDiagnosticTests=true --no-daemon
       - name: GPU診断のmanifest隔離を検証
         run: python3 -B tools/gpu-diagnostic/verify_manifest.py app/build/intermediates/merged_manifest/gpuDiagnostic/processGpuDiagnosticMainManifest/AndroidManifest.xml app/build/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml app/build/intermediates/merged_manifest/release/processReleaseMainManifest/AndroidManifest.xml
+      - name: GPU診断のunitレポートを保存
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cinematic-gpu-diagnostic-check-reports
+          path: |
+            app/build/reports/tests/testGpuDiagnosticUnitTest/
+            app/build/test-results/testGpuDiagnosticUnitTest/
+          if-no-files-found: warn
+          retention-days: 7
+
+  raw-diagnostic:
+    name: RAW 診断・rawprobe unit・build
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: android-actions/setup-android@v4
+        with:
+          log-accepted-android-sdk-licenses: false
+      - name: Android SDK 37 and pinned native tools
+        run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0" "ndk;29.0.14206865" "cmake;3.22.1"
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+      - name: RAW4 diagnostic judgement unit tests
+        run: python3 -B -m unittest discover -s tools/raw-diagnostic -v
+      # Build the normal camera APK here too, so JNI isolation compares same-job outputs.
+      - name: rawprobe unit・build and normal APK for JNI isolation
+        run: ./gradlew :app:assembleDebug :rawprobe:testNormalDebugUnitTest :rawprobe:assembleNormalDebug :rawprobe:assembleNormalDebugAndroidTest :rawprobe:testLargeHeapDebugUnitTest :rawprobe:assembleLargeHeapDebug :rawprobe:assembleLargeHeapDebugAndroidTest --no-daemon
+      - name: RAW diagnostic unit・build and release manifest
+        run: ./gradlew :app:testRawDiagnosticUnitTest :app:assembleRawDiagnostic :app:processReleaseMainManifest -PcinematicRawDiagnostic=true -Pandroid.onlyEnableUnitTestForTheTestedBuildType=false --no-daemon
+      - name: Compile synthetic RAW diagnostic instrumentation
+        run: ./gradlew :app:assembleRawDiagnosticAndroidTest -PcinematicRawDiagnostic=true -PcinematicRawDiagnosticTests=true --no-daemon
       - name: Verify RAW diagnostic optimization recipe
         shell: bash
         run: |
@@ -210,41 +253,104 @@ jobs:
           path: rawprobe/build/diagnostic/
           if-no-files-found: error
           retention-days: 7
-      - name: DNG test runner登録を確認
-        shell: bash
-        run: |
-          set -euo pipefail
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump xmltree app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk AndroidManifest.xml > "$RUNNER_TEMP/cinematic-test-manifest.txt"
-          grep -F '"androidx.test.runner.AndroidJUnitRunner"' "$RUNNER_TEMP/cinematic-test-manifest.txt"
-          grep -F '"dev.cinematic.p0.rawcapture.DngHandoffInstrumentation"' "$RUNNER_TEMP/cinematic-test-manifest.txt"
-      - name: APKの署名・識別子・ハッシュを記録
-        shell: bash
-        run: |
-          set -euo pipefail
-          apk=app/build/outputs/apk/debug/app-debug.apk
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$apk"
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$apk" | grep -E "^package: name='dev\.cinematic\.p0' versionCode='${CINEMATIC_VERSION_CODE}'"
-          sha256sum "$apk" | tee app/build/outputs/apk/debug/SHA256SUMS.txt
-      - name: 一時署名のP0 APKを保存
-        uses: actions/upload-artifact@v7
-        with:
-          name: cinematic-camera-p0-debug-apk-ephemeral
-          path: |
-            app/build/outputs/apk/debug/app-debug.apk
-            app/build/outputs/apk/debug/SHA256SUMS.txt
-          if-no-files-found: error
-          retention-days: 7
-      - name: テスト・lintレポートを保存
+      - name: RAW診断・rawprobeのunitレポートを保存
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: cinematic-camera-p0-check-reports
+          name: cinematic-raw-diagnostic-check-reports
           path: |
-            app/build/reports/tests/testDebugUnitTest/
-            app/build/test-results/testDebugUnitTest/
-            app/build/reports/lint-results-debug.*
             app/build/reports/tests/testRawDiagnosticUnitTest/
             app/build/test-results/testRawDiagnosticUnitTest/
-            app/build/reports/lint-results-rawDiagnostic.*
+            rawprobe/build/reports/tests/
+            rawprobe/build/test-results/
           if-no-files-found: warn
           retention-days: 7
+
+  mesa:
+    name: Mesa shader・pixel regression
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: android-actions/setup-android@v4
+        with:
+          log-accepted-android-sdk-licenses: false
+      - name: Android SDK 37 and pinned native tools
+        run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0" "ndk;29.0.14206865" "cmake;3.22.1"
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+      - name: Mesa software EGL / GLES libraries
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o APT::Update::Error-Mode=any update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install --no-install-recommends -y libegl1-mesa-dev libgles2-mesa-dev libgl1-mesa-dri
+          dpkg-query -W libegl-mesa0 libgl1-mesa-dri libgles2
+      - name: Mesa GLES 3.2 shader / pixel regression (not Android acceptance)
+        env:
+          EGL_PLATFORM: surfaceless
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          MESA_LOADER_DRIVER_OVERRIDE: llvmpipe
+          LP_NUM_THREADS: '2'
+        shell: bash
+        run: |
+          set -euo pipefail
+          started=$SECONDS
+          ./gradlew :app:testDebugUnitTest -PcinematicGpuMesa=true --tests 'dev.cinematic.p0.gpu.mesa.*' --no-daemon --max-workers=2
+          echo "GPU_MESA_GRADLE_SECONDS=$((SECONDS - started))"
+      - name: Mesa test counts (zero tests or any skip is a failure)
+        if: ${{ !cancelled() }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          reports = list(Path('app/build/test-results/gpuMesa/testDebugUnitTest').glob('TEST-*.xml'))
+          assert reports, 'Mesa tests did not produce JUnit reports'
+          totals = dict.fromkeys(('tests', 'failures', 'errors', 'skipped'), 0)
+          seconds = 0.0
+          for path in reports:
+              suite = ET.parse(path).getroot()
+              for key in totals:
+                  totals[key] += int(suite.get(key, '0'))
+              seconds += float(suite.get('time', '0'))
+          print(f'GPU_MESA_JUNIT {totals} seconds={seconds:.3f}', flush=True)
+          assert totals['tests'] > 0 and not any(totals[key] for key in ('failures', 'errors', 'skipped')), totals
+          PY
+      - name: Mesa shader regression reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cinematic-gpu-mesa-reports
+          path: |
+            app/build/test-results/gpuMesa/
+            app/build/reports/tests/gpuMesa/
+          if-no-files-found: warn
+          retention-days: 7
+
+  android:
+    # Keep the existing branch-protection check name, including its punctuation.
+    name: lint・unit・build
+    needs: [product, gpu-diagnostic, raw-diagnostic, mesa]
+    if: ${{ always() }}
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Require every validation job to succeed
+        env:
+          PRODUCT_RESULT: ${{ needs.product.result }}
+          GPU_RESULT: ${{ needs.gpu-diagnostic.result }}
+          RAW_RESULT: ${{ needs.raw-diagnostic.result }}
+          MESA_RESULT: ${{ needs.mesa.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'product=%s gpu-diagnostic=%s raw-diagnostic=%s mesa=%s\n' \
+            "$PRODUCT_RESULT" "$GPU_RESULT" "$RAW_RESULT" "$MESA_RESULT"
+          for result in "$PRODUCT_RESULT" "$GPU_RESULT" "$RAW_RESULT" "$MESA_RESULT"; do
+            if [[ "$result" != success ]]; then
+              echo 'A required validation job failed, was cancelled, or was skipped.' >&2
+              exit 1
+            fi
+          done
