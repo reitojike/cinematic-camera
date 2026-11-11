@@ -70,6 +70,10 @@ class GpuGate1GestureObserverProbeTest {
         var historySamples: List<HistoricalTouch>? = null
         var windowX: Float = 0f
         var windowY: Float = 0f
+        fun arrivalPacket(sequence: Int) = Gate1MoveArrival.Packet(sequence, action, downMs,
+            Gate1MoveArrival.Sample(eventMs, windowX, windowY), x, y,
+            historySamples.orEmpty().map { Gate1MoveArrival.Sample(it.eventMs, it.x, it.y) },
+            receivedNs)
         fun json() = JSONObject().put("action", action).put("eventMs", eventMs).put("downMs", downMs)
             .put("x", x.toDouble()).put("y", y.toDouble()).put("historySize", history).put("pointerCount", pointers)
             .put("receivedNs", receivedNs).put("receivedUptimeMs", receivedUptimeMs).put("handled", handled)
@@ -172,6 +176,9 @@ class GpuGate1GestureObserverProbeTest {
             .put("conversion", "GPU x=center+touchSlop+track*(value-baseline)/span; positive then negative; CPU has a different physical gesture")
             .put("intermediateRounding", "CPU/GPU intermediate values may differ; compare endpoints with the preregistered functional tolerance")
             .put("historyMeaning", "sum(1+historySize) over Window MotionEvents, not unique input samples")
+        if (auxiliaryTouch) report.put("finalMoveIdentity",
+            "MOVE current/history sample: same downTime, exact down+800, screen x within frozen 1px; duplicates ambiguous")
+            .put("historyCoordinateRule", "history localX + containing packet rawX-localX; assumes fixed unscaled/unrotated Window; not a general affine transform")
         val operations = if (dng && !auxiliaryTouch) axes.flatMap { axis -> (0..4).map { axis to it } } else axes.map { it to 0 }
         val support = if (dng) Gate1DngObservationSupport(output.parentFile!!, "$version-$run") else null
         onUiWaitTimeout = if (auxiliaryTouch) checkNotNull(support)::captureUiTimeout else null
@@ -554,15 +561,46 @@ class GpuGate1GestureObserverProbeTest {
                     }
                     trial.put("finalUpDelivery", checkNotNull(returnedUp).json())
                     var finalMove: Touch? = null
-                    withActivity {
-                        val index = (touchFrom until touches.size).lastOrNull { index ->
-                            val touch = touches[index]
-                            touch.action == MotionEvent.ACTION_MOVE && touch.downMs == down && touch.eventMs == down + 800 &&
-                                abs(touch.x - (center + slop)) <= 1f
+                    if (auxiliaryTouch) {
+                        withActivity {
+                            val arrival = Gate1MoveArrival.match((touchFrom until touches.size).map {
+                                touches[it].arrivalPacket(it)
+                            }, down, down + 800, center + slop)
+                            trial.put("inputArrivalStatus", arrival.status).put("inputArrivalAccepted", arrival.accepted)
+                                .put("inputArrivalCandidateCount", arrival.candidates.size)
+                                .put("inputArrivalCandidates", JSONArray(arrival.candidates.map { match ->
+                                    JSONObject().put("windowSequence", match.packet.sequence)
+                                        .put("sampleKind", if (match.historyIndex == null) "current" else "history")
+                                        .put("historyIndex", match.historyIndex ?: JSONObject.NULL)
+                                        .put("eventMs", match.sample.eventMs).put("downMs", match.packet.downMs)
+                                        .put("windowX", match.sample.x.toDouble()).put("windowY", match.sample.y.toDouble())
+                                        .put("screenX", match.screenX.toDouble())
+                                        .put("historyXOffset", (match.packet.rawX - match.packet.current.x).toDouble())
+                                        .put("packetCurrentEventMs", match.packet.current.eventMs)
+                                        .put("packetCurrentWindowX", match.packet.current.x.toDouble())
+                                        .put("packetCurrentWindowY", match.packet.current.y.toDouble())
+                                        .put("packetCurrentRawX", match.packet.rawX.toDouble())
+                                        .put("packetCurrentRawY", match.packet.rawY.toDouble())
+                                        .put("packetReceivedNs", match.packet.receivedNs)
+                                }))
+                                .put("arrivalMeaning", "Window sample arrival only; history/handled is not Slider current value or onValueChange")
+                            arrival.match?.let { match ->
+                                finalMove = touches[match.packet.sequence]
+                                trial.put("finalMoveWindowSequence", match.packet.sequence)
+                                    .put("finalMoveDelivery", checkNotNull(finalMove).json())
+                            }
                         }
-                        if (index != null) {
-                            finalMove = touches[index]
-                            trial.put("finalMoveWindowSequence", index).put("finalMoveDelivery", touches[index].json())
+                    } else {
+                        withActivity {
+                            val index = (touchFrom until touches.size).lastOrNull { index ->
+                                val touch = touches[index]
+                                touch.action == MotionEvent.ACTION_MOVE && touch.downMs == down && touch.eventMs == down + 800 &&
+                                    abs(touch.x - (center + slop)) <= 1f
+                            }
+                            if (index != null) {
+                                finalMove = touches[index]
+                                trial.put("finalMoveWindowSequence", index).put("finalMoveDelivery", touches[index].json())
+                            }
                         }
                     }
                     val deliveredReturnMove = checkNotNull(finalMove) { "boundary_unproven: final MOVE was not identified" }
@@ -582,6 +620,8 @@ class GpuGate1GestureObserverProbeTest {
                             if (last != null && last.beginNs >= deliveredReturnMove.receivedNs &&
                                 last.completed && last.callbackNs != null && !end.pending && pending.isEmpty() &&
                                 axis.value(last) == settledValue && axis.value(end.params) == settledValue) {
+                                if (auxiliaryTouch) trial.put("actualReturnRender", last.json())
+                                    .put("renderBoundaryStatus", "completed_callback_drained_after_arrival")
                                 returnRowSequence = last.sequence
                                 proven = true
                             }

@@ -362,3 +362,14 @@ UI待ちtimeout時だけXMLとPNGを非公開run記録へ保存し、CPUは本�
 本追記時点はsource prepareのみである。両ローカルsource commitと統合headのcompile、標準lint/unit/assemble、診断compile/build、AVD、最終headの必須CI/canonical review/独立レビューは未検証であり、合格・採用・配布可能を意味しない。この作業ではGradle・build・ADB・AVDを一切実行していない。source範囲・公開用identity・privacy差分・`git diff --check` の静的確認と、実行証拠を区別する。
 
 ③の準備を優先し、#332の実行枠を先取りしない。枠と対象sourceが確認されてから、通常GPU touchを先、意図的失敗のnegativeを後にする。承認範囲内の各再runは1回までとし、別の失敗が出たら証拠を保持して繰り返さず報告する。CPUの原因確認前の継続条件緩和、補助試験の本番採用、主4 APK/#285の置換、Pixel配布・操作のHOLDは解除しない。
+### 10.6 2026-11-11: 入力到達と実描画の証拠を分ける
+
+利用者の追加指示により、補助GPUタッチだけで終点sampleのWindow到達と、実際に描画された値を別々に判定する。旧313c7b8のcurrent MOVE完全一致条件での失敗を保持し、新しい走行で遡って合格へ変えない。既存記録はresamplingと整合するが、具体原因を確定したとは扱わない。主4 APK、主programmatic/PSS、既存emulator-only touch、#285の登録、製品・依存・Pixel操作のHOLDは変更しない。
+
+- Android標準の[MotionEvent](https://developer.android.com/reference/android/view/MotionEvent)はMOVEをまとめ、途中sampleをhistoryとして配送できる。終点到達は、同じdownTimeのMOVEにあるcurrentとhistoryを調べ、sample時刻がdown+800、Xが注入終点から1px以内という従来条件を使う。一致sampleがちょうど1件でなければboundary_unprovenとする。current/historyの区別、含んでいたpacketの時刻・位置・receivedNs・dispatch返却、最新座標とhistory座標を記録する。Yは記録するが新しい一致条件にはしない。
+- historyはWindow座標、注入は画面座標である。両者を直接比較しない。currentは記録済みrawXを直接使い、historyはそのsampleを含むpacketのrawX−windowXを加えたXを使う。これは固定された通常Windowの平行移動という前提であり、一般の拡大・回転変換への対応を主張しない。raw/local両方と変換量を記録する。Yやstream全体の新しい条件を終点一致へ加えない。1pxは入力sampleの識別用であり、値の許容差や①の速度閾値ではない。
+- historyに終点があることはWindowへ届いた証拠であり、Sliderがそのsampleをcurrent値として採用した証拠ではない。[Compose PointerInputChange](https://developer.android.com/reference/kotlin/androidx/compose/ui/input/pointer/PointerInputChange)もcurrentとhistoryを分ける。受付・入力到達・描画完了を同義にしない。
+- 描画側は既存のUP後Compose/Main barrier、semantics値、実renderの全params・時刻・完了・callback、FIFOとmailboxのdrain、実状態との一致を別に確認する。実render開始時刻の下限は一致sampleを含んだpacketのreceivedNsとし、historyの時刻や注入時刻へ置き換えない。入力到達が成立しても、実描画値の帰着許容差が外れれば補助成功にしない。入力の不明・失敗時も取得済みの実描画値を残す。
+- 42入力、20ms刻み、200ms上昇＋400ms保持＋200ms復帰の800ms予定軌跡、端点・値許容差を維持する。終点直前の待機、入力点の追加/省略、非batch配送要求、強制submit/renderは追加しない。
+- 新sourceのcompile・標準/診断check・独立レビュー・合成正常/negative試験は新しい証拠として扱い、旧headの成功を流用しない。試験結果、追加補助APKの識別、残件はPRへ記録する。本節の追加だけでは完成・採用・実機許可にならない。
+- 実機検証の開始前に本補助作業を区切り、使用中の共有AVDを通常終了し、adbの対象がPixelだけであることを確認する。Pixelが未接続なら「対象なし」と記録し、Pixelだけであると推定しない。Pixelの配布・操作は別の許可を得るまで開始しない。
