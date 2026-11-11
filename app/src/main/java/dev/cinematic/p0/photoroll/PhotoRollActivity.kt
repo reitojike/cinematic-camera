@@ -42,7 +42,15 @@ class PhotoRollActivity : ComponentActivity() {
         }
     }
 
-    override fun onResume() { super.onResume(); foreground = true; resourceObserver.foreground(true) }
+    override fun onResume() {
+        super.onResume()
+        val current = renderer as? ManualTrialPhotoRollRenderer
+        if (current != null && current.developEngine != dev.cinematic.p0.gpu.DevelopEngineSetting(this).current()) {
+            current.discardTransientInputs()
+            renderer = ManualTrialPhotoRollRenderer(applicationContext, resourceObserver::snapshot, previewCache)
+        }
+        foreground = true; resourceObserver.foreground(true)
+    }
     override fun onPause() { foreground = false; renderer.discardTransientInputs(); resourceObserver.foreground(false); super.onPause() }
     @Suppress("OVERRIDE_DEPRECATION")
     override fun onLowMemory() { if (::previewCache.isInitialized) previewCache.clear(); if (::renderer.isInitialized) renderer.discardTransientInputs(); gpuTrimEpoch++; super.onLowMemory() }

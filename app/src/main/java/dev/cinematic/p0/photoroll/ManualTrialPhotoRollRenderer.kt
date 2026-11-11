@@ -119,6 +119,7 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
     }
 
     override fun renderDraft(request: PhotoRollRenderRequest, cancellation: CancellationSignal): PhotoRollRenderResult.Preview? {
+        check(developEngine == dev.cinematic.p0.gpu.DevelopEngine.CPU) { "GPU preview must not enter the CPU draft path" }
         require(request.mode == mode && request.lookVersion == "stage-clear-v1" && request.maxEdge == 256)
         cancellation.throwIfCanceled()
         if (AutoDevelopPolicy.previewBlockers(resources().developConditions(rendererAvailable = true)).isNotEmpty()) return null
@@ -148,6 +149,7 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
     }
 
     override fun render(request: PhotoRollRenderRequest, cancellation: CancellationSignal): PhotoRollRenderResult {
+        check(developEngine == dev.cinematic.p0.gpu.DevelopEngine.CPU) { "GPU preview must not enter the CPU render path" }
         require(request.mode == mode && request.lookVersion == "stage-clear-v1" &&
             request.strength.isFinite() && request.strength in 0.0..1.0 && request.maxEdge == maxEdge)
         cancellation.throwIfCanceled()
