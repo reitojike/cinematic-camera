@@ -13,6 +13,9 @@ import android.view.WindowInsets
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.By
+import androidx.test.uiautomator.Direction
+import androidx.test.uiautomator.UiDevice
 import java.io.File
 import java.security.MessageDigest
 import org.json.JSONArray
@@ -216,11 +219,31 @@ class CpuGate1ReferenceUiTest {
             val filesEnd = support.deadline(90_000)
             click(support.remaining(filesEnd)) { support.remaining(filesEnd); it.packageName?.toString() == TARGET && it.text?.toString()?.startsWith("Files") == true && it.isEnabled }
             val location = support.openDownload(filesEnd); report.put("pickerLocation", location)
+            val picker = UiDevice.getInstance(inst)
+            val filesPackage = location.getString("documentsUiPackage")
+            val directory = By.res(filesPackage, "dir_list")
+            fun requireDownload() {
+                support.remaining(filesEnd)
+                check(picker.currentPackageName == filesPackage && !picker.hasObject(By.res(filesPackage, "roots_list")) &&
+                    picker.hasObject(By.pkg(filesPackage).text("Download").hasAncestor(By.res(filesPackage, "toolbar"))))
+            }
+            // Search only the confirmed directory; never scroll a broader parent or another provider.
+            support.await(filesEnd) {
+                requireDownload()
+                if (picker.hasObject(By.pkg(filesPackage).text(FIXTURE).hasAncestor(directory))) true
+                else {
+                    val list = checkNotNull(picker.findObject(directory))
+                    if (list.isScrollable) list.scroll(Direction.DOWN, .5f)
+                    false
+                }
+            }
             click(support.remaining(filesEnd)) {
                 support.remaining(filesEnd)
                 var ancestor = it.parent
-                while (ancestor != null && ancestor.viewIdResourceName != "${location.getString("documentsUiPackage")}:id/dir_list") ancestor = ancestor.parent
-                it.packageName?.toString() == location.getString("documentsUiPackage") && it.text?.toString() == FIXTURE && ancestor != null
+                while (ancestor != null && ancestor.viewIdResourceName != "$filesPackage:id/dir_list") ancestor = ancestor.parent
+                val matches = it.packageName?.toString() == filesPackage && it.text?.toString() == FIXTURE && ancestor != null
+                if (matches) requireDownload() // Recheck location immediately before the single fresh ACTION_CLICK.
+                matches
             }
             val initialEnd = support.deadline(120_000)
             click(support.remaining(initialEnd)) { support.remaining(initialEnd); it.packageName?.toString() == TARGET && it.text?.toString() == "STRENGTH" && it.isEnabled }
