@@ -1,6 +1,13 @@
 package dev.cinematic.p0.gpu
 
+import android.content.Intent
 import android.graphics.Rect
+import dev.cinematic.p0.raw.DiagnosticHubActivity
+import dev.cinematic.p0.raw.LinearSrgbImage
+import androidx.lifecycle.Lifecycle
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
+import java.lang.ref.WeakReference
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
@@ -93,13 +100,17 @@ class GpuGate1GestureObserverProbeTest {
     @Test fun observeRealEngineAndDeliveredTouch() = observeProfile(programmatic = false)
     @Test fun observeProgrammaticRenderValues() = observeProfile(programmatic = true)
 
-    private fun observeProfile(programmatic: Boolean) {
+    @Test fun observeSelectedDngProgrammaticValues() = observeProfile(programmatic = true, dng = true)
+    @Test fun observeSelectedDngPssReference() = observeProfile(programmatic = true, dng = true, pssMode = true)
+
+    private fun observeProfile(programmatic: Boolean, dng: Boolean = false, pssMode: Boolean = false) {
         val args = InstrumentationRegistry.getArguments()
-        val version = if (programmatic) "programmatic-observer-probe-v1" else "gesture-observer-probe-v4"
-        val method = if (programmatic) "observeProgrammaticRenderValues" else "observeRealEngineAndDeliveredTouch"
+        val version = if (dng) { if (pssMode) "dng-programmatic-pss-v1" else "dng-programmatic-values-v1" } else if (programmatic) "programmatic-observer-probe-v1" else "gesture-observer-probe-v4"
+        val method = if (dng) { if (pssMode) "observeSelectedDngPssReference" else "observeSelectedDngProgrammaticValues" } else if (programmatic) "observeProgrammaticRenderValues" else "observeRealEngineAndDeliveredTouch"
         org.junit.Assume.assumeTrue(args.getString("gate1Part2") == version)
         check(args.getString("class") == "dev.cinematic.p0.gpu.GpuGate1GestureObserverProbeTest#$method")
-        check(Build.HARDWARE in setOf("ranchu", "goldfish") && args.getString("isolated") == "true")
+        if (dng) gate1Part2OptIn("dev.cinematic.p0.gpu.GpuGate1GestureObserverProbeTest#$method", version)
+        else check(Build.HARDWARE in setOf("ranchu", "goldfish") && args.getString("isolated") == "true")
         check(target.packageName == "dev.cinematic.p0.gpudiagnostic")
         val run = checkNotNull(args.getString("gate1ProbeRun")).also { check(it.matches(Regex("[a-zA-Z0-9_-]{1,40}"))) }
         val output = File(checkNotNull(target.getExternalFilesDir("gpu-diagnostics")), "$version-$run.json")
@@ -130,12 +141,45 @@ class GpuGate1GestureObserverProbeTest {
             .put("conversion", "GPU x=center+touchSlop+track*(value-baseline)/span; positive then negative; CPU has a different physical gesture")
             .put("intermediateRounding", "CPU/GPU intermediate values may differ; compare endpoints with the preregistered functional tolerance")
             .put("historyMeaning", "sum(1+historySize) over Window MotionEvents, not unique input samples")
+        val operations = if (dng) axes.flatMap { axis -> (0..4).map { axis to it } } else axes.map { it to 0 }
+        val support = if (dng) Gate1DngObservationSupport(output.parentFile!!, "$version-$run") else null
+        if (dng) report.put("purpose", "shared DNG programmatic values or separate PSS reference; not criterion 1 or acceptance by itself")
+            .put("profile", "strength, warmth, EV; each warmup1 then recorded4; all15 retain endpoint/input/frame results")
+            .put("targetVerification", checkNotNull(support).verifyTarget())
+            .put("pssMode", pssMode).put("pssSamples", support.pss)
+            .put("pssScope", "18 planned reference samples only in PSS mode; fixed1s settle; shell dump and file IO perturb process memory; not speed or pass/fail")
+            .put("postClosePssScope", "observer-attached same-Hub reference includes retained test renderer/callback references; does not prove Activity GC or unobserved full release")
+            .put("dumpTimeoutScope", "dumpsys -t10 service output poll only; not end-to-end shell/Binder/file IO hard deadline")
+            .put("nativeOwnerCleanup", "not observed; loading=false and GL ledger0 do not prove native pending/owner release")
+            .put("toleranceInterpretation", "GPU1px is shared touch/CPU operation tolerance, not a programmatic minimum step;8FloatULP is separate rounding allowance")
+        var hub: ActivityScenario<DiagnosticHubActivity>? = null
+        var hubIdentity = 0
+        var originalHub: WeakReference<DiagnosticHubActivity>? = null
+        fun requireHub(): String {
+            val active = checkNotNull(hub)
+            check(active.state == Lifecycle.State.RESUMED)
+            var token = ""
+            active.onActivity {
+                check(it === originalHub?.get() && System.identityHashCode(it) == hubIdentity && it.hasWindowFocus())
+                token = "hub/$hubIdentity/${it.taskId}/${System.identityHashCode(it.window.decorView)}"
+            }
+            return token
+        }
         val rows = ArrayList<Row>(128)
         val pending = ArrayDeque<Row>()
         val touches = ArrayList<Touch>(128)
         val injected = JSONArray()
         val submissions = JSONArray()
         var scenario: ActivityScenario<GpuPreviewDiagnosticActivity>? = null
+        var dngActivity: WeakReference<GpuPreviewDiagnosticActivity>? = null
+        fun withActivity(action: (GpuPreviewDiagnosticActivity) -> Unit) {
+            if (!dng) checkNotNull(scenario).onActivity { action(it) }
+            else ins.runOnMainSync {
+                val activity = checkNotNull(dngActivity?.get())
+                check(ActivityLifecycleMonitorRegistry.getInstance().getLifecycleStageOf(activity) != Stage.DESTROYED)
+                action(activity)
+            }
+        }
         var render: GpuPreviewRenderer? = null
         var callback: Window.Callback? = null
         var originalEngine: StageClearGpu? = null
@@ -147,15 +191,55 @@ class GpuGate1GestureObserverProbeTest {
         val trials = JSONArray()
         report.put("trials", trials)
         try {
-            scenario = ActivityScenario.launch(GpuPreviewDiagnosticActivity::class.java)
-            val activeScenario = checkNotNull(scenario)
-            activeScenario.onActivity { render = it.renderer }
+            if (dng) {
+                hub = ActivityScenario.launch(DiagnosticHubActivity::class.java)
+                checkNotNull(hub).onActivity { hubIdentity = System.identityHashCode(it); originalHub = WeakReference(it) }
+                await { try { requireHub(); true } catch (_: IllegalStateException) { false } }
+                report.put("hubIdentity", hubIdentity)
+                if (pssMode) checkNotNull(support).capturePss("hub_before_input", ::requireHub)
+                // Do not use ActivityScenario for this launch: its invoker adds CLEAR_TASK.
+                checkNotNull(hub).onActivity { it.startActivity(Intent(it, GpuPreviewDiagnosticActivity::class.java)) }
+                await {
+                    var found = false
+                    ins.runOnMainSync {
+                        val resumed = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                            .filterIsInstance<GpuPreviewDiagnosticActivity>()
+                        check(resumed.size <= 1)
+                        resumed.singleOrNull()?.let { dngActivity = WeakReference(it); found = true }
+                    }
+                    found
+                }
+            } else scenario = ActivityScenario.launch(GpuPreviewDiagnosticActivity::class.java)
+            withActivity { render = it.renderer }
             val renderer = checkNotNull(render)
             await { state(renderer).let { it.draw > 0 && !it.pending && it.bytes > 0 } }
+            if (dng) {
+                // Existing Files callback closes the synthetic photo itself. Do not add another close/release.
+                report.put("dngSource", checkNotNull(support).loadThroughFiles(::withActivity))
+                await { state(renderer).let { !it.pending && it.bytes > 0 } }
+                onGl(renderer) {
+                    report.put("dngInput", checkNotNull(support).inputIdentity(field(renderer, "retainedInput") as LinearSrgbImage))
+                }
+            }
+            fun requireDngBaseline(): String {
+                var activityId = 0
+                withActivity {
+                    check(it.renderer === renderer)
+                    check(it.diagnosticState().let { state -> state.resumed && !state.gpuError && !state.loading && state.inputResult == "loaded" })
+                    activityId = System.identityHashCode(it)
+                }
+                var token = ""
+                onGl(renderer) {
+                    val state = stateOnGl(renderer)
+                    check(!state.pending && state.bytes > 0 && axes.all { axis -> abs(axis.value(state.params) - axis.baseline) < 1e-6 })
+                    token = boundaryToken(renderer, activityId, state)
+                }
+                return token
+            }
             // All endpoint rules are computed and persisted before the first gesture, never tuned to results.
             var slop = 0
             var density = 0f
-            activeScenario.onActivity {
+            withActivity {
                 slop = ViewConfiguration.get(it).scaledTouchSlop
                 density = it.resources.displayMetrics.density
             }
@@ -195,6 +279,7 @@ class GpuGate1GestureObserverProbeTest {
                     .put("plannedSubmitCount", if (programmatic) 41 else 0).put("sampleIntervalMs", 20)
             })).put("preInputContractRecordedUptimeMs", SystemClock.uptimeMillis())
             output.writeText(report.toString(2))
+            if (pssMode) checkNotNull(support).capturePss("initial_dng_display", ::requireDngBaseline)
             val startReference = AtomicReference<State>()
             onGl(renderer) {
                 val start = stateOnGl(renderer)
@@ -235,7 +320,7 @@ class GpuGate1GestureObserverProbeTest {
             }
             val start = checkNotNull(startReference.get())
             report.put("observationStartState", start.json())
-            activeScenario.onActivity {
+            withActivity {
                 val prior = it.window.callback
                 callback = prior
                 it.window.callback = object : Window.Callback by prior {
@@ -253,7 +338,8 @@ class GpuGate1GestureObserverProbeTest {
                     }
                 }
             }
-            for (axis in axes) {
+            for ((operationIndex, operation) in operations.withIndex()) {
+                val (axis, repetition) = operation
                 // Reset/reveal actions are setup, outside this trial's row/draw/touch boundaries.
                 axes.forEach { setBaseline(reveal(it), it) }
                 val slider = reveal(axis)
@@ -276,8 +362,10 @@ class GpuGate1GestureObserverProbeTest {
                     check(pending.isEmpty())
                     rowFrom = rows.size
                 }
-                activeScenario.onActivity { touchFrom = touches.size }
-                val trial = JSONObject().put("axis", axis.name).put("startState", trialStart.get().json())
+                withActivity { touchFrom = touches.size }
+                val trial = JSONObject().put("axis", axis.name)
+                    .put("operationIndex", operationIndex).put("axisRepetition", repetition)
+                    .put("role", if (dng && repetition == 0) "warmup" else "recorded").put("startState", trialStart.get().json())
                     .put("setupComposeBarrier", setupBarrier)
                     .put("rowFromInclusive", rowFrom).put("touchFromInclusive", touchFrom)
                     .put("left", bounds.left).put("right", bounds.right).put("top", bounds.top).put("bottom", bounds.bottom)
@@ -386,7 +474,7 @@ class GpuGate1GestureObserverProbeTest {
                     // UP receipt alone plus an old idle mailbox cannot establish Compose's final submission.
                     var returnedUp: Touch? = null
                     await {
-                        activeScenario.onActivity {
+                        withActivity {
                             returnedUp = touches.drop(touchFrom).lastOrNull {
                                 it.action == MotionEvent.ACTION_UP && it.downMs == down && it.returnedNs != null
                             }
@@ -395,7 +483,7 @@ class GpuGate1GestureObserverProbeTest {
                     }
                     trial.put("finalUpDelivery", checkNotNull(returnedUp).json())
                     var finalMove: Touch? = null
-                    activeScenario.onActivity {
+                    withActivity {
                         val index = (touchFrom until touches.size).lastOrNull { index ->
                             val touch = touches[index]
                             touch.action == MotionEvent.ACTION_MOVE && touch.downMs == down && touch.eventMs == down + 800 &&
@@ -452,7 +540,7 @@ class GpuGate1GestureObserverProbeTest {
                 }
                 trial.put("boundaryStatus", if (programmatic) "final_programmatic_submit_and_render_proven" else "final_dispatch_compose_submit_and_render_proven")
                 val trialTouches = ArrayList<Touch>()
-                activeScenario.onActivity {
+                withActivity {
                     trialTouches.addAll(touches.subList(touchFrom, touches.size))
                     trial.put("touchToExclusive", touches.size)
                 }
@@ -500,6 +588,7 @@ class GpuGate1GestureObserverProbeTest {
                     .put("windowDownToUpReceivedUptimeMs", trialTouches.last().receivedUptimeMs - trialTouches.first().receivedUptimeMs)
                     .put("windowReceiptAfterEventTimeCount", trialTouches.count { it.receivedUptimeMs > it.eventMs })
                     .put("sameUptimeMillisecondWindowIntervalCount", trialTouches.zipWithNext().count { (a, b) -> a.receivedUptimeMs == b.receivedUptimeMs })
+                if (pssMode) checkNotNull(support).capturePss("operation_${operationIndex}_${axis.name}_$repetition", ::requireDngBaseline)
                 output.writeText(report.toString(2))
             }
             onGl(renderer) {
@@ -511,6 +600,10 @@ class GpuGate1GestureObserverProbeTest {
                     .put("globalDrawCountDelta", end.draw - start.draw)
                     .put("allRendererCallbackCountIncludingSetup", rows.count { it.frameTimeNs != null })
                     .put("invalidTrialCount", invalidTrials).put("invalidTimingTrialCount", invalidTimingTrials)
+            }
+            if (dng) {
+                checkNotNull(support).verifyOriginalUnchanged()
+                report.put("sourceOriginalUnchanged", true)
             }
             check(observerFailure.get() == null)
             coverageVerified = true
@@ -532,7 +625,15 @@ class GpuGate1GestureObserverProbeTest {
             }
             val renderer = render
             var terminal: CountDownLatch? = null
-            attempt("capture_close_boundary") { terminal = renderer?.let { field(it, "terminated") as CountDownLatch } }
+            var glWorker: Thread? = null
+            var glOwner: Any? = null
+            attempt("capture_close_boundary") {
+                terminal = renderer?.let { field(it, "terminated") as CountDownLatch }
+                if (dng && renderer != null) {
+                    glOwner = checkNotNull(field(renderer, "thread"))
+                    glWorker = field(checkNotNull(glOwner), "thread") as Thread
+                }
+            }
             attempt("restore_engine") {
                 if (renderer != null) onGl(renderer) { originalEngine?.let { setField(renderer, "engine", it) } }
             }
@@ -542,9 +643,31 @@ class GpuGate1GestureObserverProbeTest {
                     report.put("unpairedRows", pending.size)
                 }
             }
-            attempt("restore_window_callback") { scenario?.onActivity { callback?.let { prior -> it.window.callback = prior } } }
-            attempt("close_activity") { scenario?.close() }
+            attempt("restore_window_callback") { if (scenario != null || dngActivity?.get() != null) withActivity { callback?.let { prior -> it.window.callback = prior } } }
+            attempt("close_activity") {
+                if (!dng) scenario?.close() else dngActivity?.get()?.let { activity ->
+                    ins.runOnMainSync { activity.finish() }
+                    await {
+                        var destroyed = false
+                        ins.runOnMainSync { destroyed = ActivityLifecycleMonitorRegistry.getInstance().getLifecycleStageOf(activity) == Stage.DESTROYED }
+                        destroyed
+                    }
+                    dngActivity?.clear()
+                }
+            }
             attempt("await_renderer_close") { terminal?.let { check(it.await(5, TimeUnit.SECONDS)) } }
+            if (dng) attempt("join_gl_thread") {
+                val worker = checkNotNull(glWorker)
+                check(Thread.currentThread() !== worker)
+                val deadline = SystemClock.elapsedRealtime() + 5000
+                while (worker.isAlive) {
+                    val left = deadline - SystemClock.elapsedRealtime()
+                    check(left > 0) { "GL thread join deadline exceeded" }
+                    worker.join(left)
+                }
+                report.put("glThreadTerminated", !worker.isAlive)
+                check(field(checkNotNull(glOwner), "asynchronousFailure") == null)
+            }
             attempt("verify_release") {
                 if (renderer != null) {
                     check(checkNotNull(terminal).count == 0L)
@@ -556,6 +679,22 @@ class GpuGate1GestureObserverProbeTest {
                     check((field(renderer, "surfaceDestroyFailure") as AtomicReference<*>).get() == null)
                 }
             }
+            if (dng && cleanupErrors.length() == 0) attempt("return_same_hub") {
+                await { try { requireHub(); true } catch (_: IllegalStateException) { false } }
+                report.put("returnedSameHub", true)
+                if (pssMode) {
+                    checkNotNull(support).capturePss("closed_same_hub") {
+                        val hubToken = requireHub()
+                        val closed = checkNotNull(renderer)
+                        check(checkNotNull(glWorker).isAlive.not() && checkNotNull(terminal).count == 0L)
+                        val ledger = field(closed, "ledger") as GpuMemoryLedger
+                        check(ledger.allocatedBytes == 0L && ledger.textureCount == 0 && closed.activeWindowCount == 0)
+                        "$hubToken/closed/" + boundaryToken(closed, 0, null)
+                    }
+                    check(support.pss.length() == 18)
+                }
+            }
+            attempt("close_hub_after_observation") { hub?.close() }
             report.put("cleanupErrors", cleanupErrors)
                 .put("cleanupStatus", if (cleanupErrors.length() == 0) "verified" else "failed")
                 .put("observerOutcome", when {
@@ -563,14 +702,14 @@ class GpuGate1GestureObserverProbeTest {
                     coverageVerified -> "coverage_verified"
                     else -> "not_fully_verified"
                 })
-                .put("allEndpointValid", trials.length() == axes.size && (0 until trials.length()).all {
+                .put("allEndpointValid", trials.length() == operations.size && (0 until trials.length()).all {
                     trials.getJSONObject(it).optBoolean("endpointValid", false)
                 })
                 .put("outcome", when {
                     failed != null || observerFailure.get() != null -> "functional_probe_failed"
                     else -> "completed_functional_observer_probe"
                 })
-            val timingComplete = trials.length() == axes.size && (0 until trials.length()).all {
+            val timingComplete = trials.length() == operations.size && (0 until trials.length()).all {
                 trials.getJSONObject(it).has("inputTimingValid")
             }
             val allTimingValid = timingComplete && (0 until trials.length()).all {
@@ -591,6 +730,17 @@ class GpuGate1GestureObserverProbeTest {
         }
         if (failed != null || observerFailure.get() != null) throw AssertionError("GPU observer functional probe failed; see private report")
         if (invalidTrials > 0 || invalidTimingTrials > 0) throw AssertionError("GPU endpoints or input schedule invalid; observer coverage and cleanup are reported separately")
+    }
+
+    /** Scalar witnesses only: do not keep photo/input/window references alive across dumps. */
+    private fun boundaryToken(renderer: GpuPreviewRenderer, activityId: Int, state: State?): String {
+        val ledger = field(renderer, "ledger") as GpuMemoryLedger
+        return JSONObject().put("activityId", activityId).put("rendererId", System.identityHashCode(renderer))
+            .put("state", state?.json() ?: JSONObject.NULL).put("drawCount", field(renderer, "drawCount"))
+            .put("bytes", ledger.allocatedBytes).put("textures", ledger.textureCount).put("windows", renderer.activeWindowCount)
+            .also { token -> listOf("photo", "enginePhoto", "retainedInput", "window", "windowLease").forEach {
+                token.put(it + "Id", field(renderer, it)?.let(System::identityHashCode) ?: 0)
+            } }.toString()
     }
 
     /** Fixed runtime/ui 1.12.1 and default Activity.setContent only; not a generic effect-idle API.

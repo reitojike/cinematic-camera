@@ -3,6 +3,7 @@ package dev.cinematic.p0.gpu
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Rect
+import android.os.ParcelFileDescriptor
 import android.os.Build
 import android.os.SystemClock
 import android.view.InputDevice
@@ -21,12 +22,13 @@ import org.junit.runner.RunWith
 
 /** External UI controller only. Fixed CPU APK has no added observation code.
  * Functional candidate, not a benchmark or proof of per-image values. Host owns APK verification,
- * gfxinfo/PSS collection and isolation. No accessibility polling during the comparison gesture.
+ * PSS collection and isolation; gfxinfo is streamed outside the input window. No accessibility polling during the comparison gesture.
  */
 @RunWith(AndroidJUnit4::class)
 class CpuGate1ReferenceUiTest {
     private val inst = InstrumentationRegistry.getInstrumentation()
     private val ui get() = inst.uiAutomation
+    private val preparationClicks = JSONArray()
 
     @Test fun axisHoldReferenceOnly() {
         val args = InstrumentationRegistry.getArguments()
@@ -51,7 +53,7 @@ class CpuGate1ReferenceUiTest {
             .put("screenValuesAreImageFrameValues", false).put("peakScreenValue", JSONObject.NULL)
             .put("peakScreenStatus", "NOT_CAPTURED_USE_SEPARATE_AUXILIARY_RUN")
             .put("perImageValues", "UNAVAILABLE").put("formalGate1Measurement", false)
-            .put("injectedEvents", events)
+            .put("injectedEvents", events).put("preparationClicks", preparationClicks)
         File(root, "contract.json").writeText(report.toString(2))
         var activity: Activity? = null
         try {
@@ -92,7 +94,9 @@ class CpuGate1ReferenceUiTest {
                     .put("baselineHoldValue", axis.step / 3).put("baselineHoldPx", k * axis.step / 3)
                     .put("startX", x).put("peakX", x - peakTravel).put("returnX", x).put("y", y))
             }
+            report.put("gfxinfoReset", captureGfxinfo(root, "reset"))
             gesture(x, y, k, axis, events)
+            report.put("gfxinfoFramestats", captureGfxinfo(root, "framestats"))
             report.put("actualDownToUpMs", events.getJSONObject(41).getLong("eventUptimeMs") - events.getJSONObject(0).getLong("eventUptimeMs"))
             // Outside input window. This is UI semantics readiness, not a renderer completion observation.
             await("ruler ready after release", 120_000) { ready() && ruler(axis) != null }
@@ -110,6 +114,45 @@ class CpuGate1ReferenceUiTest {
         }
     }
 
+    /** Outside gesture window, while the target Activity/process still exists.
+     * -t 10 is a dumpsys service timeout, NOT a hard deadline on executeShellCommand or pipe IO.
+     * Raw output is reference UI-frame information, not image-render values or formal Gate1 data.
+     * EOF is transport completion only: host must inspect raw output for timeout/no-process/errors.
+     */
+    private fun captureGfxinfo(root: File, operation: String): JSONObject {
+        check(operation == "reset" || operation == "framestats")
+        val file = File(root, "gfxinfo-$operation.txt")
+        val result = JSONObject().put("operation", operation).put("file", file.name)
+            .put("startedUptimeMs", SystemClock.uptimeMillis()).put("serviceTimeoutSeconds", 10)
+            .put("hardIoDeadline", false).put("timeoutStatus", "UNKNOWN_REQUIRES_RAW_OUTPUT_AUDIT")
+            .put("measurementStatus", "UNVALIDATED_REFERENCE_ONLY").put("exitCode", JSONObject.NULL)
+            .put("bytes", JSONObject.NULL).put("imageFrameMapping", false).put("formalGate1Comparable", false)
+        var bytes = 0L
+        try {
+            val descriptor = ui.executeShellCommand("dumpsys -t 10 gfxinfo $TARGET $operation")
+            ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { input ->
+                file.outputStream().use { output ->
+                    val buffer = ByteArray(8192)
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        output.write(buffer, 0, count)
+                        bytes += count
+                    }
+                }
+            }
+            result.put("captureStatus", if (bytes == 0L) "EMPTY_OUTPUT_MISSING" else "EOF_RAW_SAVED")
+        } catch (error: Exception) {
+            result.put("captureStatus", "CAPTURE_FAILED_OR_PARTIAL")
+                .put("errorType", error.javaClass.name).put("error", error.message)
+        } finally {
+            result.put("endedUptimeMs", SystemClock.uptimeMillis()).put("bytes", bytes)
+            // Byte count is transport metadata; never substitute zero for missing frame measurements.
+            try { File(root, "gfxinfo-$operation-status.json").writeText(result.toString(2)) }
+            catch (error: Exception) { result.put("statusFileErrorType", error.javaClass.name) }
+        }
+        return result
+    }
     private fun displacement(ms: Long, k: Double, axis: Axis): Float {
         val fraction = when { ms <= 200 -> ms / 200.0; ms <= 600 -> 1.0; else -> (800 - ms) / 200.0 }
         return if (fraction == 0.0) 0f else (k * (axis.step / 3 + (axis.peak - axis.start) * fraction)).toFloat()
@@ -160,11 +203,54 @@ class CpuGate1ReferenceUiTest {
         return ui.rootInActiveWindow?.let(::find)
     }
     private fun click(timeout: Long = 15_000, predicate: (AccessibilityNodeInfo) -> Boolean) {
-        var selected: AccessibilityNodeInfo? = null
-        await("UI click target", timeout) { selected = node(predicate); selected != null }
-        var target = checkNotNull(selected)
-        while (!target.isClickable) target = checkNotNull(target.parent)
-        check(target.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+        val record = JSONObject().put("startedUptimeMs", SystemClock.uptimeMillis()).put("actionAttempts", 0)
+        preparationClicks.put(record) // Three setup clicks only; overwrite last readiness snapshot, not an unbounded log.
+        var target: AccessibilityNodeInfo? = null
+        try {
+            await("fresh enabled actionable ancestor", timeout) {
+                target = null
+                val selected = node(predicate)
+                if (selected == null) { record.put("label", JSONObject.NULL); record.put("ancestor", JSONObject.NULL); false }
+                else {
+                    val labelFresh = selected.refresh()
+                    record.put("label", clickNode(selected).put("refreshSucceeded", labelFresh))
+                    var ancestor: AccessibilityNodeInfo? = selected
+                    while (ancestor != null && !ancestor.isClickable) ancestor = ancestor.parent
+                    if (ancestor == null) { record.put("ancestor", JSONObject.NULL); false }
+                    else {
+                        val fresh = ancestor.refresh()
+                        val activeWindow = ui.rootInActiveWindow?.windowId
+                        val sameWindow = activeWindow != null && ancestor.windowId == activeWindow
+                        val actionable = ancestor.actionList.any { it.id == AccessibilityNodeInfo.ACTION_CLICK }
+                        record.put("ancestor", clickNode(ancestor).put("refreshSucceeded", fresh)
+                            .put("sameActiveWindow", sameWindow).put("visibleToUser", ancestor.isVisibleToUser))
+                        // Public attachment evidence is refresh success + membership in the current active window.
+                        val ready = labelFresh && predicate(selected) && fresh && sameWindow &&
+                            ancestor.isVisibleToUser && ancestor.isEnabled && ancestor.isClickable && actionable
+                        if (ready) target = ancestor
+                        ready
+                    }
+                }
+            }
+            record.put("actionAttempts", 1).put("attemptUptimeMs", SystemClock.uptimeMillis())
+            val accepted = checkNotNull(target).performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            record.put("accepted", accepted)
+            check(accepted) { "ACTION_CLICK returned false; no retry or fallback" }
+        } catch (error: Throwable) {
+            record.put("failureType", error.javaClass.name).put("failure", error.message)
+            throw error
+        }
+    }
+    private fun clickNode(value: AccessibilityNodeInfo): JSONObject = JSONObject()
+        .put("class", value.className?.toString() ?: JSONObject.NULL)
+        .put("text", safeSetupText(value.text)).put("contentDescription", safeSetupText(value.contentDescription))
+        .put("isEnabled", value.isEnabled).put("isClickable", value.isClickable).put("windowId", value.windowId)
+        .put("actionIds", JSONArray(value.actionList.map { it.id }))
+    private fun safeSetupText(value: CharSequence?): Any {
+        val text = value?.toString() ?: return JSONObject.NULL
+        // Do not save arbitrary Files provider contents or other personal UI text.
+        return if (text in setOf("Files", FIXTURE, "STRENGTH", "色温度", "明るさ",
+                "色温度 · 相対（K値ではありません）", "明るさ · EV")) text else "[REDACTED_NON_FIXTURE_TEXT]"
     }
     private fun await(label: String, timeout: Long, predicate: () -> Boolean) {
         val deadline = SystemClock.uptimeMillis() + timeout
