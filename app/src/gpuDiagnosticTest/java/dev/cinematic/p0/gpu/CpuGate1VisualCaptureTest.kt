@@ -86,7 +86,56 @@ class CpuGate1VisualCaptureTest {
 
     /** Image semantics, not the parent viewport. No corrective control input is performed. */
     private fun readUi(s: Gate1VisualCaptureSupport): JSONObject? {
-        val nodes = s.nodes()
+        // Same UiAutomation connection, public APIs only; no second UI client or product hooks.
+        // clearCache: developer.android.com/reference/android/app/UiAutomation#clearCache()
+        // refresh: developer.android.com/reference/android/view/accessibility/AccessibilityNodeInfo#refresh()
+        val automation = s.ins.uiAutomation
+        val cleared = if (android.os.Build.VERSION.SDK_INT >= 34) automation.clearCache() else null
+        val root = automation.rootInActiveWindow
+        val window = root?.windowId
+        val all = ArrayList<AccessibilityNodeInfo>()
+        val parents = HashMap<AccessibilityNodeInfo, AccessibilityNodeInfo?>()
+        val children = HashMap<AccessibilityNodeInfo, MutableList<AccessibilityNodeInfo>>()
+        val queue = ArrayDeque<Pair<AccessibilityNodeInfo, AccessibilityNodeInfo?>>()
+        root?.let { queue.add(it to null) }
+        var complete = root != null && cleared != false
+        var refreshFailed = 0
+        var scopeRejected = 0
+        var missingChildren = 0
+        while (complete && queue.isNotEmpty()) {
+            check(all.size < 1023) { "Unexpected UI tree size" }
+            val (node, parent) = queue.removeFirst()
+            if (!node.refresh()) { refreshFailed++; complete = false; break }
+            if (node.packageName?.toString() != Gate1VisualCaptureSupport.TARGET || node.windowId != window) {
+                scopeRejected++; complete = false; break
+            }
+            check(!parents.containsKey(node)) { "Duplicate UI node" }
+            all.add(node); parents[node] = parent; children[node] = ArrayList()
+            parent?.let { children.getValue(it).add(node) }
+            for (index in 0 until node.childCount) {
+                val child = node.getChild(index)
+                if (child == null) { missingChildren++; complete = false; break }
+                queue.add(child to node)
+            }
+        }
+        val endRoot = automation.rootInActiveWindow
+        val sameWindow = endRoot?.refresh() == true &&
+            endRoot.packageName?.toString() == Gate1VisualCaptureSupport.TARGET && endRoot.windowId == window
+        val freshness = JSONObject().put("apiLevel", android.os.Build.VERSION.SDK_INT)
+            .put("cacheClearSupported", cleared != null)
+            .put("cacheCleared", cleared ?: JSONObject.NULL).put("refreshedNodeCount", all.size)
+            .put("refreshFailedCount", refreshFailed).put("scopeRejectedCount", scopeRejected)
+            .put("missingChildCount", missingChildren).put("sameActiveWindowAfter", sameWindow)
+            .put("complete", complete && sameWindow)
+            .put("meaning", "one refreshed traversal; not an atomic frame or proof that all CPU workers are idle")
+        if (!complete || !sameWindow) {
+            saveReadiness(s, JSONObject().put("activityBound", true).put("ready", false)
+                .put("firstBlocker", "accessibility_snapshot_not_fresh")
+                .put("uiPredicates", "NOT_OBSERVED").put("freshness", freshness))
+            return null
+        }
+        val nodes = all.filter { it.isVisibleToUser }
+        val visible = nodes.toHashSet()
         val text = nodes.mapNotNull { it.text?.toString() }
         val predicates = linkedMapOf<String, Boolean>()
         val observed = JSONObject().put("nodeCount", nodes.size)
@@ -95,6 +144,15 @@ class CpuGate1VisualCaptureTest {
         listOf("更新中", "未反映", "画像を準備中", "原本を確認中").zip(
             listOf("no_updating_text", "no_unapplied_text", "no_preparing_text", "no_checking_text")
         ).forEach { (label, key) -> predicates[key] = text.none { label in it } }
+        val unapplied = nodes.filter { it.text?.contains("未反映") == true }
+        observed.put("unappliedNodeCount", unapplied.size)
+            .put("unappliedEvidence", JSONArray(unapplied.take(4).map { node ->
+                JSONObject().put("boundsScreen", s.rect(s.bounds(node))).put("kind", when (node.text?.toString()) {
+                    "表示中 · 未反映の調整あり" -> "IMAGE_CAPTION"
+                    "指定 · 未反映" -> "FOOTER_PENDING"
+                    else -> "OTHER_MATCH"
+                })
+            }))
         val panels = nodes.count { it.contentDescription?.toString() == "現像調整パネル" }
         observed.put("adjustmentPanelCount", panels)
         predicates["no_adjustment_panel"] = panels == 0
@@ -125,7 +183,7 @@ class CpuGate1VisualCaptureTest {
         var control = label
         var depth = 0
         while (control != null && !control.isCheckable && depth < 32) {
-            control = control.parent
+            control = parents[control]
             depth++
         }
         val sameScope = label != null && control != null &&
@@ -149,9 +207,16 @@ class CpuGate1VisualCaptureTest {
         predicates["parallel_off"] = control?.isCheckable == true && !control.isChecked
 
         fun button(heading: String, expected: String): Boolean {
-            return nodes.filter { it.isClickable && it.isEnabled }.any { node ->
-                val tokens = descendantText(node).split(Regex("[\\s,]+"))
-                heading in tokens && expected in tokens && "未反映" !in tokens
+            val candidates = nodes.filter { it.isClickable }.map { node ->
+                node to descendantText(node, children, visible).split(Regex("[\\s,]+"))
+            }.filter { (_, tokens) -> heading in tokens }
+            if (heading == "明るさ") observed.put("exposureFooterCandidateCount", candidates.size)
+                .put("exposureFooterEvidence", JSONArray(candidates.take(4).map { (node, tokens) ->
+                    JSONObject().put("boundsScreen", s.rect(s.bounds(node))).put("enabled", node.isEnabled)
+                        .put("expectedValuePresent", expected in tokens).put("unappliedTokenPresent", "未反映" in tokens)
+                }))
+            return candidates.any { (node, tokens) ->
+                node.isEnabled && expected in tokens && "未反映" !in tokens
             }
         }
         predicates["strength_footer_50"] = button("STRENGTH", "50")
@@ -166,7 +231,7 @@ class CpuGate1VisualCaptureTest {
         val blocker = predicates.entries.firstOrNull { !it.value }?.key
         saveReadiness(s, JSONObject().put("activityBound", true).put("ready", blocker == null)
             .put("firstBlocker", blocker ?: "NONE").put("predicates", JSONObject(predicates))
-            .put("observed", observed))
+            .put("observed", observed).put("freshness", freshness))
         if (blocker != null) return null
         checkNotNull(bounds); checkNotNull(viewportBounds)
         val scale = minOf(bounds.width() / 1024.0, bounds.height() / 768.0)
@@ -208,13 +273,17 @@ class CpuGate1VisualCaptureTest {
         }
     }
 
-    private fun descendantText(root: AccessibilityNodeInfo): String {
+    /** Reuse the same refreshed tree. Do not fetch children or parents again while evaluating UI. */
+    private fun descendantText(root: AccessibilityNodeInfo,
+        children: Map<AccessibilityNodeInfo, List<AccessibilityNodeInfo>>,
+        visible: Set<AccessibilityNodeInfo>): String {
         val text = ArrayList<String>(); val queue = ArrayDeque<AccessibilityNodeInfo>(); queue.add(root)
         var count = 0
         while (queue.isNotEmpty()) {
             check(++count < 256)
-            val node = queue.removeFirst(); node.text?.toString()?.let(text::add)
-            repeat(node.childCount) { node.getChild(it)?.let(queue::addLast) }
+            val node = queue.removeFirst()
+            if (node in visible) node.text?.toString()?.let(text::add)
+            children[node]?.forEach(queue::addLast)
         }
         return text.joinToString(" ")
     }
