@@ -58,7 +58,7 @@ class GpuProductInputAndroidTest {
                 GpuPhotoRollRetiredOwners.releaseBeforeOpen()
                 val opensBefore = provider.opens.get()
                 val admitted = AtomicInteger()
-                val loaded = renderer.openGpu(repository, Uri.parse("content://media/external/images/media/$id"), false,
+                val loaded = renderer.openGpu(repository, provider.uri(id), false,
                     CancellationSignal(), GpuInputRequestDeadline(nowMillis = SystemClock::elapsedRealtime),
                     { failure -> assertNull(failure); admitted.incrementAndGet() }) { PhotoAdjustmentPolicy.defaults }
                 assertEquals(1, admitted.get())
@@ -125,6 +125,8 @@ class GpuProductInputAndroidTest {
         val readers = CopyOnWriteArrayList<ParcelFileDescriptor>()
         init { attachInfo(context, ProviderInfo().apply { authority = "media"; exported = false }) }
         fun verifyUnchanged() = files.forEach { (id, f) -> DngContentVerifier.verify(checkNotNull(fingerprints[id]), { f.inputStream() }) }
+        fun uri(id: Int): Uri = ContentUris.withAppendedId(
+            MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), id.toLong())
         override fun onCreate() = true
         override fun getType(uri: Uri) = "image/x-adobe-dng"
         override fun query(uri: Uri, projection: Array<out String>?, selection: String?, args: Array<out String>?, sort: String?): Cursor {
@@ -133,6 +135,7 @@ class GpuProductInputAndroidTest {
                 OpenableColumns.DISPLAY_NAME -> "SYNTHETIC.dng"
                 OpenableColumns.SIZE -> file.length()
                 MediaStore.MediaColumns.MIME_TYPE -> "image/x-adobe-dng"
+                MediaStore.MediaColumns.VOLUME_NAME -> MediaStore.VOLUME_EXTERNAL_PRIMARY
                 MediaStore.MediaColumns.DATE_MODIFIED -> 100L
                 MediaStore.MediaColumns.OWNER_PACKAGE_NAME -> packageName
                 MediaStore.MediaColumns.IS_PENDING, MediaStore.MediaColumns.IS_TRASHED -> 0

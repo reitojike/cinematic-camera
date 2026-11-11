@@ -65,7 +65,9 @@ class GpuDevelopLayoutAndroidTest {
                 assertTrue("same-photo retry attaches a fresh renderer surface", replacement.renderer.surfaceAttached.value)
                 assertFalse(gpu.renderer.surfaceAttached.value)
                 scenario.onActivity { failed.value = true }
-                val retry = await("再試行")
+                val label = await("再試行")
+                val retry = checkNotNull(generateSequence(label) { it.parent }.firstOrNull { it.isClickable })
+                assertTrue("retry action is enabled", retry.isEnabled)
                 val failureBounds = Rect().also { retry.getBoundsInScreen(it) }
                 assertTrue("retry remains inside selected image region", cpuViewport.contains(failureBounds))
                 assertTrue(retry.performAction(AccessibilityNodeInfo.ACTION_CLICK))

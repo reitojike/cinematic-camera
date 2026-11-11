@@ -89,7 +89,7 @@ class GpuProductEditorAndroidTest {
             CompositionLocalProvider(LocalContext provides uiContext) {
                 CaptureTheme {
                     key(selected.value) {
-                        GpuPhotoRollEditor(repository, renderer, "content://media/external/images/media/${selected.value}", false,
+                        GpuPhotoRollEditor(repository, renderer, provider.uri(selected.value).toString(), false,
                             "SYNTHETIC", state.isAtLeast(Lifecycle.State.RESUMED), publications, trimEpoch.intValue,
                             {}, Modifier.fillMaxSize().safeDrawingPadding())
                     }
