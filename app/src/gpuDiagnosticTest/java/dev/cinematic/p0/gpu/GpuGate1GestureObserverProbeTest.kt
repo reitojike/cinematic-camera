@@ -25,6 +25,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /** Emulator-only functional proof, not a Gate 1 performance measurement or Pixel entry.
  * Real engine and Window callback are delegated unchanged, exactly once. No extra GPU pass/readback.
@@ -41,11 +42,12 @@ class GpuGate1GestureObserverProbeTest {
     private data class Row(val sequence: Int, val strength: Double, val warmth: Double, val ev: Double,
         val beginNs: Long, var endNs: Long = 0, var frameTimeNs: Long? = null,
         var cpuSubmitNs: Long? = null, var gpuNs: Long? = null, var completed: Boolean = false,
-        var callbackNs: Long? = null) {
+        var callbackNs: Long? = null, val showBefore: Boolean = false, val rotationDegrees: Int = 0) {
         fun json() = JSONObject().put("sequence", sequence).put("strength", strength).put("warmth", warmth)
             .put("exposureEv", ev).put("beginNs", beginNs).put("endNs", endNs).put("renderCompleted", completed)
             .put("rendererFrameTimeNs", frameTimeNs ?: JSONObject.NULL).put("cpuSubmitNs", cpuSubmitNs ?: JSONObject.NULL)
             .put("gpuNs", gpuNs ?: JSONObject.NULL).put("callbackNs", callbackNs ?: JSONObject.NULL)
+            .put("showBefore", showBefore).put("rotationDegrees", rotationDegrees)
     }
     private data class Touch(val action: Int, val eventMs: Long, val downMs: Long, val x: Float, val y: Float,
         val history: Int, val pointers: Int, val receivedNs: Long, val receivedUptimeMs: Long,
@@ -55,10 +57,11 @@ class GpuGate1GestureObserverProbeTest {
             .put("receivedNs", receivedNs).put("receivedUptimeMs", receivedUptimeMs).put("handled", handled)
             .put("delegateReturnedNs", returnedNs ?: JSONObject.NULL)
     }
-    private data class State(val draw: Long, val pending: Boolean, val params: GpuRenderParams, val bytes: Long) {
+    private data class State(val draw: Long, val pending: Boolean, val params: GpuRenderParams, val bytes: Long, val display: GpuDisplayOptions) {
         fun json() = JSONObject().put("drawCount", draw).put("pending", pending)
             .put("strength", params.strength).put("warmth", params.adjustments.warmth)
             .put("exposureEv", params.adjustments.exposureEv)
+            .put("showBefore", display.showBefore).put("rotationDegrees", display.rotationDegrees)
     }
     private data class Axis(val name: String, val min: Float, val max: Float, val baseline: Double,
         val peak: Double, val cpuTapStep: Double, val quantizationHalfWidth: Double) {
@@ -67,6 +70,11 @@ class GpuGate1GestureObserverProbeTest {
             "strength" -> params.strength
             "warmth" -> params.adjustments.warmth
             else -> params.adjustments.exposureEv
+        }
+        fun withValue(params: GpuRenderParams, value: Double): GpuRenderParams = when (name) {
+            "strength" -> params.copy(strength = value)
+            "warmth" -> params.copy(adjustments = params.adjustments.copy(warmth = value))
+            else -> params.copy(adjustments = params.adjustments.copy(exposureEv = value))
         }
         fun value(row: Row): Double = when (name) {
             "strength" -> row.strength
@@ -82,23 +90,38 @@ class GpuGate1GestureObserverProbeTest {
     private data class Geometry(val track: Double, val cpuOnePx: Double, val gpuOnePx: Double,
         val floatAllowance: Double, val tolerance: Double)
 
-    @Test fun observeRealEngineAndDeliveredTouch() {
+    @Test fun observeRealEngineAndDeliveredTouch() = observeProfile(programmatic = false)
+    @Test fun observeProgrammaticRenderValues() = observeProfile(programmatic = true)
+
+    private fun observeProfile(programmatic: Boolean) {
         val args = InstrumentationRegistry.getArguments()
-        org.junit.Assume.assumeTrue(args.getString("gate1Part2") == "gesture-observer-probe-v3")
-        check(args.getString("class") == "dev.cinematic.p0.gpu.GpuGate1GestureObserverProbeTest#observeRealEngineAndDeliveredTouch")
+        val version = if (programmatic) "programmatic-observer-probe-v1" else "gesture-observer-probe-v4"
+        val method = if (programmatic) "observeProgrammaticRenderValues" else "observeRealEngineAndDeliveredTouch"
+        org.junit.Assume.assumeTrue(args.getString("gate1Part2") == version)
+        check(args.getString("class") == "dev.cinematic.p0.gpu.GpuGate1GestureObserverProbeTest#$method")
         check(Build.HARDWARE in setOf("ranchu", "goldfish") && args.getString("isolated") == "true")
         check(target.packageName == "dev.cinematic.p0.gpudiagnostic")
         val run = checkNotNull(args.getString("gate1ProbeRun")).also { check(it.matches(Regex("[a-zA-Z0-9_-]{1,40}"))) }
-        val output = File(checkNotNull(target.getExternalFilesDir("gpu-diagnostics")), "gesture-probe-v3-$run.json")
+        val output = File(checkNotNull(target.getExternalFilesDir("gpu-diagnostics")), "$version-$run.json")
         check(output.createNewFile()) { "Do not overwrite prior evidence" }
-        val report = JSONObject().put("version", "gesture-observer-probe-v3")
-            .put("purpose", "synthetic emulator endpoint and observer proof only; timing validity not assessed; not criterion 1 or Pixel acceptance")
+        val report = JSONObject().put("version", version)
+            .put("purpose", "MIXED synthetic emulator endpoint/input/observer proof; not shared-DNG comparison, criterion 1 or Pixel acceptance")
             .put("frameMeaning", "real engine render completed, FIFO paired with renderer callback after swap; not scanout")
-            .put("profile", "three rise-hold-return value profiles, one trial per axis; 200ms linear rise, 400ms peak hold, 200ms linear return; 800ms DOWN to UP")
+            .put("profile", "three rise-hold-return value profiles, one trial per axis; 200ms linear rise, 400ms peak hold, 200ms linear return; 800ms planned input span")
             .put("candidateOnly", true)
-            .put("profileIdentity", "v3 symmetric rise-hold-return candidate; not the v2 triangle or an identical prior comparison")
+            .put("inputMode", if (programmatic) "direct_existing_renderer_submit" else "auxiliary_touch")
+            .put("uiSliderSynchronized", !programmatic)
+            .put("uiEvidenceScope", if (programmatic) "setup semantics only; main trial endpoints are actual render values"
+                else "touch setup and final semantics values only; peak is actual render maximum, not a separate peak UI read")
+            .put("sharedPath", "touch onValueChange -> Compose state -> LaunchedEffect -> renderer.submit; main probe enters that same submit -> latest-wins mailbox -> existing FULL_RECOMPUTE engine -> swap/callback")
+            .put("latestWins", "not all scheduled values need be rendered; actual render parameters and callbacks are recorded")
+            .put("programmaticSchedule", "41 fixed values at relative 0,20,...,800ms; actual first Main submit uptime is origin; never drop or recompute samples based on lateness")
+            .put("inputTimingRule", "programmatic only: every relative lateness in [0,20]ms, final span [800,820]ms, no adjacent submits in same uptime millisecond; not criterion 1")
+            .put("clockResolution", "input timing validity uses integer SystemClock.uptimeMillis; nanoTime recorded separately")
+            .put("geometryRule", "accessibility width - 2*roundToPx(10dp semantics padding) - roundToPx(2dp active thumb); Material3 1.4.0")
+            .put("profileIdentity", "symmetric rise-hold-return candidate; new input/geometry contract, not an identical prior comparison")
             .put("peakObservation", "Holding the requested peak does not guarantee a rendered peak; frozen endpoint rules still apply")
-            .put("trajectoryTimingStatus", "not_assessed")
+            .put("trajectoryTimingStatus", if (programmatic) "pending_input_schedule_check" else "not_assessed")
             .put("timingDiagnostics", "late means actualInjectMs>plannedMs; burst interval means adjacent injections in the same uptime millisecond; diagnostic counts only, no timing acceptance tolerance")
             .put("finalMoveIdentity", "Window MOVE with matching downTime, eventTime=down+800, and x within 1px of injected return coordinate; otherwise boundary_unproven")
             .put("modelRequiresApkDependencyVerification", true)
@@ -111,6 +134,7 @@ class GpuGate1GestureObserverProbeTest {
         val pending = ArrayDeque<Row>()
         val touches = ArrayList<Touch>(128)
         val injected = JSONArray()
+        val submissions = JSONArray()
         var scenario: ActivityScenario<GpuPreviewDiagnosticActivity>? = null
         var render: GpuPreviewRenderer? = null
         var callback: Window.Callback? = null
@@ -118,6 +142,7 @@ class GpuGate1GestureObserverProbeTest {
         var originalFrame: ((GpuPreviewFrame) -> Unit)? = null
         var failed: Throwable? = null
         var invalidTrials = 0
+        var invalidTimingTrials = 0
         var coverageVerified = false
         val trials = JSONArray()
         report.put("trials", trials)
@@ -139,7 +164,7 @@ class GpuGate1GestureObserverProbeTest {
                 val node = reveal(axis)
                 setBaseline(node, axis)
                 val bounds = Rect().also(node::getBoundsInScreen)
-                val track = bounds.width().toDouble() - 2.0 * density
+                val track = activeTrackPx(bounds, density)
                 check(track > 0)
                 val cpuOnePx = axis.cpuTapStep / (24.0 * density)
                 val gpuOnePx = axis.span / track
@@ -159,12 +184,15 @@ class GpuGate1GestureObserverProbeTest {
                     .put("holdValuePerSecond", 0.0)
                     .put("returnValuePerSecond", -(axis.peak - axis.baseline) / .2)
                     .put("density", density.toDouble()).put("touchSlopPx", slop)
-                    .put("activeThumbModelPx", 2.0 * density).put("trackPx", g.track)
+                    .put("semanticsPaddingEachSidePx", (10f * density).roundToInt())
+                    .put("activeThumbModelPx", (2f * density).roundToInt()).put("trackPx", g.track)
                     .put("rangeMin", axis.min.toDouble()).put("rangeMax", axis.max.toDouble())
                     .put("cpuTapStep", axis.cpuTapStep).put("cpuQuantizationHalfWidth", axis.quantizationHalfWidth)
                     .put("cpuOnePx", g.cpuOnePx).put("gpuValuePerPx", g.gpuOnePx)
                     .put("eightFloatUlp", g.floatAllowance).put("endpointTolerance", g.tolerance)
-                    .put("plannedInjectedEventCount", 42).put("plannedMoveCount", 40).put("moveIntervalMs", 20)
+                    .put("plannedInjectedEventCount", if (programmatic) 0 else 42)
+                    .put("plannedMoveCount", if (programmatic) 0 else 40)
+                    .put("plannedSubmitCount", if (programmatic) 41 else 0).put("sampleIntervalMs", 20)
             })).put("preInputContractRecordedUptimeMs", SystemClock.uptimeMillis())
             output.writeText(report.toString(2))
             val startReference = AtomicReference<State>()
@@ -183,7 +211,8 @@ class GpuGate1GestureObserverProbeTest {
                         var row: Row? = null
                         observe {
                             check(rows.size < 1024)
-                            row = Row(rows.size, params.strength, params.adjustments.warmth, params.adjustments.exposureEv, System.nanoTime())
+                            row = Row(rows.size, params.strength, params.adjustments.warmth, params.adjustments.exposureEv, System.nanoTime(),
+                                showBefore = display.showBefore, rotationDegrees = display.rotationDegrees)
                             rows.add(checkNotNull(row))
                         }
                         val result = actual.renderPreview(photo, params, target, display)
@@ -232,21 +261,24 @@ class GpuGate1GestureObserverProbeTest {
                 await { state(renderer).let { !it.pending && axes.all { axis -> abs(axis.value(it.params) - axis.baseline) < 1e-6 } } }
                 val bounds = Rect().also(slider::getBoundsInScreen)
                 val g = geometry.getValue(axis)
-                check(bounds.width().toDouble() - 2.0 * density == g.track) { "Geometry changed after preregistration" }
+                check(activeTrackPx(bounds, density) == g.track) { "Geometry changed after preregistration" }
                 val center = bounds.exactCenterX()
                 val y = bounds.exactCenterY()
                 val travel = (g.track * (axis.peak - axis.baseline) / axis.span).toFloat()
                 check(center + slop + travel < bounds.right - density) { "Candidate trajectory does not fit; do not shorten it" }
+                val setupBarrier = awaitComposeSubmitBarrier(0L)
+                await { state(renderer).let { !it.pending && axes.all { axis -> abs(axis.value(it.params) - axis.baseline) < 1e-6 } } }
                 var rowFrom = 0
                 var touchFrom = 0
                 val trialStart = AtomicReference<State>()
                 onGl(renderer) {
-                    trialStart.set(stateOnGl(renderer).also { check(!it.pending) })
+                    trialStart.set(stateOnGl(renderer).also { check(!it.pending && !it.display.showBefore && it.display.rotationDegrees == 0) })
                     check(pending.isEmpty())
                     rowFrom = rows.size
                 }
                 activeScenario.onActivity { touchFrom = touches.size }
                 val trial = JSONObject().put("axis", axis.name).put("startState", trialStart.get().json())
+                    .put("setupComposeBarrier", setupBarrier)
                     .put("rowFromInclusive", rowFrom).put("touchFromInclusive", touchFrom)
                     .put("left", bounds.left).put("right", bounds.right).put("top", bounds.top).put("bottom", bounds.bottom)
                     .put("travelPx", travel.toDouble()).put("endpointTolerance", g.tolerance)
@@ -255,90 +287,157 @@ class GpuGate1GestureObserverProbeTest {
                 trials.put(trial)
                 val injectionFrom = injected.length()
                 val down = SystemClock.uptimeMillis() + 100
-                fun send(action: Int, time: Long, x: Float) {
-                    val wait = time - SystemClock.uptimeMillis()
-                    if (wait > 0) SystemClock.sleep(wait)
-                    val actualTime = SystemClock.uptimeMillis()
-                    val event = MotionEvent.obtain(down, time, action, x, y, 0).apply { source = InputDevice.SOURCE_TOUCHSCREEN }
-                    val accepted = try { ins.uiAutomation.injectInputEvent(event, false) } finally { event.recycle() }
-                    injected.put(JSONObject().put("axis", axis.name).put("action", action).put("plannedMs", time)
-                        .put("actualInjectMs", actualTime).put("injectReturnedMs", SystemClock.uptimeMillis())
-                        .put("x", x.toDouble()).put("y", y.toDouble()).put("accepted", accepted))
-                    check(accepted)
-                }
-                send(MotionEvent.ACTION_DOWN, down, center)
-                for (index in 1..40) {
-                    val fraction = when {
-                        index <= 10 -> index / 10f
-                        index <= 30 -> 1f
-                        else -> (40 - index) / 10f
-                    }
-                    send(MotionEvent.ACTION_MOVE, down + index * 20, center + slop + travel * fraction)
-                }
-                send(MotionEvent.ACTION_UP, down + 800, center + slop)
-                val injectionRows = (injectionFrom until injected.length()).map { injected.getJSONObject(it) }
-                trial.put("injectedEventCount", injectionRows.size)
-                    .put("plannedDownToUpMs", 800)
-                    .put("actualInjectionDownToUpMs", injectionRows.last().getLong("actualInjectMs") - injectionRows.first().getLong("actualInjectMs"))
-                    .put("lateInjectionCount", injectionRows.count { it.getLong("actualInjectMs") > it.getLong("plannedMs") })
-                    .put("maxInjectionLatenessMs", injectionRows.maxOf { it.getLong("actualInjectMs") - it.getLong("plannedMs") })
-                    .put("sameUptimeMillisecondInjectionIntervalCount", injectionRows.zipWithNext().count { (a, b) ->
-                        a.getLong("actualInjectMs") == b.getLong("actualInjectMs") })
-                // UP receipt alone plus an old idle mailbox cannot establish Compose's final submission.
-                var returnedUp: Touch? = null
-                await {
-                    activeScenario.onActivity {
-                        returnedUp = touches.drop(touchFrom).lastOrNull {
-                            it.action == MotionEvent.ACTION_UP && it.downMs == down && it.returnedNs != null
-                        }
-                    }
-                    returnedUp != null
-                }
-                trial.put("finalUpDelivery", checkNotNull(returnedUp).json())
-                var finalMove: Touch? = null
-                activeScenario.onActivity {
-                    val index = (touchFrom until touches.size).lastOrNull { index ->
-                        val touch = touches[index]
-                        touch.action == MotionEvent.ACTION_MOVE && touch.downMs == down && touch.eventMs == down + 800 &&
-                            abs(touch.x - (center + slop)) <= 1f
-                    }
-                    if (index != null) {
-                        finalMove = touches[index]
-                        trial.put("finalMoveWindowSequence", index).put("finalMoveDelivery", touches[index].json())
-                    }
-                }
-                val deliveredReturnMove = checkNotNull(finalMove) { "boundary_unproven: final MOVE was not identified" }
-                trial.put("composeSubmitBarrier", awaitComposeSubmitBarrier(checkNotNull(returnedUp?.returnedNs)))
-                // Read semantics only AFTER the pinned Compose/Main barrier has drained the final effect.
-                // Endpoint tolerance is deliberately not part of this boundary proof.
-                val uiFinalValue = checkNotNull(nodes().firstOrNull {
-                    it.rangeInfo?.let { r -> r.min == axis.min && r.max == axis.max } == true
-                }?.rangeInfo?.current?.toDouble())
-                trial.put("uiLastObservedValue", uiFinalValue)
+                var settledValue = Double.NaN
                 var returnRowSequence = -1
-                // A final MOVE render may complete before UP; no forced submit/render is used.
-                await {
-                    var proven = false
-                    onGl(renderer) {
-                        val end = stateOnGl(renderer)
-                        val last = rows.lastOrNull()?.takeIf { it.sequence >= rowFrom }
-                        if (last != null && last.beginNs >= deliveredReturnMove.receivedNs &&
-                            last.completed && last.callbackNs != null && !end.pending && pending.isEmpty() &&
-                            axis.value(last) == uiFinalValue && axis.value(end.params) == uiFinalValue) {
-                            returnRowSequence = last.sequence
-                            proven = true
+                if (programmatic) {
+                    // Setup is drained before row boundaries; unchanged UI keys do not launch parameter effects.
+                    val submissionFrom = submissions.length()
+                    var originMs = 0L
+                    var finalSubmitNs = 0L
+                    for (index in 0..40) {
+                        val fraction = when {
+                            index <= 10 -> index / 10.0
+                            index <= 30 -> 1.0
+                            else -> (40 - index) / 10.0
+                        }
+                        val params = axis.withValue(trialStart.get().params, axis.baseline + (axis.peak - axis.baseline) * fraction)
+                        if (index > 0) {
+                            val wait = originMs + index * 20 - SystemClock.uptimeMillis()
+                            if (wait > 0) SystemClock.sleep(wait)
+                        }
+                        val submission = JSONObject().put("axis", axis.name).put("sampleIndex", index)
+                            .put("plannedRelativeMs", index * 20).put("strength", params.strength)
+                            .put("warmth", params.adjustments.warmth).put("exposureEv", params.adjustments.exposureEv)
+                            .put("showBefore", trialStart.get().display.showBefore)
+                            .put("rotationDegrees", trialStart.get().display.rotationDegrees)
+                        ins.runOnMainSync {
+                            val actualMs = SystemClock.uptimeMillis()
+                            val beginNs = System.nanoTime()
+                            if (index == 0) originMs = actualMs
+                            // Exactly the existing Activity LaunchedEffect's submit entry; no force-render.
+                            renderer.submit(params, trialStart.get().display)
+                            submission.put("actualSubmitUptimeMs", actualMs).put("submitBeginNs", beginNs)
+                                .put("submitReturnedNs", System.nanoTime()).put("plannedUptimeMs", originMs + index * 20)
+                                .put("actualRelativeMs", actualMs - originMs)
+                                .put("relativeLatenessMs", actualMs - originMs - index * 20)
+                            if (index == 40) finalSubmitNs = beginNs
+                        }
+                        submissions.put(submission)
+                    }
+                    val submitted = (submissionFrom until submissions.length()).map { submissions.getJSONObject(it) }
+                    val lateness = submitted.map { it.getLong("relativeLatenessMs") }
+                    val span = submitted.last().getLong("actualRelativeMs")
+                    val bursts = submitted.zipWithNext().count { (a, b) -> a.getLong("actualSubmitUptimeMs") == b.getLong("actualSubmitUptimeMs") }
+                    val timingValid = lateness.all { it in 0L..20L } && span in 800L..820L && bursts == 0
+                    if (!timingValid) invalidTimingTrials++
+                    trial.put("submissionFromInclusive", submissionFrom).put("submissionToExclusive", submissions.length())
+                        .put("programmaticSubmitCount", submitted.size).put("plannedSubmitSpanMs", 800)
+                        .put("actualSubmitSpanMs", span).put("minRelativeLatenessMs", lateness.min())
+                        .put("maxRelativeLatenessMs", lateness.max()).put("lateSubmitCount", lateness.count { it > 0 })
+                        .put("earlySubmitCount", lateness.count { it < 0 })
+                        .put("sameUptimeMillisecondSubmitIntervalCount", bursts)
+                        .put("inputTimingValid", timingValid)
+                        .put("trajectoryTimingStatus", if (timingValid) "valid_input_schedule" else "invalid_input_schedule")
+                    settledValue = axis.baseline
+                    await {
+                        var proven = false
+                        onGl(renderer) {
+                            val end = stateOnGl(renderer)
+                            val last = rows.lastOrNull()?.takeIf { it.sequence >= rowFrom }
+                            if (last != null && last.beginNs >= finalSubmitNs && last.completed && last.callbackNs != null &&
+                                !end.pending && pending.isEmpty() && axis.value(last) == settledValue && axis.value(end.params) == settledValue) {
+                                returnRowSequence = last.sequence
+                                proven = true
+                            }
+                        }
+                        proven
+                    }
+                    trial.put("finalProgrammaticSubmitNs", finalSubmitNs).put("returnEvidenceRowSequence", returnRowSequence)
+                } else {
+                    fun send(action: Int, time: Long, x: Float) {
+                        val wait = time - SystemClock.uptimeMillis()
+                        if (wait > 0) SystemClock.sleep(wait)
+                        val actualTime = SystemClock.uptimeMillis()
+                        val event = MotionEvent.obtain(down, time, action, x, y, 0).apply { source = InputDevice.SOURCE_TOUCHSCREEN }
+                        val accepted = try { ins.uiAutomation.injectInputEvent(event, false) } finally { event.recycle() }
+                        injected.put(JSONObject().put("axis", axis.name).put("action", action).put("plannedMs", time)
+                            .put("actualInjectMs", actualTime).put("injectReturnedMs", SystemClock.uptimeMillis())
+                            .put("x", x.toDouble()).put("y", y.toDouble()).put("accepted", accepted))
+                        check(accepted)
+                    }
+                    send(MotionEvent.ACTION_DOWN, down, center)
+                    for (index in 1..40) {
+                        val fraction = when {
+                            index <= 10 -> index / 10f
+                            index <= 30 -> 1f
+                            else -> (40 - index) / 10f
+                        }
+                        send(MotionEvent.ACTION_MOVE, down + index * 20, center + slop + travel * fraction)
+                    }
+                    send(MotionEvent.ACTION_UP, down + 800, center + slop)
+                    val injectionRows = (injectionFrom until injected.length()).map { injected.getJSONObject(it) }
+                    trial.put("injectedEventCount", injectionRows.size)
+                        .put("plannedDownToUpMs", 800)
+                        .put("actualInjectionDownToUpMs", injectionRows.last().getLong("actualInjectMs") - injectionRows.first().getLong("actualInjectMs"))
+                        .put("lateInjectionCount", injectionRows.count { it.getLong("actualInjectMs") > it.getLong("plannedMs") })
+                        .put("maxInjectionLatenessMs", injectionRows.maxOf { it.getLong("actualInjectMs") - it.getLong("plannedMs") })
+                        .put("sameUptimeMillisecondInjectionIntervalCount", injectionRows.zipWithNext().count { (a, b) ->
+                            a.getLong("actualInjectMs") == b.getLong("actualInjectMs") })
+                    // UP receipt alone plus an old idle mailbox cannot establish Compose's final submission.
+                    var returnedUp: Touch? = null
+                    await {
+                        activeScenario.onActivity {
+                            returnedUp = touches.drop(touchFrom).lastOrNull {
+                                it.action == MotionEvent.ACTION_UP && it.downMs == down && it.returnedNs != null
+                            }
+                        }
+                        returnedUp != null
+                    }
+                    trial.put("finalUpDelivery", checkNotNull(returnedUp).json())
+                    var finalMove: Touch? = null
+                    activeScenario.onActivity {
+                        val index = (touchFrom until touches.size).lastOrNull { index ->
+                            val touch = touches[index]
+                            touch.action == MotionEvent.ACTION_MOVE && touch.downMs == down && touch.eventMs == down + 800 &&
+                                abs(touch.x - (center + slop)) <= 1f
+                        }
+                        if (index != null) {
+                            finalMove = touches[index]
+                            trial.put("finalMoveWindowSequence", index).put("finalMoveDelivery", touches[index].json())
                         }
                     }
-                    proven
+                    val deliveredReturnMove = checkNotNull(finalMove) { "boundary_unproven: final MOVE was not identified" }
+                    trial.put("composeSubmitBarrier", awaitComposeSubmitBarrier(checkNotNull(returnedUp?.returnedNs)))
+                    // Read semantics only AFTER the pinned Compose/Main barrier has drained the final effect.
+                    // Endpoint tolerance is deliberately not part of this boundary proof.
+                    settledValue = checkNotNull(nodes().firstOrNull {
+                        it.rangeInfo?.let { r -> r.min == axis.min && r.max == axis.max } == true
+                    }?.rangeInfo?.current?.toDouble())
+                    trial.put("uiLastObservedValue", settledValue)
+                    // A final MOVE render may complete before UP; no forced submit/render is used.
+                    await {
+                        var proven = false
+                        onGl(renderer) {
+                            val end = stateOnGl(renderer)
+                            val last = rows.lastOrNull()?.takeIf { it.sequence >= rowFrom }
+                            if (last != null && last.beginNs >= deliveredReturnMove.receivedNs &&
+                                last.completed && last.callbackNs != null && !end.pending && pending.isEmpty() &&
+                                axis.value(last) == settledValue && axis.value(end.params) == settledValue) {
+                                returnRowSequence = last.sequence
+                                proven = true
+                            }
+                        }
+                        proven
+                    }
+                    trial.put("uiReturnValue", settledValue).put("returnEvidenceRowSequence", returnRowSequence)
+                        .put("uiReturnWithinTolerance", abs(settledValue - axis.baseline) <= g.tolerance)
                 }
-                trial.put("uiReturnValue", uiFinalValue).put("returnEvidenceRowSequence", returnRowSequence)
-                    .put("uiReturnWithinTolerance", abs(uiFinalValue - axis.baseline) <= g.tolerance)
                 val trialRows = ArrayList<Row>()
                 val endRef = AtomicReference<State>()
                 onGl(renderer) {
                     val end = stateOnGl(renderer)
                     check(!end.pending && pending.isEmpty())
-                    check(rows.lastOrNull()?.sequence == returnRowSequence && axis.value(end.params) == uiFinalValue) {
+                    check(rows.lastOrNull()?.sequence == returnRowSequence && axis.value(end.params) == settledValue) {
                         "boundary_unproven: final state changed after return evidence"
                     }
                     endRef.set(end)
@@ -351,15 +450,19 @@ class GpuGate1GestureObserverProbeTest {
                         .put("rendererCallbackCount", trialRows.count { it.frameTimeNs != null })
                         .put("pendingRows", pending.size).put("drainedAtNs", System.nanoTime())
                 }
-                trial.put("boundaryStatus", "final_dispatch_compose_submit_and_render_proven")
+                trial.put("boundaryStatus", if (programmatic) "final_programmatic_submit_and_render_proven" else "final_dispatch_compose_submit_and_render_proven")
                 val trialTouches = ArrayList<Touch>()
                 activeScenario.onActivity {
                     trialTouches.addAll(touches.subList(touchFrom, touches.size))
                     trial.put("touchToExclusive", touches.size)
                 }
-                check(trialTouches.count { it.action == MotionEvent.ACTION_DOWN } == 1)
-                check(trialTouches.count { it.action == MotionEvent.ACTION_UP } == 1)
-                check(trialTouches.all { it.downMs == down && it.action != MotionEvent.ACTION_CANCEL && it.pointers == 1 })
+                if (programmatic) {
+                    check(trialTouches.isEmpty()) { "Unexpected touch during programmatic trial" }
+                } else {
+                    check(trialTouches.count { it.action == MotionEvent.ACTION_DOWN } == 1)
+                    check(trialTouches.count { it.action == MotionEvent.ACTION_UP } == 1)
+                    check(trialTouches.all { it.downMs == down && it.action != MotionEvent.ACTION_CANCEL && it.pointers == 1 })
+                }
                 val actualPeak = trialRows.maxOfOrNull { axis.value(it) }
                 val lastRow = trialRows.lastOrNull()
                 val actualReturn = lastRow?.let { axis.value(it) } ?: axis.value(trialStart.get().params)
@@ -372,17 +475,23 @@ class GpuGate1GestureObserverProbeTest {
                 }
                 check(axes.all { abs(it.value(endRef.get().params) -
                     (lastRow?.let(it::value) ?: it.value(trialStart.get().params))) < 1e-6 })
-                val valid = startValid && peakValid && returnValid && othersFixed
+                val displayFixed = trialRows.all {
+                    it.showBefore == trialStart.get().display.showBefore && it.rotationDegrees == trialStart.get().display.rotationDegrees
+                }
+                val valid = startValid && peakValid && returnValid && othersFixed && displayFixed
                 if (!valid) invalidTrials++
                 trial.put("startActualValue", axis.value(trialStart.get().params)).put("maxRenderedValue", actualPeak ?: JSONObject.NULL)
                     .put("returnRenderedValue", actualReturn).put("startWithinTolerance", startValid)
                     .put("peakWithinTolerance", peakValid).put("returnWithinTolerance", returnValid)
-                    .put("otherAxesFixed", othersFixed).put("endpointValid", valid)
+                    .put("otherAxesFixed", othersFixed).put("displayFixed", displayFixed).put("endpointValid", valid)
                     .put("endpointValidity", if (valid) "valid_endpoints" else "invalid_endpoints")
                     .put("observerCoverage", "one row per renderer draw and one FIFO callback per row")
                     .put("injectedEventCount", injected.length() - injectionFrom)
                     .put("windowMotionEventCount", trialTouches.size)
                     .put("summedSampleCountIncludingHistoryNotUnique", trialTouches.sumOf { 1 + it.history })
+                    .put("returnFrameCompletedNs", lastRow?.endNs ?: JSONObject.NULL)
+                    .put("returnRendererCallbackNs", lastRow?.callbackNs ?: JSONObject.NULL)
+                if (!programmatic) trial
                     .put("plannedDownToUpMs", 800)
                     .put("actualInjectionDownToUpMs", injected.getJSONObject(injected.length() - 1).getLong("actualInjectMs") -
                         injected.getJSONObject(injectionFrom).getLong("actualInjectMs"))
@@ -391,8 +500,6 @@ class GpuGate1GestureObserverProbeTest {
                     .put("windowDownToUpReceivedUptimeMs", trialTouches.last().receivedUptimeMs - trialTouches.first().receivedUptimeMs)
                     .put("windowReceiptAfterEventTimeCount", trialTouches.count { it.receivedUptimeMs > it.eventMs })
                     .put("sameUptimeMillisecondWindowIntervalCount", trialTouches.zipWithNext().count { (a, b) -> a.receivedUptimeMs == b.receivedUptimeMs })
-                    .put("returnFrameCompletedNs", lastRow?.endNs ?: JSONObject.NULL)
-                    .put("returnRendererCallbackNs", lastRow?.callbackNs ?: JSONObject.NULL)
                 output.writeText(report.toString(2))
             }
             onGl(renderer) {
@@ -403,7 +510,7 @@ class GpuGate1GestureObserverProbeTest {
                 report.put("observationEndState", end.json()).put("allObservedRowsIncludingSetup", rows.size)
                     .put("globalDrawCountDelta", end.draw - start.draw)
                     .put("allRendererCallbackCountIncludingSetup", rows.count { it.frameTimeNs != null })
-                    .put("invalidTrialCount", invalidTrials)
+                    .put("invalidTrialCount", invalidTrials).put("invalidTimingTrialCount", invalidTimingTrials)
             }
             check(observerFailure.get() == null)
             coverageVerified = true
@@ -463,13 +570,27 @@ class GpuGate1GestureObserverProbeTest {
                     failed != null || observerFailure.get() != null -> "functional_probe_failed"
                     else -> "completed_functional_observer_probe"
                 })
+            val timingComplete = trials.length() == axes.size && (0 until trials.length()).all {
+                trials.getJSONObject(it).has("inputTimingValid")
+            }
+            val allTimingValid = timingComplete && (0 until trials.length()).all {
+                trials.getJSONObject(it).getBoolean("inputTimingValid")
+            }
+            report.put("programmaticSubmissions", submissions)
+                .put("allInputTimingValid", if (programmatic) allTimingValid else JSONObject.NULL)
+                .put("trajectoryTimingStatus", when {
+                    !programmatic -> "not_assessed"
+                    !timingComplete -> "input_schedule_incomplete"
+                    allTimingValid -> "valid_input_schedule"
+                    else -> "invalid_input_schedule"
+                })
             report.put("injectedEvents", injected).put("receivedEvents", JSONArray(touches.map { it.json() }))
                 .put("frames", JSONArray(rows.map { it.json() }))
                 .put("observerFailure", observerFailure.get() ?: JSONObject.NULL)
             output.writeText(report.toString(2))
         }
         if (failed != null || observerFailure.get() != null) throw AssertionError("GPU observer functional probe failed; see private report")
-        if (invalidTrials > 0) throw AssertionError("GPU endpoints invalid; timing not assessed; observer coverage and cleanup are reported separately")
+        if (invalidTrials > 0 || invalidTimingTrials > 0) throw AssertionError("GPU endpoints or input schedule invalid; observer coverage and cleanup are reported separately")
     }
 
     /** Fixed runtime/ui 1.12.1 and default Activity.setContent only; not a generic effect-idle API.
@@ -510,6 +631,9 @@ class GpuGate1GestureObserverProbeTest {
             .put("contract", "runtime/ui 1.12.1 default Main dispatcher; synchronous parameter effect; two Main messages with applied snapshots and stable idle recomposer")
     }
 
+    private fun activeTrackPx(bounds: Rect, density: Float): Double =
+        (bounds.width() - 2 * (10f * density).roundToInt() - (2f * density).roundToInt()).toDouble()
+
     private fun state(renderer: GpuPreviewRenderer): State {
         val result = AtomicReference<State>()
         onGl(renderer) { result.set(stateOnGl(renderer)) }
@@ -524,7 +648,8 @@ class GpuGate1GestureObserverProbeTest {
         val timerPending = timer?.let { (field(it, "queries") as ArrayDeque<*>).isNotEmpty() } ?: false
         val pending = field(mailbox, "dirtySince") != null || field(mailbox, "displayed") != value || timerPending
         return State((field(renderer, "drawCount") as Long), pending,
-            (field(value, "params") as GpuRenderParams), (field(renderer, "ledger") as GpuMemoryLedger).allocatedBytes)
+            (field(value, "params") as GpuRenderParams), (field(renderer, "ledger") as GpuMemoryLedger).allocatedBytes,
+            field(value, "display") as GpuDisplayOptions)
     }
     private fun onGl(renderer: GpuPreviewRenderer, action: () -> Unit) {
         val ready = CountDownLatch(1)
