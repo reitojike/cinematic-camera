@@ -9,6 +9,7 @@ import android.os.Process
 import android.os.SystemClock
 import android.provider.DocumentsContract
 import android.provider.Settings
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
 import androidx.test.platform.app.InstrumentationRegistry
@@ -245,7 +246,7 @@ internal class Gate1DngObservationSupport(private val folder: File, private val 
         auxiliaryPicker.put("phase", "open_roots")
         if (!device.hasObject(roots)) find("auxiliary Files drawer", By.pkg(pkg).clazz("android.widget.ImageButton")
             .desc(Pattern.compile("Show roots|Open navigation drawer|ルートを表示|ナビゲーション ドロワーを開く"))).click()
-        find("auxiliary internal root", By.pkg(pkg).text(label).hasAncestor(roots)).click()
+        clickFreshAuxiliaryRoot(pkg, label)
         auxiliaryPicker.put("phase", "await_internal_root")
         await("auxiliary internal root arrived") {
             device.currentPackageName == pkg && !device.hasObject(roots) &&
@@ -264,6 +265,59 @@ internal class Gate1DngObservationSupport(private val folder: File, private val 
         rewindDirectory(pkg)
         auxiliaryPicker.put("phase", "download_confirmed").put("downloadConfirmed", true)
             .put("directSelectedUriObservation", false)
+    }
+
+    /** Root selection only: refresh/readiness may poll; ACTION_CLICK is issued once, never retried. */
+    private fun clickFreshAuxiliaryRoot(pkg: String, label: Pattern) {
+        val record = JSONObject().put("actionAttempts", 0)
+        auxiliaryPicker.put("rootClick", record)
+        var targetNode: AccessibilityNodeInfo? = null
+        await("fresh auxiliary internal root") {
+            targetNode = null
+            val window = instrumentation.uiAutomation.rootInActiveWindow
+            val roots = window?.findAccessibilityNodeInfosByViewId("$pkg:id/roots_list")?.singleOrNull()
+            var selected: AccessibilityNodeInfo? = null
+            val queue = ArrayDeque<AccessibilityNodeInfo>()
+            roots?.let(queue::addLast)
+            while (queue.isNotEmpty()) {
+                val node = queue.removeFirst()
+                if (node.packageName?.toString() == pkg && label.matcher(node.text?.toString().orEmpty()).matches()) {
+                    check(selected == null) { "Ambiguous auxiliary internal root" }
+                    selected = node
+                }
+                repeat(node.childCount) { node.getChild(it)?.let(queue::addLast) }
+            }
+            val item = selected
+            val labelFresh = item?.refresh() == true
+            var action = item
+            while (action != null && !action.isClickable && action.viewIdResourceName != "$pkg:id/roots_list") action = action.parent
+            val actionFresh = action?.refresh() == true
+            var ancestor = item?.parent
+            var scoped = false
+            while (ancestor != null) {
+                if (ancestor.viewIdResourceName == "$pkg:id/roots_list" && ancestor.packageName?.toString() == pkg) { scoped = true; break }
+                ancestor = ancestor.parent
+            }
+            val activeWindow = instrumentation.uiAutomation.rootInActiveWindow?.windowId
+            val ready = labelFresh && actionFresh && scoped && item != null && action != null &&
+                item.packageName?.toString() == pkg && label.matcher(item.text?.toString().orEmpty()).matches() &&
+                item.isVisibleToUser && item.isEnabled && action.packageName?.toString() == pkg &&
+                action.viewIdResourceName != "$pkg:id/roots_list" && action.isVisibleToUser && action.isEnabled && action.isClickable &&
+                item.windowId == activeWindow && action.windowId == activeWindow &&
+                action.actionList.any { it.id == AccessibilityNodeInfo.ACTION_CLICK }
+            record.put("labelFresh", labelFresh).put("actionFresh", actionFresh).put("scoped", scoped).put("ready", ready)
+            if (ready) targetNode = action
+            ready
+        }
+        record.put("actionAttempts", 1)
+        try {
+            val accepted = checkNotNull(targetNode).performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            record.put("accepted", accepted)
+            check(accepted) { "Auxiliary root ACTION_CLICK returned false; no retry" }
+        } catch (failure: Throwable) {
+            record.put("failureType", failure.javaClass.simpleName)
+            throw failure
+        }
     }
 
     private fun findAuxiliaryEntry(pkg: String, name: String, phase: String, location: Pattern): UiObject2 {
@@ -285,29 +339,46 @@ internal class Gate1DngObservationSupport(private val folder: File, private val 
      * never retry or claim cancellation merely because input injection returned. */
     fun cancelFailedAuxiliaryPicker() {
         if (!pickerPending) return
-        auxiliaryPicker.put("cancelStatus", "checking_owned_picker")
-        check(!cancelAttempted)
-        val owner = checkNotNull(pickerOwner?.get())
-        val pkg = checkNotNull(pickerPackage)
-        check(device.currentPackageName == pkg)
-        instrumentation.runOnMainSync {
-            val stage = ActivityLifecycleMonitorRegistry.getInstance().getLifecycleStageOf(owner)
-            check(stage != Stage.DESTROYED && stage != Stage.RESUMED && !owner.isFinishing)
-        }
-        cancelAttempted = true
-        auxiliaryPicker.put("cancelStatus", "back_attempted").put("backAttempts", 1)
-        check(device.pressBack())
-        await("original diagnostic Activity resumed after picker cancel") {
-            var resumed = false
+        auxiliaryPicker.put("cancelStatus", "checking_owned_picker").put("backReturned", false)
+            .put("originalActivityResumed", false)
+        var phase = "ownership_guard"
+        try {
+            check(!cancelAttempted) { "Picker cancellation already attempted" }
+            val owner = checkNotNull(pickerOwner?.get()) { "Original picker owner unavailable" }
+            val pkg = checkNotNull(pickerPackage) { "Owned picker package unavailable" }
+            check(device.currentPackageName == pkg) { "Owned picker not foreground" }
             instrumentation.runOnMainSync {
-                val monitor = ActivityLifecycleMonitorRegistry.getInstance()
-                resumed = monitor.getActivitiesInStage(Stage.RESUMED).singleOrNull() === owner &&
-                    owner.diagnosticState().resumed && owner.hasWindowFocus() && !owner.isFinishing
+                val stage = ActivityLifecycleMonitorRegistry.getInstance().getLifecycleStageOf(owner)
+                check(stage != Stage.DESTROYED && stage != Stage.RESUMED && !owner.isFinishing) { "Original picker owner not eligible" }
             }
-            device.currentPackageName == target.packageName && resumed
+            cancelAttempted = true
+            phase = "back_call"
+            auxiliaryPicker.put("cancelStatus", "back_attempted").put("backAttempts", 1)
+            val accepted = device.pressBack()
+            auxiliaryPicker.put("backReturned", true).put("backAccepted", accepted)
+            check(accepted) { "Picker Back returned false" }
+            phase = "await_original_activity"
+            await("original diagnostic Activity resumed after picker cancel") {
+                var resumed = false
+                instrumentation.runOnMainSync {
+                    val monitor = ActivityLifecycleMonitorRegistry.getInstance()
+                    resumed = monitor.getActivitiesInStage(Stage.RESUMED).singleOrNull() === owner &&
+                        owner.diagnosticState().resumed && owner.hasWindowFocus() && !owner.isFinishing
+                }
+                device.currentPackageName == target.packageName && resumed
+            }
+            pickerPending = false
+            auxiliaryPicker.put("cancelStatus", "original_activity_resumed").put("originalActivityResumed", true)
+        } catch (failure: Throwable) {
+            // Preserve our bounded diagnostic messages, not arbitrary framework/provider text.
+            val knownMessages = setOf("Picker cancellation already attempted", "Original picker owner unavailable",
+                "Owned picker package unavailable", "Owned picker not foreground", "Original picker owner not eligible",
+                "Picker Back returned false", "Timed out: original diagnostic Activity resumed after picker cancel")
+            auxiliaryPicker.put("cancelStatus", "unproven").put("cancelFailurePhase", phase)
+                .put("cancelFailureType", failure.javaClass.simpleName)
+                .put("cancelFailureMessage", failure.message?.let { if (it in knownMessages) it else "[non-contract message omitted]" } ?: JSONObject.NULL)
+            throw failure
         }
-        pickerPending = false
-        auxiliaryPicker.put("cancelStatus", "original_activity_resumed").put("originalActivityResumed", true)
     }
 
     private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }

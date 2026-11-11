@@ -321,3 +321,5 @@ GPU補助touchだけは、内部ストレージの `roots_list` 内のラベル�
 `auxiliaryPicker` は到達phase、位置確認、cancel結果だけを残し、全filename一覧や画面画像を採取しない。setup失敗時は、このtestが開いて未完了のpickerと元Activityを確認し、標準Backを1回だけ試みる。元Activityの同一object・resumed・focus復帰を検証し、その後は既存のfinish/GL終了/同一Hub復帰検証を使う。drawerだけが閉じた場合を含め、復帰未確認はcleanup失敗として残し、繰り返しBack・kill・再起動で成功扱いにしない。元のsetup例外は保持する。observer attach前の失敗でも初期synthetic renderが0だったとは扱わない。
 
 `gate1AuxTouchFailAfterDownload=true` は正確な補助touch class/modeとemulatorを入力前に検査し、Download到着後・DNG選択前に意図的に失敗させる別run専用hook。既存の `gate1AuxTouchFailAfterDown=true` とは併用不可。通常runでは省略し、意図的失敗は正常完走・本番計測に数えない。修正やhookの存在だけではFiles成功・cancel成功・実機検証済みを意味しない。
+
+内部root選択だけは、既存CPU setupと同じ公開 `AccessibilityNodeInfo` APIでfreshなラベルとクリック可能ancestor、roots_list内・同active window・visible/enabled・ACTION_CLICK対応を確認し、`ACTION_CLICK` を1回だけ発行する。準備のread-only pollingとaction再試行は区別し、false・例外・結果不明時の再clickや座標fallbackは行わない。UiAutomator 2.3.0のcached bytecodeと失敗stackの照合では、旧root clickはgesture注入前のnode refresh失敗だったが、node置換の具体原因は未確定。先行drawer clickやcleanup Backの未実行を意味しない。取消はBack最大1回を維持し、呼出phase・返値・例外と元Activity復帰未確認を記録する。この限定補修後の `failAfterDownload` negativeは別runで1回だけ検証し、別失敗なら保存して停止する。後続のDNG row選択やtouch成功はこのnegativeだけでは証明しない。
