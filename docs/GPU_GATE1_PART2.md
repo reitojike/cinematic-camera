@@ -281,3 +281,35 @@ GPUのcloseは正常finish→DESTROYED→元Hub identity/resumed/focus復帰、t
 - [ ] 最終条件を #285 へ新規追記し、APK・Pixel 9a・範囲・所要・同package切替/試験APK削除を示して新しい配布/実機許可を得る。
 
 §5の最低2分冷却、30秒間隔2sampleの安定、開始NONE/LIGHT、追加5分で延期、異常時停止は維持する。旧第1部・AVDの許可をPixelへ流用せず、許可前に実機へ配布/導入/操作しない。生ログ・画像・端末固有識別子・個人用絶対パスは公開しない。
+
+## 10. 任意補助試験の準備
+
+本節は任意の補助試験であり、§1〜§9と既存登録の履歴を変更しない。**本番のGPU/CPU本体と主試験APKの4本は固定したまま**、補足試験APKを5本目の別artifactとして扱う。GPU主試験 `03204b4117421ebb2561aab94cb13f8cdaec5d292d52b8b818461ee8884e8846` とCPU参考試験 `a5ab18c18b38700ee92757cc72be6ca0c53de5539ed050503adacd1eb5f3bfe1` を補足版で置き換えない。補助試験の欠測・未採用はGPU第2部の開始条件に加えない。
+
+### 10.1 補助入口と範囲
+
+完全修飾classは下表の名前に `dev.cinematic.p0.gpu.` を前置し、`class=<完全修飾class#method>` を1件だけ指定する。両入口とも `isolated=true`、実APK bytesと共通DNGの照合、未使用run IDを要する。物理端末には追加で `gate1PixelProbe=true` とMODEL `Pixel 9a` を要求するが、flagは実施許可ではない。
+
+| 任意項目 | class#method / gate1Part2 | 操作・境界 |
+| --- | --- | --- |
+| GPU補助タッチ | `GpuGate1GestureObserverProbeTest#observeSelectedDngAuxiliaryTouch` / `dng-auxiliary-touch-v1` | 共通DNGでstrength→warmth→EVを各1回、計3操作。各42events（DOWN＋40MOVE＋UP）。PSS・主入力・正式①と別run |
+| CPU PSS参考 | `CpuGate1ReferenceUiTest#selectedDngPssReferenceOnly` / `cpu-reference-pss-v1` | 同じHubから1回だけFiles選択し、同じ写真で各軸慣らし1＋本番4、計15操作/630events。Hub1＋初回UI1＋各操作後15＋close後1＝18予定点 |
+
+- GPUの追加引数は§9.3のDNG主入力と同じ `gate1ProbeRun`、`gate1AuthorizedTarget`、`gate1TargetApkSha256`、`gate1DngDocumentId`。固定GPU本体/共通DNGだけを対象とする。
+- CPUは `cpuReferencePss=true`、`cpuRunId=<未使用ID>`（§9.6の形式）、`gate1AuthorizedTarget=<実MODEL>`、`verifiedCpuApkSha256=8cfc16cf5c60e29a3c67618402a9913be7a24a7f5367e5bd101c362e8b4bf745`、`gate1DngDocumentId=primary:Download/gate1-common-synthetic-1024x768-v1.dng` を指定する。既存 `axisHoldReferenceOnly` の1軸参考入口とは別で、`cpuAxis` を使って15操作を分割しない。
+- GPU/CPUの目標値と200ms増＋400ms保持＋200ms減（予定800ms）は§9.4と同じ。GPUは実タッチ経路を通すが、実到達値・帰着・時刻・受付/不明を分ける。補正入力・許容差緩和・自動再試行を足さない。§9.5の式とPixel geometryの事前確認を維持し、AVD座標をPixelへ流用しない。
+- GPUの `gate1AuxTouchFailAfterDown=true` はemulator-onlyの意図的失敗で、途中入力のCANCELとcleanupを確認するための別run。正常完走/性能合格には数えず、通常runには指定しない。
+
+### 10.2 CPU PSSの意味と打切り
+
+CPUはpublic UI、標準 `ActivityLifecycleMonitor`、`dumpsys meminfo` に限定した外部参考であり、製品型・reflection・描画hookを使わない。最初の編集UI、各操作後のUI復帰、通常Back後の同じHub/resumed/focusと対象ActivityのDESTROYEDを観測する。**native完了、全worker idle、Activity GC、完全解放の証明ではない。** 強制GC/release/killや新しいHubへの置換でclose条件を作らない。 CPUのDNG確認は期待URI/read-grant/hashとFiles選択位置の証拠であり、選択result URIやdecode後の画像一致は直接観測しない。 CPU PSSもtarget process内のtest instrumentation・収集中metadata等を含む値であり、無観測のCPU本体だけのPSSやGPUと同じ観測負荷を証明しない。
+
+各点のPID/package/UID/starttimeとUI/lifecycle境界をsettle前・dump前後で照合し、`dumpsys -t 10 meminfo -d <verified PID>` を各点1回だけstream保存する。未知layout・欠落・timeout・状態変化は無効とし、再採取や0補完をしない。CPU peak描画値やCPU/GPU速度比は得られない。予定枠はCPU18＋GPU18＝36のままで、失敗/未着手点を別runの値で埋めない。
+
+CPUの13分は経過時間によるsoft budget候補で、45秒をcleanup用に残して新しい観測を切り上げる。標準shell/Binder/file IOを強制中断するend-to-end hard deadlineではなく、全18点の成功や13分以内の終了を保証しない。旧60分の全体枠に収まるとも約束せず、実行結果を見て本番採否・追加所要を別途判断する。
+
+### 10.3 補足artifactと採用判断
+
+補足APKには独自のsource commit/tree、build baseと差分、実SHA-256/bytes、package/target/runner/version、公開署名fingerprint、variant/ABI、JDK/SDK/Gradle/nativeのbuild条件を私有の固定票へ記録する。既存4本との署名・互換性を実物で照合し、同じtest packageでも主GPU/CPU試験とは別識別にする。標準checkで生成した新しい本体APKは測定候補に選ばない。未公開sourceへ公開commitリンクを付けず、私有path・生ログ・写真を公開しない。
+
+標準lint/unit/assembleと診断lint/unit/test compile・補足APK build、独立レビュー、許可されたAVD機能確認はそれぞれ別証拠とする。成功しても自動採用せず、失敗時は既存4本と本番登録を維持する。任意補助の採否、実施回数・総所要、同package切替/回収/試験APK削除を改めて固定し、新しいPixel配布・操作許可を得るまで実機へ導入しない。
