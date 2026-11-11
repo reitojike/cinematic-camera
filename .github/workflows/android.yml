@@ -132,7 +132,7 @@ jobs:
           retention-days: 7
 
   raw-diagnostic:
-    name: RAW 診断・rawprobe unit・build
+    name: RAW 診断 unit・build
     if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-26.04
     steps:
@@ -151,11 +151,8 @@ jobs:
           cache-provider: basic
       - name: RAW4 diagnostic judgement unit tests
         run: python3 -B -m unittest discover -s tools/raw-diagnostic -v
-      # Build the normal camera APK here too, so JNI isolation compares same-job outputs.
-      - name: rawprobe unit・build and normal APK for JNI isolation
-        run: ./gradlew :app:assembleDebug :rawprobe:testNormalDebugUnitTest :rawprobe:assembleNormalDebug :rawprobe:assembleNormalDebugAndroidTest :rawprobe:testLargeHeapDebugUnitTest :rawprobe:assembleLargeHeapDebug :rawprobe:assembleLargeHeapDebugAndroidTest --no-daemon
       - name: RAW diagnostic unit・build and release manifest
-        run: ./gradlew :app:testRawDiagnosticUnitTest :app:assembleRawDiagnostic :app:processReleaseMainManifest -PcinematicRawDiagnostic=true -Pandroid.onlyEnableUnitTestForTheTestedBuildType=false --no-daemon
+        run: ./gradlew :app:testRawDiagnosticUnitTest :app:assembleRawDiagnostic :app:processDebugMainManifest :app:processReleaseMainManifest -PcinematicRawDiagnostic=true -Pandroid.onlyEnableUnitTestForTheTestedBuildType=false --no-daemon
       - name: Compile synthetic RAW diagnostic instrumentation
         run: ./gradlew :app:assembleRawDiagnosticAndroidTest -PcinematicRawDiagnostic=true -PcinematicRawDiagnosticTests=true --no-daemon
       - name: Verify RAW diagnostic optimization recipe
@@ -204,36 +201,41 @@ jobs:
           assert abis == {'arm64-v8a', 'x86_64'}, abis
           print('RAW diagnostic manifest and native O2/NDEBUG verified; normal manifests are not profileable.')
           PY
-      - name: Prepare isolated RAW diagnostic
+      - name: RAW診断のunitレポートを保存
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cinematic-raw-diagnostic-check-reports
+          path: |
+            app/build/reports/tests/testRawDiagnosticUnitTest/
+            app/build/test-results/testRawDiagnosticUnitTest/
+          if-no-files-found: warn
+          retention-days: 7
+
+  rawprobe:
+    name: rawprobe unit・build
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: android-actions/setup-android@v4
+        with:
+          log-accepted-android-sdk-licenses: false
+      - name: Android SDK 37 and pinned native tools
+        run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0" "ndk;29.0.14206865" "cmake;3.22.1"
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+      - name: rawprobe unit・build
+        run: ./gradlew :rawprobe:testNormalDebugUnitTest :rawprobe:assembleNormalDebug :rawprobe:assembleNormalDebugAndroidTest :rawprobe:testLargeHeapDebugUnitTest :rawprobe:assembleLargeHeapDebug :rawprobe:assembleLargeHeapDebugAndroidTest --no-daemon
+      - name: Prepare RAW probe APKs and tools
         shell: bash
         run: |
           set -euo pipefail
-          readelf="$ANDROID_HOME/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
-          for abi in arm64-v8a x86_64; do
-            unzip -p app/build/outputs/apk/debug/app-debug.apk "lib/$abi/libcinematic_dng.so" > "$RUNNER_TEMP/normal-$abi.so"
-            unzip -p rawprobe/build/outputs/apk/normal/debug/rawprobe-normal-debug.apk "lib/$abi/libcinematic_dng.so" > "$RUNNER_TEMP/probe-$abi.so"
-            "$readelf" --dyn-syms --wide "$RUNNER_TEMP/normal-$abi.so" > "$RUNNER_TEMP/normal-$abi.symbols"
-            "$readelf" --dyn-syms --wide "$RUNNER_TEMP/probe-$abi.so" > "$RUNNER_TEMP/probe-$abi.symbols"
-            grep -F 'Java_dev_cinematic_p0_raw_NativeDngDecoder_decode' "$RUNNER_TEMP/normal-$abi.symbols"
-            if grep -F 'Java_dev_cinematic_rawprobe_' "$RUNNER_TEMP/normal-$abi.symbols"; then
-              echo 'Diagnostic JNI leaked into the camera app' >&2
-              exit 1
-            fi
-            grep -F 'Java_dev_cinematic_rawprobe_NativeFullResolutionProbe_inspect' "$RUNNER_TEMP/probe-$abi.symbols"
-            grep -E 'Java_dev_cinematic_rawprobe_NativeBaselineProbe_decode$' "$RUNNER_TEMP/probe-$abi.symbols"
-            grep -E 'Java_dev_cinematic_rawprobe_NativeBaselineProbe_decodeLarge$' "$RUNNER_TEMP/probe-$abi.symbols"
-            if grep -F 'Java_dev_cinematic_p0_raw_' "$RUNNER_TEMP/probe-$abi.symbols"; then
-              echo 'Camera JNI leaked into the diagnostic app' >&2
-              exit 1
-            fi
-          done
-          aapt="$ANDROID_HOME/build-tools/36.0.0/aapt"
-          "$aapt" dump xmltree rawprobe/build/outputs/apk/normal/debug/rawprobe-normal-debug.apk AndroidManifest.xml > "$RUNNER_TEMP/rawprobe-normal.xml"
-          "$aapt" dump xmltree rawprobe/build/outputs/apk/largeHeap/debug/rawprobe-largeHeap-debug.apk AndroidManifest.xml > "$RUNNER_TEMP/rawprobe-large.xml"
-          grep -F 'package="dev.cinematic.rawprobe"' "$RUNNER_TEMP/rawprobe-normal.xml"
-          grep -E 'android:largeHeap.*\(type 0x12\)0x0$' "$RUNNER_TEMP/rawprobe-normal.xml"
-          grep -F 'package="dev.cinematic.rawprobe.largeheap"' "$RUNNER_TEMP/rawprobe-large.xml"
-          grep -E 'android:largeHeap.*\(type 0x12\)0xffffffff$' "$RUNNER_TEMP/rawprobe-large.xml"
           mkdir -p rawprobe/build/diagnostic
           cp rawprobe/build/outputs/apk/normal/debug/rawprobe-normal-debug.apk rawprobe/build/diagnostic/rawprobe-debug.apk
           cp rawprobe/build/outputs/apk/androidTest/normal/debug/rawprobe-normal-debug-androidTest.apk rawprobe/build/diagnostic/rawprobe-debug-androidTest.apk
@@ -253,18 +255,75 @@ jobs:
           path: rawprobe/build/diagnostic/
           if-no-files-found: error
           retention-days: 7
-      - name: RAW診断・rawprobeのunitレポートを保存
+      - name: rawprobe unit reports
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: cinematic-raw-diagnostic-check-reports
+          name: cinematic-raw-probe-check-reports
           path: |
-            app/build/reports/tests/testRawDiagnosticUnitTest/
-            app/build/test-results/testRawDiagnosticUnitTest/
             rawprobe/build/reports/tests/
             rawprobe/build/test-results/
           if-no-files-found: warn
           retention-days: 7
+
+  jni-isolation:
+    name: app・rawprobe JNI isolation
+    needs: [product, rawprobe]
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: android-actions/setup-android@v4
+        with:
+          log-accepted-android-sdk-licenses: false
+      - name: Pinned APK and native inspection tools
+        run: sdkmanager "build-tools;36.0.0" "ndk;29.0.14206865"
+      - name: Download the product APK from this run
+        uses: actions/download-artifact@v8
+        with:
+          name: cinematic-camera-p0-debug-apk-ephemeral
+          path: app/build/outputs/apk/debug/
+      - name: Download rawprobe APKs from this run
+        uses: actions/download-artifact@v8
+        with:
+          name: cinematic-raw-probe-debug
+          path: rawprobe/build/diagnostic/
+      - name: Verify downloaded APK checksums
+        run: |
+          sha256sum -c app/build/outputs/apk/debug/SHA256SUMS.txt
+          (cd rawprobe/build/diagnostic && sha256sum -c SHA256SUMS.txt)
+      - name: Verify app / rawprobe JNI and manifest isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          readelf="$ANDROID_HOME/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          for abi in arm64-v8a x86_64; do
+            unzip -p app/build/outputs/apk/debug/app-debug.apk "lib/$abi/libcinematic_dng.so" > "$RUNNER_TEMP/normal-$abi.so"
+            unzip -p rawprobe/build/diagnostic/rawprobe-debug.apk "lib/$abi/libcinematic_dng.so" > "$RUNNER_TEMP/probe-$abi.so"
+            "$readelf" --dyn-syms --wide "$RUNNER_TEMP/normal-$abi.so" > "$RUNNER_TEMP/normal-$abi.symbols"
+            "$readelf" --dyn-syms --wide "$RUNNER_TEMP/probe-$abi.so" > "$RUNNER_TEMP/probe-$abi.symbols"
+            grep -F 'Java_dev_cinematic_p0_raw_NativeDngDecoder_decode' "$RUNNER_TEMP/normal-$abi.symbols"
+            if grep -F 'Java_dev_cinematic_rawprobe_' "$RUNNER_TEMP/normal-$abi.symbols"; then
+              echo 'Diagnostic JNI leaked into the camera app' >&2
+              exit 1
+            fi
+            grep -F 'Java_dev_cinematic_rawprobe_NativeFullResolutionProbe_inspect' "$RUNNER_TEMP/probe-$abi.symbols"
+            grep -E 'Java_dev_cinematic_rawprobe_NativeBaselineProbe_decode$' "$RUNNER_TEMP/probe-$abi.symbols"
+            grep -E 'Java_dev_cinematic_rawprobe_NativeBaselineProbe_decodeLarge$' "$RUNNER_TEMP/probe-$abi.symbols"
+            if grep -F 'Java_dev_cinematic_p0_raw_' "$RUNNER_TEMP/probe-$abi.symbols"; then
+              echo 'Camera JNI leaked into the diagnostic app' >&2
+              exit 1
+            fi
+          done
+          aapt="$ANDROID_HOME/build-tools/36.0.0/aapt"
+          "$aapt" dump xmltree rawprobe/build/diagnostic/rawprobe-debug.apk AndroidManifest.xml > "$RUNNER_TEMP/rawprobe-normal.xml"
+          "$aapt" dump xmltree rawprobe/build/diagnostic/rawprobe-largeheap.apk AndroidManifest.xml > "$RUNNER_TEMP/rawprobe-large.xml"
+          grep -F 'package="dev.cinematic.rawprobe"' "$RUNNER_TEMP/rawprobe-normal.xml"
+          grep -E 'android:largeHeap.*\(type 0x12\)0x0$' "$RUNNER_TEMP/rawprobe-normal.xml"
+          grep -F 'package="dev.cinematic.rawprobe.largeheap"' "$RUNNER_TEMP/rawprobe-large.xml"
+          grep -E 'android:largeHeap.*\(type 0x12\)0xffffffff$' "$RUNNER_TEMP/rawprobe-large.xml"
 
   mesa:
     name: Mesa shader・pixel regression
@@ -284,10 +343,58 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
-      - name: Mesa software EGL / GLES libraries
+      - name: Identify Mesa package cache platform
+        id: mesa-platform
+        shell: bash
         run: |
+          set -euo pipefail
+          . /etc/os-release
+          echo "identity=$ID-$VERSION_ID-$(dpkg --print-architecture)-${ImageOS:?}-${ImageVersion:?}" >> "$GITHUB_OUTPUT"
+      - name: Cache Mesa dependency packages
+        id: mesa-debs
+        uses: actions/cache@v6
+        with:
+          # No restore-keys: a different runner image or package recipe must not reuse .deb files.
+          key: mesa-debs-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.mesa-platform.outputs.identity }}-${{ hashFiles('.github/workflows/android.yml') }}
+          path: |
+            ${{ runner.temp }}/mesa-debs/*.deb
+            ${{ runner.temp }}/mesa-debs/SHA256SUMS
+      - name: Download Mesa packages on cache miss
+        if: steps.mesa-debs.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          cache="$RUNNER_TEMP/mesa-debs"
+          mkdir -p "$cache/partial"
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o APT::Update::Error-Mode=any update
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install --no-install-recommends -y libegl1-mesa-dev libgles2-mesa-dev libgl1-mesa-dri
+          # --reinstall also downloads requested packages already present in the runner image.
+          # Missing/upgraded dependencies are downloaded into the same cache by apt.
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Dir::Cache::archives="$cache" install --download-only --reinstall --no-install-recommends -y libegl1-mesa-dev libgles2-mesa-dev libgl1-mesa-dri
+          (cd "$cache" && sha256sum -- *.deb > SHA256SUMS)
+      - name: Verify and install Mesa packages without network downloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          cache="$RUNNER_TEMP/mesa-debs"
+          # This checks the complete file set too: missing, extra, or damaged .deb files fail.
+          (cd "$cache" && sha256sum -- *.deb | diff -u SHA256SUMS -)
+          architecture="$(dpkg --print-architecture)"
+          packages="$RUNNER_TEMP/mesa-package-names.txt"
+          : > "$packages"
+          for deb in "$cache"/*.deb; do
+            test -f "$deb" && test ! -L "$deb"
+            deb_architecture="$(dpkg-deb -f "$deb" Architecture)"
+            [[ "$deb_architecture" == "$architecture" || "$deb_architecture" == all ]]
+            dpkg-deb -f "$deb" Package >> "$packages"
+            dpkg-deb -f "$deb" Package Version Architecture
+          done
+          for package in libegl1-mesa-dev libgles2-mesa-dev libgl1-mesa-dri; do
+            grep -Fx "$package" "$packages"
+          done
+          # Incomplete dependency closure fails here instead of fetching or skipping Mesa.
+          sudo apt-get --no-download --no-install-recommends -y install "$cache"/*.deb
           dpkg-query -W libegl-mesa0 libgl1-mesa-dri libgles2
       - name: Mesa GLES 3.2 shader / pixel regression (not Android acceptance)
         env:
@@ -333,7 +440,7 @@ jobs:
   android:
     # Keep the existing branch-protection check name, including its punctuation.
     name: lint・unit・build
-    needs: [product, gpu-diagnostic, raw-diagnostic, mesa]
+    needs: [product, gpu-diagnostic, raw-diagnostic, rawprobe, jni-isolation, mesa]
     if: ${{ always() }}
     runs-on: ubuntu-26.04
     steps:
@@ -342,13 +449,15 @@ jobs:
           PRODUCT_RESULT: ${{ needs.product.result }}
           GPU_RESULT: ${{ needs.gpu-diagnostic.result }}
           RAW_RESULT: ${{ needs.raw-diagnostic.result }}
+          RAWPROBE_RESULT: ${{ needs.rawprobe.result }}
+          JNI_RESULT: ${{ needs.jni-isolation.result }}
           MESA_RESULT: ${{ needs.mesa.result }}
         shell: bash
         run: |
           set -euo pipefail
-          printf 'product=%s gpu-diagnostic=%s raw-diagnostic=%s mesa=%s\n' \
-            "$PRODUCT_RESULT" "$GPU_RESULT" "$RAW_RESULT" "$MESA_RESULT"
-          for result in "$PRODUCT_RESULT" "$GPU_RESULT" "$RAW_RESULT" "$MESA_RESULT"; do
+          printf 'product=%s gpu-diagnostic=%s raw-diagnostic=%s rawprobe=%s jni-isolation=%s mesa=%s\n' \
+            "$PRODUCT_RESULT" "$GPU_RESULT" "$RAW_RESULT" "$RAWPROBE_RESULT" "$JNI_RESULT" "$MESA_RESULT"
+          for result in "$PRODUCT_RESULT" "$GPU_RESULT" "$RAW_RESULT" "$RAWPROBE_RESULT" "$JNI_RESULT" "$MESA_RESULT"; do
             if [[ "$result" != success ]]; then
               echo 'A required validation job failed, was cancelled, or was skipped.' >&2
               exit 1
