@@ -21,7 +21,9 @@ import kotlinx.coroutines.flow.StateFlow
  * Input open and committed save-generation preparation are separate from the latest-value GL mailbox. */
 @Composable internal fun GpuPhotoRollEditor(repository: PhotoRollRepository, renderer: ManualTrialPhotoRollRenderer,
     source: String, fromFiles: Boolean, name: String, foreground: Boolean,
-    publications: StateFlow<GpuInputPublication>, trimEpoch: Int, back: () -> Unit, modifier: Modifier = Modifier) {
+    publications: StateFlow<GpuInputPublication>, trimEpoch: Int, back: () -> Unit, modifier: Modifier = Modifier,
+    createSession: (android.content.res.AssetManager) -> GpuPhotoRollSession = { GpuPhotoRollSession(it) },
+) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val recipes = remember(context) { AndroidPhotoEditRecipes(context) }
     val scope = rememberCoroutineScope()
@@ -45,7 +47,7 @@ import kotlinx.coroutines.flow.StateFlow
     var saveState by remember { mutableStateOf<PhotoRollSaveSnapshot?>(null) }
     val active = foreground && !trimBlocked
     val session = remember(source, retry, active) {
-        if (active && !exportPaused) GpuPhotoRollSession(context.assets) else null
+        if (active && !exportPaused) createSession(context.assets) else null
     }
     val cancellation = remember(session) { CancellationSignal() }
     DisposableEffect(session) {

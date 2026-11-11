@@ -54,7 +54,8 @@ instrumentation argument `gpuExportSave=true` の全条件が必要。実機で�
 
 ## GPU 専用編集画面との接続
 
-#338 に main の #339 が取り込まれた `736c8e7` に追従した。#340 は含めない。
+#338 に main の #339 / #340 が取り込まれた `5bc474d` に追従した。
+#340 の session factory 注入点と、今回の exportPaused ガードを両方維持する。
 GPU 専用 editor も同じ save owner の失敗理由・件数を表示し、同じ明示 retry を開始する。
 保存開始前に preview session を close し、既存 retired-owner の終了確認を IO 上で待つ。
 確認できなければ export を開始しない。プレビュー停止後も保存 handle を保持し、
@@ -65,3 +66,26 @@ GPU_FAILED の再試行・同じ publication の再照合に限って表示済�
 
 Home / trim 復帰でも停止状態と保存 handle を維持する。Activity 再作成後の入力読込でも、
 取得した保存 owner が READY / PUBLISHED 以外なら GPU 写真を開く前に止める。
+
+## 合成 DNG / 公開の追加受入
+
+`Original24GpuSaveInstrumentationTest` は `gpudiagnostic` / `gpuExportSave=true` /
+emulator 限定で、実 factory の検証済み合成DNG → GPU → JPEG → MediaStore 公開・再照合を通す。
+保存 snapshot 開始後に設定をCPUへ変更しても、その保存がGL current contextで進むことを観測する。
+寸法・orientation・sRGB・recipe・EV・原本fingerprint・同一公開URI・資源解放を確認し、
+画質閾値は追加しない。成功時だけ確認済みのexact synthetic rowsを削除し、失敗時は保全する。
+元の設定は終了時に復元する。実行結果はPRへ記録する。
+
+## 実 GPU 編集画面 / FGS の追加受入
+
+`GpuSaveLifecycleAndroidTest` は `gpudiagnostic` / `isolated=true` / `gpuExportSave=true` /
+emulator 限定。実 preview と実保存 owner・FGSを使い、previewの終了確認がFGS開始より先であること、
+Home / 復帰で同じ保存を維持すること、バックグラウンド公開後にpreviewが自動再開しないこと、
+明示再開と同じ公開URIの再照合を検証する。queue barrierは時機の制御だけに使い、保存処理をfakeに置換しない。
+この1caseは全失敗・取消・process再起動の実GPU結合を網羅しない。実行結果はPRへ記録する。
+
+## 大判比較の範囲
+
+12MPの実CPU対64/256行GPUは最終8bit最大差1・p99.9=0で合格し、両帯幅はビット一致した。
+24MPはnear-white countがCPUに対して2画素異なり、既存条件で停止した。追加24MP試験と基準変更は行わず、
+[Phase 2 検証計画](GPU_EXPORT_PHASE2.md)へ分離する。24MP全体の受入完了とはしない。
