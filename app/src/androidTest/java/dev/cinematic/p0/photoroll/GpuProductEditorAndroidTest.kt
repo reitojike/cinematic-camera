@@ -107,17 +107,20 @@ class GpuProductEditorAndroidTest {
                 click("原本を確認して再試行")
                 await("first GPU presentation") { saveReady() }
                 val openedReads = provider.opens.get()
-                val controls = listOf("STRENGTH" to .7f, "色温度" to 30f, "明るさ" to .5f)
-                for ((label, value) in controls) {
+                // PhotoEditBar exposes a normalized 0..1 accessibility range for every unit.
+                val controls = listOf(Triple("STRENGTH", .7f, "70"),
+                    Triple("色温度", .65f, "+30"), Triple("明るさ", .625f, "+0.5"))
+                for ((label, fraction, displayedValue) in controls) {
                     click(label)
                     val rangeLabel = when (label) { "色温度" -> "色温度 · 相対（K値ではありません）"; "明るさ" -> "明るさ · EV"; else -> label }
                     val range = node(rangeLabel, range = true)
                     assertTrue(range.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.id,
-                        Bundle().apply { putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE, value) }))
+                        Bundle().apply { putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE, fraction) }))
                     // ACTION_SET_PROGRESS returns before the next accessibility snapshot.
                     // Observe the new value before checking close's updated enabled state.
                     await("new $label range value") {
-                        find(rangeLabel, range = true)?.let { it.refresh() && it.rangeInfo?.current == value } == true
+                        find(rangeLabel, range = true)?.let { it.refresh() && it.rangeInfo?.current == fraction &&
+                            it.stateDescription?.toString() == displayedValue } == true
                     }
                     click("目盛りを閉じる")
                     await("saved recipe and exact presentation") { saveReady() }

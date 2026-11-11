@@ -32,10 +32,8 @@ internal fun GpuPreviewSurface(renderer: GpuPreviewRenderer, modifier: Modifier 
             owner.lifecycle.removeObserver(observer); renderer.setStarted(false)
         }
     }
-    // SurfaceHolder callbacks are owned by this View/renderer pair. In Compose 1.12.1,
-    // AndroidExternalSurface's reusable AndroidView installs callbacks only in its factory;
-    // renderer replacement can reuse an already-created Surface without notifying the new owner.
-    // The standard AndroidView non-reuse path gives each renderer a fresh SurfaceView lifetime.
+    // SurfaceHolder callbacks are owned by this View/renderer pair. The standard AndroidView
+    // non-reuse path gives each renderer a fresh SurfaceView lifetime and a post-layout signal.
     // https://developer.android.com/reference/kotlin/androidx/compose/ui/viewinterop/package-summary
     key(renderer) {
         AndroidView(
@@ -43,6 +41,18 @@ internal fun GpuPreviewSurface(renderer: GpuPreviewRenderer, modifier: Modifier 
             factory = { context ->
                 SurfaceView(context).apply {
                     holder.setFormat(PixelFormat.OPAQUE)
+                    addOnLayoutChangeListener { view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+                        // Compose can place a replacement after this window's preDraw. With no
+                        // other UI updates, SurfaceView then waits indefinitely for its first
+                        // positive-size preDraw. Request exactly one frame for changed bounds.
+                        if (right > left && bottom > top &&
+                            (left != oldLeft || top != oldTop || right != oldRight || bottom != oldBottom)) {
+                            GpuSurfaceProbe.event("compose.surface.layout") {
+                                "renderer=${System.identityHashCode(renderer)} width=${right - left} height=${bottom - top}"
+                            }
+                            view.postInvalidateOnAnimation()
+                        }
+                    }
                     holder.addCallback(object : SurfaceHolder.Callback {
                         private var attached: Surface? = null
                         override fun surfaceCreated(holder: SurfaceHolder) {
