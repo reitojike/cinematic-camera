@@ -71,22 +71,24 @@ class GpuExportParityAndroidTest {
                 val label = "1600x1200 strength=$strength adjustments=$adjustments"
                 val cpu = original(input, params)
                 val full = fullFrame(egl, input, params)
-                compareCpu(cpu, full, input.width, input.height, "$label full", log)
+                compareCpu(cpu, full, input.width, input.height, strength, "$label full", log)
                 for (rows in listOf(64, 256)) {
                     val actual = export(egl, input, params, rows)
                     assertArrayEquals("$label rows=$rows full/export DISPLAY8", full.pixels, actual.pixels)
                     assertArrayEquals(full.quantiles.map { it.toRawBits() }.toLongArray(), actual.quantiles.map { it.toRawBits() }.toLongArray())
                     assertEquals(full.nearWhite, actual.nearWhite)
-                    compareCpu(cpu, actual, input.width, input.height, "$label rows=$rows", log)
+                    compareCpu(cpu, actual, input.width, input.height, strength, "$label rows=$rows", log)
                 }
             }
         }
     }
 
-    private fun compareCpu(cpu: Output, gpu: Output, w: Int, h: Int, label: String, log: File) {
+    private fun compareCpu(cpu: Output, gpu: Output, w: Int, h: Int, strength: Double, label: String, log: File) {
         assertEquals("$label near-white count", cpu.nearWhite, gpu.nearWhite)
         for (i in 0..1) assertEquals("$label tone quantile $i", cpu.quantiles[i], gpu.quantiles[i], 1e-4)
         val acceptance = OrtonDisplayAcceptance.evaluate(w, h, { cpu.mist[it] }, { gpu.mist[it] }, cpu.pixels, gpu.pixels)
+        // Strength zero bypasses Orton, so its boundary exception cannot hide any RGB difference.
+        if (strength == 0.0) assertTrue("$label bypasses Orton: raw max=${acceptance.maxDiffAll}", acceptance.maxDiffAll <= 2)
         // Preserve every excluded pixel and keep all RGB channels in p99.9, as required by #276.
         acceptance.logLines().forEach { line -> Log.i("GpuExportParity", "$label $line"); log.appendText("$label $line\n") }
         acceptance.assertPassed()
