@@ -22,7 +22,9 @@ import kotlin.math.min
 @TargetApi(29)
 internal class ManualTrialPhotoRollRenderer(context: Context,
     private val resources: () -> PhotoRollResources,
-    private val previewCache: PhotoRollPreviewCache? = null) : PhotoRollRenderer {
+    private val previewCache: PhotoRollPreviewCache? = null,
+    val developEngine: dev.cinematic.p0.gpu.DevelopEngine = dev.cinematic.p0.gpu.DevelopEngineSetting(context).current(),
+) : PhotoRollRenderer {
     private val app = context.applicationContext
     override val mode = PhotoRollPreviewMode.MANUAL_TRIAL
     override val maxEdge = 1024
@@ -72,6 +74,48 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
             repository.verifyPreview(checked.original,
                 { shouldStop() || stop() || checked.epoch != originalEpoch.get() }, readers = readers)
         }
+    }
+
+    internal data class GpuInput(val original: PhotoRollOriginal,
+        val input: dev.cinematic.p0.raw.LinearSrgbImage, val save: PhotoRollJpegSaveOwner,
+        val values: dev.cinematic.p0.photoedit.PhotoEditValues)
+
+    /** Called once per open/retry, on IO. The frame loop never reopens the original. */
+    fun openGpu(repository: PhotoRollRepository, uri: Uri, fromFiles: Boolean,
+        cancellation: CancellationSignal, deadline: dev.cinematic.p0.gpu.preview.GpuInputRequestDeadline,
+        admitted: (Throwable?) -> Unit,
+        values: (PhotoRollOriginal) -> dev.cinematic.p0.photoedit.PhotoEditValues): GpuInput {
+        check(developEngine == dev.cinematic.p0.gpu.DevelopEngine.GPU)
+        val original = PhotoRollOriginalChecks.run(resources, cancellation, preview = true,
+            gpuRequest = deadline, onGpuAdmission = admitted) { readers, stop ->
+            val epoch = originalEpoch.get()
+            repository.check(uri, fromFiles, stop, maxSourceBytes, readers).also {
+                if (stop() || epoch != originalEpoch.get()) throw DngVerificationStopped()
+                checkedOriginal = CheckedOriginal(it, fromFiles, epoch, repository)
+            }
+        }
+        val requested = values(original)
+        val adjustments = dev.cinematic.p0.photoedit.PhotoAdjustmentPolicy.adjustments(requested)
+        val result = awaitTrialPreview(AndroidManualOriginalTrialSaves.loadGpuPreview(app, original.reference,
+            requested.strength, resources().developConditions(true), adjustments, previewCheck(original)) {
+            cancellation.isCanceled
+        }, cancellation, awaitCancelledOwner = true)
+        cancellation.throwIfCanceled()
+        verifyPreviewOriginal(repository, original, cancellation) { cancellation.isCanceled }
+        return GpuInput(original, result.input, ManualTrialJpegSaveOwner(result.save, resources), requested)
+    }
+
+    /** A committed recipe gets its own existing save generation, never a GPU-frame-side write. */
+    fun prepareGpuSave(original: PhotoRollOriginal, values: dev.cinematic.p0.photoedit.PhotoEditValues,
+        cancellation: CancellationSignal): PhotoRollJpegSaveOwner {
+        check(developEngine == dev.cinematic.p0.gpu.DevelopEngine.GPU)
+        checked(original)
+        val handle = awaitTrialPreview(AndroidManualOriginalTrialSaves.prepare(app, original.reference,
+            values.strength, resources().developConditions(true),
+            dev.cinematic.p0.photoedit.PhotoAdjustmentPolicy.adjustments(values)) { cancellation.isCanceled },
+            cancellation, awaitCancelledOwner = true)
+        cancellation.throwIfCanceled()
+        return ManualTrialJpegSaveOwner(handle, resources)
     }
 
     override fun renderDraft(request: PhotoRollRenderRequest, cancellation: CancellationSignal): PhotoRollRenderResult.Preview? {

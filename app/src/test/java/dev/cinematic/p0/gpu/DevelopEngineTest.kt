@@ -80,12 +80,12 @@ class DevelopEngineTest {
     }
 
     @Test fun settingIsRestrictedByBuildType() {
-        assertTrue(developEngineSettingVisible(true, "debug"))
+        assertFalse(developEngineSettingVisible(true, "debug"))
         assertTrue(developEngineSettingVisible(false, "gpuDiagnostic"))
         for (type in listOf("release", "rawDiagnostic", "previewDiagnostic")) {
             assertFalse(developEngineSettingVisible(false, type))
         }
-        assertEquals(BuildConfig.DEBUG || BuildConfig.BUILD_TYPE == "gpuDiagnostic",
+        assertEquals(BuildConfig.BUILD_TYPE == "gpuDiagnostic",
             developEngineSettingVisible(BuildConfig.DEBUG, BuildConfig.BUILD_TYPE))
     }
 

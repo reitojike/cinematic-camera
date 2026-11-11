@@ -181,7 +181,7 @@ private data class SettingsChange(val epoch: Int, val section: String, val targe
                 SettingNote("LOCKは当該接続だけの要求です。受付と実測は診断で区別します。")
             }
             if (probe.mode == CaptureMode.STILL) SettingGroup("比率", "未実装") { SettingNote("原画角 4:3 を保持") }
-            dev.cinematic.p0.gpu.DevelopEngineSettingControl(editable, Modifier.fillMaxWidth())
+            // Engine selection belongs to the dedicated diagnostic hub, never the product settings.
         }
         pending?.let { current ->
             Text("適用中：${current.section} ${current.before} → ${current.target} · ${if (probe.bound) "接続後の設定確認中" else "再接続中（プレビュー一時停止・ロック解除）"}",

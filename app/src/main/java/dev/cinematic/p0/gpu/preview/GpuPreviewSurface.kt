@@ -34,8 +34,10 @@ internal fun GpuPreviewSurface(renderer: GpuPreviewRenderer, modifier: Modifier 
             surface.onChanged { w, h -> renderer.resizeSurface(this, w, h) }
             surface.onDestroyed {
                 GpuSurfaceProbe.event("compose.surface.destroyed.begin") { "surface=${System.identityHashCode(this)}" }
-                renderer.detachSurface(this)
-                GpuSurfaceProbe.event("compose.surface.destroyed.end") { "surface=${System.identityHashCode(this)}" }
+                // A timeout is an explicit GPU error, never an exception escaping Android's
+                // destruction callback. The renderer retains its incomplete cleanup barrier.
+                val completed = renderer.detachSurface(this)
+                GpuSurfaceProbe.event("compose.surface.destroyed.end") { "surface=${System.identityHashCode(this)} completed=$completed" }
             }
         }
     }

@@ -45,9 +45,21 @@ internal object PhotoRollOriginalChecks {
         if (reader.finished && reader.closeRetained() && owners.remove(token, reader)) DevelopExecution.completeAfterResourcesClosed(token)
     }
     fun <T> run(resources: () -> PhotoRollResources, cancellation: CancellationSignal, preview: Boolean = false,
+        gpuRequest: dev.cinematic.p0.gpu.preview.GpuInputRequestDeadline? = null,
+        onGpuAdmission: (Throwable?) -> Unit = {},
         read: (PhotoRollReadResources, () -> Boolean) -> T): T {
         owners.forEach { (token, reader) -> release(token, reader) }
         var admitted: AutoDevelopCoordinator.Attempt? = null
+        if (gpuRequest != null) {
+            cancellation.throwIfCanceled()
+            val conditions = resources().developConditions(rendererAvailable = true)
+            lateinit var result: AutoDevelopCoordinator.GpuDiagnosticPreviewAdmission
+            admitted = gpuRequest.tryAdmit {
+                DevelopExecution.tryStartGpuDiagnosticPreviewObserved(conditions).also { result = it }.attempt
+            }
+            if (admitted == null) throw dev.cinematic.p0.gpu.preview.GpuInputAdmissionRefused(result.snapshot).also(onGpuAdmission)
+            onGpuAdmission(null)
+        }
         while (admitted == null) {
             cancellation.throwIfCanceled()
             val conditions = resources().developConditions(rendererAvailable = true)
