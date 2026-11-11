@@ -11,8 +11,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.Flow
 
-internal enum class PhotoRollSavePhase { READY, SAVING, PUBLISHED, UNCONFIRMED, HOLD }
-internal data class PhotoRollSaveSnapshot(val phase: PhotoRollSavePhase, val uri: String? = null)
+internal enum class PhotoRollSavePhase { READY, SAVING, PUBLISHED, UNCONFIRMED, GPU_FAILED, HOLD }
+internal data class PhotoRollSaveSnapshot(val phase: PhotoRollSavePhase, val uri: String? = null,
+    val gpuFailure: dev.cinematic.p0.rawcapture.GpuSaveFailure? = null)
 internal fun interface PhotoRollJpegPublisher {
     fun advance(shouldStop: () -> Boolean): JpegPublicationRecord
 }

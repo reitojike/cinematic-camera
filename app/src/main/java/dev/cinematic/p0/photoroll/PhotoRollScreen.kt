@@ -627,8 +627,14 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                 val saveDescription = if (owner == null) unavailableJpegSaveMessage(renderer.mode)
                         else if (renderer.mode == PhotoRollPreviewMode.MANUAL_TRIAL) when {
                             savePending || saved?.phase == PhotoRollSavePhase.SAVING -> "試験品質JPEGの手動保存を確認中…"
+                            saved?.phase == PhotoRollSavePhase.GPU_FAILED ->
+                                "${saved.gpuFailure?.description}。同じ GPU 保存を再試行できます"
+                            saved?.phase == PhotoRollSavePhase.HOLD && saved.gpuFailure != null ->
+                                "${saved.gpuFailure.description}。解放または保存状態を確認できないため、再試行せず停止しました"
                             saved?.phase == PhotoRollSavePhase.READY -> "試験品質の原寸JPEGを生成して手動保存します。顔保護なし・診断露出・暫定色です。24MP以下の対応DNGのみ利用できます"
                             saved?.phase == PhotoRollSavePhase.PUBLISHED -> "試験品質JPEGの保存を確認しました。開く前に再確認します"
+                            saved?.phase == PhotoRollSavePhase.UNCONFIRMED && saved.gpuFailure != null ->
+                                "${saved.gpuFailure.description}。同じ保存先を再照合します。別の JPEG は生成しません"
                             saved?.phase == PhotoRollSavePhase.UNCONFIRMED -> "保存結果を確認できません。同じ保存操作を再照合します。別のJPEGは作りません"
                             else -> "試験品質JPEGの保存状態が不明なため停止しました。保存済みとは表示しません"
                         }
@@ -637,6 +643,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                         PhotoRollSavePhase.SAVING -> "同じJPEG保存操作を確認中…"
                         PhotoRollSavePhase.PUBLISHED -> "前回のJPEG公開を確認しました。開く前にもう一度照合します"
                         PhotoRollSavePhase.UNCONFIRMED -> "保存結果を確認できません。同じ保存操作を再照合します。別のJPEGは作り直しません"
+                        PhotoRollSavePhase.GPU_FAILED -> "GPU 保存に失敗しました。明示的に再試行してください"
                         PhotoRollSavePhase.HOLD -> "保存先の状態を判断できないため停止しました。保存済みとは扱いません"
                         null -> "JPEG保存の準備を確認できません"
                     }
@@ -648,7 +655,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                         if (diagnostic) {
                             val canSwitch = foreground && !editSavePending && !savePending &&
                                 trialEditor.session == null && selection.phase == PhotoRollPhase.DISPLAYED &&
-                                saved?.phase !in setOf(PhotoRollSavePhase.SAVING, PhotoRollSavePhase.HOLD, PhotoRollSavePhase.UNCONFIRMED)
+                                saved?.phase !in setOf(PhotoRollSavePhase.SAVING, PhotoRollSavePhase.HOLD, PhotoRollSavePhase.UNCONFIRMED, PhotoRollSavePhase.GPU_FAILED)
                             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Text("診断: 候補3工程の2並列 ${if (parallelPreview) "ON" else "OFF"}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
                                 Switch(checked = parallelPreview, enabled = canSwitch, onCheckedChange = { enabled ->
@@ -667,7 +674,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                     stage = renderStage, message = notice ?: if (draftShown) "操作中は最大256pxの近似表示です。離すと最大1024pxで再計算します" else selection.message, preview = preview, comparison = comparison,
                     comparisonLabel = comparisonLabel, foreground = foreground && !editSavePending, savePhase = saved?.phase, savePending = savePending || editSavePending,
                     saveEnabled = foreground && !editSavePending && trialEditor.session == null && selection.phase == PhotoRollPhase.DISPLAYED && !savePending && owner != null &&
-                        saved?.phase in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED, PhotoRollSavePhase.UNCONFIRMED),
+                        saved?.phase in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED, PhotoRollSavePhase.UNCONFIRMED, PhotoRollSavePhase.GPU_FAILED),
                     beginEnabled = !editSavePending && strengthEditable && selection.phase == PhotoRollPhase.DISPLAYED && canBeginStrengthEdit(renderer.mode, foreground, savePending, saved?.phase),
                     begin = { if (!editSavePending) trialEditor = trialEditor.begin(tapStep = .01, adjustments = manualTrial) },
                     back = ::backToList, retry = { if (!editSavePending) { explicitRetry = true; retry++ } },
@@ -686,7 +693,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                     modifier = Modifier.weight(1f), save = saveAction@{
                             if (!currentForeground || editSavePending || trialEditor.session != null || selection.phase != PhotoRollPhase.DISPLAYED ||
                                 savePending || saveSnapshot?.phase !in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED,
-                                    PhotoRollSavePhase.UNCONFIRMED)) return@saveAction
+                                    PhotoRollSavePhase.UNCONFIRMED, PhotoRollSavePhase.GPU_FAILED)) return@saveAction
                             val operation = jpegSave ?: return@saveAction
                             val ticket = selection.ticket ?: return@saveAction
                             val openAfterCheck = saveSnapshot?.phase == PhotoRollSavePhase.PUBLISHED

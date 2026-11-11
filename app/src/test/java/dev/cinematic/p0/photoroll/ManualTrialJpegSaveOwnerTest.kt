@@ -6,6 +6,22 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ManualTrialJpegSaveOwnerTest {
+    @Test fun gpuFailureReasonAndCountStayVisibleWithoutPretendingPublication() {
+        val failure = dev.cinematic.p0.rawcapture.GpuSaveFailure(
+            dev.cinematic.p0.rawcapture.GpuSaveFailureReason.CONTEXT_LOST, 2)
+        for (phase in listOf(ManualOriginalTrialSavePhase.GPU_FAILED, ManualOriginalTrialSavePhase.HOLD,
+            ManualOriginalTrialSavePhase.UNCONFIRMED)) {
+            val result = manualSaveSnapshot(ManualOriginalTrialSaveState(phase, gpuFailure = failure))
+            assertEquals(failure, result.gpuFailure)
+            assertEquals(null, result.uri)
+        }
+        val result = manualSaveVisibleSnapshot(
+            ManualOriginalTrialSaveState(ManualOriginalTrialSavePhase.GPU_FAILED, gpuFailure = failure),
+            PhotoRollSaveSnapshot(PhotoRollSavePhase.UNCONFIRMED))
+        assertEquals(PhotoRollSavePhase.GPU_FAILED, result.phase)
+        assertEquals(failure, result.gpuFailure)
+    }
+
     @Test fun onlyPublicationWithAUriCanBePresentedAsSaved() {
         val published = manualSaveSnapshot(ManualOriginalTrialSaveState(ManualOriginalTrialSavePhase.PUBLISHED,
             "content://media/external/images/media/1"))
