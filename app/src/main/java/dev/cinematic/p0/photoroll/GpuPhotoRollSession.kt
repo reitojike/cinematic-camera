@@ -25,6 +25,7 @@ internal class GpuPhotoRollSession(assets: AssetManager,
     val renderer = GpuPreviewRenderer(assets,
         onError = { if (!closed.get()) mutableFailure.value = it },
         engineFactory = engineFactory,
+        recoverContextOnSubmit = false,
         onPresented = { params, display ->
             if (!closed.get() && !display.showBefore) mutablePresented.value = PhotoEditValues(params.strength,
                 params.adjustments.warmth, params.adjustments.exposureEv)
