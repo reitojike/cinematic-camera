@@ -16,6 +16,7 @@ import dev.cinematic.p0.rawcapture.DevelopExecution
 class PhotoRollActivity : ComponentActivity() {
     private var foreground by mutableStateOf(false)
     private var gpuTrimEpoch by mutableStateOf(0)
+    internal val previewTrimEpoch: Int get() = gpuTrimEpoch
     private val gpuPublications = kotlinx.coroutines.flow.MutableStateFlow(dev.cinematic.p0.gpu.preview.GpuInputPublication())
     private lateinit var resourceObserver: PhotoRollResourceObserver
     private lateinit var renderer: PhotoRollRenderer

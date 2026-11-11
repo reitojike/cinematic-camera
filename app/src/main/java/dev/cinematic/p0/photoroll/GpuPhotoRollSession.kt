@@ -14,7 +14,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** One selected photo owns its GL callbacks. Closed generations can never publish to a new photo. */
-internal class GpuPhotoRollSession(assets: AssetManager) {
+internal class GpuPhotoRollSession(assets: AssetManager,
+    engineFactory: (EglContexts, GpuMemoryLedger) -> StageClearGpu = { egl, ledger -> DefaultStageClearGpu(egl, ledger) },
+) {
     private val closed = AtomicBoolean()
     private val mutableFailure = MutableStateFlow<Throwable?>(null)
     val failure = mutableFailure.asStateFlow()
@@ -22,7 +24,8 @@ internal class GpuPhotoRollSession(assets: AssetManager) {
     val presented = mutablePresented.asStateFlow()
     val renderer = GpuPreviewRenderer(assets,
         onError = { if (!closed.get()) mutableFailure.value = it },
-        engineFactory = { egl, ledger -> DefaultStageClearGpu(egl, ledger) },
+        engineFactory = engineFactory,
+        recoverContextOnSubmit = false,
         onPresented = { params, display ->
             if (!closed.get() && !display.showBefore) mutablePresented.value = PhotoEditValues(params.strength,
                 params.adjustments.warmth, params.adjustments.exposureEv)

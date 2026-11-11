@@ -114,10 +114,10 @@ class GpuProductInputAndroidTest {
         error("Synthetic GPU presentation did not complete")
     }
 
-    internal class Provider(context: Context) : ContentProvider() {
+    internal class Provider(context: Context, width: Int = 256, height: Int = 192) : ContentProvider() {
         private val packageName = context.packageName
         private val files = (1..2).associateWith { id -> File.createTempFile("gpu-product-$id-", ".dng", context.cacheDir).apply {
-            outputStream().use { writeSyntheticRollDng(it, 256, 192, if (id == 1) 1 else 6) }
+            outputStream().use { writeSyntheticRollDng(it, width, height, if (id == 1) 1 else 6) }
         } }
         private val fingerprints = files.mapValues { (_, f) -> DngContentVerifier.identify(f.length(), { f.inputStream() }) }
         val opens = AtomicInteger()
