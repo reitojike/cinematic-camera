@@ -2,6 +2,7 @@ package dev.cinematic.p0.gpu
 
 import android.app.Activity
 import android.graphics.Rect
+import android.os.Bundle
 import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
@@ -262,6 +263,41 @@ class CpuGate1VisualCaptureTest {
             .put("observed", observed).put("freshness", freshness))
         if (blocker != null) return null
         checkNotNull(bounds); checkNotNull(viewportBounds)
+        val readyImage = checkNotNull(image)
+        // API 26 lazy extra: an advertised key is not an eagerly populated extras value.
+        // developer.android.com/reference/android/view/accessibility/AccessibilityNodeInfo#refreshWithExtraData(java.lang.String,%20android.os.Bundle)
+        val idKey = "androidx.compose.ui.semantics.id"
+        val extra = JSONObject().put("keyAdvertised", idKey in readyImage.availableExtraData)
+            .put("requestAttempted", false).put("refreshSucceeded", JSONObject.NULL)
+            .put("sameNodeAndScope", JSONObject.NULL).put("idType", "NOT_OBSERVED")
+        fun stopExtra(reason: String): Nothing {
+            extra.put("status", reason)
+            s.report.getJSONObject("cpuReadiness").put("ready", false)
+                .put("firstBlocker", "semantics_id_$reason").put("semanticsIdExtraData", extra)
+            s.save()
+            error("CPU semantics ID extra unavailable; no retry")
+        }
+        s.phase("observe_cpu_semantics_id_extra")
+        if (!extra.getBoolean("keyAdvertised")) stopExtra("not_advertised")
+        val priorImage = AccessibilityNodeInfo(readyImage)
+        extra.put("requestAttempted", true)
+        val refreshed = try { readyImage.refreshWithExtraData(idKey, Bundle()) } catch (error: Throwable) {
+            extra.put("requestFailureType", error.javaClass.simpleName)
+            stopExtra("request_failed")
+        }
+        extra.put("refreshSucceeded", refreshed)
+        if (!refreshed) stopExtra("refresh_failed")
+        val sameImage = readyImage == priorImage && readyImage.packageName?.toString() == Gate1VisualCaptureSupport.TARGET &&
+            readyImage.windowId == window && readyImage.isVisibleToUser &&
+            readyImage.contentDescription?.toString() == "現像結果（表示用）" &&
+            readyImage.stateDescription?.toString() == state && s.bounds(readyImage) == bounds
+        extra.put("sameNodeAndScope", sameImage)
+        if (!sameImage) stopExtra("node_or_scope_changed")
+        @Suppress("DEPRECATION") val semanticsId = readyImage.extras.get(idKey)
+        extra.put("idType", when (semanticsId) { is Int -> "INT"; null -> "MISSING"; else -> "OTHER" })
+        if (semanticsId !is Int) stopExtra("missing_or_non_int")
+        extra.put("status", "VERIFIED").put("semanticsId", semanticsId)
+        s.report.getJSONObject("cpuReadiness").put("semanticsIdExtraData", extra); s.save()
         val scale = minOf(bounds.width() / 1024.0, bounds.height() / 768.0)
         val width = 1024 * scale; val height = 768 * scale
         // A continuous mathematical FIT rectangle, NOT an asserted integer raster crop.
@@ -287,8 +323,7 @@ class CpuGate1VisualCaptureTest {
             .put("recipeDisplayHalfWidth", JSONObject().put("strength", .005).put("warmth", .5).put("exposureEv", .05))
             .put("parallelUi", false).put("showBeforeUi", false)
             .put("imageBoundsScreen", s.rect(bounds)).put("parentViewportBoundsScreen", s.rect(viewportBounds))
-            .put("imageSemanticsId", image?.extras?.takeIf { it.containsKey("androidx.compose.ui.semantics.id") }
-                ?.getInt("androidx.compose.ui.semantics.id") ?: JSONObject.NULL)
+            .put("imageSemanticsId", semanticsId)
             .put("imageAccessibilityWindowId", image?.windowId ?: JSONObject.NULL)
             .put("fitContentRectScreenContinuous", fit)
             .put("contentRectMeaning", "source-based 4:3 FIT estimate only; not decoded CPU dimensions or an automatic crop")
