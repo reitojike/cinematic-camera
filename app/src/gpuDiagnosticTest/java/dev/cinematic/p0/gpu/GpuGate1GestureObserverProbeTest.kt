@@ -60,7 +60,8 @@ class GpuGate1GestureObserverProbeTest {
         fun json() = JSONObject().put("eventMs", eventMs).put("windowX", x.toDouble()).put("windowY", y.toDouble())
     }
     private data class ActiveTouch(val axis: String, val downMs: Long, var x: Float, val y: Float,
-        var lastAction: Int = MotionEvent.ACTION_DOWN, var downAccepted: Boolean = false,
+        var lastAction: Int = MotionEvent.ACTION_DOWN, var downInjectionAttempted: Boolean = false,
+        var downInjectionReturned: Boolean = false, var downAccepted: Boolean? = null,
         var upInjectionReturned: Boolean = false, var upAccepted: Boolean? = null)
     private data class Touch(val action: Int, val eventMs: Long, val downMs: Long, val x: Float, val y: Float,
         val history: Int, val pointers: Int, val receivedNs: Long, val receivedUptimeMs: Long,
@@ -184,7 +185,7 @@ class GpuGate1GestureObserverProbeTest {
                 .put("sharedPath", "injected touch -> Window -> Slider onValueChange -> Compose state -> LaunchedEffect -> existing renderer.submit -> FULL_RECOMPUTE -> swap/callback")
                 .put("historyTraceScope", "Window pointer0 local coordinates/time copied before delegate; raw current coordinates separate; max 64 history/event and 4096 total; overflow invalidates observer; no JSON/file IO in callback")
                 .put("historyInterpretation", "injected and delivered/history traces may differ; no unique-sample count, resampled flag, prediction attribution or timing validity inferred")
-                .put("failureTouchCleanupRule", "failed run only: one best-effort CANCEL if accepted/delivered DOWN has no completed Window UP/CANCEL; injection return is not delivery; never added on successful operations")
+                .put("failureTouchCleanupRule", "failed run only: one best-effort CANCEL if accepted/delivered or attempted-but-unreturned DOWN has no completed Window UP/CANCEL; injection return is not delivery; never added on successful operations")
             report.remove("programmaticSchedule")
         }
         var hub: ActivityScenario<DiagnosticHubActivity>? = null
@@ -498,9 +499,10 @@ class GpuGate1GestureObserverProbeTest {
                         val event = MotionEvent.obtain(down, time, action, x, y, 0).apply { source = InputDevice.SOURCE_TOUCHSCREEN }
                         if (auxiliaryTouch) checkNotNull(activeTouch).also { it.x = x; it.lastAction = action }
                         val accepted = try {
+                            if (auxiliaryTouch && action == MotionEvent.ACTION_DOWN) checkNotNull(activeTouch).downInjectionAttempted = true
                             ins.uiAutomation.injectInputEvent(event, false).also { accepted ->
                                 if (auxiliaryTouch) checkNotNull(activeTouch).also { stream ->
-                                    if (action == MotionEvent.ACTION_DOWN) stream.downAccepted = accepted
+                                    if (action == MotionEvent.ACTION_DOWN) { stream.downInjectionReturned = true; stream.downAccepted = accepted }
                                     if (action == MotionEvent.ACTION_UP) { stream.upInjectionReturned = true; stream.upAccepted = accepted }
                                 }
                             }
@@ -686,7 +688,8 @@ class GpuGate1GestureObserverProbeTest {
             if (auxiliaryTouch && failed != null) attempt("cancel_failed_touch") {
                 activeTouch?.let { stream ->
                     failureTouchCleanup.put("status", "checking_failed_stream").put("axis", stream.axis).put("downMs", stream.downMs)
-                        .put("downInjectionAccepted", stream.downAccepted).put("lastAttemptedAction", stream.lastAction)
+                        .put("downInjectionAttempted", stream.downInjectionAttempted).put("downInjectionReturned", stream.downInjectionReturned)
+                        .put("downInjectionAccepted", stream.downAccepted ?: JSONObject.NULL).put("lastAttemptedAction", stream.lastAction)
                         .put("upInjectionReturned", stream.upInjectionReturned).put("upInjectionAccepted", stream.upAccepted ?: JSONObject.NULL)
                     var downDelivered = false
                     var touchCount = 0
@@ -703,7 +706,10 @@ class GpuGate1GestureObserverProbeTest {
                     val before = terminalReceipt()
                     failureTouchCleanup.put("downWindowDelivered", downDelivered)
                         .put("terminalBefore", before?.json() ?: JSONObject.NULL)
-                    if ((!stream.downAccepted && !downDelivered) || before?.returnedNs != null) {
+                    val uncertainDown = stream.downInjectionAttempted && !stream.downInjectionReturned
+                    failureTouchCleanup.put("downInjectionOutcomeUncertain", uncertainDown)
+                    // A thrown injection may already be queued even when the first Window snapshot is empty.
+                    if ((stream.downAccepted != true && !downDelivered && !uncertainDown) || before?.returnedNs != null) {
                         failureTouchCleanup.put("status", "not_required_no_active_stream")
                     } else {
                         failureTouchCleanup.put("status", "cancel_attempted").put("touchFromInclusive", touchCount)
