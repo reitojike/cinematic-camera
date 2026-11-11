@@ -114,6 +114,11 @@ class GpuProductEditorAndroidTest {
                     val range = node(rangeLabel, range = true)
                     assertTrue(range.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.id,
                         Bundle().apply { putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE, value) }))
+                    // ACTION_SET_PROGRESS returns before the next accessibility snapshot.
+                    // Observe the new value before checking close's updated enabled state.
+                    await("new $label range value") {
+                        find(rangeLabel, range = true)?.let { it.refresh() && it.rangeInfo?.current == value } == true
+                    }
                     click("目盛りを閉じる")
                     await("saved recipe and exact presentation") { saveReady() }
                 }
@@ -177,7 +182,15 @@ class GpuProductEditorAndroidTest {
     }
     private fun click(label: String) {
         var found: AccessibilityNodeInfo? = null
-        await("enabled $label") { actionable(find(label)).also { found = it }?.isEnabled == true }
+        await("enabled $label") {
+            actionable(find(label))?.let { node ->
+                // Re-query the live node; a cached enabled=true can precede the frame update.
+                (node.refresh() && node.isVisibleToUser && node.isEnabled && node.isClickable &&
+                    node.actionList.any { it.id == AccessibilityNodeInfo.ACTION_CLICK }).also {
+                    if (it) found = node
+                }
+            } == true
+        }
         assertTrue(checkNotNull(found).performAction(AccessibilityNodeInfo.ACTION_CLICK))
         instrumentation.waitForIdleSync()
     }

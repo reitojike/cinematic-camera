@@ -7,6 +7,9 @@ import android.view.accessibility.AccessibilityNodeInfo
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Text
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.SideEffect
+import dev.cinematic.p0.gpu.preview.GpuPreviewSurface
+import dev.cinematic.p0.gpu.preview.GpuPreviewRenderer
 import androidx.compose.ui.Modifier
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
@@ -56,13 +59,12 @@ class GpuDevelopLayoutAndroidTest {
                 instrumentation.waitForIdleSync()
                 assertEquals(cpuViewport, bounds("現像画像の表示領域"))
                 assertEquals(cpuImage, bounds("現像結果（表示用）"))
+                // Require an established Surface before retry. This was the failing path:
+                // replacing before its first creation could pass while hiding View reuse.
+                awaitSurface(gpu.renderer)
                 val replacement = GpuPhotoRollSession(instrumentation.targetContext.assets)
                 scenario.onActivity { gpuSession.value = replacement; gpu.close() }
-                repeat(100) {
-                    instrumentation.waitForIdleSync()
-                    if (!replacement.renderer.surfaceAttached.value) SystemClock.sleep(50)
-                }
-                assertTrue("same-photo retry attaches a fresh renderer surface", replacement.renderer.surfaceAttached.value)
+                awaitSurface(replacement.renderer)
                 assertFalse(gpu.renderer.surfaceAttached.value)
                 scenario.onActivity { failed.value = true }
                 val label = await("再試行")
@@ -82,6 +84,45 @@ class GpuDevelopLayoutAndroidTest {
             GpuPhotoRollRetiredOwners.releaseBeforeOpen()
             bitmap.recycle()
         }
+    }
+
+    @Test fun replacingBeforeFirstSurfaceCreationStillAttachesTheNewRenderer() {
+        check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
+        check(android.os.Build.HARDWARE in setOf("ranchu", "goldfish"))
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val original = GpuPreviewRenderer(instrumentation.targetContext.assets)
+        val replacement = GpuPreviewRenderer(instrumentation.targetContext.assets)
+        val current = mutableStateOf(original)
+        fixture.content = {
+            GpuPreviewSurface(current.value, Modifier.fillMaxSize())
+            // After the original View is composed, before its first layout/Surface creation.
+            SideEffect {
+                if (current.value === original) {
+                    check(!original.surfaceAttached.value)
+                    current.value = replacement
+                    original.close()
+                }
+            }
+        }
+        try {
+            ActivityScenario.launch(PhotoRollActivity::class.java).use {
+                awaitSurface(replacement)
+                assertFalse(original.surfaceAttached.value)
+            }
+        } finally {
+            original.close(); replacement.close()
+            assertTrue(original.awaitClosed(5_000))
+            assertTrue(replacement.awaitClosed(5_000))
+        }
+    }
+
+    private fun awaitSurface(renderer: GpuPreviewRenderer) {
+        repeat(100) {
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            if (renderer.surfaceAttached.value) return
+            SystemClock.sleep(50)
+        }
+        fail("replacement renderer must receive its own Surface creation")
     }
 
     private fun bounds(label: String) = Rect().also { await(label).getBoundsInScreen(it) }

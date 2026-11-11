@@ -242,9 +242,9 @@ internal class GpuPreviewRenderer(
 
     /**
      * Wait at SurfaceHolder's lifetime boundary, bounded to avoid an unbounded UI hang.
-     * False means destruction is NOT confirmed. Report it rather than throwing from Compose's
-     * onDestroyed, and retain the barrier/failed state until GL cleanup actually finishes.
-     * https://developer.android.com/reference/kotlin/androidx/compose/foundation/SurfaceScope
+     * False means destruction is NOT confirmed. Report it rather than throwing from Android's
+     * surfaceDestroyed, and retain the barrier/failed state until GL cleanup actually finishes.
+     * https://developer.android.com/reference/android/view/SurfaceHolder.Callback#surfaceDestroyed(android.view.SurfaceHolder)
      */
     fun detachSurface(surface: Surface): Boolean {
         val detachStarted = SystemClock.elapsedRealtimeNanos()

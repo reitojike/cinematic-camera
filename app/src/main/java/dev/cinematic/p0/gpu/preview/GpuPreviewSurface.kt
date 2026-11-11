@@ -1,11 +1,15 @@
 package dev.cinematic.p0.gpu.preview
 
-import androidx.compose.foundation.AndroidExternalSurface
+import android.graphics.PixelFormat
+import android.view.Surface
+import android.view.SurfaceHolder
+import android.view.SurfaceView
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -28,21 +32,54 @@ internal fun GpuPreviewSurface(renderer: GpuPreviewRenderer, modifier: Modifier 
             owner.lifecycle.removeObserver(observer); renderer.setStarted(false)
         }
     }
-    // onInit belongs to one renderer. Retry replaces the lease callbacks, not only the observer.
+    // SurfaceHolder callbacks are owned by this View/renderer pair. In Compose 1.12.1,
+    // AndroidExternalSurface's reusable AndroidView installs callbacks only in its factory;
+    // renderer replacement can reuse an already-created Surface without notifying the new owner.
+    // The standard AndroidView non-reuse path gives each renderer a fresh SurfaceView lifetime.
+    // https://developer.android.com/reference/kotlin/androidx/compose/ui/viewinterop/package-summary
     key(renderer) {
-        AndroidExternalSurface(modifier = modifier) {
-            onSurface { surface, width, height ->
-                GpuSurfaceProbe.event("compose.surface.created") { "surface=${System.identityHashCode(surface)}" }
-                renderer.attachSurface(surface, width, height, refreshRate)
-                surface.onChanged { w, h -> renderer.resizeSurface(this, w, h) }
-                surface.onDestroyed {
-                    GpuSurfaceProbe.event("compose.surface.destroyed.begin") { "surface=${System.identityHashCode(this)}" }
-                    // A timeout is an explicit GPU error, never an exception escaping Android's
-                    // destruction callback. The renderer retains its incomplete cleanup barrier.
-                    val completed = renderer.detachSurface(this)
-                    GpuSurfaceProbe.event("compose.surface.destroyed.end") { "surface=${System.identityHashCode(this)} completed=$completed" }
+        AndroidView(
+            modifier = modifier,
+            factory = { context ->
+                SurfaceView(context).apply {
+                    holder.setFormat(PixelFormat.OPAQUE)
+                    holder.addCallback(object : SurfaceHolder.Callback {
+                        private var attached: Surface? = null
+                        override fun surfaceCreated(holder: SurfaceHolder) {
+                            GpuSurfaceProbe.event("compose.surface.created") {
+                                "renderer=${System.identityHashCode(renderer)} surface=${System.identityHashCode(holder.surface)}"
+                            }
+                            val frame = holder.surfaceFrame
+                            attachOrResize(holder.surface, frame.width(), frame.height())
+                        }
+                        override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+                            attachOrResize(holder.surface, width, height)
+                        }
+                        private fun attachOrResize(surface: Surface, width: Int, height: Int) {
+                            if (width <= 0 || height <= 0) return
+                            if (attached === surface) renderer.resizeSurface(surface, width, height)
+                            else {
+                                attached = surface
+                                renderer.attachSurface(surface, width, height, refreshRate)
+                            }
+                        }
+                        override fun surfaceDestroyed(holder: SurfaceHolder) {
+                            val surface = attached ?: return
+                            attached = null
+                            GpuSurfaceProbe.event("compose.surface.destroyed.begin") {
+                                "renderer=${System.identityHashCode(renderer)} surface=${System.identityHashCode(surface)}"
+                            }
+                            // Timeout remains a visible GPU error. Never throw from Android's
+                            // destruction callback or silently clear an incomplete cleanup barrier.
+                            val completed = renderer.detachSurface(surface)
+                            GpuSurfaceProbe.event("compose.surface.destroyed.end") {
+                                "renderer=${System.identityHashCode(renderer)} surface=${System.identityHashCode(surface)} completed=$completed"
+                            }
+                        }
+                    })
                 }
-            }
-        }
+            },
+            onReset = null,
+        )
     }
 }
