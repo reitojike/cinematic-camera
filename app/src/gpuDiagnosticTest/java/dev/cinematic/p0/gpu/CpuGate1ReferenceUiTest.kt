@@ -214,7 +214,17 @@ class CpuGate1ReferenceUiTest {
             support.await(hubEnd) { runCatching { support.lifecycle(true) }.isSuccess }
             capture(0) { support.lifecycle(true) }
             val openEnd = support.deadline(30_000)
-            click(support.remaining(openEnd)) { support.remaining(openEnd); it.packageName?.toString() == TARGET && it.text?.toString() == "CPUプレビューの確認（Filesから選択）" && it.isEnabled }
+            // Native Material Button accessibility exposes transformed text; accept only these full labels.
+            val hubSourceLabel = "CPUプレビューの確認（Filesから選択）"
+            val hubAllCapsLabel = "CPUプレビューの確認（FILESから選択）"
+            click(support.remaining(openEnd)) {
+                support.remaining(openEnd)
+                val label = it.text?.toString()
+                val matches = it.packageName?.toString() == TARGET && it.isEnabled &&
+                    (label == hubSourceLabel || label == hubAllCapsLabel)
+                if (matches) report.put("hubEntryMatchedLabelVariant", if (label == hubSourceLabel) "source" else "material_all_caps")
+                matches
+            }
             support.await(openEnd) { support.bindRoll().also { rollBound = it } }
             val filesEnd = support.deadline(90_000)
             click(support.remaining(filesEnd)) { support.remaining(filesEnd); it.packageName?.toString() == TARGET && it.text?.toString()?.startsWith("Files") == true && it.isEnabled }
