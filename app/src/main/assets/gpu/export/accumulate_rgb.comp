@@ -2,5 +2,5 @@
 precision highp float;
 precision highp int;
 precision highp sampler2D;
-layout(rgba32f, binding = 0) uniform highp image2D u_field;
+layout(rgba32f, binding = 0) writeonly uniform highp image2D u_field;
 #include "export/accumulate_band.glsl"

@@ -1,4 +1,6 @@
-# Gate 1 第2部の実機手順（準備中）
+# Gate 1 第2部の実機手順（完了済み・参照用）
+
+> **完了済み・参照用**: Gate 1 は [#285](https://github.com/reitojike/cinematic-camera/issues/285) / [#276 の判断記録](https://github.com/reitojike/cinematic-camera/issues/276#issuecomment-6800672199)で完了・GOとなった。以下の準備状況・未確定欄・実行手順は当時の記録であり、現在の実施予定や実機操作の許可ではない。Gate 1 専用の試験5件は [#334](https://github.com/reitojike/cinematic-camera/issues/334)で削除したため、その試験名・引数は履歴参照用とする。見た目の確認は [#291（Gate 2）](https://github.com/reitojike/cinematic-camera/issues/291)で扱う。
 
 > **後継手順の準備案**: §1〜§8は #326 でマージした記録として保持する。後続判断の「GPU判定・CPU参考」「GPUプログラム入力主・タッチ補助」は§9を参照する。未確定欄を解消し #285へ最終条件を追記するまで、準備完了・実機実施許可とは扱わない。
 
