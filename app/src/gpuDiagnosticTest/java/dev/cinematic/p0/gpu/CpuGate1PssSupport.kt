@@ -21,6 +21,7 @@ import java.io.File
 import java.io.InputStream
 import java.lang.ref.WeakReference
 import java.security.MessageDigest
+import java.util.ArrayDeque
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -32,15 +33,53 @@ internal class CpuGate1PssSupport(private val folder: File, val started: Long) {
     private var roll: WeakReference<Activity>? = null
     private var hubId = 0; private var hubTask = -1; private var rollId = 0
     private var destroyed = false
+    // Scalars only: never keep a stopped/destroyed Hub alive to make a PSS boundary pass.
+    private var hubStage: Stage? = null
+    private var hubEventCount = 0
+    private var hubEventElapsedMs: Long? = null
+    private var hubDestroyed = false
+    private var hubDestroyedElapsedMs: Long? = null
+    private val hubTransitions = ArrayDeque<JSONObject>()
+    private var hubTransitionsDropped = 0
+    private var hubTransitionRecordFailures = 0
+    private var lastLogcatWallMs = System.currentTimeMillis()
+    private var uiTimeoutCount = 0
+    val uiTimeoutDiagnostics = JSONArray()
+    private var hubReferenceUnavailableObserved = false
+    private var hubDestroyedChangingConfigurations: Boolean? = null
+    private var differentHubId: Int? = null
+    private var differentHubStage: Stage? = null
+    private var differentHubElapsedMs: Long? = null
     private var originalIdentity: String? = null
     private val callback = ActivityLifecycleCallback { activity, stage ->
         if (activity === roll?.get() && stage == Stage.DESTROYED) destroyed = true
+        if (activity.javaClass.name == "dev.cinematic.p0.raw.DiagnosticHubActivity") {
+            // Only scalar lifecycle events, including startup before bindHub. Never Activity references.
+            try {
+                if (hubTransitions.size == 64) { hubTransitions.removeFirst(); hubTransitionsDropped++ }
+                hubTransitions.addLast(JSONObject().put("elapsedMs", SystemClock.elapsedRealtime())
+                    .put("identity", System.identityHashCode(activity)).put("task", activity.taskId)
+                    .put("stage", stage.name).put("changingConfigurations", activity.isChangingConfigurations))
+            } catch (_: Throwable) { hubTransitionRecordFailures++ }
+        }
+        if (activity === hub?.get()) {
+            hubStage = stage; hubEventCount++; hubEventElapsedMs = SystemClock.elapsedRealtime()
+            if (stage == Stage.DESTROYED) {
+                hubDestroyed = true; hubDestroyedElapsedMs = hubEventElapsedMs
+                hubDestroyedChangingConfigurations = activity.isChangingConfigurations
+            }
+        } else if (hub != null && activity.javaClass.name == "dev.cinematic.p0.raw.DiagnosticHubActivity" && activity.taskId == hubTask) {
+            differentHubId = System.identityHashCode(activity); differentHubStage = stage
+            differentHubElapsedMs = SystemClock.elapsedRealtime()
+        }
     }
     init { inst.runOnMainSync { monitor.addLifecycleCallback(callback) } }
     fun dispose() = inst.runOnMainSync { monitor.removeLifecycleCallback(callback) }
     fun bindHub(activity: Activity) = inst.runOnMainSync {
+        check(hub == null) { "Original Hub must never be rebound" }
         check(activity.javaClass.name == "dev.cinematic.p0.raw.DiagnosticHubActivity")
         hub = WeakReference(activity); hubId = System.identityHashCode(activity); hubTask = activity.taskId
+        hubStage = monitor.getLifecycleStageOf(activity)
     }
     fun bindRoll(): Boolean {
         var found = false
@@ -58,8 +97,10 @@ internal class CpuGate1PssSupport(private val folder: File, val started: Long) {
     fun lifecycle(hubExpected: Boolean, requireDestroyed: Boolean = false): String {
         var result = ""
         inst.runOnMainSync {
-            val original = checkNotNull(hub?.get())
-            check(System.identityHashCode(original) == hubId && original.taskId == hubTask)
+            val observed = hub?.get()
+            val failure = hubFailure(observed)
+            check(failure == null) { checkNotNull(failure) }
+            val original = checkNotNull(observed)
             val active = if (hubExpected) original else checkNotNull(roll?.get())
             check(active.taskId == hubTask && active.hasWindowFocus() &&
                 monitor.getLifecycleStageOf(active) == Stage.RESUMED &&
@@ -70,11 +111,132 @@ internal class CpuGate1PssSupport(private val folder: File, val started: Long) {
         }
         return result
     }
+    private fun hubFailure(original: Activity?): String? {
+        if (hub == null) return "ORIGINAL_HUB_NOT_BOUND"
+        if (original == null) hubReferenceUnavailableObserved = true
+        return hubContinuityFailure(original != null,
+            original != null && System.identityHashCode(original) == hubId && original.taskId == hubTask,
+            hubDestroyed || original?.isDestroyed == true || original?.let { monitor.getLifecycleStageOf(it) } == Stage.DESTROYED,
+            differentHubId != null)
+    }
+
+    /** Diagnostic snapshot only. A missing weak reference never identifies its cause or proves GC. */
+    fun lifecycleEvidence(): JSONObject {
+        var result = JSONObject()
+        inst.runOnMainSync {
+            val original = hub?.get()
+            val failure = hubFailure(original)
+            result = JSONObject().put("observedElapsedMs", SystemClock.elapsedRealtime())
+                .put("hubIdentity", hubId).put("hubTask", hubTask).put("hubWeakAlive", original != null)
+                .put("hubCurrentStage", original?.let { monitor.getLifecycleStageOf(it).name } ?: JSONObject.NULL)
+                .put("hubLastObservedStage", hubStage?.name ?: JSONObject.NULL).put("hubLifecycleCallbackCount", hubEventCount)
+                .put("hubLastCallbackElapsedMs", hubEventElapsedMs ?: JSONObject.NULL)
+                .put("hubDestroyedObserved", hubDestroyed).put("hubCurrentlyDestroyed", original?.isDestroyed ?: JSONObject.NULL)
+                .put("hubDestroyedChangingConfigurations", hubDestroyedChangingConfigurations ?: JSONObject.NULL)
+                .put("hubDestroyedElapsedMs", hubDestroyedElapsedMs ?: JSONObject.NULL)
+                .put("hubTransitions", JSONArray(hubTransitions.toList())).put("hubTransitionsLimit", 64)
+                .put("hubTransitionsDropped", hubTransitionsDropped).put("hubTransitionRecordFailures", hubTransitionRecordFailures)
+                .put("differentHubSameTaskObserved", differentHubId != null).put("differentHubIdentity", differentHubId ?: JSONObject.NULL)
+                .put("differentHubLastStage", differentHubStage?.name ?: JSONObject.NULL).put("differentHubLastElapsedMs", differentHubElapsedMs ?: JSONObject.NULL)
+                .put("hubContinuityFailure", failure ?: JSONObject.NULL).put("weakReferenceLossCause", "UNKNOWN")
+                .put("priorWeakReferenceLossOutcome", when {
+                    hub == null -> "NOT_EVALUATED"
+                    hubReferenceUnavailableObserved -> "OBSERVED_CAUSE_UNDETERMINED"
+                    else -> "NOT_OBSERVED_CAUSE_UNDETERMINED"
+                })
+        }
+        return result
+    }
     fun deadline(capMs: Long, closing: Boolean = false) = minOf(SystemClock.elapsedRealtime() + capMs,
         started + 780_000 - if (closing) 0 else 45_000)
     fun remaining(deadline: Long) = remainingAt(deadline, SystemClock.elapsedRealtime()).also { check(it > 0) { "Soft elapsed budget exhausted" } }
     fun await(deadline: Long, predicate: () -> Boolean) {
-        while (true) { remaining(deadline); if (predicate()) { remaining(deadline); return }; SystemClock.sleep(30) }
+        try {
+            while (true) { remaining(deadline); if (predicate()) { remaining(deadline); return }; SystemClock.sleep(30) }
+        } catch (failure: Throwable) {
+            if (remainingAt(deadline, SystemClock.elapsedRealtime()) == 0L) recordUiTimeout("elapsed_ui_wait", failure)
+            throw failure
+        }
+    }
+
+    /** Private failure evidence only; no navigation/retry. At most primary + cleanup timeout artifacts. */
+    fun recordUiTimeout(label: String, originalFailure: Throwable) {
+        try {
+            val row = JSONObject().put("label", label).put("startedElapsedMs", SystemClock.elapsedRealtime())
+                .put("privateOnly", true).put("containsUnredactedUi", true).put("hardIoDeadline", false)
+            uiTimeoutDiagnostics.put(row)
+            if (uiTimeoutCount >= 2) { row.put("status", "SKIPPED_ARTIFACT_LIMIT"); return }
+            val prefix = "private-ui-timeout-${++uiTimeoutCount}"
+            val device = UiDevice.getInstance(inst)
+            fun save(extension: String, action: (File) -> Unit) {
+                val file = File(folder, "$prefix.$extension")
+                val artifact = JSONObject().put("file", file.name).put("startedElapsedMs", SystemClock.elapsedRealtime())
+                row.put(extension, artifact)
+                try { check(file.createNewFile()); action(file); check(file.length() > 0); artifact.put("status", "SAVED") }
+                catch (diagnostic: Throwable) { artifact.put("status", "FAILED_OR_PARTIAL").put("failureType", diagnostic.javaClass.simpleName) }
+                finally { artifact.put("bytes", file.length()).put("endedElapsedMs", SystemClock.elapsedRealtime()) }
+            }
+            save("xml") { device.dumpWindowHierarchy(it) }
+            save("png") { check(device.takeScreenshot(it)) }
+            row.put("endedElapsedMs", SystemClock.elapsedRealtime())
+                .put("costMs", SystemClock.elapsedRealtime() - row.getLong("startedElapsedMs"))
+        } catch (diagnostic: Throwable) { originalFailure.addSuppressed(diagnostic) }
+    }
+
+    /** After the PSS outcome, outside its settle/dump boundaries; still adds load before later samples. */
+    private fun recordPointDiagnostics(row: JSONObject, deadline: Long) {
+        val started = SystemClock.elapsedRealtime()
+        val diagnostic = JSONObject().put("privateOnly", true).put("timing", "AFTER_PSS_OUTCOME")
+            .put("startedElapsedMs", started).put("observedWallMs", System.currentTimeMillis())
+            .put("heapPressureCause", "UNKNOWN").put("hardIoDeadline", false)
+        row.put("privateDiagnostics", diagnostic)
+        try {
+            val runtime = Runtime.getRuntime()
+            val heapAt = SystemClock.elapsedRealtime(); val allocated = runtime.totalMemory(); val free = runtime.freeMemory(); val maximum = runtime.maxMemory()
+            diagnostic.put("javaHeap", JSONObject().put("observedElapsedMs", heapAt).put("usedBytes", allocated - free)
+                .put("maxBytes", maximum).put("allocatedBytes", allocated).put("freeBytes", free).put("nonAtomicEstimate", true)
+                .put("consistentSnapshot", free in 0..allocated && allocated <= maximum)
+                .put("meaning", "Runtime process heap estimate after PSS outcome, not a memory-pressure or destruction-cause proof"))
+            try { diagnostic.put("lifecycle", lifecycleEvidence()) }
+            catch (failure: Throwable) { diagnostic.put("lifecycleFailureType", failure.javaClass.simpleName) }
+            val log = JSONObject().put("status", "NOT_STARTED").put("maxBytes", 65536).put("maxMatchingRecords", 80)
+                .put("shellTimeoutSeconds", 2).put("buffers", "system,events").put("maxWindowMs", 120000)
+                .put("tags", "ActivityManager:I ActivityTaskManager:I am_destroy_activity:I wm_destroy_activity:I am_kill:I")
+                .put("scope", "target package or Hub name only; absent/truncated logs do not prove no destruction")
+            diagnostic.put("activityManagerLogcat", log)
+            if (remainingAt(deadline, SystemClock.elapsedRealtime()) <= 2500) {
+                log.put("status", "SKIPPED_REMAINING_SOFT_BUDGET"); return
+            }
+            val queryAt = System.currentTimeMillis(); val from = maxOf(lastLogcatWallMs, queryAt - 120000)
+            val timestamp = "${from / 1000}.${(from % 1000).toString().padStart(3, '0')}"
+            val command = "timeout 2s logcat -d -b system -b events -v epoch -T '$timestamp' -m 80 " +
+                "-e 'dev[.]cinematic[.]p0[.]gpudiagnostic|DiagnosticHubActivity' " +
+                "ActivityManager:I ActivityTaskManager:I am_destroy_activity:I wm_destroy_activity:I am_kill:I '*:S' 2>&1"
+            val file = File(folder, "private-am-slot-${row.getInt("slot").toString().padStart(2, '0')}.txt")
+            log.put("fromWallMs", from).put("queryStartedWallMs", queryAt).put("command", command).put("file", file.name)
+                .put("windowClipped", from != lastLogcatWallMs).put("wallClockMovedBackwards", queryAt < lastLogcatWallMs)
+                .put("status", "STARTED")
+            check(file.createNewFile())
+            var copied = 0
+            ParcelFileDescriptor.AutoCloseInputStream(inst.uiAutomation.executeShellCommand(command)).use { input ->
+                file.outputStream().use { output ->
+                    val buffer = ByteArray(4096)
+                    while (copied < 65536) {
+                        val n = input.read(buffer, 0, minOf(buffer.size, 65536 - copied)); if (n < 0) break
+                        output.write(buffer, 0, n); copied += n
+                    }
+                }
+            }
+            // Start the next query at this query's start to avoid a gap. Overlap is intentional, not merged evidence.
+            lastLogcatWallMs = queryAt
+            log.put("bytes", file.length()).put("byteCapReached", copied == 65536)
+                .put("status", "RAW_SAVED_REQUIRES_HOST_AUDIT").put("stderrIncluded", true).put("exitCode", JSONObject.NULL)
+                .put("queryEndedWallMs", System.currentTimeMillis())
+        } catch (failure: Throwable) {
+            diagnostic.put("failureType", failure.javaClass.simpleName)
+            diagnostic.optJSONObject("activityManagerLogcat")?.put("status", "FAILED_OR_PARTIAL")
+        }
+        finally { diagnostic.put("endedElapsedMs", SystemClock.elapsedRealtime()).put("costMs", SystemClock.elapsedRealtime() - started) }
     }
     /** Standard DocumentsUI root -> directory only; never search other providers for a filename. */
     fun openDownload(deadline: Long): JSONObject {
@@ -139,16 +301,19 @@ internal class CpuGate1PssSupport(private val folder: File, val started: Long) {
     /** -t 10 is not a hard deadline on shell/Binder/pipe/file IO. No retries or missing-value substitution. */
     fun capture(row: JSONObject, deadline: Long, boundary: () -> String) {
         row.put("status", "started").put("boundaryMeaning", "UI_EXTERNAL_REFERENCE")
+        var phase = "before_settle"
         try {
             remaining(deadline)
             val settledIdentity = identity(); val settled = boundary()
             row.put("boundaryBeforeSettle", settled).put("identityBeforeSettle", settledIdentity).put("beforeSettleElapsedMs", SystemClock.elapsedRealtime())
             check(remaining(deadline) > 1000); SystemClock.sleep(1000); remaining(deadline)
+            phase = "before_dump"
             val pre = identity(); val before = boundary()
             row.put("boundaryBeforeDump", before).put("identityBeforeDump", pre).put("beforeDumpElapsedMs", SystemClock.elapsedRealtime())
             if (originalIdentity == null) originalIdentity = pre
             check(settled == before && settledIdentity == pre && pre == originalIdentity)
             remaining(deadline)
+            phase = "dump"
             val file = File(folder, "pss-${row.getInt("slot").toString().padStart(2, '0')}.txt")
             check(file.createNewFile())
             val begin = SystemClock.elapsedRealtime()
@@ -159,17 +324,41 @@ internal class CpuGate1PssSupport(private val folder: File, val started: Long) {
                     file.outputStream().use { output -> input.copyTo(output, 8192) }
                 }
             } finally { row.put("endElapsedMs", SystemClock.elapsedRealtime()).put("dumpCostMs", SystemClock.elapsedRealtime() - begin).put("rawBytes", file.length()) }
+            phase = "after_dump"
             val after = boundary(); val post = identity()
             row.put("boundaryAfterDump", after).put("identityAfterDump", post).put("afterDumpElapsedMs", SystemClock.elapsedRealtime())
             check(after == before && post == pre); remaining(deadline)
+            phase = "parse"
             file.useLines { parseMeminfo(it, row, Process.myPid(), inst.targetContext.packageName) }
             remaining(deadline); row.put("status", "verified_ui_external_reference")
         } catch (failure: Throwable) {
-            row.put("status", "invalid_reference_sample").put("failureType", failure.javaClass.simpleName)
+            row.put("status", "invalid_reference_sample").put("failureType", failure.javaClass.simpleName).put("failurePhase", phase)
+            try { row.put("lifecycleAfterFailure", lifecycleEvidence()) }
+            catch (diagnostic: Throwable) { failure.addSuppressed(diagnostic) }
             throw failure
+        } finally {
+            // Diagnostics must not replace the original PSS/lifecycle failure, including allocation/IO failures.
+            try { recordPointDiagnostics(row, deadline) }
+            catch (diagnostic: Throwable) { runCatching { row.put("privateDiagnosticsFailureType", diagnostic.javaClass.simpleName) } }
         }
     }
     companion object {
+        fun hubContinuityFailure(weakAlive: Boolean, sameIdentity: Boolean, destroyed: Boolean, differentHub: Boolean): String? = when {
+            destroyed -> "ORIGINAL_HUB_DESTROYED"
+            differentHub -> "DIFFERENT_HUB_SAME_TASK_OBSERVED"
+            !weakAlive -> "ORIGINAL_HUB_REFERENCE_UNAVAILABLE_CAUSE_UNKNOWN"
+            !sameIdentity -> "ORIGINAL_HUB_IDENTITY_MISMATCH"
+            else -> null
+        }
+        fun checkHubContinuityContracts() {
+            check(hubContinuityFailure(true, true, false, false) == null)
+            check(hubContinuityFailure(true, true, true, false) == "ORIGINAL_HUB_DESTROYED")
+            check(hubContinuityFailure(false, false, true, false) == "ORIGINAL_HUB_DESTROYED")
+            check(hubContinuityFailure(true, true, false, true) == "DIFFERENT_HUB_SAME_TASK_OBSERVED")
+            check(hubContinuityFailure(true, false, false, false) == "ORIGINAL_HUB_IDENTITY_MISMATCH")
+            val reference = WeakReference(Any()).also { it.clear() } // Deterministic reference loss, not forced GC.
+            check(hubContinuityFailure(reference.get() != null, false, false, false) == "ORIGINAL_HUB_REFERENCE_UNAVAILABLE_CAUSE_UNKNOWN")
+        }
         fun remainingAt(deadline: Long, now: Long) = (deadline - now).coerceAtLeast(0)
         fun fingerprint(input: InputStream): Pair<Long, String> {
             val digest = MessageDigest.getInstance("SHA-256"); val buffer = ByteArray(8192); var bytes = 0L

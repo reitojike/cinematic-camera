@@ -33,6 +33,7 @@ class CpuGate1ReferenceUiTest {
     private val inst = InstrumentationRegistry.getInstrumentation()
     private val ui get() = inst.uiAutomation
     private val preparationClicks = JSONArray()
+    private var pssTimeoutEvidence: CpuGate1PssSupport? = null
 
     @Test fun axisHoldReferenceOnly() {
         val args = InstrumentationRegistry.getArguments()
@@ -163,6 +164,10 @@ class CpuGate1ReferenceUiTest {
             .put("formalGate1Measurement", false).put("plannedCpuSlots", 18).put("plannedCpuAndGpuSlots", 36).put("slots", slots)
             .put("verifiedInstalledCpuApkSha256", installed).put("emulator", emulator).put("preparationClicks", preparationClicks)
             .put("authorizationMeaning", "flags are guards, never physical-device permission")
+            .put("hubIdentityPolicy", "original instance only; weak reference; destroyed or different same-task Hub invalidates continuity")
+            .put("hubObservationChange", "DIAGNOSTIC_GUARDS_ONLY_NOT_CAUSE_FIX")
+            .put("privateDiagnosticCost", "Lifecycle metadata is retained in process. Heap/lifecycle/logcat snapshots run after each attempted PSS point; their allocation, IO and elapsed cost affect later PSS. No observer-free equivalence.")
+            .put("privateUiTimeoutEvidence", "XML/PNG only on UI wait timeout, at most two artifact pairs, outside successful sampling; unredacted private evidence, never publish or commit")
             .put("nativeCompletion", "UNKNOWN").put("allWorkersIdle", "UNKNOWN").put("activityGc", "UNKNOWN").put("fullRelease", "UNKNOWN").put("gcState", "UNKNOWN")
             .put("latestImageFrame", "UNKNOWN: start equals return; unchanged old UI cannot prove the latest image frame")
             .put("selectedUriIdentityLimit", "Expected URI/read-grant/hash plus picker-location evidence, not direct selected result URI or decoded frame observation")
@@ -172,6 +177,8 @@ class CpuGate1ReferenceUiTest {
         fun save() = File(root, "report.json").writeText(report.toString(2))
         save()
         val support = CpuGate1PssSupport(root, started)
+        pssTimeoutEvidence = support
+        report.put("privateUiTimeoutDiagnostics", support.uiTimeoutDiagnostics)
         var hubBound = false; var rollBound = false; var closed = false; var closeAttempted = false; var activeSlot: JSONObject? = null
         fun accessible(predicate: (AccessibilityNodeInfo) -> Boolean) = node { it.packageName?.toString() == TARGET && predicate(it) }
         fun filesVisible() = accessible { it.text?.toString()?.startsWith("Files") == true && it.isEnabled } != null
@@ -307,11 +314,17 @@ class CpuGate1ReferenceUiTest {
             try {
                 if (hubBound && !closeAttempted) try { normalClose() } catch (failure: Throwable) { report.put("normalCloseFailureType", failure.javaClass.simpleName) }
                 report.put("normalCloseObserved", closed).put("endedElapsedMs", SystemClock.elapsedRealtime())
-            } finally { try { support.dispose() } finally { save() } }
+            } finally {
+                try { report.put("lifecycleAtExit", support.lifecycleEvidence()) }
+                catch (diagnostic: Throwable) { report.put("lifecycleAtExitFailureType", diagnostic.javaClass.simpleName) }
+                finally { pssTimeoutEvidence = null; try { support.dispose() } finally { save() } }
+            }
         }
     }
 
     @Test fun pssParserAndBudgetPureChecks() = CpuGate1PssSupport.checkPureContracts()
+    // Separate synthetic guard check; never part of an 18-point PSS run.
+    @Test fun pssHubContinuityPureChecks() = CpuGate1PssSupport.checkHubContinuityContracts()
 
     /** Outside gesture window, while the target Activity/process still exists.
      * -t 10 is a dumpsys service timeout, NOT a hard deadline on executeShellCommand or pipe IO.
@@ -453,8 +466,15 @@ class CpuGate1ReferenceUiTest {
     }
     private fun await(label: String, timeout: Long, predicate: () -> Boolean) {
         val deadline = SystemClock.uptimeMillis() + timeout
-        while (SystemClock.uptimeMillis() < deadline) { if (predicate()) return; SystemClock.sleep(30) }
-        error("Timed out: $label")
+        try {
+            while (SystemClock.uptimeMillis() < deadline) { if (predicate()) return; SystemClock.sleep(30) }
+            error("Timed out: $label")
+        } catch (failure: Throwable) {
+            if (SystemClock.uptimeMillis() >= deadline || failure.message == "Soft elapsed budget exhausted") {
+                pssTimeoutEvidence?.recordUiTimeout(label, failure)
+            }
+            throw failure
+        }
     }
     private fun rect(r: Rect) = JSONArray(listOf(r.left, r.top, r.right, r.bottom))
     /** CPU1ce PhotoAdjustmentPolicy + TrialStrengthEditorPane + PhotoEditBar semantics.
