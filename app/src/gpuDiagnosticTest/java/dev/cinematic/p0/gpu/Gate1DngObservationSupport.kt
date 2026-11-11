@@ -16,6 +16,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.BySelector
 import androidx.test.uiautomator.Direction
+import androidx.test.uiautomator.StaleObjectException
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiObject2
 import dev.cinematic.p0.raw.LinearSrgbImage
@@ -42,6 +43,8 @@ internal class Gate1DngObservationSupport(private val folder: File, private val 
     private var pickerPackage: String? = null
     private var pickerPending = false
     private var cancelAttempted = false
+    private var auxiliaryUiEvidenceEnabled = false
+    private val uiTimeoutEvidence = JSONArray()
 
     fun verifyTarget(): JSONObject {
         val args = InstrumentationRegistry.getArguments()
@@ -70,17 +73,24 @@ internal class Gate1DngObservationSupport(private val folder: File, private val 
                 check(it.diagnosticState().resumed && it.hasWindowFocus())
                 pickerOwner = WeakReference(it)
             }
-            auxiliaryPicker.put("phase", "launch_requested")
+            auxiliaryUiEvidenceEnabled = true
+            auxiliaryPicker.put("phase", "launch_requested").put("uiTimeoutEvidence", uiTimeoutEvidence)
+                .put("expectedAuthority", "com.android.externalstorage.documents")
+                .put("expectedLocation", "primary:Download")
+                .put("selectionScope", "registered exact name only, via the confirmed internal root and its Download row; no provider fallback; selected result URI not directly observed")
         }
         find("Files button", By.pkg(target.packageName).text("試験用DNGをFilesから選択"), Direction.DOWN).click()
-        await("DocumentsUI foreground") { device.currentPackageName?.endsWith(".documentsui") == true }
+        await("DocumentsUI foreground") {
+            if (auxiliaryStrict) device.currentPackageName in setOf("com.android.documentsui", "com.google.android.documentsui")
+            else device.currentPackageName?.endsWith(".documentsui") == true
+        }
         val filesPackage = checkNotNull(device.currentPackageName)
         if (auxiliaryStrict) {
             pickerPackage = filesPackage; pickerPending = true
             auxiliaryPicker.put("documentsUiPackage", filesPackage).put("phase", "picker_foreground")
-            openAuxiliaryDownload(filesPackage)
+            openAuxiliaryDownload(filesPackage, documentId.substringAfterLast('/'))
             check(!failAfterDownload) { "intentional_auxiliary_picker_failure_after_download" }
-            findAuxiliaryEntry(filesPackage, documentId.substringAfterLast('/'), "preregistered_dng", Pattern.compile("Download")).click()
+            findAuxiliaryEntry(filesPackage, documentId.substringAfterLast('/'), "preregistered_dng").click()
             auxiliaryPicker.put("phase", "selection_clicked")
         } else {
             openInternalDownload(filesPackage)
@@ -92,9 +102,13 @@ internal class Gate1DngObservationSupport(private val folder: File, private val 
             var loaded = false
             withActivity {
                 val state = it.diagnosticState()
-                check(state.resumed && !state.gpuError)
-                check(state.inputResult !in setOf("load_error", "readiness_timeout"))
-                loaded = state.inputResult == "loaded" && !state.loading
+                if (auxiliaryStrict) {
+                    loaded = state.resumed && !state.gpuError && state.inputResult == "loaded" && !state.loading
+                } else {
+                    check(state.resumed && !state.gpuError)
+                    check(state.inputResult !in setOf("load_error", "readiness_timeout"))
+                    loaded = state.inputResult == "loaded" && !state.loading
+                }
             }
             loaded
         }
@@ -238,7 +252,7 @@ internal class Gate1DngObservationSupport(private val folder: File, private val 
     }
 
     /** Auxiliary route only. Do not toggle storage visibility or search another provider. */
-    private fun openAuxiliaryDownload(pkg: String) {
+    private fun openAuxiliaryDownload(pkg: String, registeredName: String) {
         val roots = By.res(pkg, "roots_list")
         val labels = listOfNotNull(Build.MODEL, Settings.Global.getString(target.contentResolver, "device_name"),
             "Internal storage", "Internal shared storage", "内部ストレージ", "内部共有ストレージ")
@@ -248,23 +262,64 @@ internal class Gate1DngObservationSupport(private val folder: File, private val 
             .desc(Pattern.compile("Show roots|Open navigation drawer|ルートを表示|ナビゲーション ドロワーを開く"))).click()
         clickFreshAuxiliaryRoot(pkg, label)
         auxiliaryPicker.put("phase", "await_internal_root")
-        await("auxiliary internal root arrived") {
-            device.currentPackageName == pkg && !device.hasObject(roots) &&
-                device.hasObject(By.pkg(pkg).text(label).hasAncestor(By.res(pkg, "toolbar"))) &&
-                device.hasObject(By.res(pkg, "dir_list"))
-        }
+        awaitAuxiliaryDirectory(pkg, label, label, "internalRootArrival", "auxiliary internal root arrived")
         auxiliaryPicker.put("internalRootConfirmed", true)
         rewindDirectory(pkg)
-        findAuxiliaryEntry(pkg, Environment.DIRECTORY_DOWNLOADS, "download_folder", label).click()
-        auxiliaryPicker.put("phase", "await_download")
-        await("auxiliary Download arrived") {
-            device.currentPackageName == pkg && !device.hasObject(roots) &&
-                device.hasObject(By.pkg(pkg).text(Environment.DIRECTORY_DOWNLOADS).hasAncestor(By.res(pkg, "toolbar"))) &&
-                device.hasObject(By.res(pkg, "dir_list"))
-        }
-        rewindDirectory(pkg)
+        val download = findAuxiliaryEntry(pkg, Environment.DIRECTORY_DOWNLOADS, "download_folder", label)
+        auxiliaryPicker.put("downloadRowClickAttempts", 1).put("downloadRowClickReturned", false)
+        download.click()
+        auxiliaryPicker.put("downloadRowClickReturned", true).put("phase", "await_download")
+        awaitAuxiliaryDirectory(pkg, label, label, "downloadArrival", "auxiliary Download arrived", registeredName)
         auxiliaryPicker.put("phase", "download_confirmed").put("downloadConfirmed", true)
             .put("directSelectedUriObservation", false)
+    }
+
+    /** Download arrival requires the registered DNG in dir_list, never a toolbar title.
+     * Only called after the confirmed internal root and its exact Download row were clicked.
+     * Reads are sequential; the route and visible name do not directly observe the result URI. */
+    private fun awaitAuxiliaryDirectory(pkg: String, expected: Pattern, rootLabel: Pattern,
+        recordName: String, waitLabel: String, registeredName: String? = null) {
+        val record = JSONObject().put("pollCount", 0).put("waitOutcome", "pending")
+            .put("observationScope", "sequential predicate reads; setup only; not atomic or direct document URI evidence")
+        record.put("arrivalRule", if (registeredName == null) "internal_root_toolbar" else "unique_visible_registered_dng_in_directory")
+        auxiliaryPicker.put(recordName, record)
+        try {
+            await(waitLabel) {
+                val sample = JSONObject().put("status", "incomplete").put("beginUptimeMs", SystemClock.uptimeMillis())
+                record.put("pollCount", record.getInt("pollCount") + 1).put("lastPredicateSample", sample)
+                val foregroundMatches = (device.currentPackageName == pkg).also { sample.put("foregroundMatches", it) }
+                val rootsAbsent = (!device.hasObject(By.res(pkg, "roots_list"))).also { sample.put("rootsAbsent", it) }
+                val expectedContentPresent = if (registeredName == null) {
+                    device.hasObject(By.pkg(pkg).text(expected).hasAncestor(By.res(pkg, "toolbar")))
+                } else {
+                    auxiliaryPicker.optBoolean("internalRootConfirmed") && auxiliaryPicker.optBoolean("downloadRowClickReturned") &&
+                        visibleAuxiliaryEntry(pkg, registeredName) != null
+                }
+                sample.put(if (registeredName == null) "expectedToolbarPresent" else "registeredDngVisible", expectedContentPresent)
+                val directoryPresent = device.hasObject(By.res(pkg, "dir_list")).also { sample.put("directoryPresent", it) }
+                val arrived = foregroundMatches && rootsAbsent && expectedContentPresent && directoryPresent
+                sample.put("arrived", arrived).put("endUptimeMs", SystemClock.uptimeMillis()).put("status", "complete")
+                arrived
+            }
+            record.put("waitOutcome", "arrived")
+        } catch (failure: Throwable) {
+            record.put("waitOutcome", "failed").put("failureType", failure.javaClass.simpleName)
+            throw failure
+        } finally {
+            // Later, independent diagnostic reads: never substitute them for the arrival predicate.
+            val snapshot = JSONObject().put("status", "incomplete")
+                .put("beginUptimeMs", SystemClock.uptimeMillis())
+            record.put("knownToolbarExactMatches", snapshot)
+            try {
+                val toolbar = By.res(pkg, "toolbar")
+                snapshot.put("internalRootLabel", device.hasObject(By.pkg(pkg).text(rootLabel).hasAncestor(toolbar)))
+                    .put("downloadLabel", device.hasObject(By.pkg(pkg).text(Environment.DIRECTORY_DOWNLOADS).hasAncestor(toolbar)))
+                    .put("endUptimeMs", SystemClock.uptimeMillis()).put("status", "recorded")
+            } catch (failure: Throwable) {
+                // Diagnostic failure must not replace the original navigation failure or allow a pass.
+                snapshot.put("status", "unavailable").put("failureType", failure.javaClass.simpleName)
+            }
+        }
     }
 
     /** Root selection only: refresh/readiness may poll; ACTION_CLICK is issued once, never retried. */
@@ -274,6 +329,7 @@ internal class Gate1DngObservationSupport(private val folder: File, private val 
         var targetNode: AccessibilityNodeInfo? = null
         await("fresh auxiliary internal root") {
             targetNode = null
+            record.put("ambiguous", false)
             val window = instrumentation.uiAutomation.rootInActiveWindow
             val roots = window?.findAccessibilityNodeInfosByViewId("$pkg:id/roots_list")?.singleOrNull()
             var selected: AccessibilityNodeInfo? = null
@@ -282,7 +338,10 @@ internal class Gate1DngObservationSupport(private val folder: File, private val 
             while (queue.isNotEmpty()) {
                 val node = queue.removeFirst()
                 if (node.packageName?.toString() == pkg && label.matcher(node.text?.toString().orEmpty()).matches()) {
-                    check(selected == null) { "Ambiguous auxiliary internal root" }
+                    if (selected != null) {
+                        record.put("ambiguous", true).put("ready", false)
+                        return@await false
+                    }
                     selected = node
                 }
                 repeat(node.childCount) { node.getChild(it)?.let(queue::addLast) }
@@ -320,16 +379,26 @@ internal class Gate1DngObservationSupport(private val folder: File, private val 
         }
     }
 
-    private fun findAuxiliaryEntry(pkg: String, name: String, phase: String, location: Pattern): UiObject2 {
+    private fun visibleAuxiliaryEntry(pkg: String, name: String): UiObject2? = try {
+        device.findObjects(By.pkg(pkg).text(name).enabled(true).hasAncestor(By.res(pkg, "dir_list")))
+            .singleOrNull()?.takeIf { !it.visibleBounds.isEmpty }
+    } catch (_: StaleObjectException) {
+        null // Readiness read only; never repeat a click.
+    }
+
+    private fun findAuxiliaryEntry(pkg: String, name: String, phase: String, location: Pattern? = null): UiObject2 {
         auxiliaryPicker.put("phase", phase)
         val directory = By.res(pkg, "dir_list")
-        val selector = By.pkg(pkg).text(name).hasAncestor(directory)
+
         var result: UiObject2? = null
         await("auxiliary $phase") {
-            check(device.currentPackageName == pkg && !device.hasObject(By.res(pkg, "roots_list")) &&
-                device.hasObject(By.pkg(pkg).text(location).hasAncestor(By.res(pkg, "toolbar"))))
-            result = device.findObject(selector)
-            if (result == null) device.findObject(directory)?.let { if (it.isScrollable) it.scroll(Direction.DOWN, .5f) }
+            result = null
+            val locationReady = if (location != null) {
+                device.hasObject(By.pkg(pkg).text(location).hasAncestor(By.res(pkg, "toolbar")))
+            } else auxiliaryPicker.optBoolean("downloadConfirmed")
+            if (device.currentPackageName != pkg || device.hasObject(By.res(pkg, "roots_list")) || !locationReady) return@await false
+            result = visibleAuxiliaryEntry(pkg, name)
+            if (result == null && location != null) device.findObject(directory)?.let { if (it.isScrollable) it.scroll(Direction.DOWN, .5f) }
             result != null
         }
         return checkNotNull(result)
@@ -438,6 +507,39 @@ internal class Gate1DngObservationSupport(private val folder: File, private val 
             if (predicate()) return
             SystemClock.sleep(25)
         }
-        error("Timed out: $label")
+        val failure = IllegalStateException("Timed out: $label")
+        if (auxiliaryUiEvidenceEnabled) {
+            try { captureUiTimeout(label) } catch (recordingFailure: Throwable) { failure.addSuppressed(recordingFailure) }
+        }
+        throw failure
+    }
+
+    /** One standard PNG and XML capture per timeout, before the caller continues. Files stay private beside
+     * the run JSON; failed or partial captures are retained, never retried or used to pass a wait. */
+    fun captureUiTimeout(label: String) {
+        val suffix = (uiTimeoutEvidence.length() + 1).toString().padStart(2, '0')
+        val record = JSONObject().put("waitLabel", label).put("beginUptimeMs", SystemClock.uptimeMillis())
+            .put("scope", "private timeout evidence; sequential captures, not atomic; may contain file names; no publication")
+            .put("timeoutScope", "capture and file IO are outside the expired polling budget; no hard end-to-end deadline")
+        uiTimeoutEvidence.put(record)
+        auxiliaryPicker.put("uiTimeoutEvidence", uiTimeoutEvidence)
+        fun capture(kind: String, extension: String, action: (File) -> Boolean) {
+            val file = File(folder, "$prefix-ui-timeout-$suffix.$extension")
+            val artifact = JSONObject().put("fileName", file.name).put("attempts", 1)
+                .put("status", "incomplete").put("beginUptimeMs", SystemClock.uptimeMillis())
+            record.put(kind, artifact)
+            try {
+                check(file.createNewFile()) { "Do not overwrite timeout evidence" }
+                check(action(file) && file.length() > 0) { "Timeout capture incomplete" }
+                artifact.put("status", "saved")
+            } catch (failure: Throwable) {
+                artifact.put("status", "failed").put("failureType", failure.javaClass.simpleName)
+            } finally {
+                artifact.put("bytes", file.length()).put("endUptimeMs", SystemClock.uptimeMillis())
+            }
+        }
+        capture("screenshot", "png") { device.takeScreenshot(it) }
+        capture("hierarchy", "xml") { device.dumpWindowHierarchy(it); true }
+        record.put("endUptimeMs", SystemClock.uptimeMillis())
     }
 }

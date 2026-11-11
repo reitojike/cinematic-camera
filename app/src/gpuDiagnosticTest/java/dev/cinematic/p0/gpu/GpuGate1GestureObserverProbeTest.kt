@@ -42,6 +42,7 @@ class GpuGate1GestureObserverProbeTest {
     private val ins get() = InstrumentationRegistry.getInstrumentation()
     private val target get() = ins.targetContext
     private val observerFailure = AtomicReference<String?>()
+    private var onUiWaitTimeout: ((String) -> Unit)? = null
     private inline fun observe(block: () -> Unit) {
         try { block() } catch (failure: Throwable) { observerFailure.compareAndSet(null, failure.javaClass.simpleName) }
     }
@@ -173,6 +174,7 @@ class GpuGate1GestureObserverProbeTest {
             .put("historyMeaning", "sum(1+historySize) over Window MotionEvents, not unique input samples")
         val operations = if (dng && !auxiliaryTouch) axes.flatMap { axis -> (0..4).map { axis to it } } else axes.map { it to 0 }
         val support = if (dng) Gate1DngObservationSupport(output.parentFile!!, "$version-$run") else null
+        onUiWaitTimeout = if (auxiliaryTouch) checkNotNull(support)::captureUiTimeout else null
         if (dng) report.put("purpose", "shared DNG programmatic values or separate PSS reference; not criterion 1 or acceptance by itself")
             .put("profile", "strength, warmth, EV; each warmup1 then recorded4; all15 retain endpoint/input/frame results")
             .put("targetVerification", checkNotNull(support).verifyTarget())
@@ -250,7 +252,8 @@ class GpuGate1GestureObserverProbeTest {
                     ins.runOnMainSync {
                         val resumed = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
                             .filterIsInstance<GpuPreviewDiagnosticActivity>()
-                        check(resumed.size <= 1)
+                        if (auxiliaryTouch && resumed.size > 1) return@runOnMainSync
+                        if (!auxiliaryTouch) check(resumed.size <= 1)
                         resumed.singleOrNull()?.let { dngActivity = WeakReference(it); found = true }
                     }
                     found
@@ -944,7 +947,12 @@ class GpuGate1GestureObserverProbeTest {
     private fun await(condition: () -> Boolean) {
         val deadline = SystemClock.elapsedRealtime() + 30_000
         do { if (condition()) return; SystemClock.sleep(25) } while (SystemClock.elapsedRealtime() < deadline)
-        error("Functional observer condition timed out")
+        failUiWait("Functional observer condition timed out")
+    }
+    private fun failUiWait(message: String): Nothing {
+        val failure = IllegalStateException(message)
+        try { onUiWaitTimeout?.invoke(message) } catch (recordingFailure: Throwable) { failure.addSuppressed(recordingFailure) }
+        throw failure
     }
     private fun nodes(): List<AccessibilityNodeInfo> {
         ins.uiAutomation.clearCache()
@@ -972,6 +980,6 @@ class GpuGate1GestureObserverProbeTest {
             all.firstOrNull { it.isScrollable }?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
             SystemClock.sleep(100)
         }
-        error("${axis.name} control unavailable")
+        failUiWait("${axis.name} control unavailable")
     }
 }
