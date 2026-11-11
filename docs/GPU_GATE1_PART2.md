@@ -323,3 +323,42 @@ GPU補助touchだけは、内部ストレージの `roots_list` 内のラベル�
 `gate1AuxTouchFailAfterDownload=true` は正確な補助touch class/modeとemulatorを入力前に検査し、Download到着後・DNG選択前に意図的に失敗させる別run専用hook。既存の `gate1AuxTouchFailAfterDown=true` とは併用不可。通常runでは省略し、意図的失敗は正常完走・本番計測に数えない。修正やhookの存在だけではFiles成功・cancel成功・実機検証済みを意味しない。
 
 内部root選択だけは、既存CPU setupと同じ公開 `AccessibilityNodeInfo` APIでfreshなラベルとクリック可能ancestor、roots_list内・同active window・visible/enabled・ACTION_CLICK対応を確認し、`ACTION_CLICK` を1回だけ発行する。準備のread-only pollingとaction再試行は区別し、false・例外・結果不明時の再clickや座標fallbackは行わない。UiAutomator 2.3.0のcached bytecodeと失敗stackの照合では、旧root clickはgesture注入前のnode refresh失敗だったが、node置換の具体原因は未確定。先行drawer clickやcleanup Backの未実行を意味しない。取消はBack最大1回を維持し、呼出phase・返値・例外と元Activity復帰未確認を記録する。この限定補修後の `failAfterDownload` negativeは別runで1回だけ検証し、別失敗なら保存して停止する。後続のDNG row選択やtouch成功はこのnegativeだけでは証明しない。
+
+### 10.5 2026-11-11: 補助sourceの限定改修と未実行範囲
+
+以下は§10.4後の時系列追記であり、以前の失敗記録・手順・artifactを改変しない。新しい依頼による旧HOLDの解除は、#332の補助source修正と非公開診断の準備に限る。主4 APK、#285の登録、固定CPU `1ce63154bd886d50b7669ccfdcfd01a8e192f83e` と固定GPU `ee68264`、製品コード・依存・本番境界は変更しない。Pixelへの配布・導入・操作は不可のままである。
+
+#### source統合の記録
+
+共通baseは `f2a8ace6df578613e6764cc229f6e7852e89f37c`。次のローカルsource commitをCPU、GPUの順にcherry-pickした。未公開sourceを公開済みcommitリンクとして扱わず、build artifactの同一性とも区別する。
+
+| 対象 | 元source commit | 元tree | 統合後commit |
+| --- | --- | --- | --- |
+| CPU診断 | `0c9283645aa140aa8daae3a8aaea1618f2d1c729` | `4eded4322207f7f01d291c626fbe6446aaf1578b` | `afde36be0de9d7ea9c266b89b63f347f663d16d2` |
+| GPU補助picker | `2ccef577c27fca8f03f44f802ca0e7fe7c3b17d3` | `5593640c74a174eeb7cdcbd079c4d41e602c8e06` | `96a9e78675387b1d5ebf8777d77babab1e28f7a0` |
+
+統合source headは `96a9e78675387b1d5ebf8777d77babab1e28f7a0`、treeは `6c4973faf4c94f47ca1a2005955f76364b06e863`。source変更は `app/src/gpuDiagnosticTest/java/dev/cinematic/p0/gpu/` 内の `CpuGate1PssSupport.kt`、`CpuGate1ReferenceUiTest.kt`、`Gate1DngObservationSupport.kt`、`GpuGate1GestureObserverProbeTest.kt` の4ファイルだけで、本追記は別の文書変更である。
+
+#### CPU: 原Hubの事実確認を追加し、継続条件は変更しない
+
+旧f2a8ace6 runはPSS18予定点のうち14点、13操作まで進み、15点目で原Hubのweak referenceがnullとなって停止した。旧raw・失敗・未着手点を保持し、再runの値で補完しない。この事実だけではHubの破棄、GC、ヒープ逼迫の有無・原因を確定できず、原因は `UNKNOWN` のままである。
+
+原Hubはweak referenceで追跡し、標準lifecycle callbackによる遷移を最大64件、identity/task/stageと破棄を観測したelapsed時刻を記録する。破棄・同じtask内の別Hub・参照消失は区別して失敗理由に残す。strong reference保持、強制GC、`ActivityScenario`、Hubの再bindは追加しない。原Hubの同一instanceという条件は維持し、再生成したHubで続行する境界変更は未実施である。ヒープ逼迫により破棄されたことが証拠で確認できた場合も、境界を変更する前に利用者へ別途確認する。
+
+各PSS試行の結果を確定した後に、Java heapのused/max/allocated/freeとlifecycle snapshotを記録する。heap値は非atomicなprocess推定であり、破棄原因の証明にはしない。ActivityManager / ActivityTaskManagerとkill/destroy eventのlogcatは、対象packageまたはHub名で限定し、system/events buffer、最大120秒・80件・64KiB、shell `timeout 2s` とする。欠落・切詰め・stderr混在・終了コード未確認を成功の根拠にせず、非公開rawのhost確認を要する。shell/Binder/file IO全体のhard deadlineを保証しない。
+
+UI待ちtimeout時だけXMLとPNGを非公開run記録へ保存し、CPUは本失敗とcleanupを合わせて最大2組とする。採取失敗・部分保存を記録して元のPSS/UI失敗を上書きしない。lifecycle metadataの保持と各点後のheap/logcat診断は割当・IO・経過時間を増やし、後続PSSにも影響する。無観測CPUや旧runと同じ観測負荷とは扱わない。18予定点・15操作、通常Back、1秒settle、各点1回のdump、13分soft budget/cleanup45秒、既存CPU1軸入口は変更しない。
+
+#### GPU: 登録DNGの可視性でDownload到着を判定する
+
+§10.4の旧Download toolbar判定を、既知のDocumentsUI（`com.android.documentsui` / `com.google.android.documentsui`）の `dir_list` 内で登録DNGの完全一致名が一意・visible・enabledであることへ変更する。内部rootの確認からその `Download` 行を1回だけclickする経路は維持する。Download toolbar文字は独立した診断として残し、到着判定に用いない。未知directoryのscroll、provider fallback、再clickは追加しない。内部rootの既知一覧内での準備探索と、Download到着後のDNG選択を区別する。
+
+補助経路のUI待機中に未成立となる条件は `check()` で即時終了せず `false` として扱う。UI待ちtimeoutごとにXML/PNGを非公開run記録へ採取し、採取失敗で元の例外を置き換えない。画面階層・画像には他のfilename等が含まれ得るため、§10.4の従来の通常記録とは別の非公開失敗証拠とする。Git・PR・公開artifactへ生XML/PNG/logcatを含めず、公開報告は必要な状態と件数だけに限定する。
+
+登録DNGが見えたことはUI経路の証拠であり、実際に選択されたresult URIの直接観測とは別である。既存の期待URI・read grant・hash検証は維持する。主programmatic/PSS経路、入力値・gesture、Back最大1回と既存finish/GL終了/元Hub復帰のcleanup条件は変更しない。
+
+#### 実行順・残るHOLD
+
+本追記時点はsource prepareのみである。両ローカルsource commitと統合headのcompile、標準lint/unit/assemble、診断compile/build、AVD、最終headの必須CI/canonical review/独立レビューは未検証であり、合格・採用・配布可能を意味しない。この作業ではGradle・build・ADB・AVDを一切実行していない。source範囲・公開用identity・privacy差分・`git diff --check` の静的確認と、実行証拠を区別する。
+
+③の準備を優先し、#332の実行枠を先取りしない。枠と対象sourceが確認されてから、通常GPU touchを先、意図的失敗のnegativeを後にする。承認範囲内の各再runは1回までとし、別の失敗が出たら証拠を保持して繰り返さず報告する。CPUの原因確認前の継続条件緩和、補助試験の本番採用、主4 APK/#285の置換、Pixel配布・操作のHOLDは解除しない。
