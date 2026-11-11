@@ -27,9 +27,10 @@ import kotlinx.coroutines.sync.withLock
 
 internal enum class DevelopEngine { CPU, GPU }
 
-/** release は保存済みの診断値からも GPU を有効にしない。Gate 2 で別途変更する。 */
+/** 通常 debug/release は保存済みの診断値からも GPU を有効にしない。Gate 2 で別途変更する。 */
+@Suppress("UNUSED_PARAMETER")
 internal fun developEngineSettingVisible(debug: Boolean, buildType: String): Boolean =
-    debug || buildType == "gpuDiagnostic"
+    buildType == "gpuDiagnostic"
 
 internal sealed interface GpuAvailability {
     data object Checking : GpuAvailability
@@ -37,7 +38,7 @@ internal sealed interface GpuAvailability {
     data class Unavailable(val reason: String) : GpuAvailability
 }
 
-/** プレビューと保存の唯一の設定入口。描画エンジン自体への接続は #286 / #287。 */
+/** プレビューと保存の唯一の設定入口。通常版の既定は CPU のまま。 */
 internal class DevelopEngineSetting(
     private val read: () -> String,
     private val write: (String) -> Unit,
@@ -107,7 +108,7 @@ internal class DevelopGpuAvailabilityCache(private val inspect: () -> GpuAvailab
 
 private val processDevelopGpuAvailability = DevelopGpuAvailabilityCache(::inspectDevelopGpuAvailability)
 
-/** debug設定と診断Hubで同じ項目を使う。検査中/不足時は GPU ボタンを無効化。 */
+/** 専用診断Hubでだけ使う。検査中/不足時は GPU ボタンを無効化。 */
 internal class DevelopEngineSettingView(
     context: Context,
     private val setting: DevelopEngineSetting = DevelopEngineSetting(context),
@@ -144,7 +145,7 @@ internal class DevelopEngineSettingView(
         addView(status.apply { setTextColor(CaptureDesign.Muted.toArgb()) })
         addView(retry)
         addView(TextView(context).apply {
-            text = "プレビュー・保存で共通。保存中の変更は次回から。現在は設定の準備のみで、GPU 描画・保存は未接続です。"
+            text = "プレビュー・保存で共通。保存中の変更は次回から。通常版の既定は CPU です。GPU 失敗時も CPU に自動で切り替えません。"
             setTextColor(CaptureDesign.Muted.toArgb())
         })
         cpu.setOnClickListener { select(DevelopEngine.CPU) }

@@ -51,7 +51,9 @@ import kotlinx.coroutines.withContext
 import java.util.Locale
 
 @Composable
-internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRollRenderer, foreground: Boolean, close: () -> Unit) {
+internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRollRenderer, foreground: Boolean,
+    gpuPublications: kotlinx.coroutines.flow.StateFlow<dev.cinematic.p0.gpu.preview.GpuInputPublication>? = null,
+    gpuTrimEpoch: Int = 0, close: () -> Unit) {
     var selectedUri by rememberSaveable { mutableStateOf<String?>(null) }
     DisposableEffect(selectedUri, foreground) {
         dev.cinematic.p0.diagnostics.PreviewPresentationTrace.invalidate()
@@ -72,6 +74,9 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
     var savedStrength by rememberSaveable { mutableDoubleStateOf(.5) }
     var savedWarmth by rememberSaveable { mutableDoubleStateOf(0.0) }
     var savedExposureEv by rememberSaveable { mutableDoubleStateOf(0.0) }
+    val gpuRenderer = (renderer as? ManualTrialPhotoRollRenderer)?.takeIf {
+        it.developEngine == dev.cinematic.p0.gpu.DevelopEngine.GPU
+    }
     val manualTrial = renderer.mode == PhotoRollPreviewMode.MANUAL_TRIAL
     val diagnostic = dev.cinematic.p0.BuildConfig.EDITOR_PREVIEW_DIAGNOSTIC && manualTrial
     var parallelPreview by remember { mutableStateOf(false) }
@@ -265,7 +270,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
     // 256px render. Continuous input cannot repeatedly abort all work. Release invalidates its ticket.
     LaunchedEffect(foreground) { if (!foreground) stopDraft() }
     LaunchedEffect(renderer, lifecycleOwner) {
-        if (!manualTrial) return@LaunchedEffect
+        if (!manualTrial || gpuRenderer != null) return@LaunchedEffect
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             for (draft in draftRequests) {
                 val workers = currentDiagnosticWorkers
@@ -347,7 +352,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
             }
         }
     }
-    LaunchedEffect(selectedUri, retry, lifecycleOwner, currentQuery, accessEpoch, strengthTicket) {
+    LaunchedEffect(renderer, selectedUri, retry, lifecycleOwner, currentQuery, accessEpoch, strengthTicket) {
       lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
         draftAdmission.invalidate()
         draftShown = false
@@ -397,6 +402,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
             finally { listingWork.finish(ticket); cancellationOwner.finish(cancellation); if (loadingTicket === ticket) loadingTicket = null }
             return@repeatOnLifecycle
         }
+        if (gpuRenderer != null) return@repeatOnLifecycle
         selection = selection.select(source)
         notice = null
         renderStage = null
@@ -621,6 +627,12 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                     }
                 }
 
+            } else if (gpuRenderer != null && gpuPublications != null) {
+                key(selectedUri) {
+                    GpuPhotoRollEditor(repository, gpuRenderer, checkNotNull(selectedUri), fromFiles,
+                        listing.items.firstOrNull { it.uri == selectedUri }?.name ?: "DNG（名前未取得）",
+                        foreground, gpuPublications, gpuTrimEpoch, ::backToList, Modifier.weight(1f))
+                }
             } else {
                 val owner = jpegSave
                 val saved = saveSnapshot

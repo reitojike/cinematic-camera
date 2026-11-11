@@ -13,8 +13,9 @@ class GpuFailuresTest {
             GpuUnavailableException("capability", cause),
             GpuContextLostException("context", cause),
             GpuMemoryBudgetException("budget", cause),
+            GpuSurfaceTeardownException("surface", cause),
         )
-        assertEquals(listOf("capability", "context", "budget"), failures.map { it.message })
+        assertEquals(listOf("capability", "context", "budget", "surface"), failures.map { it.message })
         failures.forEach { assertSame(cause, it.cause) }
     }
 
@@ -23,6 +24,7 @@ class GpuFailuresTest {
             GpuUnavailableException("capability"),
             GpuContextLostException("context"),
             GpuMemoryBudgetException("budget"),
+            GpuSurfaceTeardownException("surface"),
         ).forEach { assertNull(it.cause) }
     }
 
@@ -32,9 +34,10 @@ class GpuFailuresTest {
             GpuUnavailableException(unsafeMessage),
             GpuContextLostException(unsafeMessage),
             GpuMemoryBudgetException(unsafeMessage),
+            GpuSurfaceTeardownException(unsafeMessage),
         )
         val policies = failures.map { requireNotNull(gpuFailurePolicy(it)) }
-        assertEquals(listOf("gpu_unavailable", "gpu_context_lost", "gpu_memory_budget"),
+        assertEquals(listOf("gpu_unavailable", "gpu_context_lost", "gpu_memory_budget", "gpu_surface_teardown"),
             policies.map { it.kind.exportReason })
         policies.forEach {
             assertEquals(DevelopEngine.GPU, it.retryEngine)
