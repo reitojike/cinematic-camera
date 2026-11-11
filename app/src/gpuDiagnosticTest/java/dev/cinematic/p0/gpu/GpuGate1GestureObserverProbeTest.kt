@@ -34,7 +34,7 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-/** Emulator-only functional proof, not a Gate 1 performance measurement or Pixel entry.
+/** Functional observations, not criterion 1 or acceptance. MIXED probes remain emulator-only.
  * Real engine and Window callback are delegated unchanged, exactly once. No extra GPU pass/readback.
  * Observer failures invalidate this probe without changing the original delegate's return/exception. */
 @RunWith(AndroidJUnit4::class)
@@ -56,13 +56,28 @@ class GpuGate1GestureObserverProbeTest {
             .put("gpuNs", gpuNs ?: JSONObject.NULL).put("callbackNs", callbackNs ?: JSONObject.NULL)
             .put("showBefore", showBefore).put("rotationDegrees", rotationDegrees)
     }
+    private data class HistoricalTouch(val eventMs: Long, val x: Float, val y: Float) {
+        fun json() = JSONObject().put("eventMs", eventMs).put("windowX", x.toDouble()).put("windowY", y.toDouble())
+    }
+    private data class ActiveTouch(val axis: String, val downMs: Long, var x: Float, val y: Float,
+        var lastAction: Int = MotionEvent.ACTION_DOWN, var downInjectionAttempted: Boolean = false,
+        var downInjectionReturned: Boolean = false, var downAccepted: Boolean? = null,
+        var upInjectionReturned: Boolean = false, var upAccepted: Boolean? = null)
     private data class Touch(val action: Int, val eventMs: Long, val downMs: Long, val x: Float, val y: Float,
         val history: Int, val pointers: Int, val receivedNs: Long, val receivedUptimeMs: Long,
         var handled: Boolean = false, var returnedNs: Long? = null) {
+        var historySamples: List<HistoricalTouch>? = null
+        var windowX: Float = 0f
+        var windowY: Float = 0f
         fun json() = JSONObject().put("action", action).put("eventMs", eventMs).put("downMs", downMs)
             .put("x", x.toDouble()).put("y", y.toDouble()).put("historySize", history).put("pointerCount", pointers)
             .put("receivedNs", receivedNs).put("receivedUptimeMs", receivedUptimeMs).put("handled", handled)
-            .put("delegateReturnedNs", returnedNs ?: JSONObject.NULL)
+            .put("delegateReturnedNs", returnedNs ?: JSONObject.NULL).also { result ->
+                historySamples?.let { samples ->
+                    result.put("windowX", windowX.toDouble()).put("windowY", windowY.toDouble())
+                        .put("historicalSamples", JSONArray(samples.map { it.json() }))
+                }
+            }
     }
     private data class State(val draw: Long, val pending: Boolean, val params: GpuRenderParams, val bytes: Long, val display: GpuDisplayOptions) {
         fun json() = JSONObject().put("drawCount", draw).put("pending", pending)
@@ -102,16 +117,26 @@ class GpuGate1GestureObserverProbeTest {
 
     @Test fun observeSelectedDngProgrammaticValues() = observeProfile(programmatic = true, dng = true)
     @Test fun observeSelectedDngPssReference() = observeProfile(programmatic = true, dng = true, pssMode = true)
+    @Test fun observeSelectedDngAuxiliaryTouch() = observeProfile(programmatic = false, dng = true)
 
     private fun observeProfile(programmatic: Boolean, dng: Boolean = false, pssMode: Boolean = false) {
         val args = InstrumentationRegistry.getArguments()
-        val version = if (dng) { if (pssMode) "dng-programmatic-pss-v1" else "dng-programmatic-values-v1" } else if (programmatic) "programmatic-observer-probe-v1" else "gesture-observer-probe-v4"
-        val method = if (dng) { if (pssMode) "observeSelectedDngPssReference" else "observeSelectedDngProgrammaticValues" } else if (programmatic) "observeProgrammaticRenderValues" else "observeRealEngineAndDeliveredTouch"
+        val auxiliaryTouch = dng && !programmatic
+        val version = if (auxiliaryTouch) "dng-auxiliary-touch-v1" else if (dng) { if (pssMode) "dng-programmatic-pss-v1" else "dng-programmatic-values-v1" } else if (programmatic) "programmatic-observer-probe-v1" else "gesture-observer-probe-v4"
+        val method = if (auxiliaryTouch) "observeSelectedDngAuxiliaryTouch" else if (dng) { if (pssMode) "observeSelectedDngPssReference" else "observeSelectedDngProgrammaticValues" } else if (programmatic) "observeProgrammaticRenderValues" else "observeRealEngineAndDeliveredTouch"
         org.junit.Assume.assumeTrue(args.getString("gate1Part2") == version)
         check(args.getString("class") == "dev.cinematic.p0.gpu.GpuGate1GestureObserverProbeTest#$method")
         if (dng) gate1Part2OptIn("dev.cinematic.p0.gpu.GpuGate1GestureObserverProbeTest#$method", version)
         else check(Build.HARDWARE in setOf("ranchu", "goldfish") && args.getString("isolated") == "true")
         check(target.packageName == "dev.cinematic.p0.gpudiagnostic")
+        val failAfterDown = auxiliaryTouch && args.getString("gate1AuxTouchFailAfterDown") == "true"
+        if (auxiliaryTouch) {
+            check(!pssMode && args.getString("isolated") == "true")
+            check(args.getString("gate1AuxTouchFailAfterDown") in listOf(null, "false", "true"))
+            check(!failAfterDown || Build.HARDWARE in setOf("ranchu", "goldfish")) {
+                "Intentional auxiliary failure is emulator-only"
+            }
+        }
         val run = checkNotNull(args.getString("gate1ProbeRun")).also { check(it.matches(Regex("[a-zA-Z0-9_-]{1,40}"))) }
         val output = File(checkNotNull(target.getExternalFilesDir("gpu-diagnostics")), "$version-$run.json")
         check(output.createNewFile()) { "Do not overwrite prior evidence" }
@@ -141,7 +166,7 @@ class GpuGate1GestureObserverProbeTest {
             .put("conversion", "GPU x=center+touchSlop+track*(value-baseline)/span; positive then negative; CPU has a different physical gesture")
             .put("intermediateRounding", "CPU/GPU intermediate values may differ; compare endpoints with the preregistered functional tolerance")
             .put("historyMeaning", "sum(1+historySize) over Window MotionEvents, not unique input samples")
-        val operations = if (dng) axes.flatMap { axis -> (0..4).map { axis to it } } else axes.map { it to 0 }
+        val operations = if (dng && !auxiliaryTouch) axes.flatMap { axis -> (0..4).map { axis to it } } else axes.map { it to 0 }
         val support = if (dng) Gate1DngObservationSupport(output.parentFile!!, "$version-$run") else null
         if (dng) report.put("purpose", "shared DNG programmatic values or separate PSS reference; not criterion 1 or acceptance by itself")
             .put("profile", "strength, warmth, EV; each warmup1 then recorded4; all15 retain endpoint/input/frame results")
@@ -152,6 +177,17 @@ class GpuGate1GestureObserverProbeTest {
             .put("dumpTimeoutScope", "dumpsys -t10 service output poll only; not end-to-end shell/Binder/file IO hard deadline")
             .put("nativeOwnerCleanup", "not observed; loading=false and GL ledger0 do not prove native pending/owner release")
             .put("toleranceInterpretation", "GPU1px is shared touch/CPU operation tolerance, not a programmatic minimum step;8FloatULP is separate rounding allowance")
+        if (auxiliaryTouch) {
+            report.put("purpose", "shared DNG auxiliary touch operation proof only; separate from main input, PSS and criterion 1")
+                .put("intentionalFailureAfterDown", failAfterDown)
+                .put("profile", "strength, warmth, EV; each once; 3 auxiliary operations, no warmup repetitions")
+                .put("touchSchedule", "DOWN + 40 MOVE at 20,...,800ms + UP at 800ms; 42 events per operation; no compensation or resampling changes")
+                .put("sharedPath", "injected touch -> Window -> Slider onValueChange -> Compose state -> LaunchedEffect -> existing renderer.submit -> FULL_RECOMPUTE -> swap/callback")
+                .put("historyTraceScope", "Window pointer0 local coordinates/time copied before delegate; raw current coordinates separate; max 64 history/event and 4096 total; overflow invalidates observer; no JSON/file IO in callback")
+                .put("historyInterpretation", "injected and delivered/history traces may differ; no unique-sample count, resampled flag, prediction attribution or timing validity inferred")
+                .put("failureTouchCleanupRule", "failed run only: one best-effort CANCEL if accepted/delivered or attempted-but-unreturned DOWN has no completed Window UP/CANCEL; injection return is not delivery; never added on successful operations")
+            report.remove("programmaticSchedule")
+        }
         var hub: ActivityScenario<DiagnosticHubActivity>? = null
         var hubIdentity = 0
         var originalHub: WeakReference<DiagnosticHubActivity>? = null
@@ -168,6 +204,9 @@ class GpuGate1GestureObserverProbeTest {
         val rows = ArrayList<Row>(128)
         val pending = ArrayDeque<Row>()
         val touches = ArrayList<Touch>(128)
+        var historySampleCount = 0
+        var activeTouch: ActiveTouch? = null
+        val failureTouchCleanup = JSONObject().put("status", "not_required")
         val injected = JSONArray()
         val submissions = JSONArray()
         var scenario: ActivityScenario<GpuPreviewDiagnosticActivity>? = null
@@ -331,6 +370,16 @@ class GpuGate1GestureObserverProbeTest {
                             row = Touch(event.actionMasked, event.eventTime, event.downTime, event.rawX, event.rawY,
                                 event.historySize, event.pointerCount, System.nanoTime(), SystemClock.uptimeMillis())
                             touches.add(checkNotNull(row))
+                            if (auxiliaryTouch) {
+                                check(event.historySize <= 64 && historySampleCount + event.historySize <= 4096)
+                                checkNotNull(row).also { touch ->
+                                    touch.windowX = event.x; touch.windowY = event.y
+                                    touch.historySamples = List(event.historySize) { index ->
+                                        HistoricalTouch(event.getHistoricalEventTime(index), event.getHistoricalX(index), event.getHistoricalY(index))
+                                    }
+                                }
+                                historySampleCount += event.historySize
+                            }
                         }
                         val handled = prior.dispatchTouchEvent(event)
                         observe { row?.also { it.handled = handled; it.returnedNs = System.nanoTime() } }
@@ -365,7 +414,7 @@ class GpuGate1GestureObserverProbeTest {
                 withActivity { touchFrom = touches.size }
                 val trial = JSONObject().put("axis", axis.name)
                     .put("operationIndex", operationIndex).put("axisRepetition", repetition)
-                    .put("role", if (dng && repetition == 0) "warmup" else "recorded").put("startState", trialStart.get().json())
+                    .put("role", if (auxiliaryTouch) "auxiliary" else if (dng && repetition == 0) "warmup" else "recorded").put("startState", trialStart.get().json())
                     .put("setupComposeBarrier", setupBarrier)
                     .put("rowFromInclusive", rowFrom).put("touchFromInclusive", touchFrom)
                     .put("left", bounds.left).put("right", bounds.right).put("top", bounds.top).put("bottom", bounds.bottom)
@@ -442,18 +491,29 @@ class GpuGate1GestureObserverProbeTest {
                     }
                     trial.put("finalProgrammaticSubmitNs", finalSubmitNs).put("returnEvidenceRowSequence", returnRowSequence)
                 } else {
+                    if (auxiliaryTouch) activeTouch = ActiveTouch(axis.name, down, center, y)
                     fun send(action: Int, time: Long, x: Float) {
                         val wait = time - SystemClock.uptimeMillis()
                         if (wait > 0) SystemClock.sleep(wait)
                         val actualTime = SystemClock.uptimeMillis()
                         val event = MotionEvent.obtain(down, time, action, x, y, 0).apply { source = InputDevice.SOURCE_TOUCHSCREEN }
-                        val accepted = try { ins.uiAutomation.injectInputEvent(event, false) } finally { event.recycle() }
+                        if (auxiliaryTouch) checkNotNull(activeTouch).also { it.x = x; it.lastAction = action }
+                        val accepted = try {
+                            if (auxiliaryTouch && action == MotionEvent.ACTION_DOWN) checkNotNull(activeTouch).downInjectionAttempted = true
+                            ins.uiAutomation.injectInputEvent(event, false).also { accepted ->
+                                if (auxiliaryTouch) checkNotNull(activeTouch).also { stream ->
+                                    if (action == MotionEvent.ACTION_DOWN) { stream.downInjectionReturned = true; stream.downAccepted = accepted }
+                                    if (action == MotionEvent.ACTION_UP) { stream.upInjectionReturned = true; stream.upAccepted = accepted }
+                                }
+                            }
+                        } finally { event.recycle() }
                         injected.put(JSONObject().put("axis", axis.name).put("action", action).put("plannedMs", time)
                             .put("actualInjectMs", actualTime).put("injectReturnedMs", SystemClock.uptimeMillis())
                             .put("x", x.toDouble()).put("y", y.toDouble()).put("accepted", accepted))
                         check(accepted)
                     }
                     send(MotionEvent.ACTION_DOWN, down, center)
+                    if (failAfterDown) error("intentional_auxiliary_touch_failure_after_accepted_down")
                     for (index in 1..40) {
                         val fraction = when {
                             index <= 10 -> index / 10f
@@ -464,6 +524,7 @@ class GpuGate1GestureObserverProbeTest {
                     }
                     send(MotionEvent.ACTION_UP, down + 800, center + slop)
                     val injectionRows = (injectionFrom until injected.length()).map { injected.getJSONObject(it) }
+                    if (auxiliaryTouch) check(injectionRows.size == 42)
                     trial.put("injectedEventCount", injectionRows.size)
                         .put("plannedDownToUpMs", 800)
                         .put("actualInjectionDownToUpMs", injectionRows.last().getLong("actualInjectMs") - injectionRows.first().getLong("actualInjectMs"))
@@ -623,6 +684,62 @@ class GpuGate1GestureObserverProbeTest {
                     if (failed == null) failed = cleanup
                 }
             }
+            // Still attached to the original Window delegate. Never put cleanup input in the normal 42-event stream.
+            if (auxiliaryTouch && failed != null) attempt("cancel_failed_touch") {
+                activeTouch?.let { stream ->
+                    failureTouchCleanup.put("status", "checking_failed_stream").put("axis", stream.axis).put("downMs", stream.downMs)
+                        .put("downInjectionAttempted", stream.downInjectionAttempted).put("downInjectionReturned", stream.downInjectionReturned)
+                        .put("downInjectionAccepted", stream.downAccepted ?: JSONObject.NULL).put("lastAttemptedAction", stream.lastAction)
+                        .put("upInjectionReturned", stream.upInjectionReturned).put("upInjectionAccepted", stream.upAccepted ?: JSONObject.NULL)
+                    var downDelivered = false
+                    var touchCount = 0
+                    fun terminalReceipt(): Touch? {
+                        var terminalTouch: Touch? = null
+                        withActivity {
+                            touchCount = touches.size
+                            downDelivered = touches.any { it.downMs == stream.downMs && it.action == MotionEvent.ACTION_DOWN }
+                            terminalTouch = touches.lastOrNull { it.downMs == stream.downMs &&
+                                it.action in setOf(MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL) }
+                        }
+                        return terminalTouch
+                    }
+                    val before = terminalReceipt()
+                    failureTouchCleanup.put("downWindowDelivered", downDelivered)
+                        .put("terminalBefore", before?.json() ?: JSONObject.NULL)
+                    val uncertainDown = stream.downInjectionAttempted && !stream.downInjectionReturned
+                    failureTouchCleanup.put("downInjectionOutcomeUncertain", uncertainDown)
+                    // A thrown injection may already be queued even when the first Window snapshot is empty.
+                    if ((stream.downAccepted != true && !downDelivered && !uncertainDown) || before?.returnedNs != null) {
+                        failureTouchCleanup.put("status", "not_required_no_active_stream")
+                    } else {
+                        failureTouchCleanup.put("status", "cancel_attempted").put("touchFromInclusive", touchCount)
+                        val time = SystemClock.uptimeMillis()
+                        failureTouchCleanup.put("cancelEventMs", time).put("cancelX", stream.x.toDouble()).put("cancelY", stream.y.toDouble())
+                        val cancel = MotionEvent.obtain(stream.downMs, time, MotionEvent.ACTION_CANCEL, stream.x, stream.y, 0)
+                            .apply { source = InputDevice.SOURCE_TOUCHSCREEN }
+                        var accepted: Boolean? = null
+                        failureTouchCleanup.put("cancelInjectionReturned", false)
+                        try {
+                            accepted = ins.uiAutomation.injectInputEvent(cancel, false)
+                            failureTouchCleanup.put("cancelInjectionReturned", true).put("cancelInjectionReturnedMs", SystemClock.uptimeMillis())
+                        } catch (cancelFailure: Throwable) {
+                            failureTouchCleanup.put("cancelInjectionFailureType", cancelFailure.javaClass.simpleName)
+                        } finally { cancel.recycle() }
+                        failureTouchCleanup.put("cancelInjectionAccepted", accepted ?: JSONObject.NULL)
+                        failureTouchCleanup.put("terminalPollScope", "1s polling budget between Main calls; not a hard end-to-end deadline")
+                        val deadline = SystemClock.elapsedRealtime() + 1000
+                        var after = terminalReceipt()
+                        while (after?.returnedNs == null && SystemClock.elapsedRealtime() < deadline) {
+                            SystemClock.sleep(25); after = terminalReceipt()
+                        }
+                        failureTouchCleanup.put("terminalAfter", after?.json() ?: JSONObject.NULL).put("touchToExclusive", touchCount)
+                            .put("downWindowDeliveredAfter", downDelivered).put("upWindowDelivered", after?.action == MotionEvent.ACTION_UP)
+                            .put("cancelWindowDelivered", after?.action == MotionEvent.ACTION_CANCEL)
+                            .put("status", if (accepted == true && after?.returnedNs != null) "terminal_observed_after_cancel_attempt" else "cancel_unproven")
+                        check(accepted == true && after?.returnedNs != null) { "Failure touch cleanup unproven" }
+                    }
+                }
+            }
             val renderer = render
             var terminal: CountDownLatch? = null
             var glWorker: Thread? = null
@@ -723,11 +840,13 @@ class GpuGate1GestureObserverProbeTest {
                     allTimingValid -> "valid_input_schedule"
                     else -> "invalid_input_schedule"
                 })
+            if (auxiliaryTouch) report.put("failureTouchCleanup", failureTouchCleanup).put("capturedHistoricalSampleCount", historySampleCount)
             report.put("injectedEvents", injected).put("receivedEvents", JSONArray(touches.map { it.json() }))
                 .put("frames", JSONArray(rows.map { it.json() }))
                 .put("observerFailure", observerFailure.get() ?: JSONObject.NULL)
             output.writeText(report.toString(2))
         }
+        if (auxiliaryTouch && failed != null) throw AssertionError("GPU auxiliary touch failed; see private report").also { it.initCause(failed) }
         if (failed != null || observerFailure.get() != null) throw AssertionError("GPU observer functional probe failed; see private report")
         if (invalidTrials > 0 || invalidTimingTrials > 0) throw AssertionError("GPU endpoints or input schedule invalid; observer coverage and cleanup are reported separately")
     }
