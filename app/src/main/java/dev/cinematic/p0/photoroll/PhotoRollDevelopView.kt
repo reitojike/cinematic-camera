@@ -57,13 +57,16 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
     save: () -> Unit, begin: () -> Unit, back: () -> Unit, retry: () -> Unit,
     change: (PhotoEditInputToken, PhotoEditParameter, Double) -> Unit, reset: (PhotoEditInputToken) -> Unit,
     apply: (PhotoEditInputToken) -> Unit, cancel: (PhotoEditInputToken) -> Unit, close: (PhotoEditInputToken) -> Unit,
-    modifier: Modifier = Modifier, statusOverlay: @Composable () -> Unit = {}, fillImageWidth: Boolean = false, viewportModifier: Modifier = Modifier, info: @Composable () -> Unit) {
+    modifier: Modifier = Modifier, statusOverlay: @Composable () -> Unit = {}, fillImageWidth: Boolean = false, viewportModifier: Modifier = Modifier,
+    gpuSession: GpuPhotoRollSession? = null, gpuReady: Boolean = false,
+    gpuFailure: dev.cinematic.p0.gpu.GpuFailureHandling? = null, info: @Composable () -> Unit) {
     var information by remember { mutableStateOf(false) }
     var parameter by remember { mutableStateOf(PhotoEditParameter.STRENGTH) }
-    var comparing by remember(preview, comparison, foreground) { mutableStateOf(false) }
+    var comparing by remember(preview, comparison, foreground, gpuSession) { mutableStateOf(false) }
     val session = state.session
     val adjustments = mode == PhotoRollPreviewMode.MANUAL_TRIAL
-    val compareEnabled = foreground && preview != null && comparison != null && comparisonLabel != null && phase == PhotoRollPhase.DISPLAYED
+    val compareEnabled = foreground && phase == PhotoRollPhase.DISPLAYED &&
+        (gpuReady || (preview != null && comparison != null && comparisonLabel != null))
     val requested = session?.draft ?: state.requestedValues
     val unapplied = mode in setOf(PhotoRollPreviewMode.MANUAL_TRIAL, PhotoRollPreviewMode.STAGE_CLEAR,
         PhotoRollPreviewMode.PRIVATE_TRIAL) && state.displayedValues != requested
@@ -101,7 +104,9 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
             Box((if (compact) Modifier.fillMaxWidth().height(260.dp) else Modifier.fillMaxWidth().weight(1f))
                 .then(viewportModifier).semantics { contentDescription = "現像画像の表示領域" }, contentAlignment = Alignment.Center) {
                 val updating = phase in setOf(PhotoRollPhase.CHECKING, PhotoRollPhase.RENDERING, PhotoRollPhase.PAUSED)
-                if (preview != null && phase != PhotoRollPhase.BLOCKED) PhotoRollComparisonImage(preview,
+                if (gpuSession != null) GpuPhotoRollImage(gpuSession, requested, comparing && compareEnabled,
+                    compareEnabled, { comparing = it }, Modifier.fillMaxSize())
+                else if (preview != null && phase != PhotoRollPhase.BLOCKED) PhotoRollComparisonImage(preview,
                     comparison.takeIf { compareEnabled }, foreground, "現像結果（表示用）", comparisonLabel,
                     Modifier.fillMaxSize(), comparing && compareEnabled, { comparing = it }, unapplied || updating,
                     fillImageWidth = fillImageWidth, stableCaption = true)
@@ -112,9 +117,9 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                 Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().verticalScroll(rememberScrollState()).background(CaptureDesign.Ink.copy(alpha = .9f))
                     .pointerInput(Unit) { detectTapGestures(onTap = {}) }) {
                     if (phase == PhotoRollPhase.BLOCKED) {
-                        Text(message ?: "現像を開始・完了できません", Modifier.padding(8.dp),
+                        Text(gpuFailure?.let { "${it.title}\n${it.reason}" } ?: message ?: "現像を開始・完了できません", Modifier.padding(8.dp),
                             color = CaptureDesign.Failed, style = CaptureDesign.Explanation)
-                        TextButton(onClick = retry, enabled = foreground, shape = RectangleShape) { Text("原本を確認して再試行") }
+                        TextButton(onClick = retry, enabled = foreground, shape = RectangleShape) { Text(if (gpuFailure != null) "再試行" else "原本を確認して再試行") }
                     }
                     if (updating) Text(if (preview != null) "更新中 · 直前の表示です" else
                         if (phase == PhotoRollPhase.CHECKING) "原本を確認中…" else stage?.label ?: "DNGを処理中…",
@@ -126,7 +131,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                             color = CaptureDesign.Muted, style = CaptureDesign.Explanation)
                     }
                     if (phase == PhotoRollPhase.PAUSED) TextButton(onClick = retry, enabled = foreground,
-                        shape = RectangleShape) { Text("原本を確認して再試行") }
+                        shape = RectangleShape) { Text(if (gpuFailure != null) "再試行" else "原本を確認して再試行") }
                     if (session != null) key(parameter) {
                         Box(Modifier.fillMaxWidth().semantics { contentDescription = "現像調整パネル" }) {
                             TrialStrengthEditorPane(state, readState, parameter, foreground, phase, change, reset, apply, close)

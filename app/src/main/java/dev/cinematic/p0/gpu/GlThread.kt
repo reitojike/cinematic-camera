@@ -49,6 +49,16 @@ internal class GlThread : AutoCloseable {
         if (failure != null) throw IllegalStateException("An asynchronous GL request failed", failure)
     }
 
+    /** Observe actual HandlerThread exit after queued cleanup, with no unbounded join. */
+    fun awaitTermination(timeoutMillis: Long): Boolean {
+        require(timeoutMillis >= 0)
+        check(Looper.myLooper() !== Looper.getMainLooper()) { "Await GL thread exit off the UI thread" }
+        check(Thread.currentThread() !== thread) { "GL thread cannot await its own exit" }
+        // Thread.join(0) waits forever, so a zero remaining budget must only inspect state.
+        if (timeoutMillis > 0) thread.join(timeoutMillis)
+        return !thread.isAlive
+    }
+
     override fun close() {
         synchronized(lock) {
             if (closed) return

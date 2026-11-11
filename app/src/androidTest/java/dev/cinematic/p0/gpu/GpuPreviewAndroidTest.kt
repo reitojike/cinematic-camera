@@ -311,6 +311,122 @@ class GpuPreviewAndroidTest {
         }
     }
 
+    @Test fun delayedDrawDetachReportsFailureAndBlocksRetryUntilBarrierCompletes() {
+        val failure = AtomicReference<Throwable?>()
+        val frames = ArrayBlockingQueue<GpuPreviewFrame>(8)
+        val presented = LinkedBlockingQueue<Pair<GpuRenderParams, GpuDisplayOptions>>()
+        val drawing = CountDownLatch(1)
+        val releaseDraw = CountDownLatch(1)
+        val renderer = GpuPreviewRenderer(instrumentation.targetContext.assets,
+            onFrame = { frames.offer(it) }, onError = { failure.set(it) },
+            draw = { photo, _, output ->
+                drawing.countDown()
+                check(releaseDraw.await(15, TimeUnit.SECONDS)) { "Test did not release stalled draw" }
+                GLES32.glBindFramebuffer(GLES32.GL_FRAMEBUFFER, output.framebufferId)
+                GLES32.glClearColor(0.1f, 0.2f, 0.3f, 1f)
+                GLES32.glClear(GLES32.GL_COLOR_BUFFER_BIT)
+                photo.input.context.checkGl("synthetic delayed detach")
+            }, onPresented = { params, display -> presented.add(params to display) })
+        val consumer = HandlerThread("PreviewDetachTimeoutConsumer").apply { start() }
+        try {
+            ImageReader.newInstance(16, 16, PixelFormat.RGBA_8888, 2).use { reader ->
+                reader.setOnImageAvailableListener({ it.acquireLatestImage()?.close() }, Handler(consumer.looper))
+                try {
+                    val params = GpuRenderParams(0.75, PhotoAdjustments.NONE)
+                    val display = GpuDisplayOptions(false, 90)
+                    renderer.submit(params, display)
+                    renderer.setStarted(true)
+                    renderer.openPhoto(LinearSrgbImage(4, 2, FloatArray(24) { 0.18f }))
+                    renderer.attachSurface(reader.surface, 16, 16)
+                    assertTrue(drawing.await(5, TimeUnit.SECONDS))
+                    instrumentation.runOnMainSync {
+                        assertFalse(renderer.detachSurface(reader.surface))
+                    }
+                    assertTrue(failure.get() is GpuSurfaceTeardownException)
+                    assertTrue(renderer.teardownPending)
+                    assertEquals(1, renderer.activeWindowCount)
+                    assertFalse(renderer.retry())
+                    renderer.attachSurface(reader.surface, 16, 16)
+                    releaseDraw.countDown()
+                    val failed = snapshot(renderer, AtomicReference(null))
+                    assertFalse(renderer.teardownPending)
+                    assertEquals(0L, failed.drawCount)
+                    assertEquals(0, failed.windowCount)
+                    assertTrue("Invalidated frame must not become a photo result", presented.isEmpty())
+                    assertTrue("Timeout must not automatically recover", frames.isEmpty())
+                    failure.set(null)
+                    assertTrue(renderer.retry())
+                    assertEquals(params to display, presented.poll(5, TimeUnit.SECONDS))
+                    awaitFrame(frames, failure)
+                    assertTrue(renderer.detachSurface(reader.surface))
+                } finally {
+                    releaseDraw.countDown()
+                    renderer.close()
+                    assertTrue(renderer.awaitClosed(5_000))
+                }
+            }
+        } finally {
+            releaseDraw.countDown()
+            renderer.close()
+            consumer.quitSafely(); consumer.join(5_000)
+            assertFalse(consumer.isAlive)
+        }
+    }
+
+    @Test fun glTerminationWaitDoesNotConfuseQuitRequestWithThreadExit() {
+        val thread = GlThread()
+        val quitRequested = CountDownLatch(1)
+        val releaseCallback = CountDownLatch(1)
+        try {
+            thread.post {
+                thread.close()
+                quitRequested.countDown()
+                check(releaseCallback.await(5, TimeUnit.SECONDS))
+            }
+            assertTrue(quitRequested.await(5, TimeUnit.SECONDS))
+            assertFalse(thread.awaitTermination(0))
+            assertFalse(thread.awaitTermination(20))
+            releaseCallback.countDown()
+            assertTrue(thread.awaitTermination(5_000))
+            assertTrue(thread.awaitTermination(0))
+        } finally {
+            releaseCallback.countDown()
+            assertTrue(thread.awaitTermination(5_000))
+        }
+    }
+
+    @Test fun closeWhileDrawIsDelayedCannotClaimCleanupOrPublishFrame() {
+        val drawing = CountDownLatch(1)
+        val releaseDraw = CountDownLatch(1)
+        val presented = AtomicInteger()
+        val renderer = GpuPreviewRenderer(instrumentation.targetContext.assets,
+            draw = { _, _, _ ->
+                drawing.countDown()
+                check(releaseDraw.await(10, TimeUnit.SECONDS))
+            }, onPresented = { _, _ -> presented.incrementAndGet() })
+        ImageReader.newInstance(16, 16, PixelFormat.RGBA_8888, 2).use { reader ->
+            try {
+                renderer.setStarted(true)
+                renderer.openPhoto(LinearSrgbImage(4, 2, FloatArray(24) { 0.18f }))
+                renderer.attachSurface(reader.surface, 16, 16)
+                assertTrue(drawing.await(5, TimeUnit.SECONDS))
+                renderer.close()
+                assertFalse(renderer.awaitClosed(20))
+                assertTrue(renderer.teardownPending)
+                assertFalse(renderer.retry())
+                releaseDraw.countDown()
+                assertTrue(renderer.awaitClosed(5_000))
+                assertFalse(renderer.teardownPending)
+                assertEquals(0, presented.get())
+                assertEquals(0, renderer.activeWindowCount)
+            } finally {
+                releaseDraw.countDown()
+                renderer.close()
+                assertTrue(renderer.awaitClosed(5_000))
+            }
+        }
+    }
+
     @Test fun stopTimeWindowDestructionFailureRemainsVisibleAtLaterDetachAndShutdown() {
         val failure = AtomicReference<Throwable?>()
         val frames = ArrayBlockingQueue<GpuPreviewFrame>(8)
@@ -335,17 +451,16 @@ class GpuPreviewAndroidTest {
                     // Failure originates in the earlier lifecycle stop, not detach's own barrier.
                     renderer.setStarted(false)
                     assertTrue("Stop did not report destruction failure", destructionFailed.await(5, TimeUnit.SECONDS))
-                    assertSame(injected, failure.get())
+                    assertTrue(failure.get() is GpuSurfaceTeardownException)
+                    assertSame(injected, failure.get()?.cause)
                     assertEquals("Failed destruction must not claim the window was released", 1, renderer.activeWindowCount)
-                    val detachFailure = assertThrows(IllegalStateException::class.java) { renderer.detachSurface(surface) }
-                    assertTrue("Detach must preserve the earlier destruction failure",
-                        generateSequence<Throwable>(detachFailure) { it.cause }.any { it === injected })
+                    assertFalse("Detach reports failure without crashing the lifecycle callback", renderer.detachSurface(surface))
+                    assertFalse("Failed destruction cannot be retried as if ownership ended", renderer.retry())
 
                     renderer.close()
                     // This also waits for context shutdown, which closes the real target directly.
-                    val shutdownDetachFailure = assertThrows(IllegalStateException::class.java) { renderer.detachSurface(surface) }
-                    assertTrue("Shutdown must not erase the earlier destruction failure",
-                        generateSequence<Throwable>(shutdownDetachFailure) { it.cause }.any { it === injected })
+                    assertFalse("Shutdown must not erase earlier destruction failure", renderer.detachSurface(surface))
+                    assertFalse(renderer.awaitClosed(5_000))
                 } finally {
                     renderer.close()
                     // The injected failure remains expected; still wait for shutdown before reader.close.
