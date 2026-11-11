@@ -41,7 +41,7 @@ instrumentation argument `gpuExportSave=true` の全条件が必要。実機で�
 - caller interruption 時に作業を放置せず drain し、取消として返すこと。
 
 この Android test は DNG decode / JPEG / MediaStore / FGS / preview と保存の同時利用を検証しない。
-これらは次の承認済み AVD / 実機確認の対象であり、host Mesa 結果を代用しない。
+別のDNG/publicationとGPU editor/FGS fixtureで確認する。host Mesa結果をAndroid実行の代用にしない。
 
 ## この Draft の作業時確認
 
@@ -62,7 +62,7 @@ GPU 専用 editor も同じ save owner の失敗理由・件数を表示し、�
 GPU_FAILED の再試行・同じ publication の再照合に限って表示済みプレビューなしで続行できる。
 保存中・HOLD・publication 不明・GPU_FAILEDではプレビューを自動再開せず、READY / PUBLISHED
 でだけ明示「プレビューを再開」を許可する。GPU_FAILEDでは同じGPU保存の明示retryに限定する。設定・画像の自動再計算は追加しない。
-この接続の Compose / foreground / GPU owner 排他は AVD の最終統合確認が必要。
+この接続のCompose / foreground / GPU owner排他は、後述の合成AVD fixtureで限定確認する。
 
 Home / trim 復帰でも停止状態と保存 handle を維持する。Activity 再作成後の入力読込でも、
 取得した保存 owner が READY / PUBLISHED 以外なら GPU 写真を開く前に止める。
@@ -74,7 +74,7 @@ emulator 限定で、実 factory の検証済み合成DNG → GPU → JPEG → M
 保存 snapshot 開始後に設定をCPUへ変更しても、その保存がGL current contextで進むことを観測する。
 寸法・orientation・sRGB・recipe・EV・原本fingerprint・同一公開URI・資源解放を確認し、
 画質閾値は追加しない。成功時だけ確認済みのexact synthetic rowsを削除し、失敗時は保全する。
-元の設定は終了時に復元する。実行結果はPRへ記録する。
+元の設定は終了時に復元する。`2058c1f` の合成AVDで1/1成功（1.481秒、skip0）。
 
 ## 実 GPU 編集画面 / FGS の追加受入
 
@@ -82,10 +82,29 @@ emulator 限定で、実 factory の検証済み合成DNG → GPU → JPEG → M
 emulator 限定。実 preview と実保存 owner・FGSを使い、previewの終了確認がFGS開始より先であること、
 Home / 復帰で同じ保存を維持すること、バックグラウンド公開後にpreviewが自動再開しないこと、
 明示再開と同じ公開URIの再照合を検証する。queue barrierは時機の制御だけに使い、保存処理をfakeに置換しない。
-この1caseは全失敗・取消・process再起動の実GPU結合を網羅しない。実行結果はPRへ記録する。
+`2058c1f` の合成AVDで1/1成功（53.076秒、skip0、再実行なし）。
+この1caseは全失敗・取消・process再起動の実GPU結合を網羅しない。
 
 ## 大判比較の範囲
 
-12MPの実CPU対64/256行GPUは最終8bit最大差1・p99.9=0で合格し、両帯幅はビット一致した。
-24MPはnear-white countがCPUに対して2画素異なり、既存条件で停止した。追加24MP試験と基準変更は行わず、
-[Phase 2 検証計画](GPU_EXPORT_PHASE2.md)へ分離する。24MP全体の受入完了とはしない。
+12MPの実CPU対64/256行GPUは最終8bit最大差1・p99.9=0で当時の条件では合格し、両帯幅はビット一致した。
+24MPはnear-white countがCPUに対して2画素異なり、旧条件で停止した。後にAVD1600×1200の既存全画面GPUでも
+count差1が出た。その後の最新ユーザー判断でCPU差（count/Mist/最終8bit/分位点）はすべて参考記録とし、
+停止条件にしない。Gate2合否はユーザーの実写の見た目で決める。自動試験は帯対全画面GPU一致、shader compile、
+原本保護・再試行・資源解放を維持する。
+[Phase 2 検証計画](GPU_EXPORT_PHASE2.md)に理由・旧結果・最新の判断を残す。追加24MP試験は後回しとし、
+未実施の24MP最終8bitや全体受入を完了扱いしない。1600×1200はCPU診断記録とGPU同士の自動判定を分けて再開する。
+
+## AVD確認の時系列
+
+`2058c1f` でGPU出力adapter3件、実DNG公開1件、実GPU editor/FGS1件、GPU解析4件、renderer4件の計13件が成功。
+その後1600×1200の最初のCPU対全画面GPUのcount旧条件で停止した。旧失敗を消さず、
+最新方針へ改訂したheadでCPU差を参考記録し、帯64/256と全画面GPUの一致・残るFGS/owner回帰を確認する。
+小型64×48の実保存結合、1600×1200のengine受入、12MPのhost画質を区別し、実12MP DNG保存や実機合格に読み替えない。
+
+## 今回の移行範囲と残る旧試験
+
+今回の参考値化はexport対象の `GpuExportParityAndroidTest` / `GpuExportRendererAndroidTest` に限定する。
+旧 `StageClearGpuPipelineAndroidTest` / `GlowMistParityAndroidTest` 等の広範なCPU parity試験には旧assertが残る。
+これは移行前の試験範囲の差であり、CPU差をGate2条件へ戻す意味ではない。今回の#341結合に広げず、
+GPU既定化後の#290でGPU基準画像回帰への置換を扱う。純粋なcount集計関数自体の正しさ試験は別物として保持する。
