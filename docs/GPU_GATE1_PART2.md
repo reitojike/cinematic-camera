@@ -1,5 +1,7 @@
 # Gate 1 第2部の実機手順（準備中）
 
+> **後継手順の準備案**: §1〜§8は #326 でマージした記録として保持する。後続判断の「GPU判定・CPU参考」「GPUプログラム入力主・タッチ補助」は§9を参照する。未確定欄を解消し #285へ最終条件を追記するまで、準備完了・実機実施許可とは扱わない。
+
 正本: [#285](https://github.com/reitojike/cinematic-camera/issues/285)、基準 [#276 §2.2](https://github.com/reitojike/cinematic-camera/issues/276)。
 本書は第1部後のユーザー判断を受けた第2部専用手順。旧第1部の条件・結果を遡って変更せず、
 旧 #270 の操作・許可も再利用しない。**本書の準備・マージは APK の配布や実機操作の許可ではない。**
@@ -164,3 +166,97 @@ JPEG全byteのSHA/長さ/向き、保存・公開順序、journal遷移・確定
 採用ケース/実APK/CPU基準照合、正式①と参考列、②の範囲、③のユーザー判断、④peak/解放、PSS、保存、欠測/延期を分ける。
 公開は匿名集計のみ。写真名・写真別数値・個人用パス・端末固有識別子・生の会話/ログ・画像を含めない。
 第1部と第2部を合わせた未確認点を示し、全 Gate 1 の継続・中止をユーザーへ確認する。
+
+## 9. 後継手順：GPU判定・CPU参考の準備案
+
+本節は #326 マージ後のユーザー判断を反映する追補である。[既存の第2部登録](https://github.com/reitojike/cinematic-camera/issues/285#issuecomment-6772026000)と§1〜§8の旧記録を遡って修正しない。未確定欄を解消し、実施に使う最終条件を #285 へ追記する。エミュレーター試行は手順作成の検証であり、Pixelの性能測定・実機合格ではない。実機計測開始後に手順・目標値・許容差を変える場合はユーザーの承認を得る。
+
+### 9.1 変更範囲
+
+- 判定にはGPUを使い、CPUは参考とする。CPUの描画ごとの値を得るコードを追加しない。CPU参考記録の取得不能をGPU第2部の開始延期理由にしない。
+- GPUは既存描画経路へのプログラム値入力を主、タッチドラッグを操作成立確認の補助とする。§4の「同じ物理操作」の旧準備条件をこの役割分担へ置き換える。GPUプログラム入力とCPU相対ダイヤルを同じ物理操作・同じ描画値列と呼ばない。
+- **正式①は不変**。MIXED 1024×768、seed=20261110、photo-lived FULL_RECOMPUTE、各軸60慣らし＋120本番（540/360）、16,666,667ns目標開始周期。CPU時計の描画開始→glEndQuery/glFinish完了wall中央値を判定列とし、強さ16.7ms以下（最低33ms以下）、色温度/EV33ms以下、p95等の記録を維持する。写真p97/基準EVはopen時1回の初回準備として除く。
+- GPUプログラム入力・タッチ・DNG操作は正式①と別走行・別列。CPU gfxinfoとGPU完了wallから高速化率を作らない。
+- ②、④の台帳128MiB、書出し192MiBは不変。PSSは参考。③とCPU書出しメモリは未準備のため第2部後へ回す。#325の合成保存同等性受入は完了済みで、同じ受入を再実行しない。
+
+### 9.2 固定本体と試験APKの識別
+
+| 対象 | 固定値 |
+| --- | --- |
+| GPU本体 source / tree | `ee682646034f08f5739c6dc20cfff268514bc780` / `c168ffbad35d62e7d9fd4a886b02ab7fe6eb865a` |
+| GPU本体 APK SHA-256 / bytes | `cf79d84ea2e225d390516ff8f7bcfe3c2d6e93c775f5118a0b97008cfd4285ac` / 36,577,393 |
+| CPU本体 source / tree | `1ce63154bd886d50b7669ccfdcfd01a8e192f83e` / `1b9ca54e1309ae350cc6f2d10c220037abcc3ac0` |
+| CPU本体 APK SHA-256 / bytes | `8cfc16cf5c60e29a3c67618402a9913be7a24a7f5367e5bd101c362e8b4bf745` / 36,462,513 |
+| 両本体 variant / ABI | `gpuDiagnostic` / `arm64-v8a`, `x86_64` |
+| 両本体 package / version | `dev.cinematic.p0.gpudiagnostic` / code 10、name `0.0.10-p05` |
+| 両本体 manifest条件 | debuggable=false、profileable shell=true |
+| 既存公開署名証明書SHA-256 | `0e6fc2b5e12b4bcf5142592992f3b4879b44ca849c6c26c14464003ca0a35a8c` |
+| 最終試験APK source / tree / build base | 未確定。公開commitとlocal-onlyを区別する |
+| 最終試験APK SHA-256 / bytes / package / version | 未確定。旧probe APKを最終識別へ流用しない |
+| 最終試験 target / runner / 全method・引数 / 署名 | 未確定。各methodの対象がGPU本体かCPU本体かも記入する |
+
+GPU本体は受入head `5b143d6414b1394c278e69a96a2c97e29d3f239a` と上表sourceのtree一致を根拠に、既存APK bytesを不変で使う。CPU本体も上表bytesを維持する。新しい本体assembleや署名秘密の生成を意味しない。
+
+最終試験APKのbuild baseには後継mainの既存Gradle/variant変更が含まれ得る。固定本体をそのbaseから再buildしたと記載せず、次を別々に照合する。
+1. 固定本体source/treeと実APK hash、実行前のinstalled APK hash。
+2. 試験APKのsource/tree、build base、固定本体sourceとの差分、target/runner/署名と互換性検証。
+3. 後継PRのbase/head差分。PRで製品・依存・Gradleが無変更でも、固定本体sourceと後継main全体のtree一致を意味しない。
+
+未公開sourceへ公開commitリンクを付けない。最終headのCI/reviewと、実行source/APKの対応も別に残す。GPU/CPUは同じpackageなので、導入切替を新しい実機許可の範囲に含める。削除・データ消去・署名不一致の回避を自動実施しない。
+
+### 9.3 GPU主入力・補助タッチの候補
+
+主入力はtest-onlyで `GpuPreviewRenderer.submit(params, display)` へ値を与え、タッチの既存LaunchedEffectと同じ入口以降を共有する。**主入力中はUI Sliderの表示値を提出値に同期しない。** Slider表示ではなく実engine renderのparams・完了・renderer callbackの対応を記録する。上流のSlider/Compose state更新は迂回し、同じタッチ入力そのものを再現するとは主張しない。
+
+固定本体の根拠: [Slider→state](https://github.com/reitojike/cinematic-camera/blob/ee682646034f08f5739c6dc20cfff268514bc780/app/src/gpuDiagnostic/java/dev/cinematic/p0/gpu/GpuPreviewDiagnosticActivity.kt#L412-L414)、[LaunchedEffect→submit](https://github.com/reitojike/cinematic-camera/blob/ee682646034f08f5739c6dc20cfff268514bc780/app/src/gpuDiagnostic/java/dev/cinematic/p0/gpu/GpuPreviewDiagnosticActivity.kt#L378-L383)、[FULL_RECOMPUTE](https://github.com/reitojike/cinematic-camera/blob/ee682646034f08f5739c6dc20cfff268514bc780/app/src/gpuDiagnostic/java/dev/cinematic/p0/gpu/GpuPreviewDiagnosticActivity.kt#L299)、[submit→mailbox/wake](https://github.com/reitojike/cinematic-camera/blob/ee682646034f08f5739c6dc20cfff268514bc780/app/src/main/java/dev/cinematic/p0/gpu/preview/GpuPreviewRenderer.kt#L147-L152)、[render→swap/drawCount→callback](https://github.com/reitojike/cinematic-camera/blob/ee682646034f08f5739c6dc20cfff268514bc780/app/src/main/java/dev/cinematic/p0/gpu/preview/GpuPreviewRenderer.kt#L405-L429)。このsource経路の一致は、最終test APKの動作確認や負荷ゼロの証明ではない。
+
+| 軸 | 開始→到達→帰着 | 上昇/下降の速度 |
+| --- | --- | --- |
+| strength | 0.50→0.56→0.50 | +0.30 /s、−0.30 /s |
+| warmth | 0→6→0 | +30 /s、−30 /s |
+| exposureEv | 0→0.6→0 | +3 EV/s、−3 EV/s |
+
+候補は200ms等速上昇＋400ms保持＋200ms等速下降の800ms。他軸は0.50/0/0に固定。t=0,20,...,800msの41点を各1回提出し、遅れた点の省略や実経過時間からの値列再計算をしない案である。予定時刻、実submit開始/返却時刻、params、実render時刻/値、callback、欠落/遅延を分けて記録する。latest-winsのため41点すべての描画は保証せず、予定点数を実描画数や表示FPSと呼ばない。
+
+入力時間の成立条件は最終sourceと機能試行で確認後に固定する。現候補は初回実submitをt0とし、全点のuptime遅れ0〜20ms、最終span800〜820ms、隣接submitの同一uptimeミリ秒への集中なし。20msは予定入力周期1点分であり、①の描画速度閾値ではない。uptimeの整数ms分解能とnanoTime記録を分ける。**本節の数値は未最終登録**。endpointValidity、inputTimingValidity、observer/cleanupを別判定にし、端点と入力時間が揃わない走行を有効な800ms操作に読み替えない。
+
+タッチ補助は主入力と別method/識別にし、実注入/Window受信/history/実描画を区別する。Material3のaccessibility boundsから左右それぞれ `round(10dp×density)` を除き、active thumb幅 `round(2dp×density)` も考慮した実trackで値/pxを求める。旧GPU v3の幾何はここが誤り、strength端点valid、warmth/EV端点invalidだった記録を保持する。新許容差で旧結果を再判定せず、新source・新試験として扱う。タッチの入力時間成立は主入力と別扱いにする。
+
+### 9.4 最小刻みに基づく許容差とCPU参考
+
+許容差はCPU dial/touchとの比較に使う共通操作許容差として先に式を固定し、成功率や実到達値に合わせて広げない。`epsilon_operation=max(CPU量子化半幅, CPUの1px相当, GPU touchの1px相当)` とする。GPUの1px値はprogrammatic主経路自体の最小刻みではなく、比較対象のtouch幾何から決める。別に `epsilon_round=8 Float ULP(target)` を数値丸め余裕として記録する。これは1px由来ではない。採用許容差は `max(epsilon_operation, epsilon_round)` とし、各成分を別欄で残す。
+
+式・丸め方・適用経路を測定前に固定したうえで、**新しい許可後の準備UI確認→実端末のdensity/bounds/trackから各軸の1px値・1段値・具体的許容差を算出して記録→性能計測開始**の順とする。Pixelの境界/densityは未検証で、AVDの991pxや他端末寸法を流用しない。準備UI確認を含む許可範囲と最終数値の記録先を先に示す。未確認の端末換算値を推測で埋めない。
+
+CPUは固定1ce6315へ描画hookを加えず、既存public UIだけを操作する最小driverが候補。相対dialは左増加、非zero進行率fで `x=x0−K(h+A×f)`、zeroで `x=x0`。K=24dpPx/tapStep、h=tapStep/3、Aは軸の振幅。dead-zone、strength丸め、baseline snap、画面端/system gesture領域を含めて実座標を固定する。要求値・同座標swipeだけで到達を証明しない。
+
+CPUの記録は次に限定し、取得不可は参考欠測にする。
+- `dumpsys gfxinfo ... framestats` 等の外部UI frame時間。header/flags/有効timestampを確認し、例えばFrameCompleted−IntendedVsyncならその区間名を記す。現像engine時間・写真frame数・GPU完了wallとは同一視せず、欠測は0にしない。
+- 開始/到達/帰着の画面表示値、実操作時間、方式・座標と所定軌跡との差。**描画ごとの値との対応は取得できない**。正規化FloatのrangeInfoから逆換算した値もUI状態の復元値であり、内部Doubleそのものや画像frame値ではない。stateDescription表示文字だけの場合の半幅はstrength 0.005 / warmth 0.5 / EV 0.05で、その表示精度より細かな一致を主張しない。この観測精度を共通操作許容差の後付け拡大に使わず、判定できない精度は未確認として残す。
+- PSS。内部full採用、完全idle、native解放を画面だけで証明したとは書かない。
+
+CPU public UI-only driverは `cpuAxis=strength|warmth|EV` の3軸source対応を独立reviewで確認済み。1回1軸・42eventsで、製品型依存/reflection/hookはない。最終source/APKによるruntime確認は未完、peak画面値も未取得であり、3軸の実操作成立を証明したとは扱わない。最終method/引数/座標/取得精度と実行証拠を固定票へ記入する。旧CPU v3の未build/未run案を実施済みにせず、停止した描画hook開発や詳しいCPU観測は第2部後の別作業とする。
+
+### 9.5 共通DNG、回数、PSS
+
+非写真の合成DNG候補は1,573,250 bytes、SHA-256 `796555f835a38a94162383dc9f037023a1fd6400037d7b5f3f0e287ccd64bf3a`、orientation 1。GPU候補側でnative/AS_SHOTとも1024×768、Float raw bits全一致を確認した準備証拠があるが、それだけで固定CPU 1ce6315の実行・実機共通入力・GPUプログラム入力DNG連携が検証済みとはしない。最終入口で入力hash/実寸法/原本不変を確認し、DNG④はpeakと解放を実測する。currentからpeakを推定しない。
+
+- 操作順はstrength→warmth→EV、各軸慣らし1＋本番4、計15操作/経路を維持する。1往復が1操作。主GPU、CPU参考、補助タッチのどのrunへ適用するかを最終method表で分け、補助タッチ回数を未登録で増やさない。
+- PSSは速度と別run、**18予定点/経路、CPU＋GPUで36予定点**。Hub入力前1、初回1、15操作それぞれの後、close/Hub復帰後1。慣らし後も採る。§6の「操作ブロック後」を各軸1回へ減らさず、原典の「各操作後」を維持する。36成功の保証ではなく、失敗点はmissing/invalidとし自動再採取しない。
+- 各点はverified PIDのmeminfoを1回。PID/package/UID/starttimeを前後照合し、TOTAL/Dalvik/Native PSS、managed/native Heap Alloc、KiB、時刻、採取費用を分ける。process変更・状態不明を正常値へ混ぜず、強制GC/kill/追加releaseで揃えない。
+- CPU初回は外部から初回表示を確認した点、closeは通常Backで元Hub復帰とActivity消失を外部確認した点。内部exact/full採用やnative解放の未証明を明記し、参考欠測でGPU開始を止めない。
+- GPUは既存observerのframe完了/params/pending、正常closeの終了/台帳/window情報を使う最小連携が候補。terminatedと実worker終了は異なる。DNG owner/worker終了の未確認を完全解放とせず、close後snapshot、追加cleanup、CPU用新hook、大きなhost/app protocolを導入しない。
+- CPU host採取とGPU instrumentation内採取はallocation/待機負荷が異なり得る。PSSは瞬間peakでも台帳peakと同時点でもなく、台帳や別時点最大とは足さない。
+
+### 9.6 最終登録までの未確定欄
+
+- [ ] 後継PR公開head、最終test-only差分、CI/canonical/独立reviewと本節の対応。
+- [ ] 試験APK全識別、build base、固定GPU/CPU本体との互換性、実行source/APKの一致。
+- [ ] 正式①、共通入力、DNG④、主programmatic、touch補助、CPU外部参考、PSSのmethod/guard/引数/各run回数。
+- [ ] 主軌跡の入力時間成立、実render/完了対応、開始/到達/帰着定義、geometryと最小刻みからの許容差。
+- [ ] 共通DNG最終入口と固定CPU実寸法の確認範囲。DNG統合とMIXED機能probeを区別する。
+- [ ] PSS連携、CPU外部観測、PID/待機/close境界、欠測処理と停止上限。
+- [ ] 導入順、入力配備、速度/PSS別run、補助タッチ、回収、冷却、切替を含む総所要見込み。
+- [ ] 最終APK・Pixel 9a・範囲・所要・導入切替/試験APK削除を提示し、新しい配布/実機許可を得る。
+
+PSSだけの13分/経路・計26分は検討中の観測停止枠であり、全第2部の所要や実機性能予測ではない。同期shell/file IOのhard real-time停止を保証せず、最終方法に即した待機上限と不確実結果の扱いを登録する。§5の最低2分冷却、30秒間隔2sampleの安定、開始NONE/LIGHT、追加5分で延期、異常時停止は維持する。旧第1部やAVDの許可をPixelへ流用せず、許可前にPixelへ配布/導入/操作しない。
