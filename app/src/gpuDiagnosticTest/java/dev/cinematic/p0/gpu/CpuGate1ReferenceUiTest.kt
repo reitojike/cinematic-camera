@@ -14,6 +14,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
+import java.security.MessageDigest
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assume.assumeTrue
@@ -34,17 +35,35 @@ class CpuGate1ReferenceUiTest {
         val args = InstrumentationRegistry.getArguments()
         assumeTrue(args.getString("cpuReferenceUi") == "true" && args.getString("isolated") == "true")
         check(args.getString("class") == "dev.cinematic.p0.gpu.CpuGate1ReferenceUiTest#axisHoldReferenceOnly")
-        check(Build.HARDWARE in setOf("ranchu", "goldfish") && Build.VERSION.SDK_INT >= 30)
+        check(Build.VERSION.SDK_INT >= 30)
+        val emulator = Build.HARDWARE in setOf("ranchu", "goldfish")
+        if (!emulator) {
+            // Consistent with gate1Part2OptIn. Flags are guards, never user authorization.
+            // Separate explicit authorization is required before any physical-device access.
+            check(args.getString("gate1Part2") == "cpu-reference-ui-v1")
+            check(args.getString("gate1PixelProbe") == "true" && Build.MODEL == "Pixel 9a")
+        }
         check(inst.targetContext.packageName == TARGET)
-        // A host attestation, not an in-app hash measurement. Host must verify installed APK bytes.
+        // Require both host attestation and public ApplicationInfo.sourceDir byte identity.
         check(args.getString("verifiedCpuApkSha256") == CPU_SHA)
+        val installedCpuSha = File(inst.targetContext.applicationInfo.sourceDir).inputStream().use { input ->
+            val digest = MessageDigest.getInstance("SHA-256")
+            val buffer = ByteArray(8192)
+            while (true) { val count = input.read(buffer); if (count < 0) break; digest.update(buffer, 0, count) }
+            digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        }
+        check(installedCpuSha == CPU_SHA) { "Installed CPU APK bytes do not match the fixed baseline" }
+        val runId = checkNotNull(args.getString("cpuRunId"))
+        check(runId.matches(Regex("[A-Za-z0-9][A-Za-z0-9_-]{0,79}"))) { "Safe unique cpuRunId required" }
         val axis = Axis.from(checkNotNull(args.getString("cpuAxis")))
         val root = File(checkNotNull(inst.targetContext.getExternalFilesDir("cpu-reference-ui")),
-            "functional-${SystemClock.elapsedRealtime()}")
-        check(root.mkdirs())
+            runId)
+        check(!root.exists() && root.mkdirs()) { "cpuRunId already exists or cannot be reserved; do not overwrite" }
         val events = JSONArray()
         val report = JSONObject().put("schema", 1).put("purpose", "UNREGISTERED_FUNCTIONAL_REFERENCE")
-            .put("hostAttestedCpuApkSha256", CPU_SHA).put("axis", axis.id)
+            .put("hostAttestedCpuApkSha256", CPU_SHA).put("verifiedInstalledCpuApkSha256", installedCpuSha)
+            .put("runId", runId).put("emulator", emulator)
+            .put("authorizationMeaning", "flags are guards only; physical-device access requires separate explicit authorization").put("axis", axis.id)
             .put("requestedStart", axis.start).put("requestedPeak", axis.peak).put("requestedReturn", axis.start)
             .put("valueUnit", axis.unit).put("rangeMinimum", axis.minimum).put("rangeMaximum", axis.maximum)
             .put("stateDescriptionConversion", axis.displayConversion)
