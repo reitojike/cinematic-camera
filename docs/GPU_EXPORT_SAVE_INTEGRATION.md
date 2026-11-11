@@ -46,14 +46,22 @@ instrumentation argument `gpuExportSave=true` の全条件が必要。実機で�
 ## この Draft の作業時確認
 
 - pure Kotlin/JUnit で保存 owner 36件、固定 failure 表示3件、計39件が成功。
+- UI snapshot 表示3件とGPU editor再開方針3件も、該当純粋部分を抽出して6/6成功。
 - 実 renderer / GLSL を LWJGL Mesa GLES 3.2 に binding した host で adapter 3試験を実行し成功。
   thread の host binding は Java executor であり Android HandlerThread そのものではない。
 - cloud の Android 一式は Gradle 配布取得不能、SDK 未配置のため未実行。公式 PR CI が必要。
 - 実機操作、製品 merge は未実施。
 
-## GPU 専用編集画面との依存
+## GPU 専用編集画面との接続
 
-基点 #338 の `9e36037` には、その後 #339 で main に入った GPU 専用編集画面は含まれない。
-この stack の画面変更は既存 `PhotoRollScreen` / `ManualTrialJpegSaveOwner` に限る。
-#339 / #340 の GPU 専用画面から同じ保存 handle を取得し、preview owner の終了確認後に
-foreground save へ渡す接続は、この基点だけでは完成しない。最新 main との統合・独立試験を要する。
+#338 に main の #339 が取り込まれた `736c8e7` に追従した。#340 は含めない。
+GPU 専用 editor も同じ save owner の失敗理由・件数を表示し、同じ明示 retry を開始する。
+保存開始前に preview session を close し、既存 retired-owner の終了確認を IO 上で待つ。
+確認できなければ export を開始しない。プレビュー停止後も保存 handle を保持し、
+GPU_FAILED の再試行・同じ publication の再照合に限って表示済みプレビューなしで続行できる。
+保存中・HOLD・publication 不明・GPU_FAILEDではプレビューを自動再開せず、READY / PUBLISHED
+でだけ明示「プレビューを再開」を許可する。GPU_FAILEDでは同じGPU保存の明示retryに限定する。設定・画像の自動再計算は追加しない。
+この接続の Compose / foreground / GPU owner 排他は AVD の最終統合確認が必要。
+
+Home / trim 復帰でも停止状態と保存 handle を維持する。Activity 再作成後の入力読込でも、
+取得した保存 owner が READY / PUBLISHED 以外なら GPU 写真を開く前に止める。

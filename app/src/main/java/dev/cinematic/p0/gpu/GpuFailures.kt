@@ -19,10 +19,15 @@ internal class GpuContextLostException(message: String, cause: Throwable? = null
 internal class GpuMemoryBudgetException(message: String, cause: Throwable? = null) :
     RuntimeException(message, cause)
 
+/** Surface lifetime teardown did not finish or failed. Never silently resume or use CPU. */
+internal class GpuSurfaceTeardownException(message: String, cause: Throwable? = null) :
+    RuntimeException(message, cause)
+
 internal enum class GpuFailureKind(val exportReason: String) {
     UNAVAILABLE("gpu_unavailable"),
     CONTEXT_LOST("gpu_context_lost"),
     MEMORY_BUDGET("gpu_memory_budget"),
+    SURFACE_TEARDOWN("gpu_surface_teardown"),
 }
 
 internal data class GpuFailureHandling(
@@ -42,6 +47,7 @@ internal fun gpuFailurePolicy(failure: Throwable): GpuFailureHandling? {
         is GpuUnavailableException -> GpuFailureKind.UNAVAILABLE to "この端末は必須の GPU 能力を満たしていません"
         is GpuContextLostException -> GpuFailureKind.CONTEXT_LOST to "GPU の接続が失われました。再試行してください"
         is GpuMemoryBudgetException -> GpuFailureKind.MEMORY_BUDGET to "GPU メモリの上限に達しました。再試行してください"
+        is GpuSurfaceTeardownException -> GpuFailureKind.SURFACE_TEARDOWN to "GPU の表示終了を確認できません。終了後に再試行してください"
         else -> return null
     }
     return GpuFailureHandling(kind, reason, retryEngine = DevelopEngine.GPU)

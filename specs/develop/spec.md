@@ -59,6 +59,17 @@
 [ComponentCallbacks2](https://developer.android.com/reference/android/content/ComponentCallbacks2)、
 [ComponentCallbacks](https://developer.android.com/reference/android/content/ComponentCallbacks)。
 
+## 診断版だけの GPU 編集経路（#287）
+
+- 通常 debug / release の既定は CPU のまま。専用 gpuDiagnostic の診断 Hub でだけ GPU を選べる。通常の設定画面へエンジン切替は置かず、Gate 2 後の既定変更は別途承認する。
+- GPU 選択時は同じ現像画面・画像領域・固定比較キャプション・Fit 配置を使う。撮影時 WB の線形入力を既存 snapshot → RGB16 → BOX 経路で一度準備し、物理的な向きを直した入力を GPU 表示へ渡す。入力上限は長辺1024pxかつ786,432画素で、通常 CPU の寸法条件を変えない。
+- 強さ・色温度・明るさは GL の最新値へ送る。256px粗表示・CPU描画・フレームごとの原本照合・フレームごとの保存世代作成は行わない。実際に表示した値が確定値と一致するまで閉じる・保存へ昇格しない。比較操作は既存の長押し・比較ボタン・下段切替・読み上げ操作を維持する。
+- Files選択後は前面復帰だけで読み始めず、既存観測のカメラ利用状態と受付条件、表示面を待つ。通知を使う最大10秒の受付待機で、GPU専用のpollingや固定sleepを加えない。待機の取消・別写真・背景化では旧要求を開始しない。受付成功後のnative展開時間を待機上限に含めない。
+- 選択後の失敗は選択した写真の画像領域に表示する。GPU能力不足・context喪失・メモリ予算・表示面解放未確認は「GPU を使えません」と再試行を示し、CPUへ自動で切り替えない。
+- Surface破棄は最大2秒で区切り、時間超過をアプリの未処理例外にしない。未完了の破棄ownerを保持し、旧Surfaceへの表示を止める。再試行/写真切替は旧ownerの終了確認後だけ新しく開く。
+- 写真切替・画面終了・背景化ではGL写真/表示面/入力/コールバックを閉じる。UI_HIDDEN（20）以上のtrimも同じプレビューownerだけを終了し、10ではこのtrim契約による解放を行わない。foreground exportの所有資源を解放しない。
+- GPUプレビューと原寸保存は同じ DevelopEngine 設定を参照する。#286 の保存接続が揃うまでは本候補を統合しない。GPU経路の実機品質・速度・Gate 2合格はこの仕様で主張しない。
+
 ## 製品に採用していないもの
 
 - process共通の直列受付（PreviewSerial）は診断の明示指定だけで通常オフ。同一画面内の粗/正確処理の排他とは別。

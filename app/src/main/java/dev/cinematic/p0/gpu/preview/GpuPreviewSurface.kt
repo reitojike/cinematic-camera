@@ -1,10 +1,15 @@
 package dev.cinematic.p0.gpu.preview
 
-import androidx.compose.foundation.AndroidExternalSurface
+import android.graphics.PixelFormat
+import android.view.Surface
+import android.view.SurfaceHolder
+import android.view.SurfaceView
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -27,16 +32,64 @@ internal fun GpuPreviewSurface(renderer: GpuPreviewRenderer, modifier: Modifier 
             owner.lifecycle.removeObserver(observer); renderer.setStarted(false)
         }
     }
-    AndroidExternalSurface(modifier = modifier) {
-        onSurface { surface, width, height ->
-            GpuSurfaceProbe.event("compose.surface.created") { "surface=${System.identityHashCode(surface)}" }
-            renderer.attachSurface(surface, width, height, refreshRate)
-            surface.onChanged { w, h -> renderer.resizeSurface(this, w, h) }
-            surface.onDestroyed {
-                GpuSurfaceProbe.event("compose.surface.destroyed.begin") { "surface=${System.identityHashCode(this)}" }
-                renderer.detachSurface(this)
-                GpuSurfaceProbe.event("compose.surface.destroyed.end") { "surface=${System.identityHashCode(this)}" }
-            }
-        }
+    // SurfaceHolder callbacks are owned by this View/renderer pair. The standard AndroidView
+    // non-reuse path gives each renderer a fresh SurfaceView lifetime and a post-layout signal.
+    // https://developer.android.com/reference/kotlin/androidx/compose/ui/viewinterop/package-summary
+    key(renderer) {
+        AndroidView(
+            modifier = modifier,
+            factory = { context ->
+                SurfaceView(context).apply {
+                    holder.setFormat(PixelFormat.OPAQUE)
+                    addOnLayoutChangeListener { view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+                        // Compose can place a replacement after this window's preDraw. With no
+                        // other UI updates, SurfaceView then waits indefinitely for its first
+                        // positive-size preDraw. Request exactly one frame for changed bounds.
+                        if (right > left && bottom > top &&
+                            (left != oldLeft || top != oldTop || right != oldRight || bottom != oldBottom)) {
+                            GpuSurfaceProbe.event("compose.surface.layout") {
+                                "renderer=${System.identityHashCode(renderer)} width=${right - left} height=${bottom - top}"
+                            }
+                            view.postInvalidateOnAnimation()
+                        }
+                    }
+                    holder.addCallback(object : SurfaceHolder.Callback {
+                        private var attached: Surface? = null
+                        override fun surfaceCreated(holder: SurfaceHolder) {
+                            GpuSurfaceProbe.event("compose.surface.created") {
+                                "renderer=${System.identityHashCode(renderer)} surface=${System.identityHashCode(holder.surface)}"
+                            }
+                            val frame = holder.surfaceFrame
+                            attachOrResize(holder.surface, frame.width(), frame.height())
+                        }
+                        override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+                            attachOrResize(holder.surface, width, height)
+                        }
+                        private fun attachOrResize(surface: Surface, width: Int, height: Int) {
+                            if (width <= 0 || height <= 0) return
+                            if (attached === surface) renderer.resizeSurface(surface, width, height)
+                            else {
+                                attached = surface
+                                renderer.attachSurface(surface, width, height, refreshRate)
+                            }
+                        }
+                        override fun surfaceDestroyed(holder: SurfaceHolder) {
+                            val surface = attached ?: return
+                            attached = null
+                            GpuSurfaceProbe.event("compose.surface.destroyed.begin") {
+                                "renderer=${System.identityHashCode(renderer)} surface=${System.identityHashCode(surface)}"
+                            }
+                            // Timeout remains a visible GPU error. Never throw from Android's
+                            // destruction callback or silently clear an incomplete cleanup barrier.
+                            val completed = renderer.detachSurface(surface)
+                            GpuSurfaceProbe.event("compose.surface.destroyed.end") {
+                                "renderer=${System.identityHashCode(renderer)} surface=${System.identityHashCode(surface)} completed=$completed"
+                            }
+                        }
+                    })
+                }
+            },
+            onReset = null,
+        )
     }
 }

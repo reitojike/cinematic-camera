@@ -67,6 +67,27 @@ internal object AndroidManualOriginalTrialSaves {
         }
     }
 
+    /** Product GPU input uses the exact snapshot → RGB16 → BOX path, without a CPU look.
+     * The queued owner closes the one-shot session before transferring its immutable input. */
+    fun loadGpuPreview(context: Context, source: SharedOriginalReference, strength: Double,
+        conditions: AutoDevelopConditions, adjustments: PhotoAdjustments,
+        checkPreviewSource: (DngIoResources, () -> Boolean) -> Unit,
+        shouldStop: () -> Boolean): CompletableFuture<GpuOriginalPreview> {
+        val app = context.applicationContext
+        val queue = AndroidAutoDevelopQueue.get(app)
+        return queue.manualOriginalIo {
+            if (shouldStop()) throw java.util.concurrent.CancellationException("GPU preview stopped")
+            val authority = authorities.getOrPut(app.noBackupFilesDir.canonicalPath to source) { Authority(app, source) }
+            val handle = authority.prepare(queue, strength, adjustments, conditions, shouldStop)
+            previewAuthority?.discardPreview()
+            previewAuthority = authority
+            GpuOriginalPreview(handle, authority.loadGpuInput(handle, conditions, checkPreviewSource, shouldStop))
+        }
+    }
+
+    internal data class GpuOriginalPreview(val save: ManualOriginalTrialHandle,
+        val input: dev.cinematic.p0.raw.LinearSrgbImage)
+
     /** Drafts borrow only an existing exact session. They never allocate a durable save request. */
     fun renderDraftPreview(context: Context, source: SharedOriginalReference, strength: Double,
         conditions: AutoDevelopConditions, adjustments: PhotoAdjustments, diagnosticWorkers: Int? = null,
@@ -184,6 +205,38 @@ internal object AndroidManualOriginalTrialSaves {
                 if (!delivered) { bitmap?.recycle(); comparison?.recycle(); previewSession?.close(); previewSession = null }
                 if (previewSession?.hasUnreleasedResources != true) {
                     DevelopExecution.completeAfterResourcesClosed(slot); previewSlot = null
+                }
+            }
+        }
+
+        fun loadGpuInput(handle: ManualOriginalTrialHandle, conditions: AutoDevelopConditions,
+            checkPreviewSource: (DngIoResources, () -> Boolean) -> Unit,
+            stop: () -> Boolean): dev.cinematic.p0.raw.LinearSrgbImage {
+            discardPreview()
+            val admission = DevelopExecution.tryStartGpuDiagnosticPreviewObserved(conditions)
+            val slot = admission.attempt ?: throw dev.cinematic.p0.gpu.preview.GpuInputAdmissionRefused(admission.snapshot)
+            previewSlot = slot
+            sessionEpoch = previewEpoch.get()
+            var failure: Throwable? = null
+            try {
+                val parent = File(app.noBackupFilesDir.canonicalFile, "manual-original24-previews")
+                if (Files.isSymbolicLink(parent.toPath()) || parent.canonicalFile != parent ||
+                    (!parent.isDirectory && !parent.mkdirs())) throw IOException("GPU preview directory unavailable")
+                val session = Original24PreviewSession(source, File(parent, UUID.randomUUID().toString()),
+                    { stage -> Original24Resources.requireAvailable(app, stage) }, handle.geometry,
+                    checkPreviewSource, ::readOriginal).also { previewSession = it; activePreview = it }
+                DevelopExecution.registerStop(slot, session::requestStop)
+                val stopped = { stop() || DevelopExecution.shouldStop(slot) || currentRequest != handle.request ||
+                    sessionEpoch != previewEpoch.get() }
+                return session.loadGpuAsShotInput(stopped).also {
+                    if (stopped()) throw java.util.concurrent.CancellationException("GPU preview stopped")
+                }
+            } catch (error: Throwable) { failure = error; throw error }
+            finally {
+                activePreview = null
+                try { discardPreview() } catch (cleanup: Throwable) {
+                    if (failure == null) throw cleanup
+                    if (failure !== cleanup) failure.addSuppressed(cleanup)
                 }
             }
         }
