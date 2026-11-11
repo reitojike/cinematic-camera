@@ -100,6 +100,9 @@ internal class GpuPreviewRenderer(
     private val destroyWindow: (EglContexts.WindowTarget) -> Unit = { it.close() },
     private val engineFactory: ((EglContexts, GpuMemoryLedger) -> StageClearGpu)? = null,
     private val onPresented: (GpuRenderParams, GpuDisplayOptions) -> Unit = { _, _ -> },
+    // Diagnostic owners may recover on a new submit. Product owners require explicit retry,
+    // including when a submit was already queued before the failing frame reported its error.
+    private val recoverContextOnSubmit: Boolean = true,
 ) : AutoCloseable {
     init { require(draw == null || engineFactory == null) { "Choose one preview drawing owner" } }
     private data class Request(val params: GpuRenderParams, val display: GpuDisplayOptions)
@@ -314,7 +317,8 @@ internal class GpuPreviewRenderer(
         val remainingMillis = (timeoutMillis - elapsedMillis).coerceAtLeast(0)
         return thread.awaitTermination(remainingMillis) &&
             shutdownFailure.get() == null && surfaceDestroyFailure.get() == null &&
-            ledger.allocatedBytes == 0L && liveWindows.get() == 0 && window == null &&
+            ledger.allocatedBytes == 0L && ledger.textureCount == 0 && liveWindows.get() == 0 && window == null &&
+            !frameScheduled &&
             retainedInput == null && photo == null && enginePhoto == null && output == null
     }
 
@@ -337,7 +341,9 @@ internal class GpuPreviewRenderer(
         if (!closed.get() && wakeQueued.compareAndSet(false, true)) post {
             wakeQueued.set(false)
             // GPU_ENGINE §4.3: a new request after context loss rebuilds GPU state from the input.
-            if (contextLost) { resetContext(); retainedInput?.let(::uploadPhoto); latest.invalidate() }
+            if (contextLost && recoverContextOnSubmit) {
+                resetContext(); retainedInput?.let(::uploadPhoto); latest.invalidate()
+            }
             schedule()
         }
     }
