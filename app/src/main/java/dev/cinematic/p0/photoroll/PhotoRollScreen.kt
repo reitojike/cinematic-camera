@@ -352,7 +352,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
             }
         }
     }
-    LaunchedEffect(selectedUri, retry, lifecycleOwner, currentQuery, accessEpoch, strengthTicket) {
+    LaunchedEffect(renderer, selectedUri, retry, lifecycleOwner, currentQuery, accessEpoch, strengthTicket) {
       lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
         draftAdmission.invalidate()
         draftShown = false

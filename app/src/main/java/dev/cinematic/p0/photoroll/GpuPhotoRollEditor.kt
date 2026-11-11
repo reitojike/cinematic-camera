@@ -68,6 +68,7 @@ import kotlinx.coroutines.flow.StateFlow
             val deadline = GpuInputRequestDeadline(nowMillis = SystemClock::elapsedRealtime)
             var loading: Deferred<Result<ManualTrialPhotoRollRenderer.GpuInput>>? = null
             coroutineScope {
+                try {
                 awaitGpuInputReadiness(publications, session.renderer.surfaceAttached, deadline) {
                     val admitted = CompletableDeferred<GpuInputAdmissionResult>()
                     loading = async(Dispatchers.IO) {
@@ -86,6 +87,17 @@ import kotlinx.coroutines.flow.StateFlow
                     }
                     admitted
                 }
+                } catch (cancelled: CancellationException) {
+                    cancellation.cancel()
+                    throw cancelled
+                } catch (failure: Exception) {
+                    // The timeout is visible now, even while structured cancellation is waiting
+                    // for a blocked native/queue owner to acknowledge release. Never admit later.
+                    cancellation.cancel()
+                    currentCoroutineContext().ensureActive()
+                    error = failure
+                    throw failure
+                }
                 val loaded = checkNotNull(loading).await().getOrThrow()
                 ensureActive(); cancellation.throwIfCanceled()
                 input = loaded
@@ -101,7 +113,7 @@ import kotlinx.coroutines.flow.StateFlow
                 session.renderer.openPhoto(loaded.input)
             }
         } catch (cancelled: CancellationException) { throw cancelled }
-        catch (failure: Exception) { error = failure }
+        catch (failure: Exception) { currentCoroutineContext().ensureActive(); error = failure }
     }
     val failure by session?.failure?.collectAsState() ?: remember { mutableStateOf<Throwable?>(null) }
     val presented by session?.presented?.collectAsState() ?: remember { mutableStateOf<PhotoEditValues?>(null) }
@@ -121,7 +133,10 @@ import kotlinx.coroutines.flow.StateFlow
             ensureActive()
             if (editor.accepts(ticket)) { save = prepared; saveState = prepared.snapshot }
         } catch (cancelled: CancellationException) { throw cancelled }
-        catch (failure: Exception) { if (editor.accepts(ticket)) error = failure }
+        catch (failure: Exception) {
+            currentCoroutineContext().ensureActive()
+            if (editor.accepts(ticket)) error = failure
+        }
     }
     LaunchedEffect(save, foreground) {
         val owner = save ?: return@LaunchedEffect

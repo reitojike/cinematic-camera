@@ -114,7 +114,7 @@ class GpuProductInputAndroidTest {
         error("Synthetic GPU presentation did not complete")
     }
 
-    private class Provider(context: Context) : ContentProvider() {
+    internal class Provider(context: Context) : ContentProvider() {
         private val packageName = context.packageName
         private val files = (1..2).associateWith { id -> File.createTempFile("gpu-product-$id-", ".dng", context.cacheDir).apply {
             outputStream().use { writeSyntheticRollDng(it, 256, 192, if (id == 1) 1 else 6) }

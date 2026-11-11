@@ -86,6 +86,9 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
         admitted: (Throwable?) -> Unit,
         values: (PhotoRollOriginal) -> dev.cinematic.p0.photoedit.PhotoEditValues): GpuInput {
         check(developEngine == dev.cinematic.p0.gpu.DevelopEngine.GPU)
+        // Lifecycle cancellation is not a native-close acknowledgement. Drain the existing queue
+        // owner before trying the new original's admission, including rapid stop/resume.
+        awaitTrialPreview(AndroidManualOriginalTrialSaves.discardPreview(app), cancellation, awaitCancelledOwner = true)
         val original = PhotoRollOriginalChecks.run(resources, cancellation, preview = true,
             gpuRequest = deadline, onGpuAdmission = admitted) { readers, stop ->
             val epoch = originalEpoch.get()

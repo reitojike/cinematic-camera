@@ -30,6 +30,7 @@ class GpuDevelopLayoutAndroidTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val bitmap = Bitmap.createBitmap(256, 192, Bitmap.Config.ARGB_8888)
         val gpu = GpuPhotoRollSession(instrumentation.targetContext.assets)
+        val gpuSession = mutableStateOf(gpu)
         val useGpu = mutableStateOf(false)
         val failed = mutableStateOf(false)
         var retries = 0
@@ -42,7 +43,7 @@ class GpuDevelopLayoutAndroidTest {
                     if (failed.value) PhotoRollPhase.BLOCKED else PhotoRollPhase.DISPLAYED,
                     null, null, bitmap.takeUnless { useGpu.value }, null, null, true, null, false, false, false,
                     {}, {}, {}, { retries++ }, { _, _, _ -> }, {}, {}, {}, {}, modifier = Modifier.fillMaxSize(),
-                    gpuSession = gpu.takeIf { useGpu.value }, gpuReady = useGpu.value && !failed.value,
+                    gpuSession = gpuSession.value.takeIf { useGpu.value }, gpuReady = useGpu.value && !failed.value,
                     gpuFailure = if (failed.value) gpuFailurePolicy(GpuSurfaceTeardownException("synthetic")) else null,
                     info = { Text("SYNTHETIC") })
             }
@@ -55,6 +56,14 @@ class GpuDevelopLayoutAndroidTest {
                 instrumentation.waitForIdleSync()
                 assertEquals(cpuViewport, bounds("現像画像の表示領域"))
                 assertEquals(cpuImage, bounds("現像結果（表示用）"))
+                val replacement = GpuPhotoRollSession(instrumentation.targetContext.assets)
+                scenario.onActivity { gpuSession.value = replacement; gpu.close() }
+                repeat(100) {
+                    instrumentation.waitForIdleSync()
+                    if (!replacement.renderer.surfaceAttached.value) SystemClock.sleep(50)
+                }
+                assertTrue("same-photo retry attaches a fresh renderer surface", replacement.renderer.surfaceAttached.value)
+                assertFalse(gpu.renderer.surfaceAttached.value)
                 scenario.onActivity { failed.value = true }
                 val retry = await("再試行")
                 val failureBounds = Rect().also { retry.getBoundsInScreen(it) }
@@ -65,8 +74,9 @@ class GpuDevelopLayoutAndroidTest {
                 assertEquals(cpuViewport, bounds("現像画像の表示領域"))
             }
         } finally {
-            gpu.close()
+            gpu.close(); gpuSession.value.close()
             assertTrue(gpu.renderer.awaitClosed(5_000))
+            assertTrue(gpuSession.value.renderer.awaitClosed(5_000))
             GpuPhotoRollRetiredOwners.releaseBeforeOpen()
             bitmap.recycle()
         }

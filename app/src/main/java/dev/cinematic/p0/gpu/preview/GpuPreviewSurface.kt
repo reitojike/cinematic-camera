@@ -3,6 +3,7 @@ package dev.cinematic.p0.gpu.preview
 import androidx.compose.foundation.AndroidExternalSurface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
 import androidx.lifecycle.Lifecycle
@@ -27,17 +28,20 @@ internal fun GpuPreviewSurface(renderer: GpuPreviewRenderer, modifier: Modifier 
             owner.lifecycle.removeObserver(observer); renderer.setStarted(false)
         }
     }
-    AndroidExternalSurface(modifier = modifier) {
-        onSurface { surface, width, height ->
-            GpuSurfaceProbe.event("compose.surface.created") { "surface=${System.identityHashCode(surface)}" }
-            renderer.attachSurface(surface, width, height, refreshRate)
-            surface.onChanged { w, h -> renderer.resizeSurface(this, w, h) }
-            surface.onDestroyed {
-                GpuSurfaceProbe.event("compose.surface.destroyed.begin") { "surface=${System.identityHashCode(this)}" }
-                // A timeout is an explicit GPU error, never an exception escaping Android's
-                // destruction callback. The renderer retains its incomplete cleanup barrier.
-                val completed = renderer.detachSurface(this)
-                GpuSurfaceProbe.event("compose.surface.destroyed.end") { "surface=${System.identityHashCode(this)} completed=$completed" }
+    // onInit belongs to one renderer. Retry replaces the lease callbacks, not only the observer.
+    key(renderer) {
+        AndroidExternalSurface(modifier = modifier) {
+            onSurface { surface, width, height ->
+                GpuSurfaceProbe.event("compose.surface.created") { "surface=${System.identityHashCode(surface)}" }
+                renderer.attachSurface(surface, width, height, refreshRate)
+                surface.onChanged { w, h -> renderer.resizeSurface(this, w, h) }
+                surface.onDestroyed {
+                    GpuSurfaceProbe.event("compose.surface.destroyed.begin") { "surface=${System.identityHashCode(this)}" }
+                    // A timeout is an explicit GPU error, never an exception escaping Android's
+                    // destruction callback. The renderer retains its incomplete cleanup barrier.
+                    val completed = renderer.detachSurface(this)
+                    GpuSurfaceProbe.event("compose.surface.destroyed.end") { "surface=${System.identityHashCode(this)} completed=$completed" }
+                }
             }
         }
     }
