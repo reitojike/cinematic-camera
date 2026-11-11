@@ -9,6 +9,8 @@ import android.os.Process
 import android.os.SystemClock
 import android.provider.DocumentsContract
 import android.provider.Settings
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.BySelector
@@ -20,6 +22,7 @@ import dev.cinematic.p0.rawcapture.DngContentVerifier
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.lang.ref.WeakReference
 import java.security.MessageDigest
 import java.util.regex.Pattern
 
@@ -31,6 +34,13 @@ internal class Gate1DngObservationSupport(private val folder: File, private val 
     private val device get() = UiDevice.getInstance(instrumentation)
     val pss = JSONArray()
     private var originalIdentity: String? = null
+    val auxiliaryPicker = JSONObject().put("phase", "not_started").put("cancelStatus", "not_required")
+        .put("evidenceScope", "picker navigation only; not direct selected result URI or absence of initial synthetic renders")
+        .put("waitScope", "10s per navigation/cancel polling stage; not a hard end-to-end UI automation deadline")
+    private var pickerOwner: WeakReference<GpuPreviewDiagnosticActivity>? = null
+    private var pickerPackage: String? = null
+    private var pickerPending = false
+    private var cancelAttempted = false
 
     fun verifyTarget(): JSONObject {
         val args = InstrumentationRegistry.getArguments()
@@ -47,17 +57,36 @@ internal class Gate1DngObservationSupport(private val folder: File, private val 
             .put("targetApkSha256", expected).put("authorizationMeaning", "guard only; explicit host/user authorization is separately required before any physical-device access")
     }
 
-    fun loadThroughFiles(withActivity: ((GpuPreviewDiagnosticActivity) -> Unit) -> Unit): JSONObject {
+    fun loadThroughFiles(withActivity: ((GpuPreviewDiagnosticActivity) -> Unit) -> Unit,
+        auxiliaryStrict: Boolean = false, failAfterDownload: Boolean = false): JSONObject {
+        check(!failAfterDownload || auxiliaryStrict)
         val args = InstrumentationRegistry.getArguments()
         val documentId = checkNotNull(args.getString("gate1DngDocumentId"))
         check(documentId.matches(Regex("primary:Download/[A-Za-z0-9_.-]+\\.dng")))
         val uri = DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", documentId)
+        if (auxiliaryStrict) {
+            withActivity {
+                check(it.diagnosticState().resumed && it.hasWindowFocus())
+                pickerOwner = WeakReference(it)
+            }
+            auxiliaryPicker.put("phase", "launch_requested")
+        }
         find("Files button", By.pkg(target.packageName).text("試験用DNGをFilesから選択"), Direction.DOWN).click()
         await("DocumentsUI foreground") { device.currentPackageName?.endsWith(".documentsui") == true }
         val filesPackage = checkNotNull(device.currentPackageName)
-        openInternalDownload(filesPackage)
-        find("preregistered DNG", By.pkg(filesPackage).text(documentId.substringAfterLast('/')), Direction.DOWN).click()
+        if (auxiliaryStrict) {
+            pickerPackage = filesPackage; pickerPending = true
+            auxiliaryPicker.put("documentsUiPackage", filesPackage).put("phase", "picker_foreground")
+            openAuxiliaryDownload(filesPackage)
+            check(!failAfterDownload) { "intentional_auxiliary_picker_failure_after_download" }
+            findAuxiliaryEntry(filesPackage, documentId.substringAfterLast('/'), "preregistered_dng", Pattern.compile("Download")).click()
+            auxiliaryPicker.put("phase", "selection_clicked")
+        } else {
+            openInternalDownload(filesPackage)
+            find("preregistered DNG", By.pkg(filesPackage).text(documentId.substringAfterLast('/')), Direction.DOWN).click()
+        }
         await("diagnostic app returned") { device.currentPackageName == target.packageName }
+        if (auxiliaryStrict) { pickerPending = false; auxiliaryPicker.put("phase", "app_returned") }
         await("native DNG load", 60_000) {
             var loaded = false
             withActivity {
@@ -205,6 +234,80 @@ internal class Gate1DngObservationSupport(private val folder: File, private val 
             .put("nativeHeapAllocKb", values.getValue("Native Heap")[allocated])
             .put("managedHeapAllocKb", values.getValue("Dalvik Heap")[allocated])
             .put("timeoutOrErrorMarker", timeout)
+    }
+
+    /** Auxiliary route only. Do not toggle storage visibility or search another provider. */
+    private fun openAuxiliaryDownload(pkg: String) {
+        val roots = By.res(pkg, "roots_list")
+        val labels = listOfNotNull(Build.MODEL, Settings.Global.getString(target.contentResolver, "device_name"),
+            "Internal storage", "Internal shared storage", "内部ストレージ", "内部共有ストレージ")
+        val label = Pattern.compile(labels.distinct().joinToString("|") { Pattern.quote(it) })
+        auxiliaryPicker.put("phase", "open_roots")
+        if (!device.hasObject(roots)) find("auxiliary Files drawer", By.pkg(pkg).clazz("android.widget.ImageButton")
+            .desc(Pattern.compile("Show roots|Open navigation drawer|ルートを表示|ナビゲーション ドロワーを開く"))).click()
+        find("auxiliary internal root", By.pkg(pkg).text(label).hasAncestor(roots)).click()
+        auxiliaryPicker.put("phase", "await_internal_root")
+        await("auxiliary internal root arrived") {
+            device.currentPackageName == pkg && !device.hasObject(roots) &&
+                device.hasObject(By.pkg(pkg).text(label).hasAncestor(By.res(pkg, "toolbar"))) &&
+                device.hasObject(By.res(pkg, "dir_list"))
+        }
+        auxiliaryPicker.put("internalRootConfirmed", true)
+        rewindDirectory(pkg)
+        findAuxiliaryEntry(pkg, Environment.DIRECTORY_DOWNLOADS, "download_folder", label).click()
+        auxiliaryPicker.put("phase", "await_download")
+        await("auxiliary Download arrived") {
+            device.currentPackageName == pkg && !device.hasObject(roots) &&
+                device.hasObject(By.pkg(pkg).text(Environment.DIRECTORY_DOWNLOADS).hasAncestor(By.res(pkg, "toolbar"))) &&
+                device.hasObject(By.res(pkg, "dir_list"))
+        }
+        rewindDirectory(pkg)
+        auxiliaryPicker.put("phase", "download_confirmed").put("downloadConfirmed", true)
+            .put("directSelectedUriObservation", false)
+    }
+
+    private fun findAuxiliaryEntry(pkg: String, name: String, phase: String, location: Pattern): UiObject2 {
+        auxiliaryPicker.put("phase", phase)
+        val directory = By.res(pkg, "dir_list")
+        val selector = By.pkg(pkg).text(name).hasAncestor(directory)
+        var result: UiObject2? = null
+        await("auxiliary $phase") {
+            check(device.currentPackageName == pkg && !device.hasObject(By.res(pkg, "roots_list")) &&
+                device.hasObject(By.pkg(pkg).text(location).hasAncestor(By.res(pkg, "toolbar"))))
+            result = device.findObject(selector)
+            if (result == null) device.findObject(directory)?.let { if (it.isScrollable) it.scroll(Direction.DOWN, .5f) }
+            result != null
+        }
+        return checkNotNull(result)
+    }
+
+    /** Called only by auxiliary failure cleanup, before the existing Activity finish. Back once,
+     * never retry or claim cancellation merely because input injection returned. */
+    fun cancelFailedAuxiliaryPicker() {
+        if (!pickerPending) return
+        auxiliaryPicker.put("cancelStatus", "checking_owned_picker")
+        check(!cancelAttempted)
+        val owner = checkNotNull(pickerOwner?.get())
+        val pkg = checkNotNull(pickerPackage)
+        check(device.currentPackageName == pkg)
+        instrumentation.runOnMainSync {
+            val stage = ActivityLifecycleMonitorRegistry.getInstance().getLifecycleStageOf(owner)
+            check(stage != Stage.DESTROYED && stage != Stage.RESUMED && !owner.isFinishing)
+        }
+        cancelAttempted = true
+        auxiliaryPicker.put("cancelStatus", "back_attempted").put("backAttempts", 1)
+        check(device.pressBack())
+        await("original diagnostic Activity resumed after picker cancel") {
+            var resumed = false
+            instrumentation.runOnMainSync {
+                val monitor = ActivityLifecycleMonitorRegistry.getInstance()
+                resumed = monitor.getActivitiesInStage(Stage.RESUMED).singleOrNull() === owner &&
+                    owner.diagnosticState().resumed && owner.hasWindowFocus() && !owner.isFinishing
+            }
+            device.currentPackageName == target.packageName && resumed
+        }
+        pickerPending = false
+        auxiliaryPicker.put("cancelStatus", "original_activity_resumed").put("originalActivityResumed", true)
     }
 
     private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }

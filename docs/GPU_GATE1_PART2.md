@@ -313,3 +313,11 @@ CPUの13分は経過時間によるsoft budget候補で、45秒をcleanup用に�
 補足APKには独自のsource commit/tree、build baseと差分、実SHA-256/bytes、package/target/runner/version、公開署名fingerprint、variant/ABI、JDK/SDK/Gradle/nativeのbuild条件を私有の固定票へ記録する。既存4本との署名・互換性を実物で照合し、同じtest packageでも主GPU/CPU試験とは別識別にする。標準checkで生成した新しい本体APKは測定候補に選ばない。未公開sourceへ公開commitリンクを付けず、私有path・生ログ・写真を公開しない。
 
 標準lint/unit/assembleと診断lint/unit/test compile・補足APK build、独立レビュー、許可されたAVD機能確認はそれぞれ別証拠とする。成功しても自動採用せず、失敗時は既存4本と本番登録を維持する。任意補助の採否、実施回数・総所要、同package切替/回収/試験APK削除を改めて固定し、新しいPixel配布・操作許可を得るまで実機へ導入しない。
+
+### 10.4 GPU補助Files setupと失敗時の終了
+
+GPU補助touchだけは、内部ストレージの `roots_list` 内のラベルを選び、drawer終了とtoolbarを確認してから `dir_list` 内の `Download` を選択する。Download toolbar到着後に同じfile listを先頭へ戻し、登録済みDNGの完全一致だけを選ぶ。探索・scrollはfile list内に限定し、別provider探索や内部ストレージ表示設定の変更へfallbackしない。各待機は10秒のpolling上限であり、UI automation全体のhard deadlineではない。旧programmatic/PSS経路とCPU既存1軸経路は変更しない。
+
+`auxiliaryPicker` は到達phase、位置確認、cancel結果だけを残し、全filename一覧や画面画像を採取しない。setup失敗時は、このtestが開いて未完了のpickerと元Activityを確認し、標準Backを1回だけ試みる。元Activityの同一object・resumed・focus復帰を検証し、その後は既存のfinish/GL終了/同一Hub復帰検証を使う。drawerだけが閉じた場合を含め、復帰未確認はcleanup失敗として残し、繰り返しBack・kill・再起動で成功扱いにしない。元のsetup例外は保持する。observer attach前の失敗でも初期synthetic renderが0だったとは扱わない。
+
+`gate1AuxTouchFailAfterDownload=true` は正確な補助touch class/modeとemulatorを入力前に検査し、Download到着後・DNG選択前に意図的に失敗させる別run専用hook。既存の `gate1AuxTouchFailAfterDown=true` とは併用不可。通常runでは省略し、意図的失敗は正常完走・本番計測に数えない。修正やhookの存在だけではFiles成功・cancel成功・実機検証済みを意味しない。

@@ -130,6 +130,11 @@ class GpuGate1GestureObserverProbeTest {
         else check(Build.HARDWARE in setOf("ranchu", "goldfish") && args.getString("isolated") == "true")
         check(target.packageName == "dev.cinematic.p0.gpudiagnostic")
         val failAfterDown = auxiliaryTouch && args.getString("gate1AuxTouchFailAfterDown") == "true"
+        val failAfterDownload = args.getString("gate1AuxTouchFailAfterDownload") == "true"
+        check(args.getString("gate1AuxTouchFailAfterDownload") in listOf(null, "false", "true"))
+        check(!failAfterDownload || (auxiliaryTouch && !failAfterDown && Build.HARDWARE in setOf("ranchu", "goldfish"))) {
+            "Intentional picker failure requires the exact auxiliary touch mode on an emulator, without failAfterDown"
+        }
         if (auxiliaryTouch) {
             check(!pssMode && args.getString("isolated") == "true")
             check(args.getString("gate1AuxTouchFailAfterDown") in listOf(null, "false", "true"))
@@ -180,6 +185,8 @@ class GpuGate1GestureObserverProbeTest {
         if (auxiliaryTouch) {
             report.put("purpose", "shared DNG auxiliary touch operation proof only; separate from main input, PSS and criterion 1")
                 .put("intentionalFailureAfterDown", failAfterDown)
+                .put("intentionalFailureAfterDownload", failAfterDownload)
+                .put("auxiliaryPicker", checkNotNull(support).auxiliaryPicker)
                 .put("profile", "strength, warmth, EV; each once; 3 auxiliary operations, no warmup repetitions")
                 .put("touchSchedule", "DOWN + 40 MOVE at 20,...,800ms + UP at 800ms; 42 events per operation; no compensation or resampling changes")
                 .put("sharedPath", "injected touch -> Window -> Slider onValueChange -> Compose state -> LaunchedEffect -> existing renderer.submit -> FULL_RECOMPUTE -> swap/callback")
@@ -254,7 +261,7 @@ class GpuGate1GestureObserverProbeTest {
             await { state(renderer).let { it.draw > 0 && !it.pending && it.bytes > 0 } }
             if (dng) {
                 // Existing Files callback closes the synthetic photo itself. Do not add another close/release.
-                report.put("dngSource", checkNotNull(support).loadThroughFiles(::withActivity))
+                report.put("dngSource", checkNotNull(support).loadThroughFiles(::withActivity, auxiliaryStrict = auxiliaryTouch, failAfterDownload = failAfterDownload))
                 await { state(renderer).let { !it.pending && it.bytes > 0 } }
                 onGl(renderer) {
                     report.put("dngInput", checkNotNull(support).inputIdentity(field(renderer, "retainedInput") as LinearSrgbImage))
@@ -683,6 +690,9 @@ class GpuGate1GestureObserverProbeTest {
                     cleanupErrors.put(JSONObject().put("phase", phase).put("failureType", cleanup.javaClass.simpleName))
                     if (failed == null) failed = cleanup
                 }
+            }
+            if (auxiliaryTouch && failed != null) attempt("cancel_failed_picker") {
+                checkNotNull(support).cancelFailedAuxiliaryPicker()
             }
             // Still attached to the original Window delegate. Never put cleanup input in the normal 42-event stream.
             if (auxiliaryTouch && failed != null) attempt("cancel_failed_touch") {
