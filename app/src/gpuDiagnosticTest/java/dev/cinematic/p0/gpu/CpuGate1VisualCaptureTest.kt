@@ -3,7 +3,22 @@ package dev.cinematic.p0.gpu
 import android.app.Activity
 import android.graphics.Rect
 import android.os.SystemClock
+import android.view.View
+import android.view.ViewGroup
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.LayoutInfo
+import androidx.compose.ui.platform.ViewRootForTest
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getAllSemanticsNodes
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.util.fastRoundToInt
+import kotlin.math.ceil
+import kotlin.math.floor
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONArray
@@ -25,7 +40,7 @@ class CpuGate1VisualCaptureTest {
                 Gate1VisualCaptureSupport.CPU_SHA).also { support = it }
             s.report.put("decodedFloatIdentity", "UNOBSERVED_FIXED_CPU")
                 .put("internalFrameRecipe", "UNOBSERVED_FIXED_CPU")
-                .put("cpuRenderHook", false).put("cpuTimingCollection", false)
+                .put("cpuRenderHook", false).put("cpuTimingCollection", false).put("displayGeometryVerified", false)
                 .put("captureMeaning", "latest queued Window buffer cropped to the public Image bounds; not offscreen rerender")
                 .put("nativeCompletion", "UNOBSERVED").put("allWorkersIdle", "UNOBSERVED")
             s.startHub()
@@ -47,6 +62,9 @@ class CpuGate1VisualCaptureTest {
             s.report.put("sourceBefore", s.verifySource()).put("uiBefore", state)
             val before = checkNotNull(state)
             val imageBounds = fromJson(before.getJSONArray("imageBoundsScreen"))
+            s.phase("observe_cpu_unclipped_layout")
+            val layoutBefore = displayGeometry(s, host, before, imageBounds)
+            s.report.put("displayGeometryBefore", layoutBefore.json); s.save()
             var first: android.graphics.Bitmap? = null
             var second: android.graphics.Bitmap? = null
             try {
@@ -54,7 +72,12 @@ class CpuGate1VisualCaptureTest {
                 first = s.windowCopy(host, imageBounds, "cpu-window-a")
                 s.report.put("originalA", s.saveOriginal(first, "cpu-window-a")); s.save()
                 s.requireActive(host, Gate1VisualCaptureSupport.CPU_ACTIVITY)
-                check(readUi(s)?.toString() == before.toString()) { "CPU UI changed during capture" }
+                val between = checkNotNull(readUi(s))
+                check(between.toString() == before.toString()) { "CPU UI changed during capture" }
+                s.phase("observe_cpu_layout_between")
+                val layoutBetween = displayGeometry(s, host, between, imageBounds, layoutBefore)
+                s.report.put("displayGeometryBetween", layoutBetween.json); s.save()
+                check(layoutBetween.json.toString() == layoutBefore.json.toString()) { "CPU layout changed; no recapture" }
                 SystemClock.sleep(250)
                 s.phase("copy_cpu_window_b")
                 second = s.windowCopy(host, imageBounds, "cpu-window-b")
@@ -64,6 +87,11 @@ class CpuGate1VisualCaptureTest {
                     .put("stabilityMeaning", "two copies 250ms apart agree; not proof of correct or latest CPU internal frame")
                 check(after.toString() == before.toString())
                 check(first.sameAs(second)) { "CPU display changed; no recapture" }
+                s.phase("observe_cpu_layout_after")
+                val layoutAfter = displayGeometry(s, host, after, imageBounds, layoutBefore)
+                s.report.put("displayGeometryAfter", layoutAfter.json); s.save()
+                check(layoutAfter.json.toString() == layoutBefore.json.toString()) { "CPU layout changed; no recapture" }
+                s.report.put("displayGeometryVerified", true)
             } finally { first?.recycle(); second?.recycle() }
             s.requireActive(host, Gate1VisualCaptureSupport.CPU_ACTIVITY)
             s.report.put("sourceAfter", s.verifySource()).put("acquisitionStatus", "ORIGINALS_CAPTURED")
@@ -259,10 +287,102 @@ class CpuGate1VisualCaptureTest {
             .put("recipeDisplayHalfWidth", JSONObject().put("strength", .005).put("warmth", .5).put("exposureEv", .05))
             .put("parallelUi", false).put("showBeforeUi", false)
             .put("imageBoundsScreen", s.rect(bounds)).put("parentViewportBoundsScreen", s.rect(viewportBounds))
+            .put("imageSemanticsId", image?.extras?.takeIf { it.containsKey("androidx.compose.ui.semantics.id") }
+                ?.getInt("androidx.compose.ui.semantics.id") ?: JSONObject.NULL)
+            .put("imageAccessibilityWindowId", image?.windowId ?: JSONObject.NULL)
             .put("fitContentRectScreenContinuous", fit)
             .put("contentRectMeaning", "source-based 4:3 FIT estimate only; not decoded CPU dimensions or an automatic crop")
             .put("potentialOverlayRegions", overlaps).put("unoccluded", if (overlaps.length() == 0) "UNPROVEN" else "FALSE_OR_UNPROVEN")
             .put("imageSourceDimensions", "REGISTERED_1024x768_NOT_DIRECTLY_OBSERVED")
+    }
+
+    private data class LayoutObservation(val json: JSONObject, val root: ViewRootForTest, val layout: LayoutInfo)
+
+    /** Read existing public test interfaces only. Never creates a root, sets a callback or measures layout. */
+    private fun displayGeometry(s: Gate1VisualCaptureSupport, host: Activity, ui: JSONObject,
+        rawBounds: Rect, previous: LayoutObservation? = null): LayoutObservation {
+        var result: Result<LayoutObservation>? = null
+        s.ins.runOnMainSync { result = runCatching {
+            val decor = host.window.decorView
+            val roots = ArrayList<ViewRootForTest>()
+            val queue = ArrayDeque<View>(); queue.add(decor)
+            var visited = 0
+            while (queue.isNotEmpty()) {
+                check(++visited <= 1024) { "Unexpected View tree size" }
+                val view = queue.removeFirst()
+                if (view is ViewRootForTest) roots.add(view)
+                if (view is ViewGroup) repeat(view.childCount) { queue.add(view.getChildAt(it)) }
+            }
+            val id = ui.getInt("imageSemanticsId")
+            val windowId = ui.getInt("imageAccessibilityWindowId")
+            val matches = roots.flatMap { root ->
+                root.semanticsOwner.getAllSemanticsNodes(mergingEnabled = false).also {
+                    check(it.size <= 1024) { "Unexpected semantics tree size" }
+                }.filter { it.id == id && it.config.getOrNull(SemanticsProperties.ContentDescription) ==
+                    listOf("現像結果（表示用）") }.map { root to it }
+            }
+            val (root, node) = matches.single()
+            val view = root.view
+            val layout = node.layoutInfo
+            check(node.root === root && layout.semanticsId == id)
+            check(view.isAttachedToWindow && view.isShown && decor.windowToken != null && view.windowToken == decor.windowToken)
+            check(view.createAccessibilityNodeInfo().windowId == windowId)
+            check(root.isLifecycleInResumedState && !root.hasPendingMeasureOrLayout)
+            check(layout.isAttached && layout.isPlaced && !layout.isDeactivated)
+            if (previous != null) check(root === previous.root && layout === previous.layout) { "CPU layout identity changed" }
+            val coordinates = layout.coordinates
+            val size = coordinates.size
+            check(coordinates.isAttached && size == node.size && size.width > 0 && size.height > 0)
+            val local = listOf(Offset.Zero, Offset(size.width.toFloat(), 0f),
+                Offset(size.width.toFloat(), size.height.toFloat()), Offset(0f, size.height.toFloat()))
+            val screen = local.map(coordinates::localToScreen)
+            val window = local.map(coordinates::localToWindow)
+            check(screen.all { it.x.isFinite() && it.y.isFinite() } && window.all { it.x.isFinite() && it.y.isFinite() })
+            // Exact unit translation only: no zoom, pan mismatch, rotation or perspective compensation.
+            check(screen == local.map { it + screen.first() } && window == local.map { it + window.first() })
+            check(screen.first() == node.positionOnScreen && window.first() == node.positionInWindow)
+            val decorScreen = IntArray(2).also(decor::getLocationOnScreen)
+            val decorWindow = IntArray(2).also(decor::getLocationInWindow)
+            val screenToWindow = Offset((decorWindow[0] - decorScreen[0]).toFloat(), (decorWindow[1] - decorScreen[1]).toFloat())
+            check(window == screen.map { it + screenToWindow })
+            // Fixed 1ce PhotoRollComparisonImage: Fit, default Center, no draw transform. CPU frame remains unobserved.
+            // PainterModifier aligns rounded scaled size; BitmapPainter draws that same rounded destination size.
+            val scale = ContentScale.Fit.computeScaleFactor(Size(1024f, 768f), Size(size.width.toFloat(), size.height.toFloat()))
+            val scaled = Size(1024f * scale.scaleX, 768f * scale.scaleY)
+            val drawSize = IntSize(scaled.width.fastRoundToInt(), scaled.height.fastRoundToInt())
+            val align = Alignment.Center.align(drawSize, size, layout.layoutDirection)
+            check(drawSize.width > 0 && drawSize.height > 0)
+            val left = screen.first().x.toDouble() + align.x - rawBounds.left
+            val top = screen.first().y.toDouble() + align.y - rawBounds.top
+            val content = listOf(left, top, left + drawSize.width, top + drawSize.height)
+            check(content[0] >= 0 && content[1] >= 0 && content[2] <= rawBounds.width() && content[3] <= rawBounds.height())
+            val crop = Rect(ceil(content[0]).toInt(), ceil(content[1]).toInt(), floor(content[2]).toInt(), floor(content[3]).toInt())
+            check(!crop.isEmpty && Rect(0, 0, rawBounds.width(), rawBounds.height()).contains(crop))
+            check(!root.hasPendingMeasureOrLayout)
+            fun points(values: List<Offset>) = JSONArray(values.map { JSONArray(listOf(it.x, it.y)) })
+            val json = JSONObject().put("schema", "layout-crop-v1")
+                .put("observationKind", "PUBLIC_COMPOSE_UNCLIPPED_LAYOUT_FIXED_FIT_CENTER")
+                .put("coordinateSpace", "raw_original_pixels").put("semanticsNodeId", id)
+                .put("accessibilityWindowId", windowId).put("rootIdentityToken", System.identityHashCode(root))
+                .put("layoutIdentityToken", System.identityHashCode(layout)).put("sameActivityWindow", true)
+                .put("pendingMeasureOrLayout", false).put("attachedPlacedActive", true).put("unitTranslationOnly", true)
+                .put("layoutSize", JSONArray(listOf(size.width, size.height)))
+                .put("layoutCornersScreen", points(screen)).put("layoutCornersWindow", points(window))
+                .put("screenToWindowOffset", JSONArray(listOf(screenToWindow.x, screenToWindow.y)))
+                .put("rawBoundsScreen", s.rect(rawBounds)).put("rawSize", JSONArray(listOf(rawBounds.width(), rawBounds.height())))
+                .put("contentScale", "Fit").put("alignment", "Center")
+                .put("sourceAspectBasis", "REGISTERED_INPUT_AND_FIXED_CPU_PATH_NOT_FRAME_OBSERVED")
+                .put("sourceSizeBasis", JSONArray(listOf(1024, 768)))
+                .put("scaledSizeFloat", JSONArray(listOf(scaled.width, scaled.height)))
+                .put("drawSizeRounded", JSONArray(listOf(drawSize.width, drawSize.height)))
+                .put("alignmentOffset", JSONArray(listOf(align.x, align.y)))
+                .put("painterRounding", "Compose fastRoundToInt scaled size; Alignment.Center.align; BitmapPainter integer dstSize")
+                .put("contentRectRawContinuous", JSONArray(content)).put("cropRectRaw", s.rect(crop))
+                .put("cropRounding", "inward_ceil_start_floor_end").put("unoccluded", "UNPROVEN")
+                .put("meaning", "layout-derived crop metadata only; raw PNG unchanged; not atomic frame or CPU bitmap observation")
+            LayoutObservation(json, root, layout)
+        } }
+        return checkNotNull(result).getOrThrow()
     }
 
     /** One bounded scalar snapshot only. Never records arbitrary UI text or provider filenames. */

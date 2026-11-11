@@ -20,6 +20,8 @@ import java.security.MessageDigest
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.math.ceil
+import kotlin.math.floor
 
 /** Existing real GPU Surface only. No offscreen render, engine replacement, resize or performance run. */
 @RunWith(AndroidJUnit4::class)
@@ -34,7 +36,7 @@ class GpuGate1VisualCaptureTest {
                 "dev.cinematic.p0.gpu.GpuGate1VisualCaptureTest#captureSelectedGpuDisplay",
                 Gate1VisualCaptureSupport.GPU_SHA).also { support = it }
             s.report.put("captureMeaning", "latest queued real SurfaceView buffer, not offscreen rerender or scanout")
-                .put("frameMode", "FULL_RECOMPUTE").put("uiSliderSynchronized", false)
+                .put("frameMode", "FULL_RECOMPUTE").put("uiSliderSynchronized", false).put("displayGeometryVerified", false)
                 .put("inputMode", "one baseline submit through existing renderer after external Files selection")
                 .put("observerScope", "read-only existing GPU snapshot and pinned fields; no CPU hooks")
             s.startHub()
@@ -87,7 +89,9 @@ class GpuGate1VisualCaptureTest {
             val boundary = checkNotNull(before)
             check(boundary.getLong("drawCount") > 0)
             val geometry = geometry(s, view)
-            s.report.put("gpuBefore", boundary).put("geometryBefore", geometry); s.save()
+            val displayBefore = displayGeometry(s, geometry, boundary, input)
+            s.report.put("gpuBefore", boundary).put("geometryBefore", geometry)
+                .put("displayGeometryBefore", displayBefore); s.save()
             var first: Bitmap? = null
             var second: Bitmap? = null
             try {
@@ -107,6 +111,10 @@ class GpuGate1VisualCaptureTest {
                     .put("stabilityMeaning", "two native-size Surface copies 250ms apart; not user visual acceptance")
                 check(after.toString() == boundary.toString() && geometryAfter.toString() == geometry.toString())
                 check(first.sameAs(second)) { "GPU Surface changed; no recapture" }
+                val displayAfter = displayGeometry(s, geometryAfter, after, input)
+                s.report.put("displayGeometryAfter", displayAfter); s.save()
+                check(displayAfter.toString() == displayBefore.toString())
+                s.report.put("displayGeometryVerified", true)
             } finally { first?.recycle(); second?.recycle() }
             s.requireActive(host, Gate1VisualCaptureSupport.GPU_ACTIVITY)
             s.report.put("sourceAfter", s.verifySource()).put("acquisitionStatus", "ORIGINALS_CAPTURED")
@@ -166,6 +174,34 @@ class GpuGate1VisualCaptureTest {
                 .put("unoccluded", "UNPROVEN_VIEW_GEOMETRY_ONLY")
         }
         return checkNotNull(result)
+    }
+
+    /** Fixed present.frag FIT, from observed native Surface/input and rotation, not pixel colors. */
+    private fun displayGeometry(s: Gate1VisualCaptureSupport, geometry: JSONObject,
+        state: JSONObject, input: JSONObject): JSONObject {
+        val frame = geometry.getJSONArray("surfaceFrame")
+        check(frame.getInt(0) == 0 && frame.getInt(1) == 0 && state.getInt("rotationDegrees") == 0)
+        val width = frame.getInt(2); val height = frame.getInt(3)
+        check(state.getInt("surfaceWidth") == width && state.getInt("surfaceHeight") == height)
+        val inputWidth = input.getInt("width"); val inputHeight = input.getInt("height")
+        val scale = minOf(width.toFloat() / inputWidth, height.toFloat() / inputHeight)
+        val fittedWidth = inputWidth * scale; val fittedHeight = inputHeight * scale
+        val left = (width - fittedWidth) * .5f; val top = (height - fittedHeight) * .5f
+        val content = listOf(left, top, left + fittedWidth, top + fittedHeight)
+        check(content.all { it.isFinite() } && left >= 0 && top >= 0 && content[2] <= width && content[3] <= height)
+        val crop = Rect(ceil(left.toDouble()).toInt(), ceil(top.toDouble()).toInt(),
+            floor(content[2].toDouble()).toInt(), floor(content[3].toDouble()).toInt())
+        check(!crop.isEmpty && Rect(0, 0, width, height).contains(crop))
+        return JSONObject().put("schema", "layout-crop-v1").put("observationKind", "FIXED_GPU_SURFACE_INPUT_FIT")
+            .put("coordinateSpace", "raw_original_pixels").put("surfaceFrame", frame)
+            .put("rawSize", JSONArray(listOf(width, height))).put("sourceSizeBasis", JSONArray(listOf(inputWidth, inputHeight)))
+            .put("sourceAspectBasis", "OBSERVED_GPU_INPUT_AND_ROTATION").put("rotationDegrees", 0)
+            .put("surfaceLeaseIdentityToken", state.getInt("surfaceLeaseIdentityToken"))
+            .put("inputIdentityToken", state.getInt("inputIdentityToken"))
+            .put("contentScale", "Fit").put("alignment", "Center").put("fitArithmetic", "float32_fixed_present_shader")
+            .put("contentRectRawContinuous", JSONArray(content)).put("cropRectRaw", s.rect(crop))
+            .put("cropRounding", "inward_ceil_start_floor_end").put("unoccluded", "UNPROVEN_VIEW_GEOMETRY_ONLY")
+            .put("meaning", "layout-derived crop metadata only; raw PNG unchanged; not scanout or user acceptance")
     }
 
     private fun fullyVisible(view: SurfaceView): Boolean {

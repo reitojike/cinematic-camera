@@ -93,6 +93,50 @@ mailbox settled、drawCount、Surface lease/dimensionsを照合する。実画�
 条件の解釈・変更が必要なら確認を得る。`criterion3=NOT_ASSESSED`、`formalVisualPairReady=false`を維持し、
 同じルックかはユーザーが判断する。
 
+## 承認された比較用派生画像
+
+③の比較ページに限り、レイアウト由来の切り出しと縮小を原本とは別に許可された。
+本節は既存PixelCopyの取得領域・元寸法・PNGを変更せず、②の測定や判定には使用しない。
+画素色や写真の内容から境界を推測せず、古いreportへ座標を後付けしない。
+
+- CPU: 既存Viewの公開 `ViewRootForTest` / `RootForTest` / `SemanticsNode` を読み取り、
+  accessibilityのsemantics IDと固定Image descriptionで一意対応する。unclipped size/位置、
+  `LayoutInfo.coordinates` の4隅、同じActivity/window・root/layout実体、attached/placed、
+  measure/layout待ちなしを2画像の前・間・後で照合する。callback設定、root作成、再描画hookは使わない。
+  固定sourceの `ContentScale.Fit` / `Alignment.Center` とBitmapPainterの整数dstSizeに従い、
+  scaled sizeの `fastRoundToInt`、Centerの整数offset、screen→window→原PNGの変換を記録する。
+  単位平行移動以外、対応不明、不一致なら停止する。内部bitmap寸法・frame recipeは直接観測していない。
+  縦横比は登録入力と固定CPU表示経路に基づく。従来のaccessibility boundsによるFIT推定はcrop根拠にしない。
+- GPU: 実Surface、観測入力寸法、rotation 0、固定 `present.frag` のFIT式から範囲を求める。
+  buffer/View寸法は変更しない。Surface/inputの同一性と取得前後の一致を保持する。
+- 新reportの `displayGeometryBefore` / `displayGeometryAfter`（CPUは `displayGeometryBetween` も）は
+  `schema=layout-crop-v1`、`coordinateSpace=raw_original_pixels` を持つ。
+  `observationKind` はCPUが `PUBLIC_COMPOSE_UNCLIPPED_LAYOUT_FIXED_FIT_CENTER`、
+  GPUが `FIXED_GPU_SURFACE_INPUT_FIT`。`contentRectRawContinuous` と `cropRectRaw` は
+  `[left, top, right, bottom]`。整数cropはhalf-openで、開始をceil、終端をfloorする
+  `cropRounding=inward_ceil_start_floor_end`。範囲全体が原PNG内であることを要求する。
+  全snapshot一致と `displayGeometryVerified=true` がなければ派生生成を拒否する。
+  座標確認は無遮蔽・正しいframe・③合格の証明ではなく、未観測情報は残す。
+
+crop寸法をCPU `(Wc,Hc)`、GPU `(Wg,Hg)` とし、`D=abs(Wc*Hg-Wg*Hc)` を計算する。
+CPU/GPUそれぞれの幅・高さに投影した4方向の誤差がすべて1px以内、すなわち
+`D <= min(Wc,Hc,Wg,Hg)` の場合だけ進める。幅・高さとも小さい側の寸法を共通targetとし、
+大小関係が交差する場合は停止する。両側とも拡大せず、投影誤差と各軸scaleを記録する。
+
+私有生成器は整数cropを独立Bitmapへ取り出し、原本RGBA sliceとの一致を確認してから縮小する。
+両側共通の設定はGDI+ `HighQualityBicubic`、`TileFlipXY`、`PixelOffsetMode.Half`、
+`CompositingMode.SourceCopy`、`CompositingQuality.HighQuality`、`SmoothingMode.None`、
+`GraphicsUnit.Pixel`、`Format32bppArgb`。targetと同寸法の側は `IDENTITY_NO_RESAMPLE` として画素不変を確認する。
+RGBA8/sRGB・alpha全255を要求し、自動回転・色補正・linear-light変換はしない。
+出力はRGBA8/sRGB、PNG filter 0 / zlib 9で別保存し、反復生成のPNGとdecoded pixelsを照合する。
+原本・crop等倍・縮小表示を区別し、等倍は1画像px=1 CSS pxとする。browser zoom・devicePixelRatioを明示し、物理pixel一致は保証しない。
+原画像、report、生成器source、派生画像、生成HTMLは私有のままとし、Git/Issue/PRへ公開しない。
+
+API根拠: [ViewRootForTest](https://developer.android.com/reference/kotlin/androidx/compose/ui/platform/ViewRootForTest)、
+[SemanticsNode](https://developer.android.com/reference/kotlin/androidx/compose/ui/semantics/SemanticsNode)、
+[LayoutInfo](https://developer.android.com/reference/kotlin/androidx/compose/ui/layout/LayoutInfo)、
+[BitmapPainter](https://developer.android.com/reference/kotlin/androidx/compose/ui/graphics/painter/BitmapPainter)。
+
 ## 私有出力と搬出
 
 アプリ専用externalの `files/gate1-visual/<side>-<run>/` に保存する。
