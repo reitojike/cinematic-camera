@@ -1,9 +1,13 @@
 package dev.cinematic.p0.gpu
 
 import android.content.ComponentCallbacks2
+import android.graphics.SurfaceTexture
+import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
+import android.view.Surface
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.activity.compose.setContent
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -25,6 +29,92 @@ class GpuPreviewLifecycleTest {
     @Before fun syntheticEmulatorOnly() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("isolated") == "true")
         check(android.os.Build.HARDWARE in setOf("ranchu", "goldfish")) { "Synthetic emulator only" }
+    }
+
+    @Test fun oldSurfaceDetachCannotClearNewAttachmentNotification() {
+        val renderer = GpuPreviewRenderer(InstrumentationRegistry.getInstrumentation().targetContext.assets)
+        val firstTexture = SurfaceTexture(false)
+        val secondTexture = SurfaceTexture(false)
+        val first = Surface(firstTexture)
+        val second = Surface(secondTexture)
+        try {
+            assertFalse(renderer.surfaceAttached.value)
+            renderer.attachSurface(first, 16, 16)
+            assertTrue(renderer.surfaceAttached.value)
+            renderer.attachSurface(second, 16, 16)
+            renderer.detachSurface(first)
+            assertTrue(renderer.hasSurface)
+            assertTrue("Old detach must not publish false for the new lease", renderer.surfaceAttached.value)
+            renderer.resizeSurface(first, 32, 32)
+            assertTrue(renderer.surfaceAttached.value)
+            renderer.detachSurface(second)
+            assertFalse(renderer.hasSurface)
+            assertFalse(renderer.surfaceAttached.value)
+            renderer.attachSurface(first, 16, 16)
+            renderer.close()
+            assertFalse(renderer.surfaceAttached.value)
+            renderer.detachSurface(first) // Bounded existing shutdown barrier, before Surface release.
+        } finally {
+            renderer.close()
+            first.release(); second.release()
+            firstTexture.release(); secondTexture.release()
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    @Test fun readinessTimeoutReplacementPauseAndDestroyKeepOnlyCurrentInput() {
+        val scenario = ActivityScenario.launch(GpuPreviewDiagnosticActivity::class.java)
+        val activity = AtomicReference<GpuPreviewDiagnosticActivity>()
+        try {
+            val currentRenderer = renderer(scenario)
+            awaitSnapshot(currentRenderer, "initial real surface") { it.surfaceAttached && it.drawCount > 0 }
+            // Remove the real Compose surface, not its readiness flag or shared CPU observations.
+            scenario.onActivity { activity.set(it); it.setContent { } }
+            awaitSnapshot(currentRenderer, "actual surface absent while resumed") { !it.surfaceAttached && it.windowCount == 0 }
+            scenario.onActivity { it.acceptDiagnosticDocument(Uri.EMPTY) }
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            val first = inputState(scenario)
+            assertTrue(first.resumed && first.loading && !first.surfaceAttached && !first.pending)
+
+            scenario.onActivity { it.acceptDiagnosticDocument(Uri.EMPTY) }
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            val second = inputState(scenario)
+            assertTrue(second.epoch > first.epoch && second.loading)
+            assertEquals("Old cancelled callback cannot complete or clear the new wait", first.completedEpoch, second.completedEpoch)
+            val deadline = SystemClock.elapsedRealtime() + 15_000
+            var timedOut = inputState(scenario)
+            while (timedOut.loading && SystemClock.elapsedRealtime() < deadline) {
+                SystemClock.sleep(25) // Test observation only; production uses StateFlow notification.
+                timedOut = inputState(scenario)
+            }
+            assertEquals("Preparation timeout must be explicit, not cancellation/read failure", "readiness_timeout", timedOut.inputResult)
+            assertEquals(second.epoch, timedOut.completedEpoch)
+            assertFalse(timedOut.loading || timedOut.pending || timedOut.gpuError)
+
+            scenario.onActivity { it.acceptDiagnosticDocument(Uri.EMPTY) }
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            assertTrue(inputState(scenario).loading)
+            scenario.moveToState(Lifecycle.State.CREATED)
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            val paused = inputState(scenario)
+            assertFalse(paused.resumed || paused.loading || paused.pending)
+            assertEquals("Pause cancellation does not complete the newer input", second.epoch, paused.completedEpoch)
+            assertEquals("idle_or_interrupted", paused.inputResult)
+
+            scenario.onActivity { it.acceptDiagnosticDocument(Uri.EMPTY) }
+            val pending = inputState(scenario)
+            assertTrue(pending.pending)
+            assertFalse(pending.loading)
+            assertEquals("Already-paused delivery does not consume a request epoch", paused.epoch, pending.epoch)
+            scenario.onActivity { it.onTrimMemory(ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) }
+            val afterBackgroundTrim = inputState(scenario)
+            assertTrue("Background cleanup must retain a NEW already-paused picker result", afterBackgroundTrim.pending)
+            assertFalse(afterBackgroundTrim.loading)
+        } finally { scenario.close() }
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            val destroyed = checkNotNull(activity.get()).diagnosticState()
+            assertFalse("Destroy discards any pending URI and wait", destroyed.pending || destroyed.loading || destroyed.resumed)
+        }
     }
 
     @Suppress("DEPRECATION")
@@ -169,6 +259,12 @@ class GpuPreviewLifecycleTest {
     private fun renderer(scenario: ActivityScenario<GpuPreviewDiagnosticActivity>): GpuPreviewRenderer {
         val value = AtomicReference<GpuPreviewRenderer>()
         scenario.onActivity { value.set(it.renderer) }
+        return checkNotNull(value.get())
+    }
+
+    private fun inputState(scenario: ActivityScenario<GpuPreviewDiagnosticActivity>): GpuPreviewDiagnosticActivity.DiagnosticState {
+        val value = AtomicReference<GpuPreviewDiagnosticActivity.DiagnosticState>()
+        scenario.onActivity { value.set(it.diagnosticState()) }
         return checkNotNull(value.get())
     }
 

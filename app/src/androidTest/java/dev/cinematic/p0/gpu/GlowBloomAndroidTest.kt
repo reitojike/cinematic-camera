@@ -105,7 +105,8 @@ class GlowBloomAndroidTest {
         texture(egl, ledger, width, height).use { base ->
             texture(egl, ledger, width, height).use { source ->
                 StageClearGlowGpu.accumulateBloom(source) { _, _ ->
-                    assertEquals(4, ledger.textureCount) // base, source, two accumulators.
+                    // First blur overlaps only the zero accumulator; later kernels reuse both.
+                    assertEquals(if (calls == 0) 3 else 4, ledger.textureCount)
                     calls++
                     texture(egl, ledger, width, height).also {
                         clear(egl, it)
@@ -121,6 +122,27 @@ class GlowBloomAndroidTest {
         }
         assertEquals(0L, ledger.allocatedBytes)
         Log.i("GlowBloomTest", "isolatedBloomPeakBytes=$peak; full look/resample memory not measured")
+    }
+
+    @Test fun deferredDestinationFailureReleasesBlurAndKeepsBorrowedSource() = gpu { egl ->
+        val width = 8
+        val bytes = width.toLong() * GpuTexture.Format.RGBA32F.bytesPerPixel
+        val ledger = GpuMemoryLedger(bytes * 3) // source + zero accumulator + first blur, no destination.
+        var blurred: GpuTexture? = null
+        texture(egl, ledger, width).use { source ->
+            assertThrows(GpuMemoryBudgetException::class.java) {
+                StageClearGlowGpu.accumulateBloom(source) { _, _ ->
+                    texture(egl, ledger, width).also { clear(egl, it); blurred = it }
+                }
+            }
+            assertNotNull(blurred)
+            assertThrows(IllegalStateException::class.java) { blurred!!.requireOpen() }
+            source.requireOpen()
+            assertEquals(bytes, ledger.allocatedBytes)
+            assertEquals(1, ledger.textureCount)
+        }
+        assertEquals(0L, ledger.allocatedBytes)
+        assertEquals(0, ledger.textureCount)
     }
 
     @Test fun failedKernelReleasesAccumulatorsButNeverClosesBorrowedSource() = gpu { egl ->

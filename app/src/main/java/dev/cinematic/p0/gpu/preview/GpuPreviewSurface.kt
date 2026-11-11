@@ -16,18 +16,27 @@ internal fun GpuPreviewSurface(renderer: GpuPreviewRenderer, modifier: Modifier 
     val refreshRate = LocalView.current.display?.refreshRate ?: 60f
     DisposableEffect(renderer, owner) {
         val observer = LifecycleEventObserver { _, event ->
+            GpuSurfaceProbe.event("compose.lifecycle") { "event=$event" }
             if (event == Lifecycle.Event.ON_START) renderer.setStarted(true)
             if (event == Lifecycle.Event.ON_STOP) renderer.setStarted(false)
         }
         owner.lifecycle.addObserver(observer)
         renderer.setStarted(owner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
-        onDispose { owner.lifecycle.removeObserver(observer); renderer.setStarted(false) }
+        onDispose {
+            GpuSurfaceProbe.event("compose.dispose")
+            owner.lifecycle.removeObserver(observer); renderer.setStarted(false)
+        }
     }
     AndroidExternalSurface(modifier = modifier) {
         onSurface { surface, width, height ->
+            GpuSurfaceProbe.event("compose.surface.created") { "surface=${System.identityHashCode(surface)}" }
             renderer.attachSurface(surface, width, height, refreshRate)
             surface.onChanged { w, h -> renderer.resizeSurface(this, w, h) }
-            surface.onDestroyed { renderer.detachSurface(this) }
+            surface.onDestroyed {
+                GpuSurfaceProbe.event("compose.surface.destroyed.begin") { "surface=${System.identityHashCode(this)}" }
+                renderer.detachSurface(this)
+                GpuSurfaceProbe.event("compose.surface.destroyed.end") { "surface=${System.identityHashCode(this)}" }
+            }
         }
     }
 }

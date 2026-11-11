@@ -247,3 +247,33 @@ A自体が参考値を超える場合も今回の診断でcheckpointを増やさ
 `SaveCandidateCancellationTest` は合成DNGだけを使用し、既存の `OriginalStageTrace.started(MIST)` で取消を要求する。A/B各3回で停止、owner/worker/FD解放、出力未開始、最後の原本照合、scratch消去を確認する。これはMist開始直前の同じ境界での確認であり、Mist worker実行中や実機の待ち時間比較ではない。既存のnative decode後/Foundation後も3sessionで残存0を確認する。
 
 実行は `docs/MANAGED_DEVICES.md` のATD枠を利用し、classを `dev.cinematic.p0.rawdiagnostic.SaveCandidateCancellationTest` に限定する。rawDiagnostic/testプロパティと `isolated=true` を明示する。旧S06のreportにはbyte inventoryがないため、合成再現の値を実機の残存実測として扱わない。
+### 保存3工程だけの出力・公開順序・記録比較（#324 / #285 レーンE）
+
+`OriginalSaveParallelParityInstrumentationTest.threeWorkerSettingsKeepJpegStageOrderPublicationAndJournalAcrossRetries`
+は、A=Glow/Mist/R7 tone 1/1/1 と B=2/2/2だけを切り替える合成試験。
+Foundation2 / Orton4 / Character2、色融合OFF、JPEG品質95を両armで固定する。
+64×48合成DNGの2条件（向き6・強さ0.45・warmth20/EV0.3をAB順、向き1・強さ1・調整なしをBA順）を使う。
+
+- 実際の `Original24Attempt` のdecode・描画・JPEGを、既存 `ManualOriginalTrialSaveOwner`、
+  `RecoverablePhotoPublisher`、`MediaStoreJpegRows`、`JpegPublicationJournal` / `AndroidAtomicJournalStorage`へ接続する。
+  製品コードへのtest hookは追加しない。試験用backendは既存部品を呼ぶだけで、画素や公開状態機械を再実装しない。
+- JPEGの全bytesとSHA-256・byte長・寸法/向き、工程の完了順、intent→描画完了/解放→記録→共有行作成→書込/close→公開の順を照合する。
+  journalはPREPAREDからPUBLISHEDまで全7状態・revision0〜6を固定して検査する。
+- 両armは同一の原本/編集値を使い、世代・無作為token・公開URIだけを正規化して全記録と符号化bytesを比較する。
+  これらの各値も、それぞれの要求と全状態で一貫することを別に確認する。他の差は除外しない。
+- 同じownerへ2回再要求し、JPEG・公開先・確定journalが不変、再描画・重複insert/write/publish・記録書換えなし、
+  原本不変・資源解放を確認する。成功時だけ試験が作った正確な行を所有/名前で照合して削除する。
+- 通常保存factoryの配線・admission・Foreground Service・UIや、実機/実写の全般的な品質・速度を確認する試験ではない。
+  factory固有の既存 `Original24ManualSaveInstrumentationTest`（PR #309）と保証範囲を分ける。
+  現行CPU基準からのA/Bであり、古い性能対照へ戻すものではない。
+
+実行前に `docs/MANAGED_DEVICES.md` の共有枠とレーン優先順（A→B→D→E→F）を調整する。
+上位作業が待つ間は開始せず、実機を指定しない。使用するcommit/tree・APK SHA-256・variant・ABIを記録する。
+標準の `original24Probe` / ATDで次のclassだけを実行する（Windowsは `gradlew.bat`）。
+
+```text
+./gradlew :app:pixel9aapi37atdOriginal24ProbeAndroidTest --rerun --no-daemon --max-workers=1 -PcinematicOriginal24Probe=true -Pandroid.testInstrumentationRunnerArguments.original24=true -Pandroid.testInstrumentationRunnerArguments.class=dev.cinematic.p0.jpegrender.original.OriginalSaveParallelParityInstrumentationTest
+```
+
+JUnitの成功/失敗/skipと `SaveParallelParity` の合成2条件の完了記録を照合する。
+未実行・skip・環境失敗は合格に数えない。実行結果と未確認は #324 / PR、集約は #285へ記録する。
