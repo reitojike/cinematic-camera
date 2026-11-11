@@ -133,6 +133,153 @@ class CpuGate1ReferenceUiTest {
         }
     }
 
+    /** Separate optional PSS run: one Hub, one Files selection, 15 gestures, normal Back. */
+    @Test fun selectedDngPssReferenceOnly() {
+        val started = SystemClock.elapsedRealtime()
+        val args = InstrumentationRegistry.getArguments()
+        assumeTrue(args.getString("cpuReferencePss") == "true")
+        check(args.getString("class") == "dev.cinematic.p0.gpu.CpuGate1ReferenceUiTest#selectedDngPssReferenceOnly")
+        check(args.getString("gate1Part2") == "cpu-reference-pss-v1" && args.getString("isolated") == "true")
+        check(Build.VERSION.SDK_INT >= 30 && inst.targetContext.packageName == TARGET)
+        val emulator = Build.HARDWARE in setOf("ranchu", "goldfish")
+        check(args.getString("gate1AuthorizedTarget") == Build.MODEL)
+        if (!emulator) check(args.getString("gate1PixelProbe") == "true" && Build.MODEL == "Pixel 9a")
+        check(args.getString("verifiedCpuApkSha256") == CPU_SHA)
+        val installed = File(inst.targetContext.applicationInfo.sourceDir).inputStream().use { CpuGate1PssSupport.fingerprint(it) }.second
+        check(installed == CPU_SHA)
+        check(args.getString("gate1DngDocumentId") == "primary:Download/$FIXTURE")
+        val runId = checkNotNull(args.getString("cpuRunId"))
+        check(runId.matches(Regex("[A-Za-z0-9][A-Za-z0-9_-]{0,79}")))
+        val root = File(checkNotNull(inst.targetContext.getExternalFilesDir("cpu-reference-pss")), runId)
+        check(!root.exists() && root.mkdirs()) { "Safe unique cpuRunId required; never overwrite" }
+        val phases = listOf("hub_before_input", "initial_ui") + listOf("strength", "warmth", "EV").flatMap { axis ->
+            (0..4).map { "$axis-${if (it == 0) "warmup" else "recorded-$it"}" }
+        } + "normal_close_same_hub"
+        val slots = JSONArray(phases.mapIndexed { i, phase -> JSONObject().put("slot", i + 1).put("phase", phase).put("status", "not_started") })
+        val report = JSONObject().put("schema", 1).put("runId", runId).put("purpose", "OPTIONAL_UI_EXTERNAL_PSS_REFERENCE")
+            .put("formalGate1Measurement", false).put("plannedCpuSlots", 18).put("plannedCpuAndGpuSlots", 36).put("slots", slots)
+            .put("verifiedInstalledCpuApkSha256", installed).put("emulator", emulator).put("preparationClicks", preparationClicks)
+            .put("authorizationMeaning", "flags are guards, never physical-device permission")
+            .put("nativeCompletion", "UNKNOWN").put("allWorkersIdle", "UNKNOWN").put("activityGc", "UNKNOWN").put("fullRelease", "UNKNOWN").put("gcState", "UNKNOWN")
+            .put("latestImageFrame", "UNKNOWN: start equals return; unchanged old UI cannot prove the latest image frame")
+            .put("selectedUriIdentityLimit", "Expected URI/read-grant/hash plus picker-location evidence, not direct selected result URI or decoded frame observation")
+            .put("decodedFloatIdentity", "UNOBSERVED_FIXED_CPU").put("peakCollection", false).put("gfxinfoCollection", false)
+            .put("softElapsedBudgetMs", 780000).put("normalExitReserveMs", 45000).put("hardIoCancellation", false)
+            .put("eighteenCompletedWithinBudgetGuaranteed", false).put("outcome", "started")
+        fun save() = File(root, "report.json").writeText(report.toString(2))
+        save()
+        val support = CpuGate1PssSupport(root, started)
+        var hubBound = false; var rollBound = false; var closed = false; var closeAttempted = false; var activeSlot: JSONObject? = null
+        fun accessible(predicate: (AccessibilityNodeInfo) -> Boolean) = node { it.packageName?.toString() == TARGET && predicate(it) }
+        fun filesVisible() = accessible { it.text?.toString()?.startsWith("Files") == true && it.isEnabled } != null
+        fun uiToken(axis: Axis): String {
+            val state = support.lifecycle(false)
+            val ruler = checkNotNull(ruler(axis)); check(ruler.refresh() && ruler.isEnabled && ruler.isVisibleToUser && ready())
+            check(ruler.packageName?.toString() == TARGET)
+            val range = checkNotNull(ruler.rangeInfo); val value = axis.value(range.current)
+            check(kotlin.math.abs(value - axis.start) < .00001)
+            return "$state/axis=${axis.id}/value=$value/normalized=${range.current}/enabled=${ruler.isEnabled}/closeEnabled=true" +
+                "/window=${ruler.windowId}/description=${checkNotNull(ruler.stateDescription)}"
+        }
+        fun capture(index: Int, closing: Boolean = false, boundary: () -> String) {
+            activeSlot = slots.getJSONObject(index)
+            support.capture(checkNotNull(activeSlot), support.deadline(30_000, closing), boundary); save(); activeSlot = null
+        }
+        fun normalClose() {
+            check(!closeAttempted); closeAttempted = true // No retry after uncertain Back outcome.
+            val end = support.deadline(30_000, closing = true)
+            fun back() { support.remaining(end); inst.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK) }
+            if (runCatching { support.lifecycle(true, rollBound) }.isSuccess) { closed = true; return }
+            if (ui.rootInActiveWindow?.packageName?.toString()?.endsWith(".documentsui") == true) {
+                back(); support.await(end) { runCatching { support.lifecycle(false) }.isSuccess }
+            }
+            check(rollBound); support.lifecycle(false)
+            if (listOf("strength", "warmth", "EV").any { ruler(Axis.from(it)) != null }) {
+                back(); support.await(end) { !ready() && listOf("strength", "warmth", "EV").all { ruler(Axis.from(it)) == null } }
+            }
+            if (!filesVisible()) { // viewer -> list; never click the recipe-saving close control
+                support.lifecycle(false); back(); support.await(end, ::filesVisible)
+            }
+            support.lifecycle(false); back()
+            support.await(end) { runCatching { support.lifecycle(true, true) }.isSuccess }
+            closed = true
+        }
+        try {
+            val hubEnd = support.deadline(30_000)
+            support.bindHub(inst.startActivitySync(Intent().setClassName(TARGET, "dev.cinematic.p0.raw.DiagnosticHubActivity")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))); hubBound = true
+            support.await(hubEnd) { runCatching { support.lifecycle(true) }.isSuccess }
+            capture(0) { support.lifecycle(true) }
+            val openEnd = support.deadline(30_000)
+            click(support.remaining(openEnd)) { support.remaining(openEnd); it.packageName?.toString() == TARGET && it.text?.toString() == "CPUプレビューの確認（Filesから選択）" && it.isEnabled }
+            support.await(openEnd) { support.bindRoll().also { rollBound = it } }
+            val filesEnd = support.deadline(90_000)
+            click(support.remaining(filesEnd)) { support.remaining(filesEnd); it.packageName?.toString() == TARGET && it.text?.toString()?.startsWith("Files") == true && it.isEnabled }
+            val location = support.openDownload(filesEnd); report.put("pickerLocation", location)
+            click(support.remaining(filesEnd)) {
+                support.remaining(filesEnd)
+                var ancestor = it.parent
+                while (ancestor != null && ancestor.viewIdResourceName != "${location.getString("documentsUiPackage")}:id/dir_list") ancestor = ancestor.parent
+                it.packageName?.toString() == location.getString("documentsUiPackage") && it.text?.toString() == FIXTURE && ancestor != null
+            }
+            val initialEnd = support.deadline(120_000)
+            click(support.remaining(initialEnd)) { support.remaining(initialEnd); it.packageName?.toString() == TARGET && it.text?.toString() == "STRENGTH" && it.isEnabled }
+            val strength = Axis.from("strength")
+            support.await(initialEnd) { runCatching { uiToken(strength) }.isSuccess }
+            report.put("sourceBeforeOperations", support.verifyFixture()); support.remaining(initialEnd)
+            capture(1) { uiToken(strength) }
+            var index = 2
+            for (id in listOf("strength", "warmth", "EV")) {
+                val axis = Axis.from(id)
+                for (trial in 0..4) {
+                    val row = slots.getJSONObject(index); activeSlot = row; row.put("status", "operation_started")
+                    val end = support.deadline(30_000)
+                    if (trial == 0 && id != "strength") click(support.remaining(end)) {
+                        support.remaining(end); it.packageName?.toString() == TARGET && it.text?.toString() == axis.button && it.isEnabled
+                    }
+                    support.await(end) { runCatching { uiToken(axis) }.isSuccess }
+                    row.put("uiBeforeOperation", uiToken(axis))
+                    val bounds = Rect().also(checkNotNull(ruler(axis))::getBoundsInScreen)
+                    val density = inst.targetContext.resources.displayMetrics.density
+                    val d = (24f * density * axis.span / axis.step).toFloat(); val k = d.toDouble() / axis.span
+                    val x = bounds.exactCenterX(); val y = bounds.exactCenterY(); val peakTravel = displacement(200, k, axis)
+                    support.withRoll { host ->
+                        val decor = host.window.decorView; val origin = IntArray(2).also(decor::getLocationOnScreen)
+                        val insets = checkNotNull(decor.rootWindowInsets).getInsets(WindowInsets.Type.systemGestures())
+                        val safe = Rect(maxOf(bounds.left, origin[0] + insets.left), maxOf(bounds.top, origin[1] + insets.top),
+                            minOf(bounds.right, origin[0] + decor.width - insets.right), minOf(bounds.bottom, origin[1] + decor.height - insets.bottom))
+                        val slop = ViewConfiguration.get(host).scaledTouchSlop
+                        check(displacement(20, k, axis) > slop && x - peakTravel > safe.left && x < safe.right && y > safe.top && y < safe.bottom)
+                        row.put("geometry", JSONObject().put("rulerBounds", rect(bounds)).put("safeBounds", rect(safe)).put("density", density)
+                            .put("dragWidthPxFloat", d).put("pixelsPerValue", k).put("touchSlopPx", slop).put("startX", x).put("peakX", x - peakTravel).put("returnX", x).put("y", y))
+                    }
+                    check(support.remaining(end) > 800)
+                    val events = JSONArray(); row.put("injectedEvents", events).put("plannedEvents", 42)
+                        .put("riseMs", 200).put("holdMs", 400).put("returnMs", 200).put("requestedStart", axis.start).put("requestedPeak", axis.peak).put("requestedReturn", axis.start)
+                    gesture(x, y, k, axis, events) // Existing geometry/trajectory. No UI reads during input.
+                    support.await(end) { runCatching { uiToken(axis) }.isSuccess }
+                    row.put("uiAfterOperation", uiToken(axis)).put("actualDownToUpMs", events.getJSONObject(41).getLong("eventUptimeMs") - events.getJSONObject(0).getLong("eventUptimeMs"))
+                    capture(index++) { uiToken(axis) }
+                }
+            }
+            report.put("sourceAfterOperations", support.verifyFixture())
+            activeSlot = slots.getJSONObject(17).put("status", "close_started")
+            normalClose(); capture(17, closing = true) { support.lifecycle(true, true) }
+            report.put("outcome", "18_UI_EXTERNAL_REFERENCE_SAMPLES")
+        } catch (failure: Throwable) {
+            activeSlot?.let { if (it.optString("status") != "invalid_reference_sample") it.put("status", "operation_failed").put("failureType", failure.javaClass.simpleName) }
+            report.put("outcome", "STOPPED_INCOMPLETE").put("failureType", failure.javaClass.simpleName)
+            throw failure
+        } finally {
+            try {
+                if (hubBound && !closeAttempted) try { normalClose() } catch (failure: Throwable) { report.put("normalCloseFailureType", failure.javaClass.simpleName) }
+                report.put("normalCloseObserved", closed).put("endedElapsedMs", SystemClock.elapsedRealtime())
+            } finally { try { support.dispose() } finally { save() } }
+        }
+    }
+
+    @Test fun pssParserAndBudgetPureChecks() = CpuGate1PssSupport.checkPureContracts()
+
     /** Outside gesture window, while the target Activity/process still exists.
      * -t 10 is a dumpsys service timeout, NOT a hard deadline on executeShellCommand or pipe IO.
      * Raw output is reference UI-frame information, not image-render values or formal Gate1 data.
