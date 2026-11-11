@@ -370,7 +370,7 @@ jobs:
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o APT::Update::Error-Mode=any update
           # --reinstall also downloads requested packages already present in the runner image.
           # Missing/upgraded dependencies are downloaded into the same cache by apt.
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Dir::Cache::archives="$cache" install --download-only --reinstall --no-install-recommends -y libegl1-mesa-dev libgles2-mesa-dev libgl1-mesa-dri
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Dir::Cache::archives="$cache" install --download-only --reinstall --no-remove --no-install-recommends -y libegl1-mesa-dev libgles2-mesa-dev libgl1-mesa-dri
           (cd "$cache" && sha256sum -- *.deb > SHA256SUMS)
       - name: Verify and install Mesa packages without network downloads
         shell: bash
@@ -394,7 +394,8 @@ jobs:
             grep -Fx "$package" "$packages"
           done
           # Incomplete dependency closure fails here instead of fetching or skipping Mesa.
-          sudo apt-get --no-download --no-install-recommends -y install "$cache"/*.deb
+          sudo dpkg --install "$cache"/*.deb
+          sudo apt-get --no-download check
           dpkg-query -W libegl-mesa0 libgl1-mesa-dri libgles2
       - name: Mesa GLES 3.2 shader / pixel regression (not Android acceptance)
         env:
