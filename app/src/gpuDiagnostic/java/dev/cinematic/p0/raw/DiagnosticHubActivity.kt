@@ -32,6 +32,7 @@ class DiagnosticHubActivity : Activity() {
                 }
             })
         }
-        setContentView(panel)
+        panel.addView(dev.cinematic.p0.gpu.DevelopEngineSettingView(this))
+        setContentView(android.widget.ScrollView(this).apply { addView(panel) })
     }
 }
