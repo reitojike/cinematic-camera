@@ -89,7 +89,7 @@ think-canvasのclassic branch-protection APIは接続機能の権限で403とな
 
 versionNameはtag、versionCodeはこのrelease workflowのrun_numberとする。同じrunの再実行は同じversionCode。固定ファイル名、明示tag、commit・run・hashによる識別、`releases/latest`を使わない点をthink-canvasに揃える。release jobだけ`contents: write`を使い、GitHubが発行するそのrunの標準tokenでReleaseを保存する。
 
-**旧P0配布経路ではrunnerの一時debug署名を使う。現在の固定署名配布とは別経路。** think-canvasの固定PR鍵・internal鍵は一切流用しない。新しい固定鍵の生成・保管・Secrets登録・継続利用は別途確認が必要なため実行しない。通常製品のinternal release buildやObtainiumによる継続更新も今回の対象外。
+**旧P0配布経路ではrunnerの一時debug署名を使う。現在の固定署名配布とは別経路。** think-canvasの固定PR鍵・internal鍵は一切流用しない。新しい固定鍵の生成・保管・Secrets登録・継続利用は別途確認が必要なため実行しない。通常製品のinternal release buildやObtainiumによる継続更新は、旧P0経路導入時の対象外だった。
 
 同じapplicationIdでも、別runやローカル版と署名が違うと上書き更新できない。旧P0配布版の一時鍵は
 継続用として保持していない。今回の旧内部テスト写真についてだけ、利用者が消失を許可した。
