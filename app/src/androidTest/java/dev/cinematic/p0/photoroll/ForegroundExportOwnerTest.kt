@@ -53,6 +53,8 @@ class ForegroundExportOwnerTest {
             }
         }
         check(ForegroundExports.gate.active() == null)
+        if (documentsUi) check(androidx.test.uiautomator.UiDevice.getInstance(instrumentation)
+            .currentPackageName?.endsWith(".documentsui") != true) { "Existing system picker is in use" }
         val app = context.applicationContext
         val resolver = app.contentResolver
         val originalGrants = resolver.persistedUriPermissions.map { Triple(it.uri, it.isReadPermission, it.isWritePermission) }.toSet()
@@ -70,6 +72,8 @@ class ForegroundExportOwnerTest {
         var publication: JpegPublicationRecord? = null
         var scenario: ActivityScenario<PhotoRollActivity>? = null
         var monitor: android.app.Instrumentation.ActivityMonitor? = null
+        var pickerLaunchAttempted = false
+        var ownedPickerPackage: String? = null
         var observation: PhotoRollCameraOwners.Owner? = null
         val opened = java.util.concurrent.atomic.AtomicInteger()
         val released = java.util.concurrent.atomic.AtomicInteger()
@@ -109,8 +113,12 @@ class ForegroundExportOwnerTest {
                 android.content.Intent().setData(uri).addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)), true)
             scenario = ActivityScenario.launch(PhotoRollActivity::class.java)
             click("外部DNGを取り込む")
+            if (documentsUi) {
+                check(androidx.test.uiautomator.UiDevice.getInstance(instrumentation).currentPackageName == context.packageName)
+                pickerLaunchAttempted = true
+            }
             click("DNGを選ぶ・選び直す")
-            if (documentsUi) selectSyntheticDownloadThroughDocumentsUi(name)
+            if (documentsUi) selectSyntheticDownloadThroughDocumentsUi(name) { ownedPickerPackage = it }
             try {
                 await {
                     val pickerReturned = documentsUi || requireNotNull(monitor).hits == 1
@@ -232,11 +240,16 @@ class ForegroundExportOwnerTest {
             } }
             if (documentsUi) attempt {
                 val device = androidx.test.uiautomator.UiDevice.getInstance(instrumentation)
-                var backs = 0
-                while (device.currentPackageName?.endsWith(".documentsui") == true && backs++ < 3) {
-                    device.pressBack(); device.waitForIdle(1000)
+                val owned = ownedPickerPackage
+                if (owned != null) {
+                    var backs = 0
+                    while (device.currentPackageName == owned && backs++ < 3) {
+                        device.pressBack(); device.waitForIdle(1000)
+                    }
+                    check(device.currentPackageName != owned) { "System picker closure unconfirmed" }
+                } else if (pickerLaunchAttempted) {
+                    check(device.currentPackageName?.endsWith(".documentsui") != true) { "System picker ownership/closure unconfirmed" }
                 }
-                check(device.currentPackageName?.endsWith(".documentsui") != true) { "System picker closure unconfirmed" }
             }
             attempt { scenario?.close() }
             attempt { imports.pause(); await { !imports.state.value.busy } }
@@ -273,10 +286,11 @@ class ForegroundExportOwnerTest {
         }
     }
 
-    private fun selectSyntheticDownloadThroughDocumentsUi(name: String) {
+    private fun selectSyntheticDownloadThroughDocumentsUi(name: String, opened: (String) -> Unit) {
         val device = androidx.test.uiautomator.UiDevice.getInstance(instrumentation)
         await { device.currentPackageName?.endsWith(".documentsui") == true }
         val pickerPackage = requireNotNull(device.currentPackageName)
+        opened(pickerPackage)
         val roots = androidx.test.uiautomator.By.res(pickerPackage, "roots_list")
         fun unique(selector: androidx.test.uiautomator.BySelector): androidx.test.uiautomator.UiObject2 {
             var found: androidx.test.uiautomator.UiObject2? = null

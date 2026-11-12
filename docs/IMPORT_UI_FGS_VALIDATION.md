@@ -38,7 +38,7 @@ JVM回帰は復帰時unknownの再現と観測後の一回受付、古い世代/
 
 sourceは自身がMediaStore.Downloadsへ作成した1件。DocumentsProviderのdocument URIと選択名、既存copy fingerprint/原本不変、取り込み終了後のpersisted grant集合不変を検査する。後段は既存ケースと同じ編集/実FGS保存/公開JPEG/owner解放検査を再利用する。実pickerによるアプリ間のURI受渡しを検証するが、persistable grantの取得途中を観測した証拠ではなく、任意の外部providerやSD抜去を保証しない。
 
-成功・解放確認後だけ自身source/copy/JPEGの正確な3行を回収する。失敗時は保持し、pickerはBackを最大3回に限定して終了確認する。閉じられない場合も全消去や強制終了で隠さず、保持して報告する。既存の他データ/journal/permissionを変更しない。UIは英語/日本語の既存navigation labelに限定し、未知のUIでは停止する。
+成功・解放確認後だけ自身source/copy/JPEGの正確な3行を回収する。失敗時は保持し、開始時に既存pickerが前景なら停止し、picker終了は今回の起動後に同定した正確なpackageだけにBack最大3回を限定する。未同定時は操作せず終了未確認として保持する。閉じられない場合も全消去や強制終了で隠さず、保持して報告する。既存の他データ/journal/permissionを変更しない。UIは英語/日本語の既存navigation labelに限定し、未知のUIでは停止する。
 
 ```powershell
 adb -s $serial shell am instrument -w -r -e isolated true -e importUiFgsDocuments true -e class dev.cinematic.p0.photoroll.ForegroundExportOwnerTest#documentsUiSyntheticDngEditsAndPublishesThroughRealForegroundService dev.cinematic.p0.test/androidx.test.runner.AndroidJUnitRunner
