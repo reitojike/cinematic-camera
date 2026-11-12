@@ -56,9 +56,6 @@ class ForegroundExportOwnerTest {
         check(beforeImports.all { it.phase in setOf(DngImportPhase.READY, DngImportPhase.CANCELLED) })
         val beforeIds = beforeImports.map { it.target.operationId }.toSet()
         val beforeJpegs = jpegCount()
-        val preferences = app.getSharedPreferences("capture-probe", android.content.Context.MODE_PRIVATE)
-        val hadEngine = preferences.contains("develop/engine")
-        val previousEngine = preferences.getString("develop/engine", null)
         val name = "synthetic_import_ui_${UUID.randomUUID()}.dng"
         var sourceUri: Uri? = null
         var fingerprint: OriginalFingerprint? = null
@@ -73,9 +70,9 @@ class ForegroundExportOwnerTest {
         var inputObserver: AutoCloseable? = null
         var primary: Throwable? = null
         var verified = false
+        var editorReady = false
         try {
-            check(dev.cinematic.p0.gpu.DevelopEngineSetting(app).select(dev.cinematic.p0.gpu.DevelopEngine.GPU,
-                dev.cinematic.p0.gpu.GpuAvailability.Available))
+            check(dev.cinematic.p0.gpu.DevelopEngineSetting(app).current() == dev.cinematic.p0.gpu.DevelopEngine.GPU)
             inputObserver = GpuPhotoRollInputs.observeForDiagnostics(object : GpuPhotoRollInputs.DiagnosticObserver {
                 override fun preflightOpened() { opened.incrementAndGet() }
                 override fun released() { released.incrementAndGet() }
@@ -116,6 +113,7 @@ class ForegroundExportOwnerTest {
             verifySyntheticRow(Uri.parse(copy.uri), copy.target.name)
             DngContentVerifier.verify(requireNotNull(fingerprint), { requireNotNull(resolver.openInputStream(Uri.parse(copy.uri))) })
             action("JPEGを保存") // Real Panel completion delivered the imported URI to the editor.
+            editorReady = true // A prepared save proves that the existing queue has been used.
             click("比較"); click("表示")
             click("STRENGTH")
             fun slider(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
@@ -197,9 +195,11 @@ class ForegroundExportOwnerTest {
             attempt { ForegroundExports.gate.active()?.value?.let { ForegroundExports.cancel(it) } }
             attempt { await { ForegroundExports.gate.active() == null } }
             attempt { GpuPhotoRollRetiredOwners.releaseBeforeOpen() }
-            attempt { AndroidManualOriginalTrialSaves.discardPreview(app).get(60, TimeUnit.SECONDS) }
+            if (editorReady) attempt { AndroidManualOriginalTrialSaves.discardPreview(app).get(60, TimeUnit.SECONDS) }
             attempt { check(saved?.hasUnreleasedResources != true) }
-            attempt { check(opened.get() > 0 && opened.get() == released.get()) }
+            // A preflight-before-open failure may release a token without an opened callback.
+            // On failure a mismatch is unconfirmed closure, not proof of a leak.
+            attempt { check((!verified || opened.get() > 0) && opened.get() == released.get()) }
             attempt {
                 @Suppress("DEPRECATION")
                 val manager = app.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
@@ -208,12 +208,6 @@ class ForegroundExportOwnerTest {
             attempt { inputObserver?.close() }
             attempt { monitor?.let(instrumentation::removeMonitor) }
             attempt { instrumentation.runOnMainSync { observation?.close() } }
-            attempt {
-                val edit = preferences.edit()
-                if (hadEngine) edit.putString("develop/engine", previousEngine) else edit.remove("develop/engine")
-                check(edit.commit())
-                check(preferences.contains("develop/engine") == hadEngine && preferences.getString("develop/engine", null) == previousEngine)
-            }
             if (verified && primary == null && cleanup == null) attempt {
                 val rows = listOf(requireNotNull(sourceUri) to name,
                     Uri.parse(requireNotNull(imported).uri) to requireNotNull(imported).target.name,

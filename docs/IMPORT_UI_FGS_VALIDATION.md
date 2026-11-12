@@ -10,7 +10,7 @@
 - 合成RAWは一意の乱数系列を使い、過去importのfingerprint再利用を拒否。共有原本のcopy成功/SESSION_ONLY、元sourceとコピーのhash不変、保存source/recipe一致、PUBLISHED URI/journal、JPEG64×48/sRGB/fingerprintを検査する。
 - JPEG件数は隔離枠の当該アプリownerのbefore/afterで+1。全MediaStore/他providerの重複不存在やprocess-death重複防止の証拠ではない。
 - input observerのopen/release対応、保存owner解放、snapshot/RGB16 workspace除去、FGS ticketとService終了を確認。編集設定/私有journalは一意の自作記録として保持し、他担当journalは削除しない。
-- 全終了処理をattemptしprimary失敗へsuppressedで保持。成功・owner終了・元設定復旧確認後のみ、正確なURI/name/owner/publishedを再検査して自作source/コピー/JPEGの3共有行を回収。不明/失敗は保持して停止する。
+- 全終了処理をattemptしprimary失敗へsuppressedで保持。成功・owner終了確認後のみ、正確なURI/name/owner/publishedを再検査して自作source/コピー/JPEGの3共有行を回収。不明/失敗は保持して停止する。
 
 ```powershell
 adb -s $serial shell am instrument -w -r -e isolated true -e importUiFgs true -e class dev.cinematic.p0.photoroll.ForegroundExportOwnerTest#importedSyntheticDngEditsAndPublishesThroughRealForegroundService dev.cinematic.p0.test/androidx.test.runner.AndroidJUnitRunner
@@ -19,3 +19,5 @@ adb -s $serial shell am instrument -w -r -e isolated true -e importUiFgs true -e
 結果は実行head/条件とともにPRへ記録。既存のCPU/FGS試験や24MP部品試験を置き換えない。#101/#260はOPEN維持。
 
 GPU診断variantはread権限をmanifestから除外しているため全画面先にしない。通常debugの既存許可を再利用し、権限を追加/変更しない。
+
+通常debugの既定GPUを読み取り検査し、engine設定を書き換えない。保存準備まで到達しqueue利用を確認した場合だけdiscardPreviewを呼び、初期化前の失敗からcleanupでqueueを新規起動しない。observerの失敗時不一致は保守的な解放未確認であり、リーク確定とはしない。
