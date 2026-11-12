@@ -143,7 +143,7 @@ internal object AndroidManualOriginalTrialSaves {
             val handle = handles[previous.generation]
             if (handle?.hasUnreleasedResources == true || handle?.state?.value?.phase in
                 setOf(ManualOriginalTrialSavePhase.HOLD, ManualOriginalTrialSavePhase.UNCONFIRMED,
-                    ManualOriginalTrialSavePhase.SAVING, ManualOriginalTrialSavePhase.GPU_FAILED)) return false
+                    ManualOriginalTrialSavePhase.SAVING, ManualOriginalTrialSavePhase.GPU_FAILED, ManualOriginalTrialSavePhase.CANCELLED)) return false
             val publication = journal(previous).read()
             if (publication != null) return publication.phase == JpegPublicationPhase.PUBLISHED
             return storage(previous, CaptureJournalFile.MANUAL_REQUEST).read(ManualOriginalTrialRequestCodec.MAX_BYTES) == null
@@ -341,7 +341,7 @@ internal object AndroidManualOriginalTrialSaves {
         override fun readPublication() = journal(request).read()
         override fun render(stop: () -> Boolean): ManualOriginalTrialRender {
             check(attempt == null)
-            // Freeze once at the first actual save, including any explicit GPU retry.
+            // Freeze once at the first actual save, including any explicit retry.
             val selected = selectedEngine ?: DevelopEngineSetting(app).beginExport().also { selectedEngine = it }
             val io = object : AutoRenderIo {
                 override fun openOriginal() = app.contentResolver.openInputStream(Uri.parse(request.source.uri))
@@ -373,6 +373,8 @@ internal object AndroidManualOriginalTrialSaves {
                 try { releaseResources() } catch (cleanup: Throwable) {
                     if (cleanup !== failure) failure.addSuppressed(cleanup)
                 }
+                if (engine.cancellationBeforeJpegConfirmed && failure.suppressed.isEmpty() && !hasUnreleasedResources)
+                    throw ConfirmedSaveCancellationException(failure)
                 throw reportFailure(failure)
             }
         }
@@ -388,7 +390,7 @@ internal object AndroidManualOriginalTrialSaves {
         private fun reportFailure(failure: Throwable): Throwable {
             if (selectedEngine != DevelopEngine.GPU || (failure !is Exception && failure !is OutOfMemoryError) ||
                 failure is java.util.concurrent.CancellationException || failure is android.os.OperationCanceledException ||
-                failure is CaptureJournalConflict) return failure
+                failure is DngVerificationStopped || failure is CaptureJournalConflict) return failure
             val reported = failure as? GpuSaveRenderException
                 ?: GpuSaveRenderException(GpuSaveFailureReason.SAVE_FAILED, false, failure)
             try { AndroidGpuSaveFailures.record(app, reported.reason) } catch (record: Throwable) {
@@ -419,14 +421,14 @@ internal object AndroidManualOriginalTrialSaves {
         fun matches(source: SharedOriginalReference) = owner.matches(source)
         val hasUnreleasedResources get() = owner.hasUnreleasedResources
         @Volatile private var slot: AutoDevelopCoordinator.Attempt? = null // Written by IO; stop reads identity only.
-        fun advance(conditions: AutoDevelopConditions, retryGpuFailure: Boolean = false, stop: () -> Boolean): CompletableFuture<ManualOriginalTrialSaveState> =
-            advanceOwned({ conditions }, null, stop, retryGpuFailure)
+        fun advance(conditions: AutoDevelopConditions, retryGpuFailure: Boolean = false, retryCancellation: Boolean = false, stop: () -> Boolean): CompletableFuture<ManualOriginalTrialSaveState> =
+            advanceOwned({ conditions }, null, stop, retryGpuFailure, retryCancellation)
 
         /** Same owner, journal, queue and slot; only a foreground-started service uses this entry. */
         fun reserveForegroundExport(conditions: AutoDevelopConditions) = DevelopExecution.reserveForegroundExport(this, conditions)
         fun advanceForegroundExport(request: AutoDevelopCoordinator.ForegroundExportRequest,
-            conditions: () -> AutoDevelopConditions, retryGpuFailure: Boolean = false, stop: () -> Boolean) =
-            advanceOwned(conditions, request, stop, retryGpuFailure)
+            conditions: () -> AutoDevelopConditions, retryGpuFailure: Boolean = false, retryCancellation: Boolean = false, stop: () -> Boolean) =
+            advanceOwned(conditions, request, stop, retryGpuFailure, retryCancellation)
         fun stopForegroundExport(request: AutoDevelopCoordinator.ForegroundExportRequest) {
             DevelopExecution.stopForegroundExport(request); requestStop()
         }
@@ -437,7 +439,7 @@ internal object AndroidManualOriginalTrialSaves {
         }
 
         private fun advanceOwned(conditions: () -> AutoDevelopConditions, foregroundExport: AutoDevelopCoordinator.ForegroundExportRequest?,
-            stop: () -> Boolean, retryGpuFailure: Boolean): CompletableFuture<ManualOriginalTrialSaveState> = queue.manualOriginalIo {
+            stop: () -> Boolean, retryGpuFailure: Boolean, retryCancellation: Boolean): CompletableFuture<ManualOriginalTrialSaveState> = queue.manualOriginalIo {
             if (slot != null) {
                 owner.releaseResources()
                 if (hasUnreleasedResources) throw IOException("Trial resources remain held")
@@ -452,7 +454,7 @@ internal object AndroidManualOriginalTrialSaves {
                 ?: throw IOException("Trial save admission blocked")
             slot = admitted
             DevelopExecution.registerStop(admitted, backend::requestStop)
-            try { owner.advance(retryGpuFailure = retryGpuFailure) { stop() || DevelopExecution.shouldStop(admitted) } }
+            try { owner.advance(retryGpuFailure = retryGpuFailure, retryCancellation = retryCancellation) { stop() || DevelopExecution.shouldStop(admitted) } }
             catch (failure: OutOfMemoryError) { throw IOException("Original rendering memory unavailable", failure) }
             finally {
                 try { owner.releaseResources() }

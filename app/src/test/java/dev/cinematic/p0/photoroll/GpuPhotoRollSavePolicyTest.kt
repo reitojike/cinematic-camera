@@ -13,7 +13,7 @@ class GpuPhotoRollSavePolicyTest {
 
     @Test fun closedAcceptedPreviewCanRetryGpuOrReconcileTheSamePublication() {
         for (phase in PhotoRollSavePhase.entries) {
-            assertEquals(phase.name, phase in setOf(PhotoRollSavePhase.GPU_FAILED,
+            assertEquals(phase.name, phase in setOf(PhotoRollSavePhase.GPU_FAILED, PhotoRollSavePhase.CANCELLED,
                 PhotoRollSavePhase.PUBLISHED, PhotoRollSavePhase.UNCONFIRMED), gpuSaveCanContinueWithoutPreview(phase))
         }
         assertFalse(gpuSaveCanContinueWithoutPreview(null))

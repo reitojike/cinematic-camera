@@ -6,6 +6,19 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ManualTrialJpegSaveOwnerTest {
+    @Test fun confirmedCancellationStaysVisibleAfterForegroundWorkStops() {
+        val cancelled = ManualOriginalTrialSaveState(ManualOriginalTrialSavePhase.CANCELLED)
+        assertEquals(PhotoRollSavePhase.CANCELLED, manualSaveSnapshot(cancelled).phase)
+        assertEquals(false, canBeginStrengthEdit(PhotoRollPreviewMode.MANUAL_TRIAL,
+            foreground = true, savePending = false, savePhase = PhotoRollSavePhase.CANCELLED))
+        for (local in listOf(null, PhotoRollSaveSnapshot(PhotoRollSavePhase.UNCONFIRMED))) {
+            val result = manualSaveVisibleSnapshot(cancelled, local)
+            assertEquals(PhotoRollSavePhase.CANCELLED, result.phase)
+            assertEquals(null, result.uri)
+            assertEquals(null, result.gpuFailure)
+        }
+    }
+
     @Test fun gpuFailureReasonAndCountStayVisibleWithoutPretendingPublication() {
         val failure = dev.cinematic.p0.rawcapture.GpuSaveFailure(
             dev.cinematic.p0.rawcapture.GpuSaveFailureReason.CONTEXT_LOST, 2)

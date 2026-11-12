@@ -7,7 +7,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-internal enum class ManualOriginalTrialSavePhase { READY, SAVING, PUBLISHED, UNCONFIRMED, GPU_FAILED, HOLD }
+internal enum class ManualOriginalTrialSavePhase { READY, SAVING, PUBLISHED, UNCONFIRMED, GPU_FAILED, CANCELLED, HOLD }
 internal enum class ManualOriginalTrialSaveReason {
     STOPPED, SUPERSEDED, GENERATION_STARTED, RESOURCES_HELD, PUBLICATION_UNKNOWN, OPERATION_FAILED,
 }
@@ -52,6 +52,7 @@ internal class ManualOriginalTrialSaveOwner(
     private var renderStarted = false
     private var terminalHold = false
     private var gpuRetryAvailable = false
+    private var cancellationRetryAvailable = false
     private var gpuFailure: GpuSaveFailure? = null
     var lastFailure: Throwable? = null
         private set
@@ -60,8 +61,8 @@ internal class ManualOriginalTrialSaveOwner(
     init { ManualOriginalTrialRequestCodec.encode(request) }
     fun matches(source: SharedOriginalReference) = request.source == source
 
-    fun advance(retryGpuFailure: Boolean = false, stop: () -> Boolean = { false }): ManualOriginalTrialSaveState = exclusive {
-        if (terminalHold || (gpuRetryAvailable && !retryGpuFailure)) return@exclusive state.value
+    fun advance(retryGpuFailure: Boolean = false, retryCancellation: Boolean = false, stop: () -> Boolean = { false }): ManualOriginalTrialSaveState = exclusive {
+        if (terminalHold || (gpuRetryAvailable && !retryGpuFailure) || (cancellationRetryAvailable && !retryCancellation)) return@exclusive state.value
         try {
             if (!isCurrent()) return@exclusive hold(ManualOriginalTrialSaveReason.SUPERSEDED)
             val previous = backend.readPublication()
@@ -71,6 +72,9 @@ internal class ManualOriginalTrialSaveOwner(
                 recovered.requireFingerprint(record.fingerprint)
                 if (proof != null && proof != recovered) throw CaptureJournalConflict()
                 proof = recovered
+                // Completed output resumes the existing publication, never a producer retry.
+                gpuRetryAvailable = false
+                cancellationRetryAvailable = false
                 if (record.phase == JpegPublicationPhase.UNKNOWN) {
                     return@exclusive update(ManualOriginalTrialSavePhase.UNCONFIRMED, record.uri,
                         ManualOriginalTrialSaveReason.PUBLICATION_UNKNOWN)
@@ -78,18 +82,21 @@ internal class ManualOriginalTrialSaveOwner(
             }
             if (hasUnreleasedResources) return@exclusive update(ManualOriginalTrialSavePhase.HOLD, previous?.uri,
                 ManualOriginalTrialSaveReason.RESOURCES_HELD)
-            if (stop()) return@exclusive update(if (gpuRetryAvailable) ManualOriginalTrialSavePhase.GPU_FAILED
+            if (stop()) return@exclusive update(if (cancellationRetryAvailable) ManualOriginalTrialSavePhase.CANCELLED
+                else if (gpuRetryAvailable) ManualOriginalTrialSavePhase.GPU_FAILED
                 else if (proof == null) ManualOriginalTrialSavePhase.READY else
                 ManualOriginalTrialSavePhase.UNCONFIRMED, previous?.uri, ManualOriginalTrialSaveReason.STOPPED)
             update(ManualOriginalTrialSavePhase.SAVING, previous?.uri)
             if (proof == null) {
                 val intent = ManualOriginalTrialRequestCodec.encode(request)
                 val previousIntent = attemptStorage.read(ManualOriginalTrialRequestCodec.MAX_BYTES)
-                if (gpuRetryAvailable) {
-                    // This in-process permit exists only for a confirmed failed GPU producer.
+                if (gpuRetryAvailable || cancellationRetryAvailable) {
+                    // This in-process permit exists only for confirmed pre-JPEG failure/cancellation.
                     // Keep the durable intent: a restarted owner must still HOLD, never rerender.
+                    val explicitlyRetried = (gpuRetryAvailable && retryGpuFailure) || (cancellationRetryAvailable && retryCancellation)
                     gpuRetryAvailable = false
-                    if (!retryGpuFailure || !renderStarted || previousIntent?.contentEquals(intent) != true)
+                    cancellationRetryAvailable = false
+                    if (!explicitlyRetried || !renderStarted || previousIntent?.contentEquals(intent) != true)
                         return@exclusive hold(ManualOriginalTrialSaveReason.GENERATION_STARTED)
                 } else if (renderStarted || previousIntent != null)
                     return@exclusive hold(ManualOriginalTrialSaveReason.GENERATION_STARTED)
@@ -98,7 +105,9 @@ internal class ManualOriginalTrialSaveOwner(
                 attemptStorage.replace(intent)
                 if (attemptStorage.read(ManualOriginalTrialRequestCodec.MAX_BYTES)?.contentEquals(intent) != true)
                     throw IOException("Manual trial generation intent unconfirmed")
-                if (stop() || !isCurrent()) return@exclusive hold(ManualOriginalTrialSaveReason.STOPPED)
+                if (!isCurrent()) return@exclusive hold(ManualOriginalTrialSaveReason.SUPERSEDED)
+                // No producer has been entered. The durable intent is retained for explicit retry.
+                if (stop()) return@exclusive cancelled()
                 proof = backend.render { stop() || !isCurrent() }.also(::requireMatches)
                 if (hasUnreleasedResources) return@exclusive hold(ManualOriginalTrialSaveReason.RESOURCES_HELD)
             }
@@ -122,6 +131,9 @@ internal class ManualOriginalTrialSaveOwner(
             }, result.uri, if (result.phase == JpegPublicationPhase.UNKNOWN) ManualOriginalTrialSaveReason.PUBLICATION_UNKNOWN else null)
         } catch (failure: Throwable) {
             lastFailure = failure
+            if (failure is ConfirmedSaveCancellationException && proof == null && publication == null &&
+                failure.suppressed.isEmpty() && failure.cause?.suppressed?.isEmpty() == true &&
+                !hasUnreleasedResources && isCurrent()) return@exclusive cancelled()
             if (failure is GpuSaveRenderException) {
                 val count = gpuFailure?.count ?: 0
                 gpuFailure = GpuSaveFailure(failure.reason, if (count == Long.MAX_VALUE) count else count + 1)
@@ -160,6 +172,10 @@ internal class ManualOriginalTrialSaveOwner(
         if (!isCurrent()) return hold(ManualOriginalTrialSaveReason.SUPERSEDED, uri)
         if (stop()) return update(ManualOriginalTrialSavePhase.UNCONFIRMED, uri, ManualOriginalTrialSaveReason.STOPPED)
         return null
+    }
+    private fun cancelled(): ManualOriginalTrialSaveState {
+        cancellationRetryAvailable = true
+        return update(ManualOriginalTrialSavePhase.CANCELLED, reason = ManualOriginalTrialSaveReason.STOPPED)
     }
     private fun hold(reason: ManualOriginalTrialSaveReason, uri: String? = state.value.uri): ManualOriginalTrialSaveState {
         terminalHold = true

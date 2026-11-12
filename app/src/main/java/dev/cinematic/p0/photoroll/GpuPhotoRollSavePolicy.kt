@@ -2,7 +2,7 @@ package dev.cinematic.p0.photoroll
 
 /** Only an editor that explicitly closed its accepted preview may continue its retained save. */
 internal fun gpuSaveCanContinueWithoutPreview(phase: PhotoRollSavePhase?) = phase in setOf(
-    PhotoRollSavePhase.GPU_FAILED, PhotoRollSavePhase.PUBLISHED, PhotoRollSavePhase.UNCONFIRMED)
+    PhotoRollSavePhase.GPU_FAILED, PhotoRollSavePhase.CANCELLED, PhotoRollSavePhase.PUBLISHED, PhotoRollSavePhase.UNCONFIRMED)
 
 /** Never reopen GPU input while a save is active or its owners/publication remain unconfirmed. */
 internal fun gpuSaveCanResumePreview(phase: PhotoRollSavePhase?) = phase in setOf(
