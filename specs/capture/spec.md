@@ -17,8 +17,18 @@
 - 露出・プレビューの分離：[004](../004-live-exposure/spec.md)、[006](../006-exposure-simulation/spec.md)、[007](../007-normal-exposure-preview/spec.md)。
 - 固定プレビュー・向き：[005](../005-cine-framing/spec.md)、[012](../012-v15-capture-feedback/spec.md)。
 - 最新意図、数値・目盛り、AF/MF、復旧：[013](../013-live-control-intent/spec.md)。旧003/009の適用式MFや旧配置より後の契約を使う。
-- 暫定上限：[011](../011-one-second-exposure-cap/spec.md)。実機結果は [Issue #37](https://github.com/reitojike/cinematic-camera/issues/37)。
+- 暫定1秒上限の設計・検証入口：[撮影露出policy](../../docs/CAPTURE_EXPOSURE_POLICY.md)。実機結果は [Issue #37](https://github.com/reitojike/cinematic-camera/issues/37)。
 - 保存物と現像は [原本・編集情報・保存](../storage/spec.md) に分離する。
+
+## 通常MANUAL撮影targetの暫定1秒上限
+
+- 通常MANUALの新しい撮影targetは1秒以下に限定し、1秒超の直接入力は黙って短縮せず拒否する。これはアプリの暫定policyであり、端末の露光能力の報告値を書き換えない。
+- SS候補は端末の露光範囲・最大frame周期・暫定1秒上限の交差から選ぶ。CINEでは要求fpsのframe周期とも交差させる。最短側の標準SS、ISO系列、要求fpsはこの上限のために変更しない。
+- STILLの起動・再bind・背景復帰で旧1秒超のMANUAL保存値/復帰targetを受け取った場合だけ、ISOを保持して現在の交差内の最長標準SSへ明示移行する。初期preview seedとruntime復元で同じpolicyを使う。旧露光が現在の端末上限より長くても、構文・正の時間・現ISO範囲を先に検証し、移行後targetを現在の露光範囲へ照合する。
+- 1秒以下の旧targetをこの移行で再量子化しない。保存pair欠落、不正値、ISO範囲外、移行に必要な標準ISO/SS候補なしでは架空のpairを送らず停止する。候補がない場合はAUTOまたは接続停止による復旧を案内する。
+- 旧値から新targetへの移行要求を共通noticeと診断へ示す。runtimeの新API受付前や失敗時には移行先を受付済み保存値にしない。受付後だけ移行したpairを保存し、再bindで同じ値を維持する。preview API受付、シャッター時の撮影API受付、センサー実測は別の証拠である。
+- AUTOは手動露出override解除であり、独立した制御を保つ操作と全リセットを区別する。保持中の旧MANUAL復帰要求を残さず、既存の所有権・queue・世代境界を維持する。AUTOのAE実測露光が1秒以下になる保証はしない。
+- 暫定上限は長秒capture freezeの根因解消ではなく、既にセンサーへ送った長秒処理の即時終了も保証しない。実機の移行notice・actual・撮影/復帰時間・RAW回帰は、別途の対象版/条件の確認がない限り未確認として扱う。
 
 ## 検証の境界
 
