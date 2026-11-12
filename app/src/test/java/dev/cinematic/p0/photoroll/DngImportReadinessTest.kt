@@ -108,4 +108,92 @@ class DngImportReadinessTest {
         assertTrue(failure is TimeoutCancellationException)
         assertEquals(0, flow.subscriptionCount.value)
     }
+
+    private fun pending(sequence: Long) = event(sequence, conditions = ready.copy(cameraSessionInUse = true)).let {
+        it.copy(observation = it.observation.copy(initialCameraCallbacksComplete = false, cameraSampleConsistent = false))
+    }
+
+    @Test fun incompleteInitialCallbackSampleWaitsThenAdmitsExactlyOnce() = runBlocking {
+        val first = pending(3)
+        val coordinator = AutoDevelopCoordinator().apply { updateConditions(first.observation.conditions) }
+        assertNull(coordinator.tryStartObserved(ready)) // Actual stored-only CAMERA_SESSION rejection.
+        val flow = MutableStateFlow(first)
+        var attempts = 0
+        val job = launch {
+            assertTrue(awaitDngImportObservation(flow))
+            attempts++
+            val token = requireNotNull(coordinator.tryStartObserved(ready))
+            assertTrue(coordinator.completeAfterResourcesClosed(token))
+        }
+        withTimeout(1000) { flow.subscriptionCount.first { it > 0 } }
+        assertEquals(0, attempts)
+        coordinator.updateConditions(ready)
+        flow.value = event(4)
+        withTimeout(1000) { job.join() }
+        flow.value = event(5)
+        assertEquals(1, attempts)
+    }
+
+    @Test fun confirmedUnavailableAndOtherBlockersDoNotWaitForRecovery() = runBlocking {
+        val first = pending(3)
+        val cases = listOf(
+            first.copy(observation = first.observation.copy(cameraUnavailableObserved = true)),
+            first.copy(observation = first.observation.copy(initialCameraCallbacksComplete = true)),
+            first.copy(observation = first.observation.copy(conditions = first.observation.conditions.copy(memoryBudgetConfirmed = false))),
+            first.copy(observation = first.observation.copy(conditions = first.observation.conditions.copy(rebindInProgress = null))),
+        )
+        for (blocked in cases) {
+            val flow = MutableStateFlow(blocked)
+            assertTrue(awaitDngImportObservation(flow, timeoutMillis = 1000))
+            val coordinator = AutoDevelopCoordinator().apply { updateConditions(blocked.observation.conditions) }
+            assertNull(coordinator.tryStartObserved(ready))
+            assertEquals(0, flow.subscriptionCount.value)
+        }
+    }
+
+    @Test fun initialPendingThenUnavailableEndsAtExistingAdmission() = runBlocking {
+        val flow = MutableStateFlow(pending(3))
+        val job = async { awaitDngImportObservation(flow) }
+        withTimeout(1000) { flow.subscriptionCount.first { it > 0 } }
+        val unavailable = event(4, conditions = ready.copy(cameraSessionInUse = true)).let {
+            it.copy(observation = it.observation.copy(cameraUnavailableObserved = true))
+        }
+        flow.value = unavailable
+        assertTrue(withTimeout(1000) { job.await() })
+        assertNull(AutoDevelopCoordinator().apply { updateConditions(unavailable.observation.conditions) }.tryStartObserved(ready))
+    }
+
+    @Test fun repeatedInitialSamplesDoNotResetTheExistingDeadline() = runBlocking {
+        val flow = MutableStateFlow(pending(3))
+        val updates = launch { var sequence = 4L; while (isActive) { delay(2); flow.value = pending(sequence++) } }
+        try {
+            val failure = withTimeout(1000) {
+                runCatching { awaitDngImportObservation(flow, timeoutMillis = 30) }.exceptionOrNull()
+            }
+            assertTrue(failure is TimeoutCancellationException)
+            assertEquals(0, flow.subscriptionCount.value)
+        } finally { updates.cancelAndJoin() }
+    }
+
+    @Test fun initialCallbackWaitCannotCrossForegroundOrRegistrationGeneration() = runBlocking {
+        for (registration in listOf(false, true)) {
+            val flow = MutableStateFlow(pending(3))
+            val job = async { awaitDngImportObservation(flow) }
+            withTimeout(1000) { flow.subscriptionCount.first { it > 0 } }
+            flow.value = event(4, epoch = if (registration) 2 else 3, generation = if (registration) 2 else 1)
+            assertFalse(withTimeout(1000) { job.await() })
+        }
+    }
+
+    @Test fun cancellationDuringInitialCallbacksCannotDispatchLater() = runBlocking {
+        val flow = MutableStateFlow(pending(3))
+        var dispatched = false
+        val job = launch { if (awaitDngImportObservation(flow)) dispatched = true }
+        withTimeout(1000) { flow.subscriptionCount.first { it > 0 } }
+        job.cancelAndJoin()
+        flow.value = event(4)
+        assertFalse(dispatched)
+        assertEquals(0, flow.subscriptionCount.value)
+    }
+
 }

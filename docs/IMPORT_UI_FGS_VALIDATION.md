@@ -45,3 +45,14 @@ adb -s $serial shell am instrument -w -r -e isolated true -e importUiFgsDocument
 ```
 
 実機・実写・24MP全UI・Pixel RAM/768MiBは別許可による確認を残す。合成PASSだけで#101/#260をcloseしない。
+
+
+## 実DocumentsUI復帰の初期callback未確定（#374）
+
+#373 は foreground 復帰時の共有条件リセットから、最初の resourceObserved 通知までを待つ修正である。実DocumentsUIでは、その最初の通知自体が CameraManager 登録直後の初期callbackを取り終えていない場合が残った。
+
+ローカルの自作合成診断では、受付拒否判定後に条件と観測メタデータをメモリへ保存し、catch後だけ匿名分類を出力した。共有条件の参照一致を確認し、同じ観測世代・sequenceの readiness/publication が初期callback未完了、unavailable未観測、サンプル不整合、共有blocker CAMERA_SESSIONのみで拒否されることを再現した。再診断では受付記録をThreadLocalに限定した。fresh側に別の既存camera snapshot timeoutも観測しており、stored側の分類をfresh側の分類と混同しない。診断の追加自体によるタイミング差は排除できず、診断版の結果を通常APKの成功としない。一時診断コードは撤去する。
+
+修正は「初期callback未完了、unavailable未観測、blocker集合が厳密にCAMERA_SESSIONだけ」の観測に限り、同じ既存10秒枠内で次の通知を待つ。UNKNOWN全般やsample不整合全般を待つものではない。確定IN_USE、他blocker併存、初期callback完了後の不整合は従来どおり受付判定へ進み、fresh/coordinatorのguardは維持する。受付拒否後の自動再試行・固定sleep・期限再設定は追加しない。世代変更・背景化・取消の破棄条件も維持する。
+
+追加JVM回帰は実測tupleからの一回受付、通知連続でも期限を延ばさないこと、確定unavailable/他blocker/完了後不整合の拒否、待機中の世代変更と取消を対象とする。通常APKでの実DocumentsUI→取り込み→編集→実FGS保存が成功するまではDraftを維持する。
