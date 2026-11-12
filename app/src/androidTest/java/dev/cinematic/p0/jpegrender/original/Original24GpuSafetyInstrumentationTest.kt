@@ -129,6 +129,24 @@ class Original24GpuSafetyInstrumentationTest {
         assertTrue("All five producer/publication owners must be closed", fixture.handles.all { !it.hasUnreleasedResources })
     }
 
+    @Test fun optIn24MpGpuWritePublishesOriginalSizeAndReleasesOwners() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("gpuExport24") == "true")
+        withFixture(width = 6000, height = 4000) { fixture ->
+            val beforeCount = fixture.failureCount()
+            val beforeReason = fixture.failureReason()
+            val save = fixture.prepare(.45, PhotoAdjustments(20.0, .3))
+            val witness = GpuWitness(fixture, save)
+            val published = save.advance(ALLOWED, stop = witness::stop)
+                .get(SAVE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            assertNull(published.gpuFailure)
+            fixture.verifyPublication(save, published, witness)
+            fixture.assertFailureRecord(beforeCount, beforeReason)
+            assertEquals(DevelopEngine.GPU, fixture.setting.current())
+            Log.i(TAG, "case=single_24mp_write pixels=24000000 gpuObserved=true " +
+                "publicationVerified=true originalUnchanged=true resourcesClosed=true")
+        }
+    }
+
     /** Count callbacks with a current EGL context, not rows, bands, passes, or elapsed time. */
     private class GpuWitness(
         private val fixture: Fixture,
@@ -148,7 +166,7 @@ class Original24GpuSafetyInstrumentationTest {
                     val snapshot = File(scratch, "source-snapshot.dng")
                     val ready = snapshot.isFile && snapshot.length() == fixture.source.fingerprint.bytes &&
                         File(scratch, "source-linear.rgb16").let {
-                            it.isFile && it.length() == WIDTH.toLong() * HEIGHT * 6
+                            it.isFile && it.length() == fixture.width.toLong() * fixture.height * 6
                         }
                     if (ready) {
                         DngContentVerifier.verify(fixture.source.fingerprint, { snapshot.inputStream() }, fixture.stopped::get)
@@ -165,7 +183,7 @@ class Original24GpuSafetyInstrumentationTest {
         }
     }
 
-    private class Fixture(val app: Context) {
+    private class Fixture(val app: Context, val width: Int, val height: Int) {
         val resolver: ContentResolver = app.contentResolver
         val setting = DevelopEngineSetting(app)
         val stopped = AtomicBoolean()
@@ -186,7 +204,7 @@ class Original24GpuSafetyInstrumentationTest {
                 })).also { sourceUri = it }
             // Streaming fixture generation avoids a second full-size source byte array.
             val bytes = requireNotNull(resolver.openOutputStream(uri, "w")).use {
-                writeSyntheticTrialDng(it, WIDTH, HEIGHT, 1)
+                writeSyntheticTrialDng(it, width, height, 1)
             }
             assertTrue("Synthetic source must respect factory admission", bytes in 1..64L * 1024 * 1024)
             assertEquals(1, resolver.update(uri, ContentValues().apply {
@@ -204,9 +222,9 @@ class Original24GpuSafetyInstrumentationTest {
             assertEquals(edits, save.appliedAdjustments)
             assertEquals(ManualOriginalTrialRender.recipe(strength, edits), save.request.recipe)
             assertEquals(ManualOriginalTrialSavePhase.READY, save.state.value.phase)
-            assertEquals(WIDTH, save.geometry.rawWidth); assertEquals(HEIGHT, save.geometry.rawHeight)
-            assertEquals(WIDTH, save.geometry.sourceWidth); assertEquals(HEIGHT, save.geometry.sourceHeight)
-            assertEquals(WIDTH, save.geometry.outputWidth); assertEquals(HEIGHT, save.geometry.outputHeight)
+            assertEquals(width, save.geometry.rawWidth); assertEquals(height, save.geometry.rawHeight)
+            assertEquals(width, save.geometry.sourceWidth); assertEquals(height, save.geometry.sourceHeight)
+            assertEquals(width, save.geometry.outputWidth); assertEquals(height, save.geometry.outputHeight)
             assertEquals(1, save.geometry.orientation)
             assertFalse("Preparation must not create a JPEG", File(directory(save), "output.jpg").exists())
             assertTrue("A new generation must not already have a publication", journal(save).read() == null)
@@ -266,13 +284,13 @@ class Original24GpuSafetyInstrumentationTest {
             assertEquals(save.request.recipe, proof.request.recipe)
             assertEquals(save.appliedStrength, proof.appliedStrength, 0.0)
             assertEquals(save.appliedAdjustments, proof.adjustments)
-            assertEquals(OriginalRasterGeometry(WIDTH, HEIGHT, 1, WIDTH, HEIGHT, true), proof.geometry)
+            assertEquals(OriginalRasterGeometry(width, height, 1, width, height, true), proof.geometry)
             requireOwnedPublishedRow(resolver, outputs.last(), app.packageName)
             val inspection = AndroidJpegInspector().inspect(
                 { requireNotNull(resolver.openInputStream(uri)) }, record.fingerprint.bytes) { false }
             assertEquals(record.fingerprint, inspection.fingerprint)
             assertEquals(proof.request.output, inspection.output)
-            assertEquals(WIDTH, inspection.output.width); assertEquals(HEIGHT, inspection.output.height)
+            assertEquals(width, inspection.output.width); assertEquals(height, inspection.output.height)
             assertEquals(1, inspection.output.orientation)
             assertEquals("sRGB", inspection.output.color)
             // Decode the actual JPEG at a bounded sample size, not a CPU look or pixel oracle.
@@ -280,7 +298,7 @@ class Original24GpuSafetyInstrumentationTest {
                 requireNotNull(BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = 8 }))
             }
             try {
-                assertEquals(WIDTH / 8, decoded.width); assertEquals(HEIGHT / 8, decoded.height)
+                assertEquals(width / 8, decoded.width); assertEquals(height / 8, decoded.height)
                 assertTrue(requireNotNull(decoded.colorSpace).isSrgb)
             } finally { decoded.recycle() }
             assertOriginalUnchanged()
@@ -290,7 +308,7 @@ class Original24GpuSafetyInstrumentationTest {
 
     private data class OwnedRow(val uri: Uri, val name: String)
 
-    private fun withFixture(run: (Fixture) -> Unit) {
+    private fun withFixture(width: Int = WIDTH, height: Int = HEIGHT, run: (Fixture) -> Unit) {
         val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
         val arguments = InstrumentationRegistry.getArguments()
         // Check every gate before allocating a GL context, changing preferences, or writing rows.
@@ -302,11 +320,11 @@ class Original24GpuSafetyInstrumentationTest {
             EglContexts(thread, app.assets).use { GlCapabilities.inspect(it) }
         } }
         assertTrue("GPU capabilities missing: ${capabilities.missing}", capabilities.supported)
-        assertTrue("The fixed 12MP source requires 4000px texture support", capabilities.maxTextureSize >= WIDTH)
+        assertTrue("The source width requires matching texture support", capabilities.maxTextureSize >= width)
         val preferences = app.getSharedPreferences("capture-probe", Context.MODE_PRIVATE)
         val hadEngine = preferences.contains(ENGINE_KEY)
         val previousEngine = preferences.getString(ENGINE_KEY, null)
-        val fixture = Fixture(app)
+        val fixture = Fixture(app, width, height)
         var success = false
         var failure: Throwable? = null
         try {
@@ -324,33 +342,41 @@ class Original24GpuSafetyInstrumentationTest {
         } catch (error: Throwable) { failure = error; throw error }
         finally {
             fixture.stopped.set(true)
-            try {
-                if (!success) {
-                    fixture.handles.forEach { it.requestStop() }
-                    AndroidManualOriginalTrialSaves.discardPreview(app).get(CLOSE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                    // Preserve exact synthetic rows/private evidence on every failed or uncertain run.
-                } else {
-                    val source = OwnedRow(requireNotNull(fixture.sourceUri), fixture.sourceName)
-                    val rows = fixture.outputs + source
-                    assertEquals("Cleanup targets must be distinct", rows.size, rows.map { it.uri }.toSet().size)
-                    // Validate every exact owned row before deleting any. No collection cleanup.
-                    rows.forEach { requireOwnedPublishedRow(fixture.resolver, it, app.packageName) }
-                    rows.forEach { row ->
-                        requireOwnedPublishedRow(fixture.resolver, row, app.packageName)
-                        check(fixture.resolver.delete(row.uri,
-                            "${MediaStore.MediaColumns.OWNER_PACKAGE_NAME}=? AND ${MediaStore.MediaColumns.DISPLAY_NAME}=? AND ${MediaStore.MediaColumns.IS_PENDING}=0",
-                            arrayOf(app.packageName, row.name)) == 1)
-                    }
+            var terminal = failure
+            fun attempt(action: () -> Unit) {
+                try { action() } catch (error: Throwable) {
+                    val first = terminal
+                    if (first == null) terminal = error
+                    else if (first !== error) first.addSuppressed(error)
                 }
-            } catch (cleanup: Throwable) {
-                if (failure == null) throw cleanup
-                if (cleanup !== failure) failure.addSuppressed(cleanup)
-            } finally {
+            }
+            if (!success) {
+                fixture.handles.forEach { handle -> attempt { handle.requestStop() } }
+                attempt {
+                    AndroidManualOriginalTrialSaves.discardPreview(app).get(CLOSE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                }
+                // Preserve exact synthetic rows/private evidence on every failed or uncertain run.
+            }
+            attempt {
                 val editor = preferences.edit()
                 if (hadEngine) editor.putString(ENGINE_KEY, previousEngine) else editor.remove(ENGINE_KEY)
                 check(editor.commit()) { "Restore exact prior develop-engine preference" }
                 check(preferences.contains(ENGINE_KEY) == hadEngine && preferences.getString(ENGINE_KEY, null) == previousEngine)
             }
+            if (success && terminal == null) attempt {
+                val source = OwnedRow(requireNotNull(fixture.sourceUri), fixture.sourceName)
+                val rows = fixture.outputs + source
+                assertEquals("Cleanup targets must be distinct", rows.size, rows.map { it.uri }.toSet().size)
+                // Validate every exact owned row before deleting any. No collection cleanup.
+                rows.forEach { requireOwnedPublishedRow(fixture.resolver, it, app.packageName) }
+                rows.forEach { row ->
+                    requireOwnedPublishedRow(fixture.resolver, row, app.packageName)
+                    check(fixture.resolver.delete(row.uri,
+                        "${MediaStore.MediaColumns.OWNER_PACKAGE_NAME}=? AND ${MediaStore.MediaColumns.DISPLAY_NAME}=? AND ${MediaStore.MediaColumns.IS_PENDING}=0",
+                        arrayOf(app.packageName, row.name)) == 1)
+                }
+            }
+            if (failure == null) terminal?.let { throw it }
         }
     }
 
