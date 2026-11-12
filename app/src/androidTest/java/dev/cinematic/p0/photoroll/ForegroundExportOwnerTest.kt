@@ -102,8 +102,28 @@ class ForegroundExportOwnerTest {
             scenario = ActivityScenario.launch(PhotoRollActivity::class.java)
             click("外部DNGを取り込む")
             click("DNGを選ぶ・選び直す")
-            await { requireNotNull(monitor).hits == 1 && !imports.state.value.busy &&
-                files.records().any { it.target.operationId !in beforeIds && it.phase == DngImportPhase.READY } }
+            try {
+                await {
+                    val hits = requireNotNull(monitor).hits
+                    val state = imports.state.value
+                    val records = files.records().filter { it.target.operationId !in beforeIds }
+                    hits == 1 && !state.busy && records.any { it.phase == DngImportPhase.READY }
+                }
+            } catch (error: Throwable) {
+                // A single pre-cleanup snapshot, no source name/URI/hash or arbitrary screen dump.
+                try {
+                    val state = imports.state.value
+                    val records = files.records().filter { it.target.operationId !in beforeIds }
+                    error.addSuppressed(AssertionError("Synthetic import checkpoint: hits=${monitor?.hits} " +
+                        "lifecycle=${scenario.state} busy=${state.busy} message=${state.message} " +
+                        "readyUriPresent=${state.readyUri != null} newRecords=${records.size} " +
+                        "phases=${records.map { it.phase }} inputOpened=${opened.get()} inputReleased=${released.get()} " +
+                        "fgsActive=${ForegroundExports.gate.active() != null}"))
+                } catch (observationFailure: Throwable) {
+                    if (observationFailure !== error) error.addSuppressed(observationFailure)
+                }
+                throw error
+            }
             imported = files.records().filter { it.target.operationId !in beforeIds }.single()
             val copy = requireNotNull(imported)
             assertEquals(uri.toString(), copy.sourceUri)
