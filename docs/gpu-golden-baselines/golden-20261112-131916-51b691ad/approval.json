@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "ownerVisualApprovalRef": "Owner visual approval on 2026-11-12 for PR361 review-only images published at 68b703fb00bd2c24a935298db12b32f2a33fe699, image source 51b691ad561da05dde1c8f9a2e9cde09b2656860: \u76ee\u8996\u3067\u306f\u554f\u984c\u306a\u304f\u4fee\u6b63\u3055\u308c\u3066\u3044\u308b. Owner then confirmed: \u308f\u304b\u308a\u307e\u3057\u305f\u3001\u4fee\u6b63\u5b8c\u4e86\u3068\u5224\u65ad\u3057\u307e\u3059\u3002\u5b9f\u969b\u306e\u5199\u771f\u3067\u554f\u984c\u8d77\u304d\u305f\u3089\u5225\u9014\u8ab2\u984c\u3068\u3057\u3066\u6319\u3052\u308b\u306e\u3067\u3001\u4e00\u65e6\u4eca\u56de\u306e\u5bfe\u5fdc\u306f\u3053\u308c\u3067\u30af\u30ed\u30fc\u30ba\u3067\u826f\u3044. This adopts the viewed 90-case synthetic output, not real-photo quality or performance.",
+  "approvedFiles": {
+    "capture.json": "e3483adfa1069f814559c9f58616fd9dbb19d51de1582d2eb55c5519f25ae17a",
+    "host.json": "242f5463ea066bd3507052c94b96984e3b39d4ef3a33c0e96eef7814d8e0ebff"
+  }
+}
