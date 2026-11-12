@@ -3,7 +3,7 @@
 [親 Issue #276](https://github.com/reitojike/cinematic-camera/issues/276) §4 と
 [契約 Issue #277](https://github.com/reitojike/cinematic-camera/issues/277) PR1 を転記した設計の正本。
 本 PR のマージまでは提案であり、マージ後はこの文書を API・GLSL・実装設計の正本とする。
-進捗・検証結果・採否は Issue / PR に記録する。製品の既定は Gate 2 の承認まで CPU のまま。
+進捗・検証結果・採否は Issue / PR に記録する。通常 debug/release の既定は GPU とし、専用診断版だけ CPU/GPU の明示選択を残す。PR 上の変更はマージまで提案として扱う。
 以下の §4 は親 Issue の節番号・本文を維持する。
 
 ## 4. 詳細設計
@@ -391,7 +391,8 @@ EGL/GLES bindingは [LWJGL公式](https://www.lwjgl.org/guide) と
 ### 4.13 切り替えフラグ
 
 - `DevelopEngine { CPU, GPU }` を1つだけ持ち、プレビューと書き出しの両方がこれを見る。
-- Phase 0・1 の間は、診断版と開発設定でのみ GPU を選べる。製品の既定は CPU。
+- 通常 debug/release の新規プレビュー・保存は GPU 固定。診断用の保存値は読まず、設定 UI と CPU 自動回避は作らない。gpuDiagnostic は既存の明示 CPU/GPU 選択、その他診断 variant と低水準試験は CPU 既定を維持する。保存 owner が開始時に固定した engine と既存データは移行しない。
+- 問題時の戻し方は CPU 既定へ戻す別のレビュー済み変更と versionCode を上げた新しいビルドとする。旧 APK への downgrade では戻さない。
 - Gate 2 の承認後、既定を GPU に変える PR を別に作る（製品の既定の変更なので、ユーザーの確認を挟む）。
 
 ---
