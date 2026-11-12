@@ -1,6 +1,7 @@
 package dev.cinematic.p0.rawcapture
 
 import java.io.IOException
+import java.io.FileNotFoundException
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.concurrent.atomic.AtomicBoolean
@@ -98,6 +99,12 @@ internal class DngImportOwner(
             val complete = try { verify(current, true, resources); true }
                 catch (mismatch: DngContentChanged) {
                     if (resources.hasOpenResources || mismatch.suppressed.isNotEmpty()) throw mismatch
+                    false
+                } catch (unopened: FileNotFoundException) {
+                    // MediaStore may have a pending row before its data file is created. This is
+                    // not proof of absence/completion: retry only the same positively owned pending.
+                    if (resources.hasOpenResources || unopened.suppressed.isNotEmpty()) throw unopened
+                    if (!matches(current, true)) return DngImportResult.HOLD
                     false
                 }
             if (!complete) {

@@ -3,6 +3,7 @@ package dev.cinematic.p0.rawcapture
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.io.FileNotFoundException
 import java.io.InputStream
 import java.io.OutputStream
 import java.security.MessageDigest
@@ -283,6 +284,70 @@ class DngImportContractTest {
         assertEquals(0, f.rows.publishes)
     }
 
+    @Test fun pendingRowWithoutDataIsCopiedWithoutAnotherInsert() {
+        val f = Fixture(); f.rows.noData = true
+        assertEquals(DngImportResult.READY, f.owner.advance())
+        assertEquals(1, f.rows.inserts); assertEquals(1, f.rows.publishes)
+        assertArrayEquals(original, f.rows.bytes)
+    }
+    @Test fun restartAfterCopyingCommitBeforeOutputOpenUsesSamePending() {
+        val f = Fixture(); f.rows.noData = true
+        var r = f.journal.advance(f.journal.read()!!, DngImportPhase.INSERTING)
+        val pending = f.rows.insert(r.target)
+        f.journal.advance(r, DngImportPhase.COPYING, pending)
+        assertEquals(DngImportResult.READY, f.restart().advance())
+        assertEquals(pending, f.journal.read()!!.uri)
+        assertEquals(1, f.rows.inserts); assertEquals(1, f.rows.publishes)
+    }
+    @Test fun unreadablePendingMustStillMatchAfterFailureBeforeRecopy() {
+        for (change in listOf("published", "foreign", "missing")) {
+            val f = Fixture(); f.rows.noData = true
+            f.rows.onNoData = { f.rows.row = when (change) {
+                "published" -> f.rows.row!!.copy(pending = false)
+                "foreign" -> f.rows.row!!.copy(ownedByApp = false)
+                else -> null
+            } }
+            assertEquals(DngImportResult.HOLD, f.owner.advance())
+            assertEquals(0, f.rows.outputs); assertEquals(0, f.rows.publishes)
+        }
+    }
+    @Test fun unreadablePendingWithUncertainCleanupOrOtherFailureNeverRecopies() {
+        for (error in listOf(IOException("provider"), SecurityException("denied"),
+            FileNotFoundException("not opened").apply { addSuppressed(IOException("close unknown")) })) {
+            val f = Fixture(); f.rows.readFailure = error
+            assertThrows(error.javaClass) { f.owner.advance() }
+            assertEquals(0, f.rows.outputs); assertEquals(0, f.rows.publishes)
+        }
+    }
+    @Test fun pendingWithoutDataStillRequiresReadableUnchangedSource() {
+        for (revoked in listOf(true, false)) {
+            val f = Fixture(); f.rows.noData = true
+            f.rows.afterInsert = { if (revoked) f.access = false else f.sourceBytes = byteArrayOf(5, 6, 7, 8) }
+            assertThrows(IOException::class.java) { f.owner.advance() }
+            assertEquals(0, f.rows.publishes)
+            assertEquals(DngImportPhase.COPYING, f.journal.read()!!.phase)
+            assertFalse(f.owner.hasUnreleasedResources)
+        }
+    }
+    @Test fun publishingReadFailureNeverReturnsToCopying() {
+        val f = Fixture(); f.rows.afterPublish = { f.rows.noData = true }
+        assertThrows(FileNotFoundException::class.java) { f.owner.advance() }
+        assertEquals(DngImportPhase.PUBLISHING, f.journal.read()!!.phase)
+        val outputs = f.rows.outputs
+        assertThrows(FileNotFoundException::class.java) { f.restart().advance() }
+        assertEquals(outputs, f.rows.outputs); assertEquals(1, f.rows.publishes)
+    }
+
+    @Test fun missingPublishedDataIsNeverRecreated() {
+        val f = Fixture()
+        assertEquals(DngImportResult.READY, f.owner.advance())
+        val outputs = f.rows.outputs
+        f.rows.noData = true
+        assertThrows(FileNotFoundException::class.java) { f.restart().advance() }
+        assertEquals(outputs, f.rows.outputs); assertEquals(1, f.rows.inserts)
+        assertEquals(1, f.rows.publishes)
+    }
+
     private class Death : Error("simulated process death")
     private class MemoryStorage : AtomicJournalStorage {
         var bytes: ByteArray? = null
@@ -313,7 +378,8 @@ class DngImportContractTest {
         inner class Rows : DngImportRows {
             var row: DngPendingRow? = null
             var bytes = byteArrayOf()
-            var inserts = 0; var publishes = 0; var discards = 0
+            var inserts = 0; var publishes = 0; var discards = 0; var outputs = 0
+            var noData = false; var onNoData: () -> Unit = {}; var readFailure: Exception? = null
             var findMode = "normal"
             var failWrite = false; var failOutputClose = false; var failReadClose = false
             var afterInsert: () -> Unit = {}; var afterPublish: () -> Unit = {}; var afterDiscard: () -> Unit = {}; var onWrite: () -> Unit = {}
@@ -335,10 +401,13 @@ class DngImportContractTest {
             }
             override fun openRead(target: DngImportTarget, uri: String, pending: Boolean): InputStream {
                 check(target, uri, pending)
+                readFailure?.let { throw it }
+                if (noData) { onNoData(); throw FileNotFoundException("Pending data not yet opened") }
                 return object : ByteArrayInputStream(bytes) { override fun close() { if (failReadClose) throw IOException("read close") } }
             }
             override fun openPendingOutput(target: DngImportTarget, uri: String): OutputStream {
                 check(target, uri, true)
+                outputs++; noData = false
                 bytes = byteArrayOf()
                 return object : ByteArrayOutputStream() {
                     override fun write(b: ByteArray, off: Int, len: Int) {

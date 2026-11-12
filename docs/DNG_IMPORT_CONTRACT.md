@@ -57,3 +57,9 @@
 GPU準備待ちの10秒はcopy時間ではなく、今回新しいtimeout・権限・依存・上限緩和を導入しない。`requestStop`は協調要求で、ブロック中readの即時終了は保証しない。snapshot/保存の製品guard・画素式も不変。
 
 共有領域の写真は別アプリの設定でbackupされ得る。アプリはクラウド送信/backup設定変更を行わない。取り込み完了をbackup完了にしない。#101のfp実写真互換・SAF/SD抜去実機確認等は残し、partialとして追跡する。
+
+### データ未作成のpending行
+
+MediaStoreのinsert成功とデータfile生成は別であり、COPYINGの記録後・最初の出力open前にreadがFileNotFoundExceptionとなる場合がある。これは欠落/完了の証明ではない。COPYINGだけ、open資源なし・suppressed失敗なし・同URI/target/owner/pendingの再照合が成功したときに限り、同じpendingへの既存hash検証付きコピーを許す。新しいinsertはしない。公開済み、行消失/所有不明、一般I/O失敗、SecurityException、close不明は停止を維持する。公開前後の全byte検証は省略しない。
+
+[ContentResolver公式API](https://developer.android.com/reference/android/content/ContentResolver#openInputStream(android.net.Uri))はURIにデータがない場合等のFileNotFoundExceptionを定義する。例外文面のENOENT一致を判定条件にはしない。
