@@ -394,7 +394,14 @@ def foundation(linear: np.ndarray, mask: np.ndarray, base_ev: float, look: dict,
     luma = linear @ LUMA
     local = mask * np.clip(luma / .025, 0, 1)
     gain = np.exp2(base_ev + look["ev"] + local_ev * local)
-    target = luma * gain / (1 + (gain - 1) * luma)
+    # Bounded odds curve: extend its endpoints before evaluating the HDR pole.
+    # Indexed evaluation avoids np.where evaluating a singular unused branch.
+    # Keep NaN as NaN; this is not a non-finite input recovery policy.
+    target = np.clip(luma, 0, 1)
+    interior = (luma > 0) & (luma < 1)
+    y = luma[interior]
+    g = gain[interior]
+    target[interior] = y * g / (1 + (g - 1) * y)
     if luma_gain is not None:
         target = np.clip(target * luma_gain, 0, 1)
     power = 1 + (look["contrast"] - 1) * (1 - .75 * local)

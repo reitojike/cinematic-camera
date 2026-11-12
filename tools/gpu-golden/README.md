@@ -74,4 +74,4 @@ python -m unittest discover -s tools/gpu-golden -v
 
 ## Current adopted baseline
 
-The owner explicitly approved the unchanged 90-case current-output baseline on 2026-11-12, including known shared artifacts (#355). See [approval and limitations](../../docs/gpu-golden-baselines/README.md). Use that directory as the baseline argument to the existing manual comparator. This adds no automatic CI capture and does not relax exact RGB8 comparison.
+現在の採用対象は、#355 の R7 foundation 修正後に本人が目視確認した `golden-20261112-131916-51b691ad` の90条件です。目視済み候補から原本byte不変で登録し、最新main同期後の再採取で一致を確認します。#349 で採用した既知黒化を含む旧runは履歴として保持し、現在の比較先とは区別します。[承認出典・現在の比較コマンド・実写未検証などの限界](../../docs/gpu-golden-baselines/README.md) を参照してください。自動CI採取や厳密RGB8比較の緩和は追加しません。

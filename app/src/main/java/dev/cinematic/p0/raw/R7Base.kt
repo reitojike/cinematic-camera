@@ -121,7 +121,13 @@ internal object R7Base {
                 previewPixelCheckpoint(p, execution)
                 val y = luma(input, p).toDouble()
                 val local = roi[p] * unit(y / .025)
-                val exposed = y * gain / (1 + (gain - 1) * y)
+                // The bounded odds curve is defined on 0..1. Local tone can exceed it.
+                // Extend at its endpoints before evaluating the rational expression (#355).
+                val exposed = when {
+                    y <= 0.0 -> 0.0
+                    y >= 1.0 -> 1.0
+                    else -> y * gain / (1 + (gain - 1) * y)
+                }
                 val power = 1 + (R7BaseV1.CONTRAST - 1) * (1 - .75 * local)
                 val raised = unit(exposed).pow(power)
                 val lower = unit(1 - exposed).pow(power) * (.18 / .82).pow(power - 1)
