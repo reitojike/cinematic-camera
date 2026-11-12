@@ -48,7 +48,7 @@ internal class TrialPreparedFoundation(
 
     companion object {
         /** Bump whenever the native physical orientation/bounded scaling or R7 foundation changes. */
-        const val GEOMETRY_VERSION = "physical-bounded-1024-r7-final-v1"
+        const val GEOMETRY_VERSION = "physical-bounded-1024-r7-final-v2"
     }
 }
 
