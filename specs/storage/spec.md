@@ -64,3 +64,14 @@
 - JPEG 出力開始前の GPU 画像処理失敗で、GPU・原本・作業領域・出力の解放をすべて確認できた場合だけ、同じ画面から GPU 保存を明示再試行できる。通常の advance や通知再開だけでは再生成しない。再試行は原本を再検証・再展開し、同じ世代・設定・エンジンを使う。
 - durable intent は消さない。同プロセス内の確認済み失敗だけが再試行許可を持ち、再起動、解放不明、intent 不一致、JPEG 生成後、publication 不明は既存の HOLD / 同一 publication 再照合を維持する。失敗中の新しい編集世代への変更は許可しない。
 - この Draft は Android/実機での保存採用や速度・メモリ合格を意味しない。#338 の数値・texture 台帳検証とは別に、DNG decode → Bitmap/JPEG → publication、foreground service、preview 併走、失敗表示・retry の統合確認が必要。製品 merge と実機操作は別途承認する。
+
+### GPU別写真入力と保存の所有権（#350提案・merge前）
+
+- GPUでAを保存中でも、別写真Bの入力準備・表示は保存queueとは独立した単一入力ownerで行う。
+  CPUの入力・描画・保存、RAW展開、画素式、単一foreground保存の契約は変えない。
+- Bの表示だけで保存可能にしない。既存保存authorityから取得した同じ原本fingerprint・確定recipeの
+  handleを照合してから保存操作を有効にする。Aの結果や遅延した別選択の結果をBへ流用しない。
+- 入力と保存は別tokenで取消・解放を確認する。失敗closeのownerは保持し、他方の完了で解放済みにしない。
+  capture優先・原本照合・既存メモリ/熱guardを保ち、入力期限を延長して競合を隠さない。
+- 保存のため閉じた同じAのpreviewはREADY/PUBLISHED時の明示再開を維持する。
+  別写真Bの初回入力とは区別し、保存の暗黙retry、未確定publicationの解除、二重保存を追加しない。

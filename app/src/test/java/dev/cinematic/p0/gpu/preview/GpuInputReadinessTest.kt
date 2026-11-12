@@ -175,11 +175,10 @@ class GpuInputReadinessTest {
         assertEquals(10_000L, GPU_INPUT_READINESS_TIMEOUT_MS)
     }
 
-    @Test fun slotCaptureExportAndNonCameraFailuresAreNeverRetried() = runBlocking {
+    @Test fun conflictingSlotCaptureAndNonCameraFailuresAreNeverRetried() = runBlocking {
         val camera = refusal().snapshot
-        val failures = listOf(GpuInputAdmissionRefused(camera.copy(hasActiveSlot = true)),
+        val failures = listOf(GpuInputAdmissionRefused(camera.copy(hasActiveSlot = true, hasConflictingWork = true)),
             GpuInputAdmissionRefused(camera.copy(captureCount = 1)),
-            GpuInputAdmissionRefused(camera.copy(hasPendingExport = true)),
             GpuInputAdmissionRefused(camera.copy(freshPreviewBlockers = setOf(dev.cinematic.p0.rawcapture.AutoDevelopBlocker.THERMAL))),
             IOException("synthetic IO failure"))
         for (failure in failures) {

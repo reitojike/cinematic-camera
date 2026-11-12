@@ -125,9 +125,12 @@ internal class GpuExportBoundaryFixture(val app: Context) {
         sources.forEach { source -> assertEquals(source.fingerprint, DngContentVerifier.verify(source.fingerprint,
             { requireNotNull(resolver.openInputStream(Uri.parse(source.uri))) })) }
     }
-    fun assertNoGpuFailureRecorded() {
-        assertEquals(failureCount, failures.getLong("count", 0))
-        assertEquals(failureReason, failures.getString("lastReason", null))
+    fun assertNoGpuFailureRecorded() = assertGpuFailures(0, null)
+
+    private fun assertGpuFailures(expectedCount: Long, expectedReason: GpuSaveFailureReason?) {
+        require(expectedCount >= 0 && ((expectedCount == 0L) == (expectedReason == null)))
+        assertEquals(failureCount + expectedCount, failures.getLong("count", 0))
+        assertEquals(expectedReason?.code ?: failureReason, failures.getString("lastReason", null))
     }
     /** Only this fixture's synthetic sources/handles. Stream output survives a non-debuggable APK. */
     fun reportDiagnostics(stage: String) {
@@ -184,7 +187,8 @@ internal class GpuExportBoundaryFixture(val app: Context) {
         const val HEIGHT = 770
         private const val ENGINE_KEY = "develop/engine"
         val ALLOWED = AutoDevelopConditions(true, false, false, false, true, true, true, true, previewMemoryAvailable = true)
-        fun run(body: (GpuExportBoundaryFixture) -> Unit) {
+        fun run(expectedGpuFailures: Long = 0, expectedReason: GpuSaveFailureReason? = null,
+            body: (GpuExportBoundaryFixture) -> Unit) {
             val target = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
             val args = InstrumentationRegistry.getArguments()
             assumeTrue(BuildConfig.BUILD_TYPE == "gpuDiagnostic" && target.packageName == "dev.cinematic.p0.gpudiagnostic")
@@ -206,7 +210,7 @@ internal class GpuExportBoundaryFixture(val app: Context) {
                 fixture.createSource()
                 body(fixture)
                 fixture.verifyOriginals()
-                fixture.assertNoGpuFailureRecorded()
+                fixture.assertGpuFailures(expectedGpuFailures, expectedReason)
                 fixture.reportDiagnostics("success-before-cleanup")
                 success = true
             } catch (error: Throwable) {

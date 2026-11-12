@@ -17,7 +17,9 @@ import dev.cinematic.p0.gpu.preview.GpuPreviewSnapshot
 import dev.cinematic.p0.photoedit.*
 import dev.cinematic.p0.rawcapture.*
 import java.io.File
+import java.io.IOException
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -52,7 +54,7 @@ class GpuProductInputAndroidTest {
         var session: GpuPhotoRollSession? = null
         try {
             // Second photo and foreground re-open must each perform a fresh strong original check.
-            for (id in listOf(1, 2, 2)) {
+            for ((index, id) in listOf(1, 2, 2).withIndex()) {
                 renderer.discardTransientInputs()
                 AndroidManualOriginalTrialSaves.discardPreview(app).get(30, TimeUnit.SECONDS)
                 GpuPhotoRollRetiredOwners.releaseBeforeOpen()
@@ -63,7 +65,8 @@ class GpuProductInputAndroidTest {
                     { failure -> assertNull(failure); admitted.incrementAndGet() }) { PhotoAdjustmentPolicy.defaults }
                 assertEquals(1, admitted.get())
                 assertTrue(provider.opens.get() > opensBefore)
-                assertTrue(loaded.save.matches(loaded.original.reference, PhotoRollPreviewMode.MANUAL_TRIAL))
+                val prepared = prepareMetadataWhileGpuOwnsInput(app, renderer, loaded, ready, provider, firstPrepare = index < 2)
+                assertTrue(prepared.matches(loaded.original.reference, PhotoRollPreviewMode.MANUAL_TRIAL))
                 val openedReads = provider.opens.get()
                 val current = GpuPhotoRollSession(target.assets).also { session = it }
                 current.renderer.attachSurface(imageReader.surface, 320, 240)
@@ -100,6 +103,82 @@ class GpuProductInputAndroidTest {
             imageReader.close(); drain.quitSafely(); drain.join(5_000)
             provider.verifyUnchanged()
             assertTrue("all source descriptors closed", provider.readers.none { it.fileDescriptor.valid() })
+        }
+    }
+
+    /** Hold the real GPU admission while metadata uses only the already verified geometry.
+     * A new source has no Authority geometry/request cache, so another preflight would fail here. */
+    private fun prepareMetadataWhileGpuOwnsInput(app: Context, renderer: ManualTrialPhotoRollRenderer,
+        loaded: ManualTrialPhotoRollRenderer.GpuInput, ready: PhotoRollResources, provider: Provider,
+        firstPrepare: Boolean): PhotoRollJpegSaveOwner {
+        val source = loaded.original.reference
+        val conditions = ready.developConditions(true)
+        val storage = AndroidAtomicJournalStorage(File(app.noBackupFilesDir, "manual-original24-requests"),
+            ManualOriginalTrialRequests.identity(source), CaptureJournalFile.MANUAL_REQUEST)
+        if (firstPrepare) assertNull("new source has no prepared generation", storage.read(ManualOriginalTrialRequestCodec.MAX_BYTES))
+        val gpu = checkNotNull(DevelopExecution.tryStartGpuDiagnosticPreviewObserved(conditions).attempt)
+        var primary: Throwable? = null
+        try {
+            val unexpectedCpu = DevelopExecution.tryStartPreviewObserved(conditions)
+            if (unexpectedCpu != null) {
+                val failure = AssertionError("CPU preview must remain excluded while the GPU input token is held")
+                try { check(DevelopExecution.completeAfterResourcesClosed(unexpectedCpu)) }
+                catch (closing: Throwable) { if (closing !== failure) failure.addSuppressed(closing) }
+                throw failure
+            }
+            assertFalse("GPU owner must still be admitted", DevelopExecution.shouldStop(gpu))
+            val readsBeforeMetadata = provider.opens.get()
+            val prepared = renderer.prepareGpuSave(loaded, loaded.values, CancellationSignal())
+            assertEquals("GPU metadata must not reopen/re-preflight the original", readsBeforeMetadata, provider.opens.get())
+            assertFalse("metadata must not stop the GPU input owner", DevelopExecution.shouldStop(gpu))
+            val handle = checkNotNull(AndroidManualOriginalTrialSaves.knownPrepared(source))
+            val request = handle.request
+            val bytes = checkNotNull(storage.read(ManualOriginalTrialRequestCodec.MAX_BYTES))
+            assertEquals(request, ManualOriginalTrialRequestCodec.decode(bytes))
+            assertEquals(source, request.source)
+            assertEquals(loaded.geometry, handle.geometry)
+            assertEquals(loaded.values.strength, request.strength, 0.0)
+            assertEquals(PhotoAdjustmentPolicy.adjustments(loaded.values), request.adjustments)
+            assertEquals(ManualOriginalTrialSavePhase.READY, handle.state.value.phase)
+            assertFalse(handle.hasUnreleasedResources)
+            if (firstPrepare) assertEquals(1L, request.generation)
+
+            // A structurally valid but different orientation must fail before a different recipe
+            // can allocate/supersede a generation. No save/publication is attempted in this test.
+            val wrongGeometry = loaded.geometry.copy(orientation = if (loaded.geometry.orientation == 1) 2 else 1,
+                outputWidth = loaded.geometry.sourceWidth, outputHeight = loaded.geometry.sourceHeight)
+            val otherValues = PhotoEditValues(.7, 35.0, .5)
+            assertNotEquals(loaded.geometry, wrongGeometry)
+            assertNotEquals(loaded.values, otherValues)
+            try {
+                AndroidManualOriginalTrialSaves.prepareGpu(app, source, wrongGeometry, otherValues.strength,
+                    conditions, PhotoAdjustmentPolicy.adjustments(otherValues)) { false }.get(30, TimeUnit.SECONDS)
+                fail("Changed GPU input geometry must be rejected")
+            } catch (failure: ExecutionException) {
+                assertTrue("geometry failure must remain explicit", failure.cause is IOException)
+                assertEquals("GPU input geometry changed", failure.cause?.message)
+            }
+            assertSame("failed geometry must not publish a new handle", handle, AndroidManualOriginalTrialSaves.knownPrepared(source))
+            val unchanged = checkNotNull(storage.read(ManualOriginalTrialRequestCodec.MAX_BYTES))
+            assertArrayEquals("failed geometry must not rewrite source/generation/recipe", bytes, unchanged)
+            assertEquals(request, ManualOriginalTrialRequestCodec.decode(unchanged))
+            assertEquals(loaded.geometry, handle.geometry)
+            val resumed = AndroidManualOriginalTrialSaves.prepareGpu(app, source, loaded.geometry, loaded.values.strength,
+                conditions, PhotoAdjustmentPolicy.adjustments(loaded.values)) { false }.get(30, TimeUnit.SECONDS)
+            assertSame("original geometry must still reuse its exact generation", handle, resumed)
+            assertEquals(request, resumed.request)
+            assertArrayEquals(bytes, storage.read(ManualOriginalTrialRequestCodec.MAX_BYTES))
+            assertEquals("all GPU metadata remains source-read-free", readsBeforeMetadata, provider.opens.get())
+            assertFalse(DevelopExecution.shouldStop(gpu))
+            return prepared
+        } catch (failure: Throwable) { primary = failure; throw failure }
+        finally {
+            try { check(DevelopExecution.completeAfterResourcesClosed(gpu)) }
+            catch (closing: Throwable) {
+                val failure = primary
+                if (failure == null) throw closing
+                if (failure !== closing) failure.addSuppressed(closing)
+            }
         }
     }
 

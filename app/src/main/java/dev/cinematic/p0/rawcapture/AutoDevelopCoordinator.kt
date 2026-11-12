@@ -24,6 +24,8 @@ internal class AutoDevelopCoordinator {
     private var conditions = AutoDevelopConditions()
     private var conditionsObserved = false
     private var active: Active? = null
+    // GPU input preparation has one independent owner, alongside an explicit FGS export only.
+    private var gpuPreview: Active? = null
     private var pendingExport: ForegroundExportRequest? = null
     private val captures = mutableSetOf<CaptureReservation>()
 
@@ -31,6 +33,8 @@ internal class AutoDevelopCoordinator {
     fun updateConditions(value: AutoDevelopConditions) {
         conditions = value
         conditionsObserved = true
+        if (AutoDevelopPolicy.previewBlockers(value.copy(rendererAvailable = true)).isNotEmpty())
+            gpuPreview?.stopRequested = true
         // Job-local renderer availability must not cancel an interactive job with another capability.
         val current = active
         // A started export has its own service-scoped observer. Activity pause/teardown must not
@@ -48,6 +52,7 @@ internal class AutoDevelopCoordinator {
         val reservation = CaptureReservation()
         captures.add(reservation)
         active?.stopRequested = true
+        gpuPreview?.stopRequested = true
         pendingExport?.stopped = true
         return reservation
     }
@@ -62,7 +67,7 @@ internal class AutoDevelopCoordinator {
     /** Checks current observations and capture reservations in the same critical section. */
     @Synchronized
     fun tryStart(): Attempt? {
-        if (active != null || pendingExport != null || captures.isNotEmpty() || AutoDevelopPolicy.blockers(conditions).isNotEmpty()) {
+        if (active != null || gpuPreview != null || pendingExport != null || captures.isNotEmpty() || AutoDevelopPolicy.blockers(conditions).isNotEmpty()) {
             return null
         }
         return Attempt().also { active = Active(it) }
@@ -72,10 +77,10 @@ internal class AutoDevelopCoordinator {
      * The caller must keep checking observations and cancellation while it owns resources. */
     @Synchronized fun tryStartObserved(observations: AutoDevelopConditions): Attempt? = startObserved(observations, preview = false)
 
-    /** Preview ownership is distinct from save admission, not a second slot or executor. */
+    /** CPU preview keeps the existing exclusive slot and admission policy. */
     @Synchronized fun tryStartPreviewObserved(observations: AutoDevelopConditions): Attempt? = startObserved(observations, preview = true)
 
-    /** GPU diagnostic evidence only, captured before the unchanged admission decision under its lock.
+    /** GPU evidence, captured before admission under the same short identity lock.
      * Stored blockers use the same job-local renderer normalization as startObserved and apply only
      * when conditionsObserved is true. The snapshot contains no owner identities or live state. */
     data class GpuDiagnosticPreviewSnapshot(
@@ -89,6 +94,8 @@ internal class AutoDevelopCoordinator {
         val activeStopRequested: Boolean?,
         val captureCount: Int,
         val hasPendingExport: Boolean,
+        // CPU/auto work or an unreleased GPU input owner conflicts; foreground export does not.
+        val hasConflictingWork: Boolean,
     )
 
     class GpuDiagnosticPreviewAdmission(val attempt: Attempt?, val snapshot: GpuDiagnosticPreviewSnapshot)
@@ -103,23 +110,29 @@ internal class AutoDevelopCoordinator {
             freshForeground = observations.foreground,
             storedForeground = conditions.foreground,
             freshRendererAvailable = observations.rendererAvailable,
-            hasActiveSlot = active != null,
-            activeStopRequested = active?.stopRequested,
+            hasActiveSlot = active != null || gpuPreview != null,
+            activeStopRequested = active?.stopRequested ?: gpuPreview?.stopRequested,
             captureCount = captures.size,
             hasPendingExport = pendingExport != null,
+            hasConflictingWork = gpuPreview != null || active?.foregroundExport == false,
         )
-        return GpuDiagnosticPreviewAdmission(startObserved(observations, preview = true), snapshot)
+        val attempt = if (snapshot.hasConflictingWork || captures.isNotEmpty() ||
+            snapshot.freshPreviewBlockers.isNotEmpty() ||
+            (conditionsObserved && snapshot.storedGlobalPreviewBlockers.isNotEmpty())) null
+        else Attempt().also { gpuPreview = Active(it, observed = true, preview = true) }
+        return GpuDiagnosticPreviewAdmission(attempt, snapshot)
     }
 
     private fun startObserved(observations: AutoDevelopConditions, preview: Boolean): Attempt? {
         fun blocked(value: AutoDevelopConditions) = if (preview) AutoDevelopPolicy.previewBlockers(value).isNotEmpty()
             else AutoDevelopPolicy.blockers(value).isNotEmpty()
-        if (active != null || pendingExport != null || captures.isNotEmpty() || blocked(observations) ||
+        if (active != null || gpuPreview != null || pendingExport != null || captures.isNotEmpty() || blocked(observations) ||
             (conditionsObserved && blocked(conditions.copy(rendererAvailable = true)))) return null
         return Attempt().also { active = Active(it, observed = true, preview = preview) }
     }
 
-    /** Only an explicit foreground save may acquire this one slot. No background admission.
+    /** Only an explicit foreground save may acquire the existing export slot. No background admission.
+     * It may coexist with the separate GPU input owner, never with CPU preview/auto work.
      * Subsequent resource updates must come from the service observer for this exact attempt.
      * Capture reservations still stop it immediately and closure is still positively acknowledged.
      */
@@ -155,19 +168,21 @@ internal class AutoDevelopCoordinator {
 
     /** Stop is latched for the current attempt; it is not resource-release acknowledgement. */
     @Synchronized
-    fun requestStop() { active?.stopRequested = true; pendingExport?.stopped = true }
+    fun requestStop() { active?.stopRequested = true; gpuPreview?.stopRequested = true; pendingExport?.stopped = true }
 
     /** A delayed stop for an old owner must not cancel an unrelated newly admitted attempt. */
     @Synchronized
     fun requestStop(attempt: Attempt) {
         if (active?.attempt === attempt) active?.stopRequested = true
+        if (gpuPreview?.attempt === attempt) gpuPreview?.stopRequested = true
     }
 
     /** Unknown, completed, and foreign attempts must stop as well. */
     @Synchronized
     fun shouldStop(attempt: Attempt): Boolean {
-        val current = active ?: return true
-        return current.attempt !== attempt || current.stopRequested
+        val current = active?.takeIf { it.attempt === attempt }
+            ?: gpuPreview?.takeIf { it.attempt === attempt } ?: return true
+        return current.stopRequested
     }
 
     /**
@@ -177,8 +192,11 @@ internal class AutoDevelopCoordinator {
      */
     @Synchronized
     fun completeAfterResourcesClosed(attempt: Attempt): Boolean {
-        if (active?.attempt !== attempt) return false
-        active = null
+        when (attempt) {
+            active?.attempt -> active = null
+            gpuPreview?.attempt -> gpuPreview = null
+            else -> return false
+        }
         return true
     }
 }

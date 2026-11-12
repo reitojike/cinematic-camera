@@ -108,3 +108,29 @@ count差1が出た。その後の最新ユーザー判断でCPU差（count/Mist/
 旧 `StageClearGpuPipelineAndroidTest` / `GlowMistParityAndroidTest` 等の広範なCPU parity試験には旧assertが残る。
 これは移行前の試験範囲の差であり、CPU差をGate2条件へ戻す意味ではない。今回の#341結合に広げず、
 GPU既定化後の#290でGPU基準画像回帰への置換を扱う。純粋なcount集計関数自体の正しさ試験は別物として保持する。
+
+## #350: 保存中の別写真入力と中断の受入（実装・試験準備中）
+
+GPU の別写真入力は保存の serial queue と別の単一 IO owner / admission 枠で準備する。
+保存世代・intent・publication は従来の保存 owner に残し、入力表示の完了と保存可能状態を分ける。
+A の保存中に B の入力・表示が成立しても、B の同一原本・確定 recipe に対応する保存 handle の
+準備が終わるまで保存可能にしない。同じ A が保存用に閉じた preview の READY/PUBLISHED 時の
+明示再開、未確定 owner の保持、CPU の入力・描画・保存、RAW 展開と画素式は変更しない。
+
+`GpuExportActiveOwnershipAndroidTest` の追加受入は小型合成 DNG を使う。
+- A を実 GPU B1 境界に保持したまま B の persisted recipe の提示を確認する。A 解放後だけの
+  B 成功は同時動作の合格にしない。固定11秒条件でも B の10秒 admission期限は変更しない。
+- A の実 JPEG / 原本指紋 / recipe / publication を検証し、B の READY・intent未生成を経て
+  明示保存し、B の実 GPU / JPEG / 異なる原本・公開URIを検証する。
+- B の実 preflight snapshot/FD を保持した準備境界で、Cへの切替とbackgroundを別々に試験する。
+  取消要求と全資源・token解放を区別し、Bの遅延結果が表示されず、Aは独立して公開できることを確認する。
+- B 表示中のC切替、background、engineから注入する初回描画/表示後context lossを独立試験とし、previewの
+  texture/window解放とAのintent不変・GPU資源解放・公開をそれぞれ確認する。
+
+- B preflight中はB自身のGL contextは未作成なので、その境界ではA export側context lossを注入する。
+  AのGPU_FAILED・未公開・解放と、B snapshot/tokenの継続保持・解放・表示・保存可能を確認する。
+  このケースだけ固定reason CONTEXT_LOSTの累積増分1件を要求し、失敗記録を消去しない。
+
+追加試験は実行前であり、合格を示さない。OSによる実context loss、
+実12MP同時decode/保存の資源量はこの小型試験では未確認。既存context-loss明示retry試験と
+CPUのA→B・取消/retry・原本保護回帰も最終headで再確認する。実機操作の許可は別途必要。
