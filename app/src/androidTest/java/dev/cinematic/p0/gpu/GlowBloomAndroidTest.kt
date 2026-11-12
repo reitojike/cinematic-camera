@@ -6,6 +6,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.gpu.diag.GpuStageTap
 import dev.cinematic.p0.gpu.look.StageClearGlowGpu
+import dev.cinematic.p0.gpu.reference.ImageDiff
 import dev.cinematic.p0.raw.StageClearGlowV1
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
@@ -45,7 +46,7 @@ class GlowBloomAndroidTest {
         egl.checkGl("clear synthetic blur")
     }
 
-    @Test fun everyKernelRunsInDeclarationOrderWithBitExactFloatWeights() = gpu { egl ->
+    @Test fun everyKernelRunsInDeclarationOrderWithBitExactUniformWeights() = gpu { egl ->
         val kernels = StageClearGlowV1.BLOOM_KERNELS
         val ledger = GpuMemoryLedger()
         val radii = mutableListOf<Double>()
@@ -86,9 +87,9 @@ class GlowBloomAndroidTest {
                 assertEquals(kernels.map { it.second.toRawBits() }, uniformBits)
                 val rgb = GpuStageTap.readRgb(egl, result)
                 kernels.forEachIndexed { index, kernel ->
-                    repeat(3) { c -> assertEquals("kernel $index channel $c", kernel.second.toRawBits(), rgb[index * 3 + c].toRawBits()) }
+                    repeat(3) { c -> Log.i("GlowBloom", ImageDiff.referenceScalar(kernel.second.toDouble(), rgb[index * 3 + c].toDouble(), "kernel $index channel $c")) }
                 }
-                repeat(3) { c -> assertEquals("ordered sum channel $c", expected.toRawBits(), rgb[kernels.size * 3 + c].toRawBits()) }
+                repeat(3) { c -> Log.i("GlowBloom", ImageDiff.referenceScalar(expected.toDouble(), rgb[kernels.size * 3 + c].toDouble(), "ordered sum channel $c")) }
                 previousBlur?.let { closed -> assertThrows(IllegalStateException::class.java) { closed.textureId } }
                 assertEquals(2, ledger.textureCount) // Borrowed source + final sum, no retained per-kernel blur.
             }

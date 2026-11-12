@@ -3,6 +3,7 @@ package dev.cinematic.p0.gpu
 import android.graphics.PixelFormat
 import android.media.ImageReader
 import android.opengl.GLES32
+import android.util.Log
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
@@ -80,7 +81,7 @@ class GpuPreviewAndroidTest {
         assertEquals(0L, ledger.allocatedBytes)
     }
 
-    @Test fun presentationAspectFitsWithOpaqueBlackBarsAndEncodesLinearSrgb() = gpu { egl ->
+    @Test fun presentationAspectFitsWithOpaqueBlackBarsAndReportsCpuEncoding() = gpu { egl ->
         val linear = floatArrayOf(0.003f, 0.18f, 0.5f, 1f)
         val expected = linear.take(3).map { value ->
             ((if (value <= 0.0031308f) 12.92 * value else 1.055 * value.toDouble().pow(1.0 / 2.4) - 0.055) * 255).roundToInt()
@@ -89,15 +90,26 @@ class GpuPreviewAndroidTest {
         GpuTexture.create(egl, ledger, 4, 2, GpuTexture.Format.RGBA32F).use { input ->
             input.upload(floatPixels(FloatArray(4 * 2 * 4) { linear[it % 4] }))
             GpuTexture.create(egl, ledger, 8, 8, GpuTexture.Format.RGBA8).use { output ->
+                var cpuMaximum = 0
                 for (rotation in listOf(0, 90, 180, 270)) {
                     present(egl, input, 8, 8, rotation, output)
                     val pixels = readRgba(egl, output)
                     repeat(8) { y -> repeat(8) { x ->
                         val bar = if (rotation == 0 || rotation == 180) y < 2 || y >= 6 else x < 2 || x >= 6
-                        assertPixel("rotation=$rotation at $x,$y", pixels, 8, 8, x, y,
-                            if (bar) listOf(0, 0, 0, 255) else expected)
+                        if (bar) {
+                            assertPixel("rotation=$rotation black bar at $x,$y", pixels, 8, 8, x, y, listOf(0, 0, 0, 255))
+                        } else {
+                            val offset = ((7 - y) * 8 + x) * 4
+                            assertEquals("opaque image at $x,$y", 255, pixels.get(offset + 3).toInt() and 255)
+                            // A non-black image region must not be confused with its letterbox.
+                            assertTrue("image region at $x,$y", (0..2).any { (pixels.get(offset + it).toInt() and 255) != 0 })
+                            repeat(3) { channel ->
+                                cpuMaximum = maxOf(cpuMaximum, abs((pixels.get(offset + channel).toInt() and 255) - expected[channel]))
+                            }
+                        }
                     } }
                 }
+                Log.i("GpuPreview", "CPU_REFERENCE_ONLY midtone encoding max8=$cpuMaximum")
             }
         }
         assertEquals(0L, ledger.allocatedBytes)

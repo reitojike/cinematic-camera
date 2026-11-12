@@ -68,7 +68,10 @@
 - 選択後の失敗は選択した写真の画像領域に表示する。GPU能力不足・context喪失・メモリ予算・表示面解放未確認は「GPU を使えません」と再試行を示し、CPUへ自動で切り替えない。
 - Surface破棄は最大2秒で区切り、時間超過をアプリの未処理例外にしない。未完了の破棄ownerを保持し、旧Surfaceへの表示を止める。再試行/写真切替は旧ownerの終了確認後だけ新しく開く。
 - 写真切替・画面終了・背景化ではGL写真/表示面/入力/コールバックを閉じる。UI_HIDDEN（20）以上のtrimも同じプレビューownerだけを終了し、10ではこのtrim契約による解放を行わない。foreground exportの所有資源を解放しない。
-- GPUプレビューと原寸保存は同じ DevelopEngine 設定を参照する。診断用ビルド限定のプレビュー接続は #339 で先行統合し、#286 の保存接続は別途検証する。通常版のGPU有効化や既定変更は含まない。GPU経路の実機品質・速度・Gate 2合格はこの仕様で主張しない。
+- context喪失後は、失敗前にqueueへ入った入力・調整値でengineを自動再生成しない。明示retryで旧ownerの終了を待ち、原本を再確認して新sessionを開く。失敗直後のGL写真/画面surface解放と、retry・離脱・trim時の縮小CPU入力/GL thread/EGL終了を分ける。失敗表示だけで全owner終了とは扱わない。
+- GPUプレビューと原寸保存は同じ DevelopEngine 設定を参照し、保存のengineは最初の実保存時に固定する。#341の接続ではpreview ownerの終了を確認してから専用GL ownerで保存し、保存中はpreviewを停止する。共有contextでの同時実行は行わず、保存後の再開は明示操作とする。失敗・取消・HOLD中の迂回再開はしない。
+- Gate 2は本人の実写の見た目で判断する。CPUとの差（count、Mist、分位点、最終8bit等）は参考記録であり、停止・合否条件にしない。GPU帯/full、cache/fresh、shader compile、原本保護・retry・資源解放の自動検査は維持する。
+- [Gate 2の本人承認](https://github.com/reitojike/cinematic-camera/issues/291#issuecomment-6813411664) は記録された診断APKと実施範囲に限る。他の版、24MP、故障/取消、速度・メモリの確認へ広げない。通常版のGPU既定化は #289 と #290前段Aの受入後、別途承認する。GLSL正本化・GPU基準画像回帰はその既定化後の #290後段Bとし、既存CPU goldenを先に置き換えない。
 
 ## 製品に採用していないもの
 
