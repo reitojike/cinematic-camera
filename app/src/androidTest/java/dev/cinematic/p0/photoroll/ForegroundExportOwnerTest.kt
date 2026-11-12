@@ -51,7 +51,7 @@ class ForegroundExportOwnerTest {
         val app = context.applicationContext
         val resolver = app.contentResolver
         val imports = AndroidDngImports.get(app)
-        val files = DngImportJournalFiles(File(app.noBackupFilesDir, "dng-imports"))
+        val files = DngImportJournalFiles(File(app.noBackupFilesDir.canonicalFile, "dng-imports"))
         val beforeImports = files.records()
         check(beforeImports.all { it.phase in setOf(DngImportPhase.READY, DngImportPhase.CANCELLED) })
         val beforeIds = beforeImports.map { it.target.operationId }.toSet()
