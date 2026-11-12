@@ -1,0 +1,116 @@
+# GPU candidate review: current-output regression reference
+
+Source: `1a6ded41d0fe9eb09e467885e625a6c722c237a6`; run `golden-20261112-072140-1a6ded41`.
+All 90 synthetic native PNGs remain unchanged in `candidates/`. No personal photographs are included. The owner completed visual review; the two overview sheets and ten duplicate representatives were removed as requested before merge.
+
+## Decision and limitations (2026-11-12)
+
+The owner accepted the observed CPU/GPU agreement for this investigation, without requiring shared artifacts to be fixed now. Investigate and consider correction again if noticeable during real-device use. This does not establish normal image quality or resolve black inversion.
+
+- All 90 outputs compared: 10 byte-identical, every maximum channel difference <=1/255, every P99 channel difference 0. Observations only, not new thresholds.
+- Final sources: c001-c076 Android KotlinReference/production analysis; c077-c090 host JVM full-frame existing CPU functions/fixed metered base EV=0 plus user EV, not the Android product band path.
+- Android completed 77 output files including c077. The export selector FAILED at c078 with OOM; c079-c090 were not run on Android. This is NOT 77 Android test passes. Host produced 14 exports; overlapping c077 was byte-identical. Host success does not establish Android resource safety.
+- Near-black (all RGB<=3) classification had zero GPU-only/CPU-only pixels in every case. Identified blackening cases c009-c012, c037-c040, c053-c055, c057, c075 therefore also occur at the same CPU coordinates.
+- c009/c010 black inversion first occurs in shared R7 foundation. c020 boundary color spread begins in shared Glow and increases in Mist at inspected samples. [Known issue #355](https://github.com/reitojike/cinematic-camera/issues/355) remains unresolved.
+- Separate CPU-only synthetic 0.001..1 input at permitted EV=-2 reached 1,489 negative foundation denominators: center tone Y=6.0865 becomes foundation Y=0. EV=0 had none. The same shader formula was inspected, but this new probe was not executed on GPU. Real-photo frequency/severity is unproven.
+
+## Adoption and execution
+
+PNG pixels and sRGB metadata are unchanged. Following explicit owner approval, the existing approve command registered the unchanged RGB8 baseline and provenance in [gpu-golden-baselines](../../gpu-golden-baselines/README.md). PNG publication alone does not wire a regression test; the adopted data is used by the existing manual comparator. No equations, CPU golden, thresholds or CI configuration changed.
+
+The existing Android capture is manual, not automatically run in CI. Original 90 GPU conditions and 28 band/full comparisons passed. Future same-environment baseline comparison remains exact RGB8; the CPU observations do not relax that policy. See [execution instructions](../../../tools/gpu-golden/README.md).
+
+## Native PNG conditions and SHA-256
+
+|ID|種別|群|寸法|S|W|EV|PNG SHA-256|
+|---|---|---|---|---|---|---|---|
+|c001|GREY|small|256x192|0|0|0|85b75d37a0fc457fa198b8fdf5027a1747790488da15adaff10d3fc0b5624b47|
+|c002|GREY|small|256x192|0.25|0|0|2001d6f5edcdfb2400a8053c58671bd99d99d5d531ca895ab4f867cd3df02c0b|
+|c003|GREY|small|256x192|0.5|0|0|d0995782e586725282cfbbd789a29a4545f8f7089dc95b465c8453ce160d140e|
+|c004|GREY|small|256x192|1|0|0|c80f98f812c1650b61ecdc02e47b7e5aa5fd1a732add7246079dbe426146a1bd|
+|c005|DARK|small|256x192|0|0|0|060d4e3fc1b1591e14ddef595c63bb80a5b00faefc3cee3a0f99674bc60009ac|
+|c006|DARK|small|256x192|0.25|0|0|a154bbc4274cf8b7d14a9b1907421120c15c213e9b18da1cc47b1b9d155da7d2|
+|c007|DARK|small|256x192|0.5|0|0|e62cc2eebc22c3b26b73546dc6b87a4b251933994ca46d1aa7845ee313bda508|
+|c008|DARK|small|256x192|1|0|0|0bed7c9ae37ed684befe17f64e30e3d961222ba124b78651a7f668324263cfd6|
+|c009|HDR_LIGHTS|small|256x192|0|0|0|8a2c1faeb72e6382a14c42bf3599a9ac400ead7aaaec318b44709ae3de02cd42|
+|c010|HDR_LIGHTS|small|256x192|0.25|0|0|2ff4a1efb3d8200d783ac1a5879c199b0a1844c856841e39d9a15d0837ba4e84|
+|c011|HDR_LIGHTS|small|256x192|0.5|0|0|20cf7a5aa3066b7a3dfaff2c678f593a9baa2deb7d8251d36a8eec9fdfe14915|
+|c012|HDR_LIGHTS|small|256x192|1|0|0|99230f47ada87cc6d8d66786fb9d23bc62af685d7392918bc3da0b786c66bd59|
+|c013|SKIN|small|256x192|0|0|0|44ce0c68dd2aa9c3353dc4f2ad0fd5f71f27c9ca77853c395e845607bbc4b312|
+|c014|SKIN|small|256x192|0.25|0|0|61fb32529f748b87babb016dd532cb88f41ceb14a9fa4bc849681178c33bfaf8|
+|c015|SKIN|small|256x192|0.5|0|0|38596aed84509f625b5d28c54e382638c39ab17bcac2a603f07ad9d248a38035|
+|c016|SKIN|small|256x192|1|0|0|862e3e1548e3206817a559f60b77f606b70ac1cbf58f0115f3286a5dca8612d2|
+|c017|SATURATED|small|256x192|0|0|0|1877b74e722b8aefbcc287a37befcb23b541fa23bc8dece5f319f9b6711b54a1|
+|c018|SATURATED|small|256x192|0.25|0|0|11bcd003663257a62fb4ddbba1fc7a079499a7e76b80982e8e4d4e6765d68402|
+|c019|SATURATED|small|256x192|0.5|0|0|a4f483934cace8a76993d305a0300a1e8b17483786db13a1d4ffda514f21b913|
+|c020|SATURATED|small|256x192|1|0|0|d075f307471cf388555a63cb2be44c89702501deae2f6a76e463f352f449cb4c|
+|c021|NEAR_WHITE_0|small|256x192|0|0|0|a84b015fe75964692009efa63f0bef915d9a952e4b60f7f974a45e02c17252a6|
+|c022|NEAR_WHITE_0|small|256x192|0.25|0|0|0f402a8e5861b3cfcbe0e7adec559bd53069e536faabf01665e491942c8a9b8d|
+|c023|NEAR_WHITE_0|small|256x192|0.5|0|0|8fbf1bf592143f874a586db23d643aac0ab3120b91d31962ba88eabdd76b650b|
+|c024|NEAR_WHITE_0|small|256x192|1|0|0|ea33e9bcad70271d1476a8f9b650ed51f0462a043a52e7ceb85a69d98de2ceae|
+|c025|NEAR_WHITE_2|small|256x192|0|0|0|3fa5e2e526cbe4727a1d1d6c3ef3e13cce0e0d77430a6fc316ed9857fd1a31f3|
+|c026|NEAR_WHITE_2|small|256x192|0.25|0|0|e45f761295c1a8f3465d90c9c35f5c3e6a3de340e1d3d8c1c6ffec65c42eea9a|
+|c027|NEAR_WHITE_2|small|256x192|0.5|0|0|db652f08df8ff8d5975ce8cce99772ea8f6d3aeccd9baee7915219e2dfeb9018|
+|c028|NEAR_WHITE_2|small|256x192|1|0|0|51f496dda5a6d227cdf9751691d504900cf1f148380bea72b4d4f9916f689b0f|
+|c029|NEAR_WHITE_5|small|256x192|0|0|0|cfa8b517b7e01f3c2cfb88a671440dbeb75125880b0c17a02fbc30bddad76cc1|
+|c030|NEAR_WHITE_5|small|256x192|0.25|0|0|c3e1961b7dae44648f0599b0c341eba01c04394e23047936dd1f9dbd5a007681|
+|c031|NEAR_WHITE_5|small|256x192|0.5|0|0|a15a59a4ba2d671653bf400f626cc385c0ed0394d7c103d1c10006e55dc7fbd6|
+|c032|NEAR_WHITE_5|small|256x192|1|0|0|6647d3d1a2dca9e9ce842c3dc7d9a4d93aff0874397e83b83b8cf599611228df|
+|c033|NOISE|small|256x192|0|0|0|012906c7268266e917c7d845576c879876135dfeb40cedb16c06e88d3814d32a|
+|c034|NOISE|small|256x192|0.25|0|0|981824f6e232d9aad02b868af3675208627723db1d7e225de732c7d628699cb4|
+|c035|NOISE|small|256x192|0.5|0|0|88dd3604af35dd1744903822c3a0ae8b930714c6b785fa2e63b05fd685dc3eb3|
+|c036|NOISE|small|256x192|1|0|0|d25d66e94ffac2855916cd0203f3645a9371160fda58ed1667c9ac38eba8baff|
+|c037|MIXED|small|256x192|0|0|0|cea3f70cc10b1599175e8cd3f41636d61479c4f9433584ecbbb84222e28881fb|
+|c038|MIXED|small|256x192|0.25|0|0|faf1f6842b79306b5289b45c47a66b0f089c47cb160db43d32a528349938fb16|
+|c039|MIXED|small|256x192|0.5|0|0|4a0cb5ec164bdc848e1b9bf25161aa5802a40abb253db5e787313b181cf2a3bc|
+|c040|MIXED|small|256x192|1|0|0|d8fdee3f34c1a7b81a71cbc065db2e17c888df162f5bdf9d558200ad4577a10c|
+|c041|DARK|small|256x192|0.5|-100|0|2525cfb22b956277b5842a64e2c22aba85912a5feedfe07b407851f88bbfc4bf|
+|c042|DARK|small|256x192|0.5|100|0|5d8f080a76057a7f496cad7c947fe470c50cda5036edf8c5a5f838cdf3edae4e|
+|c043|DARK|small|256x192|0.5|0|-2|b5aa6ccda9404fe4dd7303ebd386dee37bc54e3791a5ab1ce2a51afe25e1a33f|
+|c044|DARK|small|256x192|0.5|0|2|4f280be105f65439a9a1cfdfa950cc71c982bb8c4cc30aa1f5644e2923cd2a82|
+|c045|DARK|small|256x192|0.5|-100|-2|d91ea39cc7abb533ce2295719608312268154efffbdd7e581bdc4745fb55f946|
+|c046|DARK|small|256x192|0.5|100|2|e0cdb47a6019a5b5ac84c2d723e0d64794a7f738172ae5d127557af22c3c19e8|
+|c047|SKIN|small|256x192|0.5|-100|0|2a7a7f8f24a944287db1d79685fa3e28d9835871880af4573fdb0405d256c029|
+|c048|SKIN|small|256x192|0.5|100|0|264bf612a9038c9661f4706bf8d645fbcf2151b880bc7280a3907b6b98c59b3c|
+|c049|SKIN|small|256x192|0.5|0|-2|1c9e250515dca2c177f3e79cd796d3116f5257c0b8804ad57673105e9679200a|
+|c050|SKIN|small|256x192|0.5|0|2|3a1c17569eef7e0e4019f9e092669a3286683b66379400e0f8bb09d087f8f546|
+|c051|SKIN|small|256x192|0.5|-100|-2|8b098c6a599b571bbffd7f5c8b070588fd4def7cadb3b4cd055379c755a8c589|
+|c052|SKIN|small|256x192|0.5|100|2|494f9885c1b72622913a537b3da047f15ffd78f3ff72d29039bc728f8f26e5b1|
+|c053|MIXED|small|256x192|0.5|-100|0|c76fef42c591e77b1fbb8d934342e0039fb5b97677030a9624c2a9327756b40a|
+|c054|MIXED|small|256x192|0.5|100|0|a948426ad94c79e3a662406463b769f75b63a4ad94faae36b1c8694216b5c01c|
+|c055|MIXED|small|256x192|0.5|0|-2|1c514b39fcaf4395c4a7238e2d8c4fbbb7ec1e2ea3eb5a77fd058c6f1bd0896c|
+|c056|MIXED|small|256x192|0.5|0|2|1db566e94dd48e6ce9631cbdd84dae29a4ab3a840d15ccca5ab95986fad8f46e|
+|c057|MIXED|small|256x192|0.5|-100|-2|d83743b60da582c2ba3daf6cf688c6019d071d677af33e765840cfc76c77bf77|
+|c058|MIXED|small|256x192|0.5|100|2|13ef86236af2a0ea7427bc7f7e425a8a54ad43c62aadd8c945dde25f12be1743|
+|c059|DARK|preview|1024x768|0.5|0|0|fd4da17ab7477b96a6297d2b0d2f5d3906983e877c7e6625fb8a0ff3f11a6a30|
+|c060|DARK|preview|768x1024|0.5|0|0|3a30e22c2483f877882e74be916eb3a1b7564f4e9f6304fee6e56064d411a793|
+|c061|DARK|preview|1024x576|0.5|0|0|0283992d100dfd79bdc1df4d9acede7b58c30e798662d67cdc6f3fe95b0e3ff6|
+|c062|DARK|preview|886x887|0.5|0|0|5cc7d4c6d4c7bbfa7cf5ad0c03e4f05e0e36da0554bc4f64adac6c3541e349c7|
+|c063|DARK|preview|1024x768|1|-100|-2|6cba5a074bf42455cb88012b51f4fa98fe0c72c434ac4d4f405fe5bae606088c|
+|c064|DARK|preview|1024x768|1|100|2|44ebef6f1860b56d2a329dd31b647e73faf13b6b9fc742dbeccca604128aab90|
+|c065|SKIN|preview|1024x768|0.5|0|0|0d76a4886b8b86990a49a86f3d594286137cf28c4427da6f3719387f6138ab72|
+|c066|SKIN|preview|768x1024|0.5|0|0|bf8e32ead1073f358b48367949ba280b65fc81b9d34ed0ac784532c1861af62b|
+|c067|SKIN|preview|1024x576|0.5|0|0|8ae25ffe5542bbff66efe29ebb33bd576bfccad72fdfffaeaa10d7c39402cb55|
+|c068|SKIN|preview|886x887|0.5|0|0|4495fa71f82956a23a3bde98cd861d42e95f2edbc2e1d262b246f3dd5a733fe2|
+|c069|SKIN|preview|1024x768|1|-100|-2|1c18d48336f21c5ed0b8f22bcf839c497d92b922813a49bc12f53e660d75a9ad|
+|c070|SKIN|preview|1024x768|1|100|2|49b45bc0cac8c33c03a4389ca9d638201e5663544042abb13368b4b451cce7a3|
+|c071|MIXED|preview|1024x768|0.5|0|0|3c88f65c0e3104647dbb4912c4a05f0a01ae4b0a0f857430d68da209ee05984b|
+|c072|MIXED|preview|768x1024|0.5|0|0|9e654eb1c48059221e61c7d79ddea07dbf34197cbf6213b1f64a9549338c12f9|
+|c073|MIXED|preview|1024x576|0.5|0|0|8204b405d12b075457ec032995073bdaba48d0b702e09996939e3da57e592c0d|
+|c074|MIXED|preview|886x887|0.5|0|0|3ab00aa0af7ccd287ea8c24582993cffc6ee0561c2183f50e7c425e903387145|
+|c075|MIXED|preview|1024x768|1|-100|-2|aa1bc1f666b1abfa139ceadebcc470cf931e8ca8adca4674820e1bdd83bbd088|
+|c076|MIXED|preview|1024x768|1|100|2|5d8537965b5d5dbea82d42309879144be2e20519b8409a5227d5d4771160a017|
+|c077|GREY|export|1600x1200|0|0|0|e3f97245b6ea9bee84f39db5e2c1e3eb9abe0bea90898cd06185dfb2cacce513|
+|c078|DARK|export|1600x1200|0.25|0|0|84ae8c7710fad369d52e18f55184a3681d8b613bf77d9f8c4a792fd7c1c93b80|
+|c079|HDR_LIGHTS|export|1600x1200|0.5|0|0|5ae63c0be0e017e334f827d03bb50e4dfb14aa01782db0bf7cd1b1c3afedf951|
+|c080|SKIN|export|1600x1200|1|-100|-2|174d05dae47eb0a487714da75a876bcb330a41011134d983f71311e0eb50e431|
+|c081|SATURATED|export|1600x1200|0|0|0|84e3ab2c2cb5d7234ad7fc401bd06e08f0818fba24e7dcb80abe80afacef4d0f|
+|c082|NEAR_WHITE_2|export|1600x1200|0.25|0|0|7b9d55e781872c0d8096abf36ed05f207fc7f7f3e6a699417e805e3ea37aca15|
+|c083|MIXED|export|1600x1200|0.5|100|2|7799daa85343d8bacdc6e400bea18afbf88aaa935bd1348fd07848625d8d7040|
+|c084|GREY|export|1597x1199|0|0|0|afa2ad8b460e915b3eabda257c22a9f35c5b4be7d690cc54079978803706c7ce|
+|c085|DARK|export|1597x1199|0.25|0|0|96935f065195518cf0429673f62d71661768514511ce23130bcf250113b7826c|
+|c086|HDR_LIGHTS|export|1597x1199|0.5|0|0|bd69f7e8893313954170010e1400978604766b0a5a96404621efd4f15c14ddc1|
+|c087|SKIN|export|1597x1199|1|-100|-2|a6d22437795a234c6cae9871c1e73b385db8cddc8f827a91f91b68aff42bffda|
+|c088|SATURATED|export|1597x1199|0|0|0|95874edaa847683dfd3d2c84179c5a88d9e6c0c0f95e46f6909c2bd050f2ab16|
+|c089|NEAR_WHITE_2|export|1597x1199|0.25|0|0|bf53b389e838537b3e75dfb22a0f06d8d787b6ae85863c65d2ee86bc39b7731e|
+|c090|MIXED|export|1597x1199|0.5|100|2|d8c09e6118a5fea1c2f8c46af58d7b8b65d6b0998eb05fe5249d2c19acd2316b|
