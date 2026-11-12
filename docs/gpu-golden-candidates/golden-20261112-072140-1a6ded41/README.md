@@ -16,7 +16,7 @@ The owner accepted the observed CPU/GPU agreement for this investigation, withou
 
 ## Adoption and execution
 
-PNG pixels and sRGB metadata are unchanged. Persistent baseline adoption remains a separate `gpu_golden.py approve` step. PNG publication alone does not wire a regression test; no approved baseline directory has been added by this update. No equations, CPU golden, thresholds or CI configuration changed.
+PNG pixels and sRGB metadata are unchanged. Following explicit owner approval, the existing approve command registered the unchanged RGB8 baseline and provenance in [gpu-golden-baselines](../../gpu-golden-baselines/README.md). PNG publication alone does not wire a regression test; the adopted data is used by the existing manual comparator. No equations, CPU golden, thresholds or CI configuration changed.
 
 The existing Android capture is manual, not automatically run in CI. Original 90 GPU conditions and 28 band/full comparisons passed. Future same-environment baseline comparison remains exact RGB8; the CPU observations do not relax that policy. See [execution instructions](../../../tools/gpu-golden/README.md).
 

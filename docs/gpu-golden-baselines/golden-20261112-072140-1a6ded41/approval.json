@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "ownerVisualApprovalRef": "Owner explicit approval 2026-11-12: Yes, OK, in response to registering the 90-case current-output baseline (about9.8MB), including known black inversion, environment and approval data in PR349, synchronizing latest main, and removing the12 review images. Exact Japanese question/reply recorded in ../README.md. This is owner approval, not agent or CI approval.",
+  "approvedFiles": {
+    "capture.json": "bc6aca890c9112f8e82d1a86e6deacb0c4a0215c65504480f2808f0b8b2e7764",
+    "host.json": "958e13a40bde348c980a575fc7464b0031cb6e974c227ed6ea776ce40b8b01c2"
+  }
+}

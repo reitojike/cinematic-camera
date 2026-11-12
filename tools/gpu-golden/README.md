@@ -71,3 +71,7 @@ python -m unittest discover -s tools/gpu-golden -v
 ```
 
 単体試験の架空承認文字列はツール動作の検証だけで、実GPU画像や本人承認の代わりにはならない。
+
+## Current adopted baseline
+
+The owner explicitly approved the unchanged 90-case current-output baseline on 2026-11-12, including known shared artifacts (#355). See [approval and limitations](../../docs/gpu-golden-baselines/README.md). Use that directory as the baseline argument to the existing manual comparator. This adds no automatic CI capture and does not relax exact RGB8 comparison.

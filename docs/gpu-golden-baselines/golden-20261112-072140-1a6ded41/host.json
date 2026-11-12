@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "sourceCommit": "1a6ded41d0fe9eb09e467885e625a6c722c237a6",
+  "sourceTree": "fc60cbc5b568845dfb2410802787d8eb30e986e1",
+  "sourceDirty": false,
+  "appApkSha256": "33b8b77fb7a20a455de80493094deac6fce788f3e8d52b58757b5b982f7746b4",
+  "testApkSha256": "abd00cda9b33ae8f413b4f016b628b6a21f07cd5e57708433a5b616dcb81872b",
+  "environment": {
+    "emulatorVersion": "Android emulator version 37.2.13.0 (build_id 16740729) (CL:N/A)",
+    "systemImageRevision": "6",
+    "avdImage": "system-images/android-37.0/google_apis/x86_64",
+    "avdConfigSha256": "cf1dd9cd56f40dc6fac0930b101522632dbbcc9fc7784ba414f1676729eaf4fd",
+    "gpuMode": "host",
+    "gpuFeatures": "GuestAngle,Vulkan",
+    "hostGpuDrivers": [
+      {
+        "Name": "NVIDIA GeForce RTX 3070",
+        "DriverVersion": "32.0.16.2114"
+      }
+    ]
+  },
+  "instrumentationPassed": true,
+  "phase": "complete",
+  "capturedUtc": "2026-11-12T07:21:41.4511219Z"
+}
