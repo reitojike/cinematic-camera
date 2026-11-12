@@ -56,14 +56,14 @@
 [編集情報の保持](../047-durable-edit-values/spec.md)。
 016には実装済み部分と将来のFULL設計が混在するため、本書の区分を優先する。歴史的な1024px私有試験だけの制約を現在の手動原寸保存へ戻さない。
 
-## #286 GPU 原寸保存接続（Draft 提案・未採用）
+## GPU 原寸保存接続（#286・通常版既定化は #353 の提案）
 
 - #338 の帯 renderer を前提に、共通エンジン設定を実際の保存開始時に一度取得し、その保存と明示再試行の間は固定する。通常 debug/release の新規保存は GPU、専用診断版は明示選択を使用する。既存保存 owner の固定値・保存世代・原本を移行せず、低水準試験の CPU 既定は変えない。
 - 検証済み snapshot の LibRaw 原寸 RGB16 から読み取る未調整の source と、既存診断露出 EV + 手動 EV、既存相対色温度 gains を GPU に渡す。warmth は GPU 内で一度だけ適用する。RGBA8 行を既存 Bitmap に詰め、JPEG 95、出力再読取、原本の前後照合、publication owner/journal は共用する。
 - GPU 保存失敗は固定の理由コードと端末内の集計件数を記録する。画面には当該保存 owner の失敗理由・件数を示し、CPU への無言 fallback はしない。写真名・URI・例外本文は失敗記録へ転記しない。
 - JPEG 出力開始前の GPU 画像処理失敗で、GPU・原本・作業領域・出力の解放をすべて確認できた場合だけ、同じ画面から GPU 保存を明示再試行できる。通常の advance や通知再開だけでは再生成しない。再試行は原本を再検証・再展開し、同じ世代・設定・エンジンを使う。
 - durable intent は消さない。同プロセス内の確認済み失敗だけが再試行許可を持ち、再起動、解放不明、intent 不一致、JPEG 生成後、publication 不明は既存の HOLD / 同一 publication 再照合を維持する。失敗中の新しい編集世代への変更は許可しない。
-- この Draft は Android/実機での保存採用や速度・メモリ合格を意味しない。#338 の数値・texture 台帳検証とは別に、DNG decode → Bitmap/JPEG → publication、foreground service、preview 併走、失敗表示・retry の統合確認が必要。製品 merge と実機操作は別途承認する。
+- 通常版の既定化は #353 の PR マージまで提案であり、Android/実機での追加の保存確認や速度・メモリ合格を意味しない。#338 の数値・texture 台帳検証とは別に、DNG decode → Bitmap/JPEG → publication、foreground service、preview 併走、失敗表示・retry の統合確認が必要。製品 merge と実機操作は別途承認する。
 
 ### GPU別写真入力と保存の所有権（#350提案・merge前）
 

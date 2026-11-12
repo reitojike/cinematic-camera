@@ -59,7 +59,7 @@
 [ComponentCallbacks2](https://developer.android.com/reference/android/content/ComponentCallbacks2)、
 [ComponentCallbacks](https://developer.android.com/reference/android/content/ComponentCallbacks)。
 
-## 診断版だけの GPU 編集経路（#287）
+## GPU 編集経路（#287・通常版既定化は #353 の提案）
 
 - 通常 debug / release は GPU を既定とし、保存済みの診断用選択を読み込まない。専用 gpuDiagnostic の診断 Hub では CPU/GPU を明示選択でき、その他の診断 variant は従来の CPU 既定を維持する。通常の設定画面へエンジン切替は置かない。GPU 失敗時も CPU へ自動回避せず、既存の GPU retry / HOLD 契約を使う。
 - GPU 選択時は同じ現像画面・画像領域・固定比較キャプション・Fit 配置を使う。撮影時 WB の線形入力を既存 snapshot → RGB16 → BOX 経路で一度準備し、物理的な向きを直した入力を GPU 表示へ渡す。入力上限は長辺1024pxかつ786,432画素で、通常 CPU の寸法条件を変えない。
@@ -68,7 +68,7 @@
 - 選択後の失敗は選択した写真の画像領域に表示する。GPU能力不足・context喪失・メモリ予算・表示面解放未確認は「GPU を使えません」と再試行を示し、CPUへ自動で切り替えない。
 - Surface破棄は最大2秒で区切り、時間超過をアプリの未処理例外にしない。未完了の破棄ownerを保持し、旧Surfaceへの表示を止める。再試行/写真切替は旧ownerの終了確認後だけ新しく開く。
 - 写真切替・画面終了・背景化ではGL写真/表示面/入力/コールバックを閉じる。UI_HIDDEN（20）以上のtrimも同じプレビューownerだけを終了し、10ではこのtrim契約による解放を行わない。foreground exportの所有資源を解放しない。
-- GPUプレビューと原寸保存は同じ DevelopEngine 設定を参照する。診断用ビルド限定のプレビュー接続は #339 で先行統合し、#286 の保存接続は別途検証する。通常版のGPU有効化や既定変更は含まない。GPU経路の実機品質・速度・Gate 2合格はこの仕様で主張しない。
+- GPUプレビューと原寸保存は同じ DevelopEngine 設定を参照する。診断用ビルド限定のプレビュー接続は #339 で先行統合した。#353 は通常版の新規プレビュー・保存を GPU 既定にする提案であり、マージまで通常版の現行契約は変更しない。実機品質・速度や追加の合格をこの仕様変更だけで主張しない。
 
 ### Draft: GPU入力準備と保存の並行動作（#350）
 
