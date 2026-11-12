@@ -1,0 +1,2 @@
+*.json -text whitespace=cr-at-eol
+*.rgb8.gz -text

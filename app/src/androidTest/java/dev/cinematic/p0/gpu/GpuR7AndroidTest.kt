@@ -70,6 +70,71 @@ class GpuR7AndroidTest {
             "input=[${input[offset]},${input[offset + 1]},${input[offset + 2]}] " +
             "gpuInput=[${gpuInput[offset]},${gpuInput[offset + 1]},${gpuInput[offset + 2]}] expected=${expected[index]} actual=${actual[index]} ulp=$ulp")
     }
+    @Test fun foundationEndpointsAreFiniteAndMonotoneAcrossHdrPole() = gpu { egl, ledger ->
+        val samples = floatArrayOf(-1f, 0f, .001f, .25f, .5f, .999f, 1f, 1.25f,
+            Math.nextDown(4f / 3f), 4f / 3f, Math.nextUp(4f / 3f), 2f, 4f)
+        val rgb = FloatArray(samples.size * 3) { samples[it / 3] }
+        upload(egl, ledger, samples.size, 1, rgb, true).use { input ->
+            upload(egl, ledger, samples.size, 1, FloatArray(samples.size)).use { roi ->
+                GpuTexture.create(egl, ledger, samples.size, 1, GpuTexture.Format.RGBA32F).use { output ->
+                    for (gain in floatArrayOf(.25f, 1f, 4f)) {
+                        egl.passes().run(FragmentPass(egl.shaders().fragment("r7/foundation.frag"),
+                            listOf(TextureInput("s_input", input, 0), TextureInput("s_roi", roi, 1)), output,
+                            uniforms = { program -> android.opengl.GLES32.glUniform1f(
+                                android.opengl.GLES32.glGetUniformLocation(program, "u_gain"), gain) }))
+                        val actual = GpuStageTap.readRgb(egl, output)
+                        var previous = -1f
+                        for (p in samples.indices) {
+                            val value = actual[p * 3]
+                            assertTrue("finite gain=$gain pixel=$p", value.isFinite())
+                            assertTrue("monotonic gain=$gain pixel=$p", value >= previous - 1e-6f)
+                            if (samples[p] <= 0f) assertEquals(0f, value, 0f)
+                            if (samples[p] >= 1f) assertEquals(1f, value, 1e-6f)
+                            previous = value
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test fun autoNegativeEvAndBoundedInputKeepBrightPointThroughFullR7() = gpu { egl, ledger ->
+        val width = 256; val height = 192
+        for ((bright, manualEv) in listOf(4f to 0.0, 1f to 0.0, 1f to -2.0)) {
+            val pixels = FloatArray(width * height * 3) { i ->
+                val x = (i / 3) % width; val y = (i / 3) / width
+                if ((x - 128) * (x - 128) + (y - 96) * (y - 96) <= 4) bright
+                else if (x in 96 until 160 && y in 64 until 128) .001f else bright
+            }
+            val input = LinearSrgbImage(width, height, pixels)
+            val prepared = KotlinReference.prepare(KotlinReference.Source(input), PhotoAdjustments(0.0, manualEv))
+            val ev = prepared.externalBaseEv
+            assertTrue("auto base EV must be negative", ev - manualEv < 0)
+            val gain = 2.0.pow(ev + dev.cinematic.p0.raw.R7BaseV1.BRIGHTNESS_EV +
+                dev.cinematic.p0.raw.R7BaseV1.FOUNDATION_EV)
+            val seen = mutableSetOf<Point>()
+            upload(egl, ledger, width, height, pixels, true).use { texture ->
+                R7Gpu(egl, ledger).use { r7 ->
+                    r7.render(texture, 0.0, ev, tap = { point, image ->
+                        seen += point
+                        val actual = GpuStageTap.readRgb(egl, image)
+                        assertTrue(actual.copyPixels().all { it.isFinite() })
+                        val p = (96 * width + 128) * 3
+                        if (point == Point.R7_TONE && gain < 1) {
+                            val y = actual[p] * .2126f + actual[p + 1] * .7152f + actual[p + 2] * .0722f
+                            assertTrue("fixture crosses old pole", 1 + (gain - 1) * y < 0)
+                        }
+                        if (point == Point.R7_FOUNDATION) repeat(3) { c ->
+                            assertEquals("bright=$bright manualEV=$manualEv", 1f, actual[p + c], 1e-5f)
+                        }
+                    })
+                }
+            }
+            assertTrue(seen.containsAll(listOf(Point.R7_TONE, Point.R7_FOUNDATION, Point.R7_FINAL)))
+            assertArrayEquals(pixels, input.copyPixels(), 0f)
+        }
+    }
+
     @Test fun everyR7TapAndQuantileReportsKotlinReference() = gpu { egl, ledger ->
         var conditions = 0
         val adjustments = listOf(PhotoAdjustments(), PhotoAdjustments(60.0), PhotoAdjustments(0.0, 1.0), PhotoAdjustments(-60.0, -1.0))

@@ -16,7 +16,11 @@ void main() {
     vec3 rgb = texelFetch(s_input, pixel, 0).rgb;
     precise float y = rgb.r * 0.2126 + rgb.g * 0.7152 + rgb.b * 0.0722;
     float local = texelFetch(s_roi, pixel, 0).r * clamp(y / 0.025, 0.0, 1.0);
-    float exposed = y * u_gain / (1.0 + (u_gain - 1.0) * y);
+    // Same endpoint extension as R7Base: never evaluate the HDR pole (#355).
+    float exposed;
+    if (y <= 0.0) exposed = 0.0;
+    else if (y >= 1.0) exposed = 1.0;
+    else exposed = y * u_gain / (1.0 + (u_gain - 1.0) * y);
     float power = 1.0 + (SC_R7_CONTRAST - 1.0) * (1.0 - 0.75 * local);
     float raised = pow(clamp(exposed, 0.0, 1.0), power);
     float lower = pow(clamp(1.0 - exposed, 0.0, 1.0), power) * pow(0.18 / 0.82, power - 1.0);
