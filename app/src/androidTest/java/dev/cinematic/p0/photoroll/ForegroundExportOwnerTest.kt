@@ -38,6 +38,208 @@ class ForegroundExportOwnerTest {
         check(Build.HARDWARE in setOf("goldfish", "ranchu") && Build.VERSION.SDK_INT >= 29)
     }
 
+    /** Picker-result integration only: no DocumentsUI, external provider, or persistable grant proof. */
+    @Test fun importedSyntheticDngEditsAndPublishesThroughRealForegroundService() {
+        org.junit.Assume.assumeTrue(context.packageName == "dev.cinematic.p0.gpudiagnostic")
+        org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("importUiFgs") == "true")
+        cameraRollReadPermissions(Build.VERSION.SDK_INT).forEach {
+            check(context.checkSelfPermission(it) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                "Reuse an already-authorized synthetic fixture app; do not change permissions"
+            }
+        }
+        check(ForegroundExports.gate.active() == null)
+        val app = context.applicationContext
+        val resolver = app.contentResolver
+        val imports = AndroidDngImports.get(app)
+        val files = DngImportJournalFiles(File(app.noBackupFilesDir, "dng-imports"))
+        val beforeImports = files.records()
+        check(beforeImports.all { it.phase in setOf(DngImportPhase.READY, DngImportPhase.CANCELLED) })
+        val beforeIds = beforeImports.map { it.target.operationId }.toSet()
+        val beforeJpegs = jpegCount()
+        val preferences = app.getSharedPreferences("capture-probe", android.content.Context.MODE_PRIVATE)
+        val hadEngine = preferences.contains("develop/engine")
+        val previousEngine = preferences.getString("develop/engine", null)
+        val name = "synthetic_import_ui_${UUID.randomUUID()}.dng"
+        var sourceUri: Uri? = null
+        var fingerprint: OriginalFingerprint? = null
+        var imported: DngImportRecord? = null
+        var saved: AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle? = null
+        var publication: JpegPublicationRecord? = null
+        var scenario: ActivityScenario<PhotoRollActivity>? = null
+        var monitor: android.app.Instrumentation.ActivityMonitor? = null
+        var observation: PhotoRollCameraOwners.Owner? = null
+        val opened = java.util.concurrent.atomic.AtomicInteger()
+        val released = java.util.concurrent.atomic.AtomicInteger()
+        var inputObserver: AutoCloseable? = null
+        var primary: Throwable? = null
+        var verified = false
+        try {
+            check(dev.cinematic.p0.gpu.DevelopEngineSetting(app).select(dev.cinematic.p0.gpu.DevelopEngine.GPU,
+                dev.cinematic.p0.gpu.GpuAvailability.Available))
+            inputObserver = GpuPhotoRollInputs.observeForDiagnostics(object : GpuPhotoRollInputs.DiagnosticObserver {
+                override fun preflightOpened() { opened.incrementAndGet() }
+                override fun released() { released.incrementAndGet() }
+            })
+            val uri = requireNotNull(resolver.insert(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "image/x-adobe-dng")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/Cinematic Camera Synthetic Tests/")
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                })).also { sourceUri = it }
+            // Unique bytes prevent reusing an earlier completed import with the same fingerprint.
+            val random = java.util.Random(UUID.randomUUID().leastSignificantBits)
+            val bytes = requireNotNull(resolver.openOutputStream(uri, "w")).use {
+                dev.cinematic.p0.testing.writeSyntheticTrialDng(it, 64, 48, 1) { _, _ -> 164 + random.nextInt(3500) }
+            }
+            check(resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null) == 1)
+            fingerprint = DngContentVerifier.identify(bytes, { requireNotNull(resolver.openInputStream(uri)) })
+            check(beforeImports.none { it.fingerprint == fingerprint })
+            instrumentation.runOnMainSync {
+                observation = AndroidPhotoRollCameraObservations.register { PhotoRollCameraSnapshot(false, false, false, false) }
+            }
+            monitor = instrumentation.addMonitor(android.content.IntentFilter(android.content.Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(android.content.Intent.CATEGORY_OPENABLE); addDataType("*/*")
+            }, android.app.Instrumentation.ActivityResult(android.app.Activity.RESULT_OK,
+                android.content.Intent().setData(uri).addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)), true)
+            scenario = ActivityScenario.launch(PhotoRollActivity::class.java)
+            click("外部DNGを取り込む")
+            click("DNGを選ぶ・選び直す")
+            await { requireNotNull(monitor).hits == 1 && !imports.state.value.busy &&
+                files.records().any { it.target.operationId !in beforeIds && it.phase == DngImportPhase.READY } }
+            imported = files.records().filter { it.target.operationId !in beforeIds }.single()
+            val copy = requireNotNull(imported)
+            assertEquals(uri.toString(), copy.sourceUri)
+            assertEquals(fingerprint, copy.fingerprint)
+            assertNotEquals(uri.toString(), copy.uri)
+            assertEquals(DngImportGrant.SESSION_ONLY, copy.grant)
+            verifySyntheticRow(Uri.parse(copy.uri), copy.target.name)
+            DngContentVerifier.verify(requireNotNull(fingerprint), { requireNotNull(resolver.openInputStream(Uri.parse(copy.uri))) })
+            action("JPEGを保存") // Real Panel completion delivered the imported URI to the editor.
+            click("比較"); click("表示")
+            click("STRENGTH")
+            fun slider(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+                if (node == null) return null
+                if (node.contentDescription?.toString() == "STRENGTH" && node.rangeInfo != null && node.isEnabled) return node
+                for (i in 0 until node.childCount) slider(node.getChild(i))?.let { return it }
+                return null
+            }
+            var ruler: AccessibilityNodeInfo? = null
+            await { ruler = slider(instrumentation.uiAutomation.rootInActiveWindow); ruler != null }
+            assertTrue(requireNotNull(ruler).performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.id,
+                android.os.Bundle().apply { putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE, .6f) }))
+            click("目盛りを閉じる")
+            action("JPEGを保存")
+            val release = CountDownLatch(1)
+            val entered = CountDownLatch(1)
+            val barrier = AndroidAutoDevelopQueue.get(app).manualOriginalIo {
+                entered.countDown(); check(release.await(120, TimeUnit.SECONDS))
+            }
+            var foregroundFailure: Throwable? = null
+            try {
+                assertTrue(entered.await(10, TimeUnit.SECONDS))
+                click("JPEGを保存")
+                await { ForegroundExports.gate.active()?.started == true }
+                val ticket = requireNotNull(ForegroundExports.gate.active())
+                saved = ticket.value.identity as AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle
+                assertEquals(copy.uri, requireNotNull(saved).request.source.uri)
+                assertEquals(.6, requireNotNull(saved).appliedStrength, .000001)
+                scenario.moveToState(Lifecycle.State.CREATED)
+                assertFalse(ticket.stopRequested)
+            } catch (error: Throwable) { foregroundFailure = error; throw error }
+            finally {
+                release.countDown()
+                try { barrier.get(30, TimeUnit.SECONDS) } catch (closing: Throwable) {
+                    val first = foregroundFailure
+                    if (first == null) throw closing
+                    if (first !== closing) first.addSuppressed(closing)
+                }
+            }
+            await { ForegroundExports.gate.active() == null }
+            val handle = requireNotNull(saved)
+            assertFalse(handle.hasUnreleasedResources)
+            assertEquals(ManualOriginalTrialSavePhase.PUBLISHED, handle.state.value.phase)
+            val generation = RenderedJpegFiles(File(app.noBackupFilesDir, "raw-captures"),
+                handle.request.captureId, handle.request.generation).generationRoot()
+            val storage = AndroidAtomicJournalStorage(requireNotNull(generation.parentFile), handle.request.generation.toString(),
+                CaptureJournalFile.JPEG_PUBLICATION)
+            publication = requireNotNull(JpegPublicationJournal(handle.request.captureId, handle.request.generation, storage).read())
+            val record = requireNotNull(publication)
+            val render = record.render as ManualOriginalTrialRender
+            assertEquals(handle.request.source, render.request.source)
+            assertEquals(handle.request.recipe, render.request.recipe)
+            assertEquals(record.uri, handle.state.value.uri)
+            assertEquals(JpegPublicationPhase.PUBLISHED, record.phase)
+            assertNotEquals(copy.uri, record.uri)
+            verifySyntheticRow(Uri.parse(record.uri), record.target.displayName)
+            val inspected = AndroidJpegInspector().inspect({ requireNotNull(resolver.openInputStream(Uri.parse(record.uri))) },
+                record.fingerprint.bytes) { false }
+            assertEquals(record.fingerprint, inspected.fingerprint)
+            assertEquals(64, inspected.output.width); assertEquals(48, inspected.output.height)
+            assertEquals("sRGB", inspected.output.color)
+            assertFalse(File(generation, "original-work").exists())
+            assertEquals(beforeJpegs + 1, jpegCount())
+            scenario.moveToState(Lifecycle.State.RESUMED)
+            action("保存したJPEGを照合して開く")
+            assertEquals(beforeJpegs + 1, jpegCount())
+            DngContentVerifier.verify(requireNotNull(fingerprint), { requireNotNull(resolver.openInputStream(uri)) })
+            DngContentVerifier.verify(requireNotNull(fingerprint), { requireNotNull(resolver.openInputStream(Uri.parse(copy.uri))) })
+            verified = true
+        } catch (error: Throwable) { primary = error; throw error }
+        finally {
+            var cleanup: Throwable? = null
+            fun attempt(block: () -> Unit) { try { block() } catch (error: Throwable) {
+                val first = primary ?: cleanup
+                if (first == null) cleanup = error else if (first !== error) first.addSuppressed(error)
+            } }
+            attempt { scenario?.close() }
+            attempt { imports.pause(); await { !imports.state.value.busy } }
+            attempt { ForegroundExports.gate.active()?.value?.let { ForegroundExports.cancel(it) } }
+            attempt { await { ForegroundExports.gate.active() == null } }
+            attempt { GpuPhotoRollRetiredOwners.releaseBeforeOpen() }
+            attempt { AndroidManualOriginalTrialSaves.discardPreview(app).get(60, TimeUnit.SECONDS) }
+            attempt { check(saved?.hasUnreleasedResources != true) }
+            attempt { check(opened.get() > 0 && opened.get() == released.get()) }
+            attempt {
+                @Suppress("DEPRECATION")
+                val manager = app.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+                await { manager.getRunningServices(Int.MAX_VALUE).none { it.service.className == ForegroundExportService::class.java.name } }
+            }
+            attempt { inputObserver?.close() }
+            attempt { monitor?.let(instrumentation::removeMonitor) }
+            attempt { instrumentation.runOnMainSync { observation?.close() } }
+            attempt {
+                val edit = preferences.edit()
+                if (hadEngine) edit.putString("develop/engine", previousEngine) else edit.remove("develop/engine")
+                check(edit.commit())
+                check(preferences.contains("develop/engine") == hadEngine && preferences.getString("develop/engine", null) == previousEngine)
+            }
+            if (verified && primary == null && cleanup == null) attempt {
+                val rows = listOf(requireNotNull(sourceUri) to name,
+                    Uri.parse(requireNotNull(imported).uri) to requireNotNull(imported).target.name,
+                    Uri.parse(requireNotNull(publication).uri) to requireNotNull(publication).target.displayName)
+                check(rows.map { it.first }.toSet().size == 3)
+                rows.forEach { (uri, label) -> verifySyntheticRow(uri, label) }
+                rows.forEach { (uri, label) ->
+                    verifySyntheticRow(uri, label)
+                    check(resolver.delete(uri, "${MediaStore.MediaColumns.OWNER_PACKAGE_NAME}=? AND ${MediaStore.MediaColumns.DISPLAY_NAME}=? AND ${MediaStore.MediaColumns.IS_PENDING}=0",
+                        arrayOf(app.packageName, label)) == 1)
+                }
+                // Preserve unique private journal evidence; never enumerate/delete another task's journals.
+            }
+            if (primary == null) cleanup?.let { throw it }
+        }
+    }
+
+    private fun verifySyntheticRow(uri: Uri, name: String) {
+        check(uri.scheme == "content" && uri.authority == "media")
+        val columns = arrayOf(MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.OWNER_PACKAGE_NAME, MediaStore.MediaColumns.IS_PENDING)
+        requireNotNull(context.contentResolver.query(uri, columns, null, null, null)).use {
+            check(it.count == 1 && it.moveToFirst() && it.getString(0) == name && it.getString(1) == context.packageName &&
+                !it.isNull(2) && it.getInt(2) == 0)
+        }
+    }
+
     @Test fun screenSavePublishesInBackgroundAndReturnShowsConfirmedOwner() = screenSave(false)
     @Test fun screenCancelAfterReturnWorksBeforePreviewReloadCompletes() = screenSave(true)
 
