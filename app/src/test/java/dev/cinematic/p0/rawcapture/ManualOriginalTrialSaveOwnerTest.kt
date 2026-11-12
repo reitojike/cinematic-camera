@@ -7,6 +7,121 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ManualOriginalTrialSaveOwnerTest {
+    @Test fun confirmedCancellationAllowsOneSuccessorWithoutErasingIntentOrRetryingOldRender() {
+        val metadata = Storage()
+        val intent = Storage()
+        val backend = Backend().also { it.renderFailure = confirmedCancellation() }
+        lateinit var owner: ManualOriginalTrialSaveOwner
+        val requests = ManualOriginalTrialRequests(source, metadata) {
+            assertEquals(owner.request, it)
+            owner.canSupersedeConfirmedCancellation()
+        }
+        val first = requests.prepare(request.strength)
+        owner = ManualOriginalTrialSaveOwner(first, backend, intent) { requests.isCurrent(first) }
+        assertFalse(owner.canSupersedeConfirmedCancellation())
+        assertEquals(ManualOriginalTrialSavePhase.CANCELLED, owner.advance().phase)
+        val preserved = intent.bytes!!.clone()
+        repeat(2) { assertTrue(owner.canSupersedeConfirmedCancellation()) }
+        assertEquals(first, requests.prepare(first.strength))
+        val next = requests.prepare(.4)
+        assertEquals(first.generation + 1, next.generation)
+        assertEquals(first.source, next.source)
+        assertNotEquals(first.recipe, next.recipe)
+        repeat(2) { assertEquals(next, requests.prepare(.4)) }
+        assertEquals(2, metadata.writes)
+        assertEquals(1, intent.writes)
+        assertArrayEquals(preserved, intent.bytes)
+        assertFalse(requests.isCurrent(first))
+        backend.renderFailure = null
+        val retired = owner.advance(retryCancellation = true)
+        assertEquals(ManualOriginalTrialSavePhase.HOLD, retired.phase)
+        assertEquals(ManualOriginalTrialSaveReason.SUPERSEDED, retired.reason)
+        assertEquals(1, backend.renders)
+        assertEquals(0, backend.publisherCreations)
+        assertArrayEquals(preserved, intent.bytes)
+        val nextRender = render.copy(request = render.request.copy(generation = next.generation, recipe = next.recipe),
+            appliedStrength = next.strength)
+        val nextBackend = Backend().also {
+            it.generated = nextRender
+            it.publication.result = JpegPublicationRecord(target.copy(generation = next.generation), nextRender,
+                nextRender.outputFingerprint, phase = JpegPublicationPhase.PUBLISHED, uri = "content://media/external_primary/images/media/2")
+        }
+        val nextIntent = Storage()
+        val nextOwner = ManualOriginalTrialSaveOwner(next, nextBackend, nextIntent) { requests.isCurrent(next) }
+        assertEquals(ManualOriginalTrialSavePhase.PUBLISHED, nextOwner.advance().phase)
+        assertEquals("content://media/external_primary/images/media/2", nextOwner.state.value.uri)
+        assertEquals(1, nextBackend.renders)
+        assertEquals(1, nextBackend.publisherCreations)
+        assertArrayEquals(preserved, intent.bytes)
+        assertArrayEquals(ManualOriginalTrialRequestCodec.encode(next), nextIntent.bytes)
+    }
+
+    @Test fun cancellationGenerationFenceRequiresLivePermitMatchingIntentAndNoPublicationOrResources() {
+        for (changed in listOf("restart", "missing", "corrupt", "different", "resources", "unknown", "published", "readFailure")) {
+            val backend = Backend().also { it.renderFailure = confirmedCancellation() }
+            val intent = Storage()
+            var owner = ManualOriginalTrialSaveOwner(request, backend, intent) { true }
+            assertEquals(ManualOriginalTrialSavePhase.CANCELLED, owner.advance().phase)
+            when (changed) {
+                "restart" -> owner = ManualOriginalTrialSaveOwner(request, Backend(), intent) { true }
+                "missing" -> intent.bytes = null
+                "corrupt" -> intent.bytes = byteArrayOf(1, 2)
+                "different" -> intent.bytes = ManualOriginalTrialRequestCodec.encode(request.copy(generation = 2))
+                "resources" -> backend.held = true
+                "unknown" -> backend.existing = record(JpegPublicationPhase.UNKNOWN)
+                "published" -> backend.existing = record(JpegPublicationPhase.PUBLISHED)
+                "readFailure" -> intent.mode = "readback"
+            }
+            if (changed == "readFailure") assertThrows(IOException::class.java) { owner.canSupersedeConfirmedCancellation() }
+            else assertFalse(changed, owner.canSupersedeConfirmedCancellation())
+            assertEquals(1, intent.writes)
+            assertEquals(1, backend.renders)
+            assertEquals(0, backend.publisherCreations)
+        }
+    }
+
+    @Test fun gpuFailureAndUnconfirmedCancellationNeverAuthorizeSuccessorEvenAfterCleanup() {
+        for (failure in listOf(gpuFailure(), CancellationException("JPEG entry unknown"),
+            confirmedCancellation().also { it.addSuppressed(IOException("cleanup unknown")) })) {
+            val backend = Backend().also { it.renderFailure = failure }
+            val owner = ManualOriginalTrialSaveOwner(request, backend, Storage()) { true }
+            owner.advance()
+            owner.releaseResources()
+            assertFalse(owner.canSupersedeConfirmedCancellation())
+            assertEquals(1, backend.renders)
+        }
+    }
+
+    @Test fun sameRecipeRetryStillWorksAfterInspectingCancellationGenerationFence() {
+        val backend = Backend().also { it.renderFailure = confirmedCancellation() }
+        val owner = ManualOriginalTrialSaveOwner(request, backend, Storage()) { true }
+        owner.advance()
+        assertTrue(owner.canSupersedeConfirmedCancellation())
+        backend.renderFailure = null
+        assertEquals(ManualOriginalTrialSavePhase.PUBLISHED, owner.advance(retryCancellation = true).phase)
+        assertFalse(owner.canSupersedeConfirmedCancellation())
+        assertEquals(2, backend.renders)
+        assertEquals(1, backend.publisherCreations)
+    }
+
+    @Test fun cleanupFailureAfterConfirmedCancellationRevokesSuccessorAndRetryPermanently() {
+        val backend = Backend().also { it.renderFailure = confirmedCancellation() }
+        val intent = Storage()
+        val owner = ManualOriginalTrialSaveOwner(request, backend, intent) { true }
+        owner.advance()
+        assertTrue(owner.canSupersedeConfirmedCancellation())
+        backend.releaseFailure = IOException("cleanup readback failed")
+        assertThrows(IOException::class.java) { owner.releaseResources() }
+        backend.releaseFailure = null
+        backend.renderFailure = null
+        owner.releaseResources()
+        assertFalse(owner.canSupersedeConfirmedCancellation())
+        assertEquals(ManualOriginalTrialSavePhase.HOLD, owner.advance(retryCancellation = true).phase)
+        assertEquals(1, backend.renders)
+        assertEquals(1, intent.writes)
+        assertArrayEquals(ManualOriginalTrialRequestCodec.encode(request), intent.bytes)
+    }
+
     @Test fun stopBeforeAdmissionIsRetryableWithoutWritingAnIntentOrDuplicatingTheRender() {
         val backend = Backend()
         val storage = Storage()
@@ -833,6 +948,7 @@ class ManualOriginalTrialSaveOwnerTest {
         var publicationReads = 0
         var renderFailure: Exception? = null
         var publisherFailure: Exception? = null
+        var releaseFailure: Exception? = null
         var beforeRender: () -> Unit = {}
         var held = false
         override val hasUnreleasedResources get() = held
@@ -847,9 +963,10 @@ class ManualOriginalTrialSaveOwnerTest {
             publisherFailure?.let { throw it }
             return publication
         }
-        override fun releaseResources() { held = false }
+        override fun releaseResources() { releaseFailure?.let { throw it }; held = false }
     }
     private inner class Publication : ManualOriginalTrialPublication {
+        var result: JpegPublicationRecord? = null
         var advances = 0
         var failure: Exception? = null
         var holdOnAdvance = false
@@ -865,7 +982,7 @@ class ManualOriginalTrialSaveOwnerTest {
             if (holdOnAdvance) { held = true; throw IOException("close unconfirmed") }
             failure?.let { throw it }
             afterAdvance()
-            return record(JpegPublicationPhase.PUBLISHED)
+            return result ?: record(JpegPublicationPhase.PUBLISHED)
         }
         override fun releaseResources() { held = false }
     }

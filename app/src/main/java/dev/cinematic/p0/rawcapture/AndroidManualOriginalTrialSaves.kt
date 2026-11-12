@@ -138,6 +138,8 @@ internal object AndroidManualOriginalTrialSaves {
             storage(request, CaptureJournalFile.JPEG_PUBLICATION))
         private fun canSupersede(previous: Original24Request): Boolean {
             val handle = handles[previous.generation]
+            if (handle?.state?.value?.phase == ManualOriginalTrialSavePhase.CANCELLED)
+                return handle.canSupersedeConfirmedCancellation()
             if (handle?.hasUnreleasedResources == true || handle?.state?.value?.phase in
                 setOf(ManualOriginalTrialSavePhase.HOLD, ManualOriginalTrialSavePhase.UNCONFIRMED,
                     ManualOriginalTrialSavePhase.SAVING, ManualOriginalTrialSavePhase.GPU_FAILED, ManualOriginalTrialSavePhase.CANCELLED)) return false
@@ -390,6 +392,7 @@ internal object AndroidManualOriginalTrialSaves {
         fun matches(source: SharedOriginalReference) = owner.matches(source)
         val hasUnreleasedResources get() = owner.hasUnreleasedResources
         @Volatile private var slot: AutoDevelopCoordinator.Attempt? = null // Written by IO; stop reads identity only.
+        fun canSupersedeConfirmedCancellation() = slot == null && owner.canSupersedeConfirmedCancellation()
         fun advance(conditions: AutoDevelopConditions, retryGpuFailure: Boolean = false, retryCancellation: Boolean = false, stop: () -> Boolean): CompletableFuture<ManualOriginalTrialSaveState> =
             advanceOwned({ conditions }, null, stop, retryGpuFailure, retryCancellation)
 
