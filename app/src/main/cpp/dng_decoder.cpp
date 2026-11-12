@@ -209,6 +209,7 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
 #endif
     check(raw.dcraw_process());
     if (raw.error_count()) fail("DNG_UNSUPPORTED");
+    if (original) original->validateProcessedGeometry(raw);
     int error = 0;
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
     if (probe) probe->stage("make_image", cancel);

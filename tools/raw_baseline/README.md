@@ -177,6 +177,56 @@ py -3.15 -m venv tools/raw_baseline/.venv-py315-diag
 & $diagPython tools/raw_baseline/r11_stage_clear.py --livepicture $livepictureFolder --r5 $round5Folder --r8 $round8Folder --app $appDngFolder --face-model $yunetModel --output $newPrivateOutput
 ```
 
+## Android顔情報との比較と採用前判断（#79、設計のみ）
+
+[#79](https://github.com/reitojike/cinematic-camera/issues/79) の既存調査を継承する。24MP/SIGMA fp優先の [#356](https://github.com/reitojike/cinematic-camera/pull/356) に従い、依存導入・推論・製品接続は行わない。顔のGPU連携はリファクタリング後。以下の候補を現行Androidの顔保護実装と読み替えない。
+
+### 現行コードの入口
+
+PCの `r10h_refine.detect_faces/face_area` は外部指定YuNetモデルを使い、表示用8bit BGRへ変換した画像を0/±25/±45度で検出する。scoreは正立.75/傾斜.85、重複を抑え、面積上位6枠から顎・首へ広げたsoft maskを作る。単に同じモデル名を選ぶだけではこの前処理・多方向検出と同等にならない。
+Androidの `DetectedFaceMasks.fromBoxes` は既存の固定bbox→mask部品であり、検出器でも測光でもない。`R7PreviewInputs` は中央p97の診断露出と明示楕円ROIのみで `NOT_RUN` を返し、`Original24PreviewSession` は空の保護maskを作る。
+`RenderedFaceState`の `VERIFIED_FACES/VERIFIED_NONE/NOT_RUN/FAILED` を区別し、ゼロmaskから「検出成功・顔なし」を推定しない。PC `stage_clear.py` の「ML Kit in the app」という説明は将来候補であり、現行依存・Manifestには顔SDKを導入していない。
+
+### 候補比較
+
+| 候補 | 顔情報・適用入力 | オフライン・サイズ・採用制約 |
+|---|---|---|
+| Camera2の顔統計 | 撮影フレームのbbox/score。SIMPLE/FULL等の端末能力に依存。外部fp DNGを解析するAPIではない | アプリに検出モデル追加不要。available modes/max face count、要求と実result、撮影原本への対応を確認してから判断 |
+| CameraX + Camera2Interop | CameraX管理のcapture callbackで統計を読む接点。CameraX自体を外部画像の顔検出器とは扱わない | 固定1.6.2を維持。session/CameraDeviceを直接操作しない。最新Web APIの後続版deprecationを理由に依存更新しない |
+| CameraX ImageAnalysis + ML Kit | ImageAnalysisは画像供給、ML Kitが検出。外部DNGは正確なdecodeから別途検出用画像を作る必要がある | 新use caseの撮影競合、backpressure、ImageProxy.closeの所有を評価。初回案内用の埋込JPEGを測光・保護の正本に流用しない |
+| bundled ML Kit 16.1.7 | bbox取得可能。公式目安は画像480×360以上・顔100×100以上。輪郭は今回不要 | モデルは同梱、公式APK増分目安約6.9MB。初回ダウンロード不要だが無通信保証ではない。実APK/依存閉包は未測定 |
+| unbundled ML Kit 17.1.0 | Google Play servicesからモデル取得。未取得中の無結果を顔なしにしない | 公式増分目安約800KB、初回取得待ち。初回完全offline要件には不利 |
+| 標準 `android.media.FaceDetector` | RGB_565、偶数幅。目の中点/間隔等から顔枠を直接得られない | 追加モデル不要だが、目から枠を推定すると未検証recipeになるため既存maskへの代替採用は保留 |
+| YuNet + OpenCV | PC比較用bboxを再利用しやすいが、同じ前処理/モデル/閾値でもAndroid上の精度・速度は未確認 | モデルはMIT。runtime・ABI・同梱binary/第三者noticeは別確認。モデル単体容量をAPK増分とせず、stock OpenCV導入保留を維持 |
+
+公式根拠（2026-11-12参照）：[Camera2顔能力](https://developer.android.com/reference/android/hardware/camera2/CameraCharacteristics#STATISTICS_INFO_AVAILABLE_FACE_DETECT_MODES)、[顔統計](https://developer.android.com/reference/android/hardware/camera2/CaptureResult#STATISTICS_FACES)、[Camera2Interop](https://developer.android.com/reference/androidx/camera/camera2/interop/Camera2Interop.Extender)、[ImageAnalysis](https://developer.android.com/media/camera/camerax/analyze)、[ML Kit入力・配布方式](https://developers.google.com/ml-kit/vision/face-detection/android)、[標準FaceDetector](https://developer.android.com/reference/android/media/FaceDetector)、[YuNetモデルlicense](https://github.com/opencv/opencv_zoo/blob/main/models/face_detection_yunet/LICENSE)。容量は公式の概算で、このアプリの実測ではない。
+
+### 通信・ライセンスと座標の採用ゲート
+
+[#122の既存比較](https://github.com/reitojike/cinematic-camera/issues/122#issuecomment-6640999544)ではYuNetモデル232,589 bytesに対し、APK内OpenCV本体は両ABI合計85,182,352 bytesと報告されている。異なる祖先APK間の差を厳密A/Bにせず、今回再測定した値とも扱わない。
+#122は容量・依存負担による「不採用・保留」で閉鎖済み。試作を再開・複製せず、未決の検出/顔測光/ガードだけを#79で扱う。
+
+ML Kitは入力画像/結果を端末内で処理する一方、利用・性能metrics送信や更新通信を説明している（[Terms & Privacy](https://developers.google.com/ml-kit/terms)、[データ開示](https://developers.google.com/ml-kit/android-data-disclosure)）。WebサンプルのlicenseをSDK/model全体のlicenseとしない。
+[#79の既存AAR/POM静的調査](https://github.com/reitojike/cinematic-camera/issues/79#issuecomment-6637683822)ではDataTransport由来の通信権限・job/receiver・初期化providerが報告済み。今回その閉包を再取得・実行したわけではなく、権限だけ除去すれば無通信になるとも判断しない。
+採用前に実際の解決版とmerged manifest、推移依存・noticeのAPK収載、初回offline、通信/IPC/更新挙動、APK増分・常駐/推論メモリを確認し、本人の採用判断を得る。
+
+座標契約案ではsource fingerprint、decoder/profile版、有効領域/DefaultCrop、向き・mirror、検出入力寸法と変換、detector/model/policy版を結果へ結び付ける。Camera2のセンサー領域・歪み補正/zoom/cropと表示枠を同一視せず、外部画像にはCamera2統計を転用しない。
+正規化したbboxを既存mask部品へ渡す前に変換・整数丸め・範囲を検証する。保護mask、foundation ROI、測光ROIは用途が異なるため同一視しない。失敗/取消/未実行/成功0件を保持し、古い写真・recipeの結果を捨てる。非協調推論の完了前に資源枠を再利用しない。
+既存mask部品は長辺1024・候補64/採用6の診断上限であり、24MP full maskの対応を証明しない。原寸への座標対応と帯処理への渡し方は後続設計事項。
+
+### 露出と白飛びガードの推奨順序（未採用）
+
+正確なAS_SHOT入力を固定し、別の検出用表示変換からbboxを得る。測光は線形入力上で一度だけ行い、検証済み顔があれば顔、成功0件なら既存中央p97方針を候補とする。未実行/失敗を成功0件へ補完しない。
+顔の集約方法・percentile・目標輝度は未決で、PCの暫定fitを完成仕様として移植しない。自動baseEV、R7 E2、手動EVの責務を分けて二重加算を避け、現行の暫定capは[編集仕様](../../specs/develop/spec.md)を参照する。
+R7→glow→iconic/顔の赤み保護→顔ガード判定→必要ならglowed像を減光してiconic/赤み保護を1回再計算→shoulder、というPC `stage_clear.render` の順を比較基準にする。
+既存ガードはmask>.5が50画素以上のpoolで表示輝度p90を評価し、最大0.7EV。顔測光値やR7へこの減光を戻して再測光・反復しない。顔ガードは顔を測定に使うが、減光はglowed像全体に掛かる点も比較する。
+撮影時AEは別系統。[FACE_PRIORITY](https://developer.android.com/reference/android/hardware/camera2/CameraMetadata#CONTROL_SCENE_MODE_FACE_PRIORITY)は能力があれば3Aに顔情報を使い、統計OFFでも働き得る。従ってbbox取得成功をAE有効の証拠にせず、AUTO/手動露出・要求/実result・撮影画像の確認を分離する。
+
+本人方針としてML Kitを第1候補にし、bundled方式を出発点にYuNetとの精度比較と撮影時Camera2の補助利用を検討する。性能と精度を両立する方式の確立を目指すが、SDK最終採用・通信許可・依存追加・実装は別判断とする。Camera2の撮影補助は外部DNGの静止画検出と分離し、検出枠を統合する方法も未決のまま保持する。
+YuNetは比較対象であり正解ラベルではない。一致率のみを採用指標にせず、人が確認した顔領域を基準に、条件別の検出漏れ・誤検出・位置/大きさの誤差・mask被覆を比較する。対象の顔の定義、対応付け/重なりの閾値、許容誤検出・漏れ率は評価前に決め、結果に合わせて緩和しない。
+まず合成bboxでcrop/向き/丸め/状態/取消とmaskを検証し、検出精度とは分ける。後の本人承認済み比較では同じ原本・同じ検出入力と線形測光入力を使い、正面/横顔/傾き/小顔/マイク遮蔽/複数顔/低照度/赤青照明/顔なし（看板・照明等）の条件ごとに評価する。推論だけと入力変換込みの時間、cold/warm、メモリ、撮影応答・熱の負荷を精度と併記し、測定条件・未取得を明示する。検出結果、baseEVとguard EVも別記録する。
+guardなし/ありの画作り確認も必要であり、現時点で実写精度・性能・顔保護を合格としない。
+
 ## 公式根拠とlicense
 
 - [rawpy 0.28.0 PyPI](https://pypi.org/project/rawpy/0.28.0/)、[Params API](https://letmaik.github.io/rawpy/api/rawpy.Params.html)、[LibRaw output parameters](https://www.libraw.org/docs/API-datastruct.html)。処理条件はCLI実装で固定しmanifestに記録する。

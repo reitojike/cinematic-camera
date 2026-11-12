@@ -221,7 +221,7 @@ import kotlinx.coroutines.flow.StateFlow
         saveState?.phase in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED,
             PhotoRollSavePhase.UNCONFIRMED, PhotoRollSavePhase.GPU_FAILED, PhotoRollSavePhase.CANCELLED)
     val saveMessage = if (saveState?.phase == PhotoRollSavePhase.CANCELLED)
-        "保存を取り消しました。同じ設定・エンジンで明示的に再試行できます" else saveState?.gpuFailure?.description
+        "保存を取り消しました。同じ設定で再試行するか、プレビューを再開して設定を変更できます" else saveState?.gpuFailure?.description
     val visibleMessage = saveMessage ?: problemMessage ?: if (exportPaused)
         "保存のため GPU プレビューを終了しました。保存後にプレビューを再開できます" else null
     PhotoRollDevelopView(name, PhotoRollPreviewMode.MANUAL_TRIAL, editor, { editor }, phase,

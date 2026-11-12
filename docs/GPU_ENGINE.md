@@ -413,6 +413,8 @@ EGL/GLES bindingは [LWJGL公式](https://www.lwjgl.org/guide) と
 
 管理先は既存 #290 / #276。#349 の Android 手動基準登録は main に反映済み。#355 の既知共通黒化は PR #361 で修正中であり、基準更新は本人の目視確認待ち。Draftの修正をmainへ先取りしない。CPUへ戻す運用は想定しないが、削除は次の条件と手順を満たしてから行う。
 
+#357 の保存取消後の設定変更は、dev.1の普段使いに影響するためD0/24MP完了待ちにせず今すぐ並行する。GPUの24MP保存と保存状態コードが競合する場合のみ24MPを優先し、#357のその部分を後へ回す。確認済み取消だけ新世代を許し、公開状態不明・cleanup未確認はHOLDを維持する。保存挙動の変更はマージ前に本人へ提示・確認する。
+
 1. **D0 は今から並行して進める設計文書**: GPU前提で切替機構の撤去、preview/export shader構成の共通化、責任分担、失敗型、命名、試験の配置、Mesaから実全工程を呼べるbinding境界、shader定数の正本を決める。D0完了をMesa実装完了と呼ばない。
 2. #290後段BでGLSLを正本とし、GPU基準画像との回帰をCPU削除・リファクタリングの前提にする。CPU削除前にshader定数の出どころも確定する。Mesa全工程CIの完成はCPU削除の前提に加えない。旧CPU数値閾値を合否へ戻さない。
 3. 数日の様子見後、本人から明暗各12MP保存、保存中の次写真表示、取消→やり直し、#352の再発有無という最低限操作の結果を確認する。経過日数だけで完了とせず、データ損失・保存不能継続など致命的不具合がないことを確認してCPU描画経路削除へ進む。小さい問題はIssueで並行追跡する。
@@ -503,7 +505,7 @@ preview/export共通化は、同じ式・定数・pass入出力の定義を共�
 
 - GPU能力不足・context喪失・予算超過等は見える失敗にし、**CPUへ自動fallbackしない**。previewは選択写真の画像領域に理由と明示retryを示し、旧owner終了確認と原本再確認後だけ新sessionを開く。
 - 保存は固定理由/当該ownerの回数を表示する。JPEG入口前のGPU producer failureでGPU・原本・作業領域・出力の全cleanupが確認できた時だけ、同じsource/recipe/generation/engineで明示retryする。失敗中の別編集世代・別engineへの迂回はしない。
-- #346の取消契約もJPEG入口前・全cleanup完了が確認できた同プロセスの同世代だけ明示retryを許す。解放不明・JPEG入口後・restart・intent不一致はHOLD/既存publication再照合を維持する。durable intentを消して回避しない。
+- #346の同世代明示retryを維持し、#357ではJPEG入口前・全cleanup完了が確認できた同プロセスの取消ownerに限り、明示的な設定変更による新世代も許す。旧intentと一致しpublicationがないことを受付時に再確認し、新requestの確定で旧世代を失効させる。解放不明・JPEG入口後・restart・intent不一致はHOLD/既存publication再照合を維持する。durable intentを消して回避しない。
 - 原本の強い照合、Foreground Service、既存publicationは共用する。画面の取消/失敗表示とowner回収を分け、実施していない故障注入をGate 2承認へ含めない。
 
 ### 4.13 切り替えフラグ

@@ -6,10 +6,10 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ManualTrialJpegSaveOwnerTest {
-    @Test fun confirmedCancellationStaysVisibleAfterForegroundWorkStops() {
+    @Test fun confirmedCancellationStaysVisibleAndAllowsEditingAfterForegroundWorkStops() {
         val cancelled = ManualOriginalTrialSaveState(ManualOriginalTrialSavePhase.CANCELLED)
         assertEquals(PhotoRollSavePhase.CANCELLED, manualSaveSnapshot(cancelled).phase)
-        assertEquals(false, canBeginStrengthEdit(PhotoRollPreviewMode.MANUAL_TRIAL,
+        assertEquals(true, canBeginStrengthEdit(PhotoRollPreviewMode.MANUAL_TRIAL,
             foreground = true, savePending = false, savePhase = PhotoRollSavePhase.CANCELLED))
         for (local in listOf(null, PhotoRollSaveSnapshot(PhotoRollSavePhase.UNCONFIRMED))) {
             val result = manualSaveVisibleSnapshot(cancelled, local)

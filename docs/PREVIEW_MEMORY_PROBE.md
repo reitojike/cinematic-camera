@@ -47,6 +47,66 @@ heap上限、OSのlow-memory閾値、実RAM、出力寸法もJSONに含めます
 
 測定値と採否はIssueに記録し、本書は再現手順を扱います。
 
+## GPU保存Aと次写真Bの同時所有（#260 partial）
+
+`GpuConcurrentMemoryProbeTest` は既存の保存factory・foreground export受付と
+`GpuPhotoRollInputs` / `GpuPhotoRollSession` を使用する診断限定の追加観測です。
+実Activityやforeground serviceのlifecycleは通さず、明示的に保存ownerを起動します。
+合成A/Bは異なる内容で、既存fixtureがAVDのMediaStoreへ作成・照合し、成功後に
+自分の検証済み項目だけを回収します。失敗時は既存fixtureの保全規則に従います。
+
+- Aの最初のMIST帯で実GPU textureと全体Bitmapを保持し、Bを開く間だけ待機する。
+- Bのsnapshot/FD保持、preflightからnative decode・縮小・入力owner解放、GPU表示、
+  A公開後のB保持、最後の解放を既存metricsで観測する。
+- Bのnative unpack/process別境界は既存observerから観測できないため、
+  `B_SNAPSHOT_FD_HELD_BEFORE_NATIVE_PREFLIGHT` から `B_INPUT_IO_NATIVE_AND_TOKEN_RELEASED`
+  までを複合区間として扱う。A自身のnative decodeとB decodeの同時実行はこの試験の対象外。
+- 小型取消ケースではBのpreflight前に取消し、Bが解放された後もAが同じrequestで
+  完了すること、原本不変、JPEG再読取、texture/GL owner解放を確認する。
+- Aの外側受付は既存fixtureの合成条件を使用する。Bの外側受付は現在のMemoryInfo・
+  温度・空き容量を読む。内側の768MiB guardとGPU予算は変更しない。
+
+共有AVDはロードマップの1枠を事前調整して単独使用する。初回はSMALLだけを実行する。
+GPU probeの正規実行先は、[GPUエンジンのAndroid opt-in手順](GPU_ENGINE.md)に従う
+既存の通常API37 AVD（host GPU、`GuestAngle,Vulkan`）である。
+ATDはhardware renderingが無効なため、このGPU試験の実行先にしない。
+予約した既存AVDの起動引数 `-gpu host -feature GuestAngle,Vulkan`、実際のGL vendor/renderer/version、
+GPU capabilityを確認する。既存端末の起動・停止や設定変更は予約担当と調整し、本手順で新規作成しない。
+12MP/24MPは別途枠・時間を確保し、別プロセスで1条件ずつ実行する。新規AVD作成、
+全クラス一括実行、SDK更新、圧迫用割当、強制GC、guard変更は含めない。
+
+```powershell
+.\gradlew.bat :app:assembleGpuDiagnostic :app:assembleGpuDiagnosticAndroidTest `
+  -PcinematicGpuDiagnostic=true -PcinematicGpuDiagnosticTests=true --no-daemon --max-workers=1
+
+# 予約・確認済みの通常API37 AVDのserialを設定する。実機を指定しない。
+if (-not $env:GPU_PROBE_SERIAL -or $env:GPU_PROBE_SERIAL -notmatch '^emulator-[0-9]+$') {
+  throw 'Set the reserved GPU emulator serial'
+}
+adb -s $env:GPU_PROBE_SERIAL install -r app/build/outputs/apk/gpuDiagnostic/app-gpuDiagnostic.apk
+adb -s $env:GPU_PROBE_SERIAL install -r app/build/outputs/apk/androidTest/gpuDiagnostic/app-gpuDiagnostic-androidTest.apk
+adb -s $env:GPU_PROBE_SERIAL shell am instrument -w `
+  -e class dev.cinematic.p0.jpegrender.original.GpuConcurrentMemoryProbeTest `
+  -e isolated true -e gpuExportBoundaries true -e gpuConcurrentMemory true `
+  -e gpuConcurrentMemorySize SMALL `
+  dev.cinematic.p0.gpudiagnostic.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+大判のselectorは同classの `#measureSaveBandAndNextPhoto` に限定し、sizeを `12MP` または
+`24MP` にする。取消methodはSMALL専用で、大判class全体の指定は拒否する。
+小型の各待機は180秒、大判は900秒で失敗扱いになる。これは実行時間の予測ではない。
+予約の暫定目安は小型15分、12MP/24MP各30分（起動・証拠回収を含む）とし、初回結果で見直す。
+
+`GPU_CONCURRENT_MEMORY_PART=index/count:...` を各testごとに連結してJSONを得る。
+実行head/APK、AVD image/実RAM/heap、GL環境、条件・結果・skipの有無を別途記録する。
+意図的に保持した区間のPSS/RSS・managed/native観測最大は、通常操作の速度・真peak・
+必要空きRAM・実機安全性を証明しない。別時刻の最大値は加算しない。
+`aBitmapPayloadBytes` と `aRasterDiskBytes` は寸法からの計算値で、RAM実測とは区別する。
+GPU台帳はtextureだけを扱い、snapshot・native・Bitmap・driver・surfaceの総量ではない。
+
+既存#264の単独CPU cold/warm結果、#269のguard分離、#355の画素修正、#357の新recipe受付を
+この試験で再実装・完了扱いしない。#260は部分対応でopenを維持する。
+
 ## 公式資料
 
 - [Android MemoryInfo](https://developer.android.com/reference/android/app/ActivityManager.MemoryInfo):
