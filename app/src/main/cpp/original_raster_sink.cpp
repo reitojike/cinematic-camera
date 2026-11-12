@@ -96,9 +96,39 @@ void OriginalRasterSink::parse(const std::vector<unsigned char>& bytes, const Li
         uint64_t(size[0]) * size[1] > 24'000'000) reject();
     if (selected.count(50718)) { const auto scale = tiff.values(selected.at(50718), 2); if (scale[0] != 1 || scale[1] != 1) reject(); }
     left = active[1] + origin[0]; top = active[0] + origin[1]; width = size[0]; height = size[1];
+    needsCropbox(raw); // Preflight and decode must accept the same known inset geometry.
+}
+
+bool OriginalRasterSink::needsCropbox(const LibRaw& raw) const {
+    const auto& inset = raw.imgdata.sizes.raw_inset_crops[0];
+    if (inset.cleft >= 65535 || inset.ctop >= 65535 || !inset.cwidth || !inset.cheight) return false;
+    if (inset.cleft == left && inset.ctop == top && inset.cwidth == width && inset.cheight == height) return false;
+    // LibRaw 0.22.3 open.cpp rounds ordinary Bayer inset margins up to even,
+    // subtracting that same pixel from the extent. Accept only that exact change.
+    const unsigned dx = width > 2 ? left % 2 : 0, dy = height > 2 ? top % 2 : 0;
+    if (raw.imgdata.idata.filters < 1000 || (!dx && !dy) ||
+        inset.cleft != left + dx || inset.ctop != top + dy ||
+        inset.cwidth != width - dx || inset.cheight != height - dy) reject();
+    return true;
 }
 
 void OriginalRasterSink::applyCrop(LibRaw& raw) const {
+    if (needsCropbox(raw)) {
+        const auto& s = raw.imgdata.sizes;
+        const auto& restored = raw.imgdata.rawdata.sizes;
+        if (s.left_margin != restored.left_margin || s.top_margin != restored.top_margin ||
+            s.width != restored.width || s.height != restored.height ||
+            left < s.left_margin || top < s.top_margin ||
+            uint64_t(left - s.left_margin) + width > s.width ||
+            uint64_t(top - s.top_margin) + height > s.height) reject();
+        // raw2image_ex applies this active-relative crop and shifts CFA via its
+        // official FC mapping. Do not overwrite sizes or filters ourselves.
+        raw.imgdata.params.cropbox[0] = left - s.left_margin;
+        raw.imgdata.params.cropbox[1] = top - s.top_margin;
+        raw.imgdata.params.cropbox[2] = width;
+        raw.imgdata.params.cropbox[3] = height;
+        return;
+    }
     const auto& inset = raw.imgdata.sizes.raw_inset_crops[0];
     if (inset.cleft < 65535 && inset.ctop < 65535 && inset.cwidth && inset.cheight) {
         if (inset.cleft != left || inset.ctop != top || inset.cwidth != width || inset.cheight != height ||
@@ -106,6 +136,13 @@ void OriginalRasterSink::applyCrop(LibRaw& raw) const {
     }
     const auto& s = raw.imgdata.sizes;
     if (s.left_margin != left || s.top_margin != top || s.width != width || s.height != height) reject();
+}
+
+void OriginalRasterSink::validateProcessedGeometry(const LibRaw& raw) const {
+    const auto& s = raw.imgdata.sizes;
+    static constexpr int flips[]{0, 0, 1, 3, 2, 4, 6, 7, 5};
+    if (s.left_margin != left || s.top_margin != top || s.width != width || s.height != height ||
+        s.flip != flips[orientation]) reject(); // Never accept cropbox's silent clamp.
 }
 
 void OriginalRasterSink::write(const libraw_processed_image_t& image, const std::function<void()>& checkpoint) const {

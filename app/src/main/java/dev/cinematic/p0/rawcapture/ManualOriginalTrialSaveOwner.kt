@@ -61,6 +61,29 @@ internal class ManualOriginalTrialSaveOwner(
     init { ManualOriginalTrialRequestCodec.encode(request) }
     fun matches(source: SharedOriginalReference) = request.source == source
 
+    /** Called only by the serialized generation fence for its exact previous request. Preparing
+     * clears current authority first, so isCurrent is deliberately not used here. The durable
+     * source request commits the successor; the old intent is never erased. A restarted owner
+     * has no cancellation permit and cannot pass this fence. This does not start or retry work. */
+    fun canSupersedeConfirmedCancellation(): Boolean = exclusive {
+        if (terminalHold || !cancellationRetryAvailable || !renderStarted ||
+            state.value.phase != ManualOriginalTrialSavePhase.CANCELLED || proof != null ||
+            publication != null || hasUnreleasedResources) return@exclusive false
+        try {
+            if (backend.readPublication() != null) return@exclusive false
+            if (attemptStorage.read(ManualOriginalTrialRequestCodec.MAX_BYTES)
+                    ?.contentEquals(ManualOriginalTrialRequestCodec.encode(request)) != true) {
+                hold(ManualOriginalTrialSaveReason.GENERATION_STARTED)
+                return@exclusive false
+            }
+            true
+        } catch (failure: Exception) {
+            lastFailure = failure
+            hold(ManualOriginalTrialSaveReason.OPERATION_FAILED)
+            throw failure
+        }
+    }
+
     fun advance(retryGpuFailure: Boolean = false, retryCancellation: Boolean = false, stop: () -> Boolean = { false }): ManualOriginalTrialSaveState = exclusive {
         if (terminalHold || (gpuRetryAvailable && !retryGpuFailure) || (cancellationRetryAvailable && !retryCancellation)) return@exclusive state.value
         try {
@@ -160,7 +183,12 @@ internal class ManualOriginalTrialSaveOwner(
         try { backend.releaseResources() } catch (error: Throwable) {
             if (failure == null) failure = error else if (failure !== error) failure!!.addSuppressed(error)
         }
-        failure?.let { lastFailure = it; throw it }
+        failure?.let {
+            lastFailure = it
+            // A later cleanup failure invalidates the earlier positive cancellation evidence.
+            if (cancellationRetryAvailable) hold(ManualOriginalTrialSaveReason.OPERATION_FAILED)
+            throw it
+        }
     }
 
     private fun requireMatches(render: ManualOriginalTrialRender) {
