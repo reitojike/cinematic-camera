@@ -1,2 +1,3 @@
-*.json -text
+# Preserve captured JSON bytes and their approval hashes, including original CRLF.
+*.json -text whitespace=cr-at-eol
 *.rgb8.gz -text
