@@ -302,11 +302,26 @@ class ForegroundExportOwnerTest {
             }
             return requireNotNull(found)
         }
-        if (!device.hasObject(roots)) unique(androidx.test.uiautomator.By.pkg(pickerPackage)
+        fun clickUnique(selector: androidx.test.uiautomator.BySelector) {
+            await {
+                check(device.currentPackageName == pickerPackage) { "System picker lost foreground" }
+                val matches = device.findObjects(selector)
+                check(matches.size <= 1) { "Ambiguous system picker target" }
+                val target = matches.singleOrNull()
+                if (target == null) false else try {
+                    target.click(); true
+                } catch (_: androidx.test.uiautomator.StaleObjectException) {
+                    // In pinned UiAutomator 2.4.1 click refreshes the node before sending input.
+                    // Re-query this exact target within the same wait; never repeat a sent click.
+                    false
+                }
+            }
+        }
+        if (!device.hasObject(roots)) clickUnique(androidx.test.uiautomator.By.pkg(pickerPackage)
             .clazz("android.widget.ImageButton").desc(java.util.regex.Pattern.compile(
-                "Show roots|Open navigation drawer|ルートを表示|ルートを表示する|ナビゲーション ドロワーを開く"))).click()
-        unique(androidx.test.uiautomator.By.pkg(pickerPackage).text(java.util.regex.Pattern.compile("Downloads|ダウンロード"))
-            .hasAncestor(roots)).click()
+                "Show roots|Open navigation drawer|ルートを表示|ルートを表示する|ナビゲーション ドロワーを開く")))
+        clickUnique(androidx.test.uiautomator.By.pkg(pickerPackage).text(java.util.regex.Pattern.compile("Downloads|ダウンロード"))
+            .hasAncestor(roots))
         await { !device.hasObject(roots) }
         val directory = androidx.test.uiautomator.By.res(pickerPackage, "dir_list")
         val exact = androidx.test.uiautomator.By.pkg(pickerPackage).text(name).hasAncestor(directory)
