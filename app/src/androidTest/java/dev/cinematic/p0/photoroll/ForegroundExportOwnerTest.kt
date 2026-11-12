@@ -318,14 +318,20 @@ class ForegroundExportOwnerTest {
         }
         var selected: androidx.test.uiautomator.UiObject2? = null
         var pages = 0
+        var endReached = false
         await {
             check(device.currentPackageName == pickerPackage) { "System picker lost foreground" }
             val matches = device.findObjects(exact)
             check(matches.size <= 1) { "Ambiguous synthetic document" }
             selected = matches.singleOrNull()
-            if (selected == null && list.isScrollable) {
-                check(++pages <= 20) { "Synthetic document not found within navigation bound" }
-                check(list.scroll(androidx.test.uiautomator.Direction.DOWN, .8f)) { "Synthetic document absent" }
+            if (selected == null) {
+                check(!endReached) { "Synthetic document absent" }
+                if (list.isScrollable) {
+                    check(++pages <= 20) { "Synthetic document not found within navigation bound" }
+                    // false means the end was reached, not that the last scroll did not move.
+                    // The next iteration still searches that final viewport before failing.
+                    endReached = !list.scroll(androidx.test.uiautomator.Direction.DOWN, .8f)
+                }
             }
             selected != null
         }
