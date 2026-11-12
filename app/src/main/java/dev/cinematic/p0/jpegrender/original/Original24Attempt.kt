@@ -46,6 +46,10 @@ internal class Original24Attempt(context: Context, private val request: Original
     private val active = AtomicBoolean(false)
     private var started = false
     private var closed = false
+    private var jpegOutputStarted = false
+    /** Set only after the failing attempt's final cleanup, never just because no proof returned. */
+    var cancellationBeforeJpegConfirmed = false
+        private set
     private val signal = CancellationSignal()
     private val resources = DngIoResources()
     private var sourceFd: AutoReadOnlyDescriptor? = null
@@ -89,7 +93,12 @@ internal class Original24Attempt(context: Context, private val request: Original
                 override fun close() = immutableFd.close()
             }
             val metadata = JSONObject(originalStage(trace, OriginalStage.NATIVE_DECODE) {
-                NativeOriginalRaster.decode24(requireNotNull(sourceFd).fd, requireNotNull(rasterFd).fd, signal)
+                try { NativeOriginalRaster.decode24(requireNotNull(sourceFd).fd, requireNotNull(rasterFd).fd, signal) }
+                catch (error: IOException) {
+                    // The native decoder reports this fixed cancellation code as IOException.
+                    if (error.message == "DNG_CANCELLED") throw java.util.concurrent.CancellationException("Native decode stopped").apply { initCause(error) }
+                    throw error
+                }
             })
             originalStage(trace, OriginalStage.DECODE_CLOSE) { closeDescriptorOwners() }
             checkpoint(); Original24Resources.requireAvailable(context)
@@ -156,6 +165,9 @@ internal class Original24Attempt(context: Context, private val request: Original
                     }
                 }
                 }
+                checkpoint()
+                // Crossing this boundary is irreversible evidence, even if openOutput/encode fails.
+                jpegOutputStarted = true
                 originalStage(trace, OriginalStage.JPEG_ENCODE) { resources.output(io.openOutput()).use { output ->
                     val bounded = object : OutputStream() {
                         override fun write(value: Int) = write(byteArrayOf(value.toByte()), 0, 1)
@@ -195,7 +207,10 @@ internal class Original24Attempt(context: Context, private val request: Original
                 if (primary == null) throw cleanup
                 if (primary !== cleanup) primary.addSuppressed(cleanup)
             } finally { active.set(false) }
-            // Disposable copies are removed only after every resource owner acknowledges close.
+            // Disposable copies and the Bitmap have all closed before granting this evidence.
+            cancellationBeforeJpegConfirmed = !jpegOutputStarted && !hasUnreleasedResources &&
+                failure?.suppressed?.isEmpty() == true && (failure is java.util.concurrent.CancellationException ||
+                failure is android.os.OperationCanceledException || failure is DngVerificationStopped)
         }
     }
 

@@ -192,8 +192,9 @@ import kotlinx.coroutines.flow.StateFlow
         ((ready && presented == editor.requestedValues && editor.displayedValues == editor.requestedValues) ||
             (exportPaused && gpuSaveCanContinueWithoutPreview(saveState?.phase))) &&
         saveState?.phase in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED,
-            PhotoRollSavePhase.UNCONFIRMED, PhotoRollSavePhase.GPU_FAILED)
-    val saveMessage = saveState?.gpuFailure?.description
+            PhotoRollSavePhase.UNCONFIRMED, PhotoRollSavePhase.GPU_FAILED, PhotoRollSavePhase.CANCELLED)
+    val saveMessage = if (saveState?.phase == PhotoRollSavePhase.CANCELLED)
+        "保存を取り消しました。同じ設定・エンジンで明示的に再試行できます" else saveState?.gpuFailure?.description
     val visibleMessage = saveMessage ?: problemMessage ?: if (exportPaused)
         "保存のため GPU プレビューを終了しました。保存後にプレビューを再開できます" else null
     PhotoRollDevelopView(name, PhotoRollPreviewMode.MANUAL_TRIAL, editor, { editor }, phase,
@@ -266,8 +267,8 @@ import kotlinx.coroutines.flow.StateFlow
             ForegroundSaveNotice(save, foreground, activeOnly = true)
             if (exportPaused) {
                 Text(saveMessage ?: "保存用に GPU プレビューを終了しました")
-                if (saveState?.phase == PhotoRollSavePhase.GPU_FAILED)
-                    Text("下の再試行ボタンで、同じ GPU 保存を再試行します")
+                if (saveState?.phase in setOf(PhotoRollSavePhase.GPU_FAILED, PhotoRollSavePhase.CANCELLED))
+                    Text("下の再試行ボタンで、同じ保存を再試行します")
                 TextButton(enabled = foreground && !saving && !savingRecipe &&
                     gpuSaveCanResumePreview(saveState?.phase), onClick = {
                         // Recheck the retained owner, not a possibly one-frame-old Flow snapshot.
