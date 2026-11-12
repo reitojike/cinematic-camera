@@ -122,6 +122,24 @@ internal object ImageDiff {
         return abs(reference - actual)
     }
 
+    /** CPU/GPU differences are observations, not acceptance or stop conditions (#290). */
+    fun referenceScalar(reference: Double, actual: Double, stage: String): String =
+        "$stage CPU_REFERENCE_ONLY cpu=$reference gpu=$actual absolute=${scalar(reference, actual)}"
+
+    /** Raw readbacks need shape/finite checks before a finite-only image model is constructed. */
+    fun referenceFloats(reference: FloatArray, actual: FloatArray, stage: String): String {
+        require(reference.isNotEmpty() && actual.size == reference.size) { "$stage: channel counts differ or are empty" }
+        var maximum = -1.0
+        var worst = 0
+        for (i in reference.indices) {
+            require(reference[i].isFinite() && actual[i].isFinite()) { "$stage: non-finite channel at $i" }
+            val delta = abs(reference[i].toDouble() - actual[i])
+            if (delta > maximum) { maximum = delta; worst = i }
+        }
+        return "$stage CPU_REFERENCE_ONLY channels=${actual.size} maxAbsolute=$maximum " +
+            "worstChannel=$worst cpu=${reference[worst]} gpu=${actual[worst]}"
+    }
+
     fun assertScalarWithin(reference: Double, actual: Double, tolerance: Double, stage: String) {
         require(tolerance.isFinite() && tolerance >= 0)
         if (!reference.isFinite() || !actual.isFinite() || abs(reference - actual) > tolerance) {

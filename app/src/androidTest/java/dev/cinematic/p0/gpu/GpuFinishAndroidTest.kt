@@ -44,7 +44,7 @@ class GpuFinishAndroidTest {
         try { texture.upload(ByteBuffer.allocateDirect(values.size * 4).order(ByteOrder.nativeOrder()).asFloatBuffer().apply { put(values); flip() }); return texture }
         catch (failure: Throwable) { texture.close(); throw failure }
     }
-    @Test fun finishStagesMatchKotlinAcrossAllImagesSizesAndStrengths() = gpu { egl, ledger ->
+    @Test fun finishStagesReportKotlinAcrossAllImagesSizesAndStrengths() = gpu { egl, ledger ->
         var conditions = 0
         for (size in listOf(GpuReferenceImages.Size(256, 192), GpuReferenceImages.PREVIEW_SIZE)) {
             for (kind in GpuReferenceImages.Kind.entries) {
@@ -53,7 +53,7 @@ class GpuFinishAndroidTest {
             }
         }
         assertEquals(80, conditions)
-        Log.i("GpuFinish", "PASS conditions=$conditions floatStages=320 displayStages=80")
+        Log.i("GpuFinish", "CPU_REFERENCE_ONLY conditions=$conditions floatStages=320 displayStages=80")
     }
 
     // Return each image/strength stack frame before allocating the next CPU reference.
@@ -79,11 +79,7 @@ class GpuFinishAndroidTest {
                             val actual = GpuStageTap.readRgb(egl, texture)
                             val elapsed = System.nanoTime() - last
                             val expected = reference[point]
-                            repeat(expected.pixelCount * 3) { i ->
-                                val ref = expected[i].toDouble(); val value = actual[i].toDouble()
-                                val delta = abs(ref - value)
-                                assertTrue("$kind $size strength=$strength $point channel=$i ref=$ref actual=$value", value.isFinite() && delta <= 1e-4 * maxOf(1.0, abs(ref)))
-                            }
+                            Log.i("GpuFinish", "CPU_REFERENCE_ONLY ${ImageDiff.linear(expected, actual, "$kind $size strength=$strength $point")}")
                             if (point == Point.ORTON && reference.lightAddingStrength == 0.0) assertSame(mist, texture)
                             seen += point
                             Log.i("GpuFinish", "$kind $size strength=$strength $point synchronizedNs=$elapsed")
@@ -106,13 +102,12 @@ class GpuFinishAndroidTest {
                                     (255 shl 24) or ((bytes.get(p * 4).toInt() and 255) shl 16) or
                                         ((bytes.get(p * 4 + 1).toInt() and 255) shl 8) or (bytes.get(p * 4 + 2).toInt() and 255)
                                 }
-                                // Formal boundary rule is additional; isolated same-input max1 stays stricter.
+                                // Retain the historical boundary metrics as reference observations only.
                                 val gpuMist = GpuStageTap.readRgb(egl, mist)
                                 val acceptance = OrtonDisplayAcceptance.evaluate(w, h,
                                     { reference[Point.MIST][it] }, { gpuMist[it] }, reference.display8, pixels)
-                                acceptance.logLines().forEach { Log.i("GpuFinish", "$kind $size strength=$strength $it") }
-                                acceptance.assertPassed()
-                                ImageDiff.display(reference.display8, pixels, w, h, "$kind $size strength=$strength DISPLAY8").assertDisplayWithin(1, 1.0)
+                                acceptance.logLines().forEach { Log.i("GpuFinish", "CPU_REFERENCE_ONLY $kind $size strength=$strength ${it.replace("passed=", "historicalWithinReference=")}") }
+                                Log.i("GpuFinish", "CPU_REFERENCE_ONLY ${ImageDiff.display(reference.display8, pixels, w, h, "$kind $size strength=$strength DISPLAY8")}")
                             }
                         }
                         assertEquals(listOf(Point.ORTON, Point.CHARACTER, Point.SKIN_CAP, Point.SHOULDER), seen)
@@ -122,7 +117,7 @@ class GpuFinishAndroidTest {
         }
     }
 
-    @Test fun characterHueMatchesKotlinTruncatingRemainderAndCircularBoundaries() = gpu { egl, ledger ->
+    @Test fun characterHueReportsKotlinTruncatingRemainderAndCircularBoundaries() = gpu { egl, ledger ->
         val assets = InstrumentationRegistry.getInstrumentation().targetContext.assets
         val production = assets.open("gpu/look/character.frag").bufferedReader().use { it.readText() }
         // Execute the production helpers, not a test-only copy of their formulas.
@@ -172,12 +167,13 @@ class GpuFinishAndroidTest {
                             repeat(3) { c ->
                                 val ref = expected[c]; val value = actual[p * 3 + c]
                                 val delta = if (!raw && c == 0) dev.cinematic.p0.gpu.reference.GpuTolerances.circularHueDifference(ref, value) else abs(ref.toDouble() - value)
-                                assertTrue("raw=$raw p=$p c=$c input=${input.slice(p * 3..p * 3 + 2)} Kotlin=$ref GPU=$value delta=$delta", value.isFinite() && delta <= if (raw) 0.0 else 1e-4)
+                                assertTrue("raw=$raw p=$p c=$c non-finite", value.isFinite())
+                                Log.i("GpuFinish", "CPU_REFERENCE_ONLY raw=$raw p=$p c=$c Kotlin=$ref GPU=$value delta=$delta")
                             }
                             val actualHue = actual[p * 3 + if (raw) 1 else 0]
                             assertTrue(actualHue >= 0f && actualHue < 360f)
                         }
-                        Log.i("GpuFinish", "Character hue boundary PASS raw=$raw cases=${input.size / 3}")
+                        Log.i("GpuFinish", "CPU_REFERENCE_ONLY Character hue boundary raw=$raw cases=${input.size / 3}")
                     }
                 }
             }

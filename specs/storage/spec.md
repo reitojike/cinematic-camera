@@ -56,11 +56,24 @@
 [編集情報の保持](../047-durable-edit-values/spec.md)。
 016には実装済み部分と将来のFULL設計が混在するため、本書の区分を優先する。歴史的な1024px私有試験だけの制約を現在の手動原寸保存へ戻さない。
 
-## #286 GPU 原寸保存接続（Draft 提案・未採用）
+## GPU 原寸保存（#286 / #341・通常版既定化は #353 の提案）
 
-- #338 の帯 renderer を前提に、開発・診断用の共通エンジン設定を実際の保存開始時に一度取得し、その保存と明示再試行の間は固定する。通常 release の CPU 既定、低水準試験の CPU 既定は変えない。
+- 共通エンジン設定を最初の実保存時に一度取得し、その保存と明示再試行の間は固定する。通常debug/releaseの新規保存はGPU、専用診断版は明示選択を使用する。既存ownerの固定engine・保存世代・原本を移行せず、低水準試験のCPU既定は変えない。engine切替だけで同じsource/recipe/generationの保存済みJPEGを再生成しない。
 - 検証済み snapshot の LibRaw 原寸 RGB16 から読み取る未調整の source と、既存診断露出 EV + 手動 EV、既存相対色温度 gains を GPU に渡す。warmth は GPU 内で一度だけ適用する。RGBA8 行を既存 Bitmap に詰め、JPEG 95、出力再読取、原本の前後照合、publication owner/journal は共用する。
 - GPU 保存失敗は固定の理由コードと端末内の集計件数を記録する。画面には当該保存 owner の失敗理由・件数を示し、CPU への無言 fallback はしない。写真名・URI・例外本文は失敗記録へ転記しない。
 - JPEG 出力開始前の GPU 画像処理失敗で、GPU・原本・作業領域・出力の解放をすべて確認できた場合だけ、同じ画面から GPU 保存を明示再試行できる。通常の advance や通知再開だけでは再生成しない。再試行は原本を再検証・再展開し、同じ世代・設定・エンジンを使う。
 - durable intent は消さない。同プロセス内の確認済み失敗だけが再試行許可を持ち、再起動、解放不明、intent 不一致、JPEG 生成後、publication 不明は既存の HOLD / 同一 publication 再照合を維持する。失敗中の新しい編集世代への変更は許可しない。
-- この Draft は Android/実機での保存採用や速度・メモリ合格を意味しない。#338 の数値・texture 台帳検証とは別に、DNG decode → Bitmap/JPEG → publication、foreground service、preview 併走、失敗表示・retry の統合確認が必要。製品 merge と実機操作は別途承認する。
+- 保存開始前に保存対象AのGPU preview ownerの終了を確認し、保存は専用GL thread/contextを所有する既存Foreground Serviceで実行する。保存対象Aのpreviewと同時描画せず、保存後は利用者が明示的にpreviewを再開する。previewのtrimでforeground exportのownerを解放しない。
+- 取消は上記の共通保存契約に従う。JPEG入口前かつ全cleanup完了と確認できた同プロセス/同世代だけ明示retryを許し、不明・入口後・再起動はHOLDを維持する。取消要求を解放済みや公開済みの証拠にしない。
+- GPU帯64/256/端数帯と全画面GPUの比較、入力/公開/ownerの安全契約は自動検査する。CPUとの数値差は参考記録のみで、Gate 2は本人の実写判断とする。[承認記録](https://github.com/reitojike/cinematic-camera/issues/291#issuecomment-6813411664) のAPK・通常保存範囲を、後続版や取消/故障・24MP・性能の合格へ広げない。通常版のGPU既定化は #353 のPRマージまで提案であり、マージと実機操作には別途承認が必要。
+
+### GPU別写真入力と保存の所有権（#350）
+
+- GPUでAを保存中でも、別写真Bの入力準備・表示は保存queueとは独立した単一入力ownerで行う。
+  CPUの入力・描画・保存、RAW展開、画素式、単一foreground保存の契約は変えない。
+- Bの表示だけで保存可能にしない。既存保存authorityから取得した同じ原本fingerprint・確定recipeの
+  handleを照合してから保存操作を有効にする。Aの結果や遅延した別選択の結果をBへ流用しない。
+- 入力と保存は別tokenで取消・解放を確認する。失敗closeのownerは保持し、他方の完了で解放済みにしない。
+  capture優先・原本照合・既存メモリ/熱guardを保ち、入力期限を延長して競合を隠さない。
+- 保存のため閉じた同じAのpreviewはREADY/PUBLISHED時の明示再開を維持する。
+  別写真Bの初回入力とは区別し、保存の暗黙retry、未確定publicationの解除、二重保存を追加しない。

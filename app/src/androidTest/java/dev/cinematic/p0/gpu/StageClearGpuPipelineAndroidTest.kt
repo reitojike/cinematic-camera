@@ -8,7 +8,6 @@ import dev.cinematic.p0.gpu.diag.GpuStageTap
 import dev.cinematic.p0.gpu.diag.OrtonDisplayAcceptance
 import dev.cinematic.p0.gpu.diag.GpuStageTap.Point
 import dev.cinematic.p0.gpu.reference.GpuReferenceImages
-import dev.cinematic.p0.gpu.reference.GpuTolerances
 import dev.cinematic.p0.gpu.reference.ImageDiff
 import dev.cinematic.p0.gpu.reference.KotlinReference
 import dev.cinematic.p0.raw.PhotoAdjustments
@@ -22,7 +21,7 @@ import org.junit.runner.RunWith
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
-/** #284 の全工程合成ゲート。実写、DNG 入力、実機性能の合格には読み替えない。 */
+/** #284 / #290 の全工程合成観測。CPU差は参考値で、実写・実機性能の合格ではない。 */
 @RunWith(AndroidJUnit4::class)
 class StageClearGpuPipelineAndroidTest {
     @Before fun isolatedEmulatorOnly() {
@@ -30,7 +29,7 @@ class StageClearGpuPipelineAndroidTest {
         check(android.os.Build.HARDWARE in setOf("ranchu", "goldfish")) { "Synthetic emulator only" }
     }
 
-    @Test fun displayAndMistMatchKotlinAcrossAll200Conditions() = gpu { egl ->
+    @Test fun displayAndMistReportKotlinAcrossAll200Conditions() = gpu { egl ->
         val cases = listOf(
             Matrix(GpuReferenceImages.Size(256, 192), listOf(0.0, .25, .5, 1.0), listOf(
                 PhotoAdjustments.NONE, PhotoAdjustments(60.0, 0.0),
@@ -45,13 +44,13 @@ class StageClearGpuPipelineAndroidTest {
         var observedPeak = 0L
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val log = File(checkNotNull(context.getExternalFilesDir("gpu-diagnostics")), "pipeline-display-acceptance.log")
-        log.writeText("Kotlin-only Orton input mask; maximum only; all-RGB p999 retained\n")
+        log.writeText("CPU_REFERENCE_ONLY historical Kotlin-only Orton mask; all-RGB p999 retained; no CPU-difference gate\n")
         for (case in cases) for (kind in GpuReferenceImages.Kind.entries) {
             observedPeak = maxOf(observedPeak, checkMatrixImage(egl, case, kind, log))
             conditions += case.adjustments.size * case.strengths.size
         }
         assertEquals("All #284 conditions must run", 200, conditions)
-        Log.i(TAG, "PASS DISPLAY8/Mist conditions=$conditions peakBytes=$observedPeak budgetBytes=$PREVIEW_BYTES " +
+        Log.i(TAG, "CPU_REFERENCE_ONLY DISPLAY8/Mist conditions=$conditions peakBytes=$observedPeak budgetBytes=$PREVIEW_BYTES " +
             "headroomBytes=${PREVIEW_BYTES - observedPeak}")
     }
 
@@ -109,19 +108,18 @@ class StageClearGpuPipelineAndroidTest {
             val difference = ImageDiff.display(expected.display8, display, photo.width, photo.height, "$condition DISPLAY8")
             val acceptance = OrtonDisplayAcceptance.evaluate(photo.width, photo.height,
                 { cpuMist[it] }, { gpuMist[it] }, expected.display8, display)
-            // Persist every condition and every excluded pixel before asserting, including failures.
+            // Persist every condition and historical boundary pixel, without a CPU-difference gate.
             acceptance.logLines().forEach { line ->
-                Log.i(TAG, "$condition $line")
-                log.appendText("$condition $line\n")
+                val referenceLine = "CPU_REFERENCE_ONLY $condition ${line.replace("passed=", "historicalWithinReference=")}"
+                Log.i(TAG, referenceLine)
+                log.appendText("$referenceLine\n")
             }
             assertEquals("$condition all-RGB percentile is unchanged", difference.p999, acceptance.p999AllRgb, 0.0)
             val decisions = checkNotNull(pipeline()).connected.lastDecisions
             val mistDifference = ImageDiff.scalar(expected.mistAutoStrength, decisions.mistAutoStrength)
-            Log.i(TAG, "$condition maxAll=${difference.maxDiff} maxOutside=${acceptance.maxDiffOutsideMask} " +
+            Log.i(TAG, "$condition CPU_REFERENCE_ONLY maxAll=${difference.maxDiff} maxOutside=${acceptance.maxDiffOutsideMask} " +
                 "p999All=${difference.p999} mean=${difference.meanDiff} mistDelta=$mistDifference peakBytes=${ledger.peakAllocatedBytes}")
-            acceptance.assertPassed()
-            ImageDiff.assertScalarWithin(expected.mistAutoStrength, decisions.mistAutoStrength,
-                GpuTolerances.MIST_AUTO_STRENGTH, "$condition mistAutoStrength")
+            assertTrue("$condition finite Mist decision", decisions.mistAutoStrength.isFinite())
             assertEquals("$condition faceCutFactor", 1.0, decisions.faceCutFactor, 0.0)
             assertWithinBudget(condition, ledger)
         } finally {

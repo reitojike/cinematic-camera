@@ -68,7 +68,7 @@ class DevelopEngineTest {
         assertEquals(DevelopEngine.GPU, setting.current())
     }
 
-    @Test fun releaseDoesNotExposeOrActivateAPersistedGpuChoice() {
+    @Test fun hiddenCpuDiagnosticDoesNotExposeOrActivateAPersistedGpuChoice() {
         val store = Store("GPU")
         val setting = store.setting(visible = false)
         assertFalse(setting.visible)
@@ -77,6 +77,21 @@ class DevelopEngineTest {
         assertFalse(setting.select(DevelopEngine.GPU, GpuAvailability.Available))
         assertFalse(setting.select(DevelopEngine.CPU, GpuAvailability.Available))
         assertEquals("GPU", store.value)
+    }
+
+    @Test fun onlyOrdinaryBuildsDefaultToGpu() {
+        for (type in listOf("debug", "release")) assertEquals(DevelopEngine.GPU, defaultDevelopEngine(type))
+        for (type in listOf("gpuDiagnostic", "rawDiagnostic", "previewDiagnostic", "original24Probe", "future"))
+            assertEquals(DevelopEngine.CPU, defaultDevelopEngine(type))
+    }
+
+    @Test fun ordinaryGpuPolicyNeverReadsOrWritesDiagnosticPreferences() {
+        val setting = DevelopEngineSetting({ error("Must not read diagnostic preference") },
+            { error("Must not write diagnostic preference") }, false, DevelopEngine.GPU)
+        assertEquals(DevelopEngine.GPU, setting.current())
+        assertEquals(DevelopEngine.GPU, setting.beginExport())
+        assertFalse(setting.visible)
+        for (engine in DevelopEngine.entries) assertFalse(setting.select(engine, GpuAvailability.Available))
     }
 
     @Test fun settingIsRestrictedByBuildType() {

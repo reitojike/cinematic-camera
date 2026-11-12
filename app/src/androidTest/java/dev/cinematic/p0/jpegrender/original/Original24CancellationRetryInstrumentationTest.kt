@@ -30,28 +30,30 @@ import org.junit.runner.RunWith
  */
 @RunWith(AndroidJUnit4::class)
 class Original24CancellationRetryInstrumentationTest {
-    @Test fun normalCpuSaveCancellationRequiresExplicitRetryBeforePublication() = runCase(DevelopEngine.CPU)
+    @Test fun diagnosticCpuSaveCancellationRequiresExplicitRetryBeforePublication() = runCase(DevelopEngine.CPU)
     @Test fun gpuSaveCancellationRequiresExplicitRetryBeforePublication() = runCase(DevelopEngine.GPU)
-    @Test fun normalCpuSaveCancellationAfterJpegEntryRemainsHeld() = runCase(DevelopEngine.CPU, afterJpegEntry = true)
+    @Test fun diagnosticCpuSaveCancellationAfterJpegEntryRemainsHeld() = runCase(DevelopEngine.CPU, afterJpegEntry = true)
     @Test fun gpuSaveCancellationAfterJpegEntryRemainsHeld() = runCase(DevelopEngine.GPU, afterJpegEntry = true)
 
-    private fun runCase(engine: DevelopEngine, afterJpegEntry: Boolean = false) {
+    @Test fun normalGpuSaveCancellationRequiresExplicitRetryBeforePublication() = runCase(DevelopEngine.GPU, ordinary = true)
+    @Test fun normalGpuSaveCancellationAfterJpegEntryRemainsHeld() = runCase(DevelopEngine.GPU, afterJpegEntry = true, ordinary = true)
+
+    private fun runCase(engine: DevelopEngine, afterJpegEntry: Boolean = false, ordinary: Boolean = false) {
         val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
         val args = InstrumentationRegistry.getArguments()
         assumeTrue(args.getString("isolated") == "true" && args.getString("saveCancellationRetry") == "true")
         assumeTrue("Physical devices are excluded", Build.HARDWARE in setOf("ranchu", "goldfish"))
-        // CPU must run in the ordinary build, whose saved diagnostic preference cannot enable GPU.
-        assumeTrue(app.packageName == if (engine == DevelopEngine.CPU) "dev.cinematic.p0" else "dev.cinematic.p0.gpudiagnostic")
+        // Diagnostic CPU/GPU stay selectable; the ordinary build is fixed GPU without a setting UI.
+        assumeTrue(app.packageName == if (ordinary) "dev.cinematic.p0" else "dev.cinematic.p0.gpudiagnostic")
         val setting = DevelopEngineSetting(app)
         if (engine == DevelopEngine.GPU) {
             val capabilities = GlThread().use { thread -> thread.call {
                 EglContexts(thread, app.assets).use { GlCapabilities.inspect(it) }
             } }
             assertTrue("Required GPU capabilities: ${capabilities.missing}", capabilities.supported)
-        } else {
-            assertFalse(setting.visible)
-            assertEquals(DevelopEngine.CPU, setting.current())
         }
+        assertEquals(!ordinary, setting.visible)
+        if (ordinary) assertEquals(DevelopEngine.GPU, setting.current())
         val preferences = app.getSharedPreferences("capture-probe", Context.MODE_PRIVATE)
         val hadEngine = preferences.contains(ENGINE_KEY)
         val oldEngine = preferences.getString(ENGINE_KEY, null)
@@ -68,7 +70,7 @@ class Original24CancellationRetryInstrumentationTest {
         var success = false
         var failure: Throwable? = null
         try {
-            if (engine == DevelopEngine.GPU) assertTrue(setting.select(engine, GpuAvailability.Available))
+            if (!ordinary) assertTrue(setting.select(engine, GpuAvailability.Available))
             assertEquals(engine, setting.current())
             val original = requireNotNull(resolver.insert(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
                 ContentValues().apply {
