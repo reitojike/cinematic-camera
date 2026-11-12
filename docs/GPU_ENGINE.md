@@ -3,8 +3,8 @@
 [親 Issue #276](https://github.com/reitojike/cinematic-camera/issues/276) §4 と
 [契約 Issue #277](https://github.com/reitojike/cinematic-camera/issues/277) PR1 を転記した設計の正本。
 現行の API・GLSL・実装設計を記録する。Draft PR中の変更はマージまで提案であり、mainの契約を置き換えない。
-進捗・検証結果・採否は Issue / PR に記録する。通常debug/releaseの新規プレビュー・保存をGPU既定とする #353 の変更は、マージまで提案として扱う。
-#291は記録された診断APKの実写確認と本人承認を完了した。GPU既定化PRのマージには別途本人の承認を必要とする。
+進捗・検証結果・採否は Issue / PR に記録する。通常debug/releaseの新規プレビュー・保存は #354 でGPU既定化済み。診断・旧保存世代のCPU依存は残る。
+#291は記録された診断APKの実写確認と本人承認を完了した。後続版・未確認条件の合格へ広げない。
 CPU数値差は参考値。#290のGPU基準画像回帰は現行GPU出力を対象にAndroidで先行し、既定切替や様子見期間の終了を待たない（§4.11）。
 以下は親Issueの節番号を維持し、実装との差を各節に記す。
 
@@ -411,7 +411,7 @@ EGL/GLES bindingは [LWJGL公式](https://www.lwjgl.org/guide) と
 
 #### D0 と D1〜Dn、CPU 整理の順序（ロードマップ v2）
 
-管理先は既存 #290 / #276。#349 の Android 手動基準登録は main に反映済み。#355 の既知共通黒化は未修正のまま実機の様子を見て再調査する。CPUへ戻す運用は想定しないが、削除は次の条件と手順を満たしてから行う。
+管理先は既存 #290 / #276。#349 の Android 手動基準登録は main に反映済み。#355 の既知共通黒化は PR #361 で修正中であり、基準更新は本人の目視確認待ち。Draftの修正をmainへ先取りしない。CPUへ戻す運用は想定しないが、削除は次の条件と手順を満たしてから行う。
 
 #357 の保存取消後の設定変更は、dev.1の普段使いに影響するためD0/24MP完了待ちにせず今すぐ並行する。GPUの24MP保存と保存状態コードが競合する場合のみ24MPを優先し、#357のその部分を後へ回す。確認済み取消だけ新世代を許し、公開状態不明・cleanup未確認はHOLDを維持する。保存挙動の変更はマージ前に本人へ提示・確認する。
 
@@ -435,6 +435,71 @@ CPU整理の境界:
 - **参照と履歴**: KotlinReference、CPU golden、旧診断履歴は代替試験と保存先・削除範囲を確認する。GLSL正本化だけを根拠に無差別削除しない。
 
 初回表示 #233/#241 と顔検出 #79 は調査・設計を先行し、実装は24MPと整理が落ち着いてから。初回表示は#260と競合するため24MP後、顔のGPU連携はリファクタリング後。性能は計測計画・分析を並行可とするが改善実装、撮影look #80、追加look #83 は後段とする。顔検出ライブラリ採用、実機計測、見た目変更は別途本人承認する。
+
+#### D0: 現行コードに対する責務・依存の棚卸し
+
+初回照合基点は main `579500f`（#356 / #359 反映後）。main `3a92047` への取込み時に、#357（PR #364）・#360・#367・#369の反映を再照合した。以下は削除・分離の設計案であり、コード変更、CPU廃止、Mesa全工程CI移行の完了を表さない。現行契約は [develop](../specs/develop/spec.md)・[storage](../specs/storage/spec.md)・[diagnostics](../specs/diagnostics/spec.md) を優先する。後続PRはその時点のmainへ再照合し、未マージの #355 の成果を実装済みに数えない。#357の確認済み取消後の新世代受付と#360の診断追加は反映済みだが、旧CPU更新互換・24MP性能の動的合格を意味しない。
+
+表のコードパスは `app/src/main/java/dev/cinematic/p0/` からの相対。保持は永久固定という意味ではなく、挙動・互換性を置換する根拠が揃うまで削除不可という意味である。
+
+| 責務・コード根拠 | 保持する境界 | 削除・分離候補と先行条件 |
+| --- | --- | --- |
+| `gpu/DevelopEngine.kt`: `defaultDevelopEngine` / `DevelopEngineSetting.beginExport` | 通常debug/releaseはGPU、他variantはCPU既定。選択UIはgpuDiagnostic限定。保存開始時の固定値と能力不足の見える失敗 | 診断選択UI・設定読書き・新規CPU入口は候補。enumやCPU既定引数の一括除去は不可。診断移動と旧保存互換を先に監査 |
+| `photoroll/ManualTrialPhotoRollRenderer.kt`: GPU準備とCPU draft/exactの分岐。`StageClearTrialPipeline.kt` / `StageClearTrialRenderer.kt` | 同じ写真・調整値、比較表示、取消、原本再照合、GPU preview ownerの終了確認 | CPU draft/exactと試験描画本体は候補。`TrialStrengthEditor` 等の編集操作やGPU入口を名前の「Trial」だけで削除しない |
+| `gpu/StageClearGpu.kt` 内の `ConnectedStageClearGpuPipeline`、`gpu/preview/` | AS_SHOT入力・写真解析・NORMAL cacheとFULL_RECOMPUTE・GL thread/context単位の所有。旧A完了を新Bへ反映しない | UI/lifecycleと画素graphの境界を分離候補とする。公開API §4.2 の変更は親Issue合意が必要。24MPの入力/owner変更後に着手 |
+| `jpegrender/original/Original24Attempt.kt` / `Original24GpuOutput.kt` | snapshot、native decode、寸法/geometry確認、解析、Bitmap/JPEG、全close確認をCPU/GPUで共用。JPEG入口の不可逆証跡 | `OriginalStageClear24` 呼出しとCPU pack分岐だけが画素削除候補。attempt全体やJPEG入口フラグ・cleanupを削除しない。#260/#101と保存互換監査が先 |
+| `raw/original/OriginalStageClear24.kt`、`raw/R7Base*` / `StageClear*`、`jpegrender/JpegGenerationAttempt.kt` | GPUから参照される型・定数・解析・係数と、CPU診断/参照試験を区別 | CPU画素実行・旧private producerは候補。参照元を製品・診断・test別に0件確認してから限定削除。#355の画素修正と同時編集しない |
+| `raw/original/OriginalRaster.kt` / `OriginalFields.kt` / `NativeOriginalRaster.kt`、`jpegrender/original/Original24PreviewSession.kt` | LibRaw入力、RGB16/行読み、AS_SHOT縮小、再読取と解放。GPUも利用する共有基盤 | raw/session一括削除は不可。CPUルックcacheとAS_SHOT入口の分離だけを候補とし、#101/#260の変更を先に反映 |
+| `raw/R7PreviewInputs.kt` / `PhotoAdjustments.kt` / `StageClearBlur.kt` | `StageClearGpu.openPhoto` と `Original24Attempt` が測光準備を利用。GPU resample/exportもblurのfilter/係数を利用 | CPUという配置名は削除根拠にしない。画像型、入力解析、調整値、係数を画素実行から分ける。数値・丸め・軸順は不変 |
+| `rawcapture/AndroidManualOriginalTrialSaves.kt` / `ManualOriginalTrialRequests.kt` / `ManualOriginalTrialSaveOwner.kt`、`photoroll/ManualTrialJpegSaveOwner.kt` | source/recipe/generation、単一queue、原本照合、journal/publication、FGS、retry/HOLDの権威 | 描画切替整理から独立。#357が取消後新recipeの条件を担当。D0は同ファイル・codec・世代終端条件を変更しない |
+
+**定数の正本案**: 現在 `gpu/ShaderConstants.kt` は `raw` の `StageClearV1`、Glow/Mist/Orton/CharacterのV1、`R7BaseV1` を参照し、`ShaderLibrary.kt` 内の `ShaderSource` がdefineとincludeを展開する。GLSLの画素式を正本にすることと、このKotlin定数依存をなくすことは別である。後段Bでは、既存値をそのまま保持するGPU用の単一の定数定義へ移し、ShaderConstantsを唯一の展開口にする案を採る。CPU参照が残る間は同じ定義を参照させ、値のコピーを増やさない。名前・値・Float/Double種別・配列順・生成define全文の同一性とAndroid回帰を確認してから旧定義を削除する。数式へ定数を直書きする変更、#355の式・cache版変更、recipe版変更をこの移動に混ぜない。実際のファイル名と移動差分は後段BのPRで確定する。
+
+#### D0: 保存世代と旧CPU互換の安全境界
+
+`AndroidManualOriginalTrialSaves.Backend.selectedEngine` は最初の実保存で取得する**プロセス内保持値**。`ManualOriginalTrialRequestCodec` v2は原本・世代・強度・調整値・recipeを保存するがengine欄を持たない。このため「永続CPU世代をengine欄で選別してGPUへ移行できる」とは設計しない。旧requestから不明なengineや完了を推定しない。
+
+| 観測状態 | 保持する扱い・削除前の検証 |
+| --- | --- |
+| 同プロセスのCPU ownerが実保存開始済み | 固定engineをGPUへ変更しない。旧owner・workerが残る状態でCPU producerを差し替えない。更新/再起動と同プロセス再試行を別ケースにする |
+| JPEG入口前の確認済み取消/producer failure | 同一requestの明示retry許可はプロセス内だけに保持。#357 / PR #364で確認済み取消に限り新recipe受付を追加済み。旧ownerの取消許可・全cleanup・intent一致・publication不存在を再確認し、新request確定後に旧世代を失効させる。旧intentは消さない。producer failureには新recipe許可を広げず、取消表示だけで世代を捨てない |
+| 再起動時にintentだけが残る、解放/JPEG入口/公開結果が不明 | intentだけのrestartはHOLD。既存公開記録がUNKNOWNならUNCONFIRMED/PUBLICATION_UNKNOWNとして同一publicationの再照合を維持する。intent削除、GPU再描画、旧世代の自動成功/自動retryへ変換しない。engineを復元できないことを正常GPU新規保存の証拠にしない |
+| 完成JPEG/proof・publicationがある | 既存成果物と同じ公開記録を再照合。CPU成果物をGPU成果物へ再生成せず、重複公開しない。原本照合/読取権限失効・改変時の停止を維持 |
+| 未開始request・別recipe受付 | request保存と実producer開始を分けて確認。generation fenceと原本同一性を維持する。#357の確認済み取消からの新世代受付を含め、CPU削除PRで更新互換ケースを再列挙する |
+
+CPU削除のPRには、旧codec bytesの読取、同recipe再利用、異なるrecipeのfence、intentありrestart、既存JPEG再照合、publication不明、cleanup失敗のfixture対応表を付ける。`ManualOriginalTrialRequestsTest` / `ManualOriginalTrialSaveOwnerTest`、Androidの原本・GPU保存境界試験を維持する。現在の静的照合を更新互換の動的検証済みとはしない。旧データの移行・消去や復旧契約の変更は個別承認が必要。
+
+#### D0: 診断・回帰・Mesa接続の分離案
+
+`app/build.gradle.kts` は `gpuDiagnostic` へ `src/rawDiagnostic/java` を追加する。従ってRAW診断削除はGPU診断の共有Hub/入力/結果表示に波及する。`original24Probe`、`rawDiagnostic`、`previewDiagnostic`、`gpuDiagnostic` と `rawprobe/` は別対象として扱い、variant名から不要と判断しない。`src/gpuDiagnosticTest` のDNG入力・Files選択・lifecycle試験、`src/androidTestRawDiagnostic` 等の故障/原本検査、PR #360の並行メモリ観測の移動先を決めてからhost画面・manifest・Gradle配線を除去する。
+
+| 層 | 現在の根拠と維持対象 | 後続の境界 |
+| --- | --- | --- |
+| Android全工程回帰 | `app/src/androidTest/java/dev/cinematic/p0/gpu/golden/GpuGoldenAndroidTest.kt` と採用90条件。実pipeline、環境/manifest/hashと本人目視更新 | #355の差と基準採否を先に照合。CPU削除・リファクタ各PR前の手動回帰を継続。基準の変更/閾値緩和はD0で行わない |
+| Android安全性 | preview owner、保存取消/失敗/解放、原本・世代・公開、FGSとlifecycle。gpuDiagnostic専用テストも対象 | 通常試験側へ移す際はtest host・manifest・opt-in引数・実行件数も移す。クラス移動だけ、skip、コンパイル成功を実行成功にしない |
+| 既存Mesa CI | `app/src/testGpuMesa/.../mesa/` の `MesaShaderAssetsTest` / `MesaImageAgreementTest` / `MesaExportBandsTest` / `MesaReferencePolicyTest`、`tools/gpu-diagnostic/check_mesa_reports.py` | 実asset全件compile/link、color/copy、部分resample/band、finite/shape・必須suite/件数/skip拒否を維持。現在は実全工程の継続CIではない |
+| 参照・fixture | KotlinReference、CPU golden、合成入力、純粋なcount集計・copy・cache/freshの検査 | CPU差の参考記録とGPU同士/安全assertを分ける。代替対応表がないCPU fixture/試験は保持。CPU renderer削除とgolden廃棄を同じ理由にしない |
+| 診断/計測 | `gpu/diag/GpuStageTap.kt`、FULL_RECOMPUTE、台帳・工程計測 | テストから使うtapと所有/解放観測を保持。性能のwall/texture/PSSを別々に扱い、#260のguard/予算は変更しない |
+
+**Mesaへ渡す境界案**: 現在、`EglContexts`・`GpuTexture`・`PassGraph`・`GpuFence`・`ShaderLibrary`・graph/analysis/export各所は `android.opengl.GLES32` 等へ直接依存し、Mesa側はLWJGLの `MesaContext` / `MesaShaders` / `MesaPixels` を使用する。共通assetだけでは全工程共通実行にならない。D1以降でGL呼出し・context能力・資源生成/破棄・同期・readbackを小さいbinding境界に切り、Android実装とtest-only Mesa実装を差し込む案とする。実graphの工程順・uniform・入力解析・cache・帯halo・texture台帳を共通側に残す。UI Surface/Choreographer、Android FGS/publication、Bitmap/JPEG encodeはAndroid結合側に残し、Mesaではそれらの合格を主張しない。
+
+preview/export共通化は、同じ式・定数・pass入出力の定義を共有する範囲に限定する。全画面previewと多走査/帯exportのスケジューラ・halo・readback・owner寿命を無理に統一しない。`GpuFailures.kt` を低水準失敗型の正本とし、固定理由への変換とUI集計、producerのJPEG前後証拠、保存HOLD判定を分ける。汎用catchで未解放を成功に変えたりCPUへ回避したりしない。
+
+既存LWJGL 3.4.3のtest-only構成と依存非混入検査を再利用し、CI専用renderer/数式コピーは作らない。binding抽出の各段階はAndroidで挙動不変を確認し、D1〜Dnの後で同じ全工程をMesaから実行する。Mesa基準はAndroid基準の無断転用をせず、driver差・条件数・環境と本人確認を別に記録する。既存 `.github/workflows/android.yml` の必須集約（product / gpu-diagnostic / raw-diagnostic / rawprobe / jni-isolation / mesa）は、対応試験の移動をレビューするまで削らない。
+
+#### D0: #231 の共通旧資料と正本の対応
+
+下表はD0と重なる資料の移行境界であり、旧specの削除許可や全資料の監査完了ではない。番号は `specs/` の既存ディレクトリ接頭辞。各配下のspecだけでなくplan/tasks・補足・被リンクを削除PRで確認する。現行契約はLiving Spec、恒久設計は本書等、再実行手順は対応docs、過去の採否/実測/進捗は既存Issue/PRとGit履歴へ残す。
+
+| 旧資料 | 現行正本・残す根拠 | 編集担当と先行条件 |
+| --- | --- | --- |
+| 014-stage-clear-v1、015-stage-clear-android（preview-inputs含む）、020-stage-clear-trial、034-trial-session-reuse、035-look-skin-sharing、036-photo-adjustment-pipeline、052-orton-zero-keep、056-drag-preview-decisions、058-preview-row-workers | develop/spec、本書。入力域・測光・cache・共有係数・診断限定と採否履歴を保持 | #290の画素/共有依存担当。#355採用内容を先取りせず、CPU式と共通解析を分離後に重複削除を判定 |
+| 016-raw-capture-lifecycle、024-jpeg-generation、037-original-stage-clear-24mp、038-export-preview-lifecycle、043-foreground-export、047-durable-edit-values | storage/spec、develop/spec、[GPU保存接続](GPU_EXPORT_SAVE_INTEGRATION.md)。原本/品質/保存世代/再照合/FGSの未集約詳細は保持 | #290が依存表、#357が取消/新recipe、#101/#260が原寸入力/メモリを担当。共有ファイルの移行編集は各変更後に調整。旧「24MP」の名称を現製品対応済みの証拠にしない |
+| 019-dng-trial-display、026-full-resolution-probe、027-baseline-jpeg-small、028-baseline-jpeg-large、040-diagnostics-design、051-gpu-band-probe | diagnostics/spec、[RAW診断](RAW_DIAGNOSTIC_BUILD.md)、[RAW probe](RAW_PROBE.md)、[基準JPEG probe](BASELINE_JPEG_PROBE.md)、[GPU診断](GPU_DIAGNOSTIC.md)。隔離・合成・非公開/製品未採用の境界を保持 | #290の診断移動担当。LibRaw/JNI・rawprobe・GPU診断host依存を照合後に整理。#360の診断fixture/計測を移す前に削除しない |
+| docsのCPU並列候補（ORTON_PARALLEL_VALIDATION、CHARACTER_PARALLEL_CANDIDATE、REMAINING_ROW_PARALLEL_CANDIDATE）、PREVIEW_DIAGNOSTICS、GPU_PIPELINE_DIAGNOSTICS、GPU_GATE1_PART2 | 本書/diagnostics/specと各Issueの採否。過去の速度・台帳・失敗は当時の条件付き履歴として保持 | #290の診断/回帰担当。現行再実行入口と共有観測の有無を確認し、履歴と現行手順を区別してから整理 |
+| PREVIEW_MEMORY_PROBE、PREVIEW_ORIGINAL_CHECKS、GPU_EXPORT_PHASE2 | 原本照合・メモリ観測・ロードマップの既存正本を維持 | #260/#101および並行計画担当。本D0では編集しない。最新結果を後続削除/分離PRへ再照合 |
+
+028-face-mask-core等の顔機能、撮影/露出/UIを含む非D0資料は #231 の管理に残す。#358/#359の移行をD0でやり直さない。Living Specに残る「通常CPU」「#353マージ前提」等の旧記述は、#354後の契約と不整合になっている箇所があるため後続の担当PRで訂正する。旧資料の当時の失敗や未確認を成功へ書き換える理由にはしない。
 
 ### 4.12 失敗時の扱い
 
