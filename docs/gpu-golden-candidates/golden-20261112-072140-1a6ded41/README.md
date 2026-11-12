@@ -1,31 +1,26 @@
-# GPU基準候補: 未採用・本人レビュー用
+# GPU candidate review: current-output regression reference
 
-ユーザーの指示により PR #349 の Files changed で目視確認するため公開した合成画像です。実写真は含みません。
-候補取得元: commit 1a6ded41d0fe9eb09e467885e625a6c722c237a6 / golden-20261112-072140-1a6ded41
+Source: `1a6ded41d0fe9eb09e467885e625a6c722c237a6`; run `golden-20261112-072140-1a6ded41`.
+All 90 synthetic native PNGs remain unchanged in `candidates/`. No personal photographs are included. The owner completed visual review; the two overview sheets and ten duplicate representatives were removed as requested before merge.
 
-## 見るファイル
-- 全90条件の一覧: review-only/overview-1.png（c001–c045）、overview-2.png（c046–c090）
-- 代表原寸10枚: review-only/representatives/
-- 全候補原寸90枚: candidates/c001.png ～ c090.png
+## Decision and limitations (2026-11-12)
 
-review-only の一覧2枚と代表10枚は、本人の確認が済んだらマージ前に削除します。今は確認待ちのため保持します。
-PNGは目視用の派生物であり、採用済みbaselineではありません。既存RGB8 gzip・採用状態・実装・CPU goldenは変更していません。
-一覧のみ縮小。原寸PNGは既存出力とバイト一致し、sRGB指定を保持。全90枚のRGBはRGB8原本と照合済み。
-S=strength / W=warmth / EV=露出補正。保存帯は最終画像で確認し、帯ごとの画像は保存していません。
+The owner accepted the observed CPU/GPU agreement for this investigation, without requiring shared artifacts to be fixed now. Investigate and consider correction again if noticeable during real-device use. This does not establish normal image quality or resolve black inversion.
 
-## 代表選定
-- c059: 暗部階調
-- c065: 肌色・横位置
-- c066: 肌色・縦位置
-- c069: 低露出・寒色
-- c070: 高露出・暖色
-- c077: グレー・保存サイズ
-- c079: 点光源・ハイライト
-- c081: 高彩度原色
-- c082: 白付近階調
-- c090: 複合パターン・端数保存サイズ
+- All 90 outputs compared: 10 byte-identical, every maximum channel difference <=1/255, every P99 channel difference 0. Observations only, not new thresholds.
+- Final sources: c001-c076 Android KotlinReference/production analysis; c077-c090 host JVM full-frame existing CPU functions/fixed metered base EV=0 plus user EV, not the Android product band path.
+- Android completed 77 output files including c077. The export selector FAILED at c078 with OOM; c079-c090 were not run on Android. This is NOT 77 Android test passes. Host produced 14 exports; overlapping c077 was byte-identical. Host success does not establish Android resource safety.
+- Near-black (all RGB<=3) classification had zero GPU-only/CPU-only pixels in every case. Identified blackening cases c009-c012, c037-c040, c053-c055, c057, c075 therefore also occur at the same CPU coordinates.
+- c009/c010 black inversion first occurs in shared R7 foundation. c020 boundary color spread begins in shared Glow and increases in Mist at inspected samples. [Known issue #355](https://github.com/reitojike/cinematic-camera/issues/355) remains unresolved.
+- Separate CPU-only synthetic 0.001..1 input at permitted EV=-2 reached 1,489 negative foundation denominators: center tone Y=6.0865 becomes foundation Y=0. EV=0 had none. The same shader formula was inspected, but this new probe was not executed on GPU. Real-photo frequency/severity is unproven.
 
-## 候補条件とPNG SHA-256
+## Adoption and execution
+
+PNG pixels and sRGB metadata are unchanged. Persistent baseline adoption remains a separate `gpu_golden.py approve` step. PNG publication alone does not wire a regression test; no approved baseline directory has been added by this update. No equations, CPU golden, thresholds or CI configuration changed.
+
+The existing Android capture is manual, not automatically run in CI. Original 90 GPU conditions and 28 band/full comparisons passed. Future same-environment baseline comparison remains exact RGB8; the CPU observations do not relax that policy. See [execution instructions](../../../tools/gpu-golden/README.md).
+
+## Native PNG conditions and SHA-256
 
 |ID|種別|群|寸法|S|W|EV|PNG SHA-256|
 |---|---|---|---|---|---|---|---|
