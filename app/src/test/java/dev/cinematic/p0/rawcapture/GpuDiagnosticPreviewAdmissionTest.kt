@@ -10,7 +10,7 @@ import org.junit.Test
 class GpuDiagnosticPreviewAdmissionTest {
     private val previewReady = permittedConditions().copy(memoryBudgetConfirmed = false, previewMemoryAvailable = true)
 
-    @Test fun cleanAdmissionCapturesPreDecisionStateAndStillOwnsTheOneSlot() {
+    @Test fun cleanAdmissionCapturesPreDecisionStateAndOwnsTheOneGpuSlot() {
         val coordinator = ready()
         val result = coordinator.tryStartGpuDiagnosticPreviewObserved(previewReady)
         val attempt = requireNotNull(result.attempt)
@@ -119,23 +119,24 @@ class GpuDiagnosticPreviewAdmissionTest {
         assertEquals(setOf(AutoDevelopBlocker.FOREGROUND), result.snapshot.storedGlobalPreviewBlockers)
     }
 
-    @Test fun pendingExportStillBlocksPreviewWithoutChangingItsOwnership() {
+    @Test fun pendingExportAllowsGpuPreviewButStillBlocksCpuPreview() {
         val saveReady = previewReady.copy(memoryBudgetConfirmed = true)
-        val result = assertSameDecision(stored = saveReady, setup = {
-            assertNotNull(it.reserveForegroundExport(Any(), saveReady))
-        })
-        assertNull(result.attempt)
-        assertTrue(result.snapshot.hasPendingExport)
-        assertFalse(result.snapshot.hasActiveSlot)
-        assertEquals(0, result.snapshot.captureCount)
-
         val coordinator = ready(saveReady)
         val owner = Any()
         val request = requireNotNull(coordinator.reserveForegroundExport(owner, saveReady))
-        assertNull(coordinator.tryStartGpuDiagnosticPreviewObserved(previewReady).attempt)
-        assertNotNull(coordinator.tryStartForegroundExport(request, owner, saveReady))
+        assertNull(coordinator.tryStartPreviewObserved(previewReady))
+        val result = coordinator.tryStartGpuDiagnosticPreviewObserved(previewReady)
+        val preview = requireNotNull(result.attempt)
+        assertTrue(result.snapshot.hasPendingExport)
+        assertFalse(result.snapshot.hasActiveSlot)
+        assertFalse(result.snapshot.hasConflictingWork)
+        assertEquals(0, result.snapshot.captureCount)
+        val export = requireNotNull(coordinator.tryStartForegroundExport(request, owner, saveReady))
+        assertFalse(coordinator.shouldStop(preview))
+        assertFalse(coordinator.shouldStop(export))
+        assertTrue(coordinator.completeAfterResourcesClosed(preview))
+        assertFalse(coordinator.shouldStop(export))
     }
-
     @Test fun snapshotIsDetachedAndBlockerSetsCannotBeMutated() {
         val coordinator = ready(previewReady.copy(foreground = false))
         val snapshot = coordinator.tryStartGpuDiagnosticPreviewObserved(

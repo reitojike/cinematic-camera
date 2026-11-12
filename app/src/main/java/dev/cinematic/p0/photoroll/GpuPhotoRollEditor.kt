@@ -72,6 +72,20 @@ import kotlinx.coroutines.flow.StateFlow
         val identity = savedIdentity
         val contract = savedContract
         try {
+            // Reopening A while its own FGS owns it must not bypass the explicit resume contract.
+            renderer.activeGpuSave(source)?.let { retained ->
+                save = retained.save; saveState = retained.save.snapshot; exportPaused = true
+                savedStrength = retained.values.strength
+                savedWarmth = retained.values.temperature ?: 0.0
+                savedExposure = retained.values.brightness ?: 0.0
+                savedIdentity = PhotoEditRestoration.identity(retained.source)
+                savedContract = PhotoEditRestoration.contract()
+                recipeLoaded = true
+                editor = checkNotNull(TrialStrengthEditor.empty(retained.values).bind(retained.source))
+                session.close()
+                withContext(Dispatchers.IO) { GpuPhotoRollRetiredOwners.releaseBeforeOpen() }
+                return@LaunchedEffect
+            }
             withContext(Dispatchers.IO) { GpuPhotoRollRetiredOwners.releaseBeforeOpen() }
             val deadline = GpuInputRequestDeadline(nowMillis = SystemClock::elapsedRealtime)
             var loading: Deferred<Result<ManualTrialPhotoRollRenderer.GpuInput>>? = null
@@ -116,10 +130,11 @@ import kotlinx.coroutines.flow.StateFlow
                 savedWarmth = loaded.values.temperature ?: 0.0
                 savedExposure = loaded.values.brightness ?: 0.0
                 editor = checkNotNull(TrialStrengthEditor.empty(loaded.values).bind(loaded.original.reference))
-                save = loaded.save; saveState = loaded.save.snapshot
-                // Recreated editors must also respect a held/uncertain/failed save owner.
-                if (gpuSaveMustPauseLoadedPreview(loaded.save.snapshot.phase)) {
-                    exportPaused = true
+                loaded.retainedSave?.takeIf { gpuSaveMustPauseLoadedPreview(it.snapshot.phase) }?.let { retained ->
+                    if (retained.appliedStrength != loaded.values.strength ||
+                        retained.appliedAdjustments != PhotoAdjustmentPolicy.adjustments(loaded.values))
+                        throw PhotoRollSourceFailure("前の保存が未確定です。保存状態を確認してください")
+                    save = retained; saveState = retained.snapshot; exportPaused = true
                     session.close()
                     withContext(Dispatchers.IO) { GpuPhotoRollRetiredOwners.releaseBeforeOpen() }
                     return@coroutineScope
@@ -132,6 +147,9 @@ import kotlinx.coroutines.flow.StateFlow
     }
     val failure by session?.failure?.collectAsState() ?: remember { mutableStateOf<Throwable?>(null) }
     val presented by session?.presented?.collectAsState() ?: remember { mutableStateOf<PhotoEditValues?>(null) }
+    LaunchedEffect(failure) {
+        if (failure != null) cancellation.cancel()
+    }
     val ticket = editor.ticket
     LaunchedEffect(presented, ticket) {
         editor = gpuPresentedEditor(editor, presented, error != null || failure != null)
@@ -144,9 +162,18 @@ import kotlinx.coroutines.flow.StateFlow
             save?.appliedAdjustments == PhotoAdjustmentPolicy.adjustments(ticket.values))) return@LaunchedEffect
         save = null; saveState = null
         try {
-            val prepared = withContext(Dispatchers.IO) { renderer.prepareGpuSave(loaded.original, ticket.values, cancellation) }
+            val prepared = withContext(Dispatchers.IO) { renderer.prepareGpuSave(loaded, ticket.values, cancellation) }
             ensureActive()
-            if (editor.accepts(ticket)) { save = prepared; saveState = prepared.snapshot }
+            if (editor.accepts(ticket)) {
+                save = prepared; saveState = prepared.snapshot
+                // Save metadata remains serialized. Loading a new preview never waits for export.
+                // A retained failed/held generation still requires explicit recovery, as before.
+                if (gpuSaveMustPauseLoadedPreview(prepared.snapshot.phase)) {
+                    exportPaused = true
+                    session.close()
+                    withContext(Dispatchers.IO) { GpuPhotoRollRetiredOwners.releaseBeforeOpen() }
+                }
+            }
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (failure: Exception) {
             currentCoroutineContext().ensureActive()

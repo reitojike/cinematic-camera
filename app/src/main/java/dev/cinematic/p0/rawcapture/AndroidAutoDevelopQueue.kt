@@ -13,6 +13,7 @@ import dev.cinematic.p0.jpegrender.JpegGenerationRecipe
 @RequiresApi(29)
 internal object AndroidAutoDevelopQueue {
     private var owner: AutoDevelopQueue? = null
+    private lateinit var startup: CompletableFuture<Unit>
     private var adapters: List<RendererAdapter> = emptyList()
     /** Explicit enrollment before creating the process owner. No production caller/provider exists yet. */
     @Synchronized fun enrollManualRenderer(adapter: RendererAdapter) {
@@ -23,6 +24,12 @@ internal object AndroidAutoDevelopQueue {
         adapters = listOf(adapter)
     }
     @Synchronized fun get(context: Context): AutoDevelopQueue = owner ?: create(context.applicationContext).also { owner = it }
+
+    /** GPU input waits only for cold recovery, never for later exports on the save queue. */
+    @Synchronized fun startupCompletion(context: Context): CompletableFuture<Unit> {
+        get(context)
+        return startup
+    }
 
     fun prepareManual(context: Context, source: SharedOriginalReference, recipe: JpegGenerationRecipe): CompletableFuture<ManualDevelopHandle> {
         require(!recipe.isTrial) { "Private trial has a separate handle" }
@@ -73,7 +80,7 @@ internal object AndroidAutoDevelopQueue {
             journal(request.captureId, request.generation)
         }, backendFactory = { request -> AndroidAutoDevelopBackend(context, request, catalog) }).also { queue ->
             // First task on the existing IO owner, ahead of manual/private prepare. Failure retains this owner.
-            queue.restore {
+            startup = queue.restore {
                 Original24ScratchRecovery.product(context.noBackupFilesDir)
                 AutoDevelopInventory(root, { id, generation -> journal(id, generation).read() }).load()
             }
