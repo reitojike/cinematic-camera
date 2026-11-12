@@ -3,6 +3,7 @@ package dev.cinematic.p0.photoroll
 import android.content.ComponentCallbacks2
 import android.content.res.AssetManager
 import android.os.SystemClock
+import android.os.Bundle
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawingPadding
@@ -18,6 +19,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.CaptureTheme
 import dev.cinematic.p0.gpu.*
 import dev.cinematic.p0.gpu.preview.GpuInputPublication
+import dev.cinematic.p0.gpu.preview.GPU_INPUT_READINESS_TIMEOUT_MS
 import dev.cinematic.p0.jpegrender.original.*
 import dev.cinematic.p0.photoedit.AndroidPhotoEditRecipes
 import dev.cinematic.p0.photoedit.PhotoAdjustmentPolicy
@@ -25,6 +27,7 @@ import dev.cinematic.p0.photoedit.PhotoEditValues
 import dev.cinematic.p0.rawcapture.*
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -91,16 +94,21 @@ class GpuExportActiveOwnershipAndroidTest {
         assertNotEquals(sourceA.fingerprint, sourceB.fingerprint)
         AndroidPhotoEditRecipes(fixture.app).save(sourceB, B_VALUES).get(30, TimeUnit.SECONDS)
         val barrier = BandBarrier()
+        SwitchTrace(env).use { trace ->
         Original24GpuOutput.observeForDiagnostics(barrier.witness).use {
             try {
                 click("JPEGを保存")
                 val saveA = awaitActiveBand(fixture, barrier)
+                trace.save.set(saveA)
+                trace.mark("a-active-band")
                 val ticket = requireNotNull(ForegroundExports.gate.active())
                 val requestA = saveA.request
                 assertEquals(sourceA, requestA.source)
                 val oldPreview = env.owners.single()
                 assertPreviewClosed(oldPreview)
+                trace.mark("select-b-before")
                 instrumentation.runOnMainSync { env.selected = sourceB.uri }
+                trace.mark("select-b-after")
                 await("new photo selected before old export completes") { find { it.text?.toString() == B_NAME } != null }
                 assertSame(ticket, ForegroundExports.gate.active())
                 assertFalse(ticket.stopRequested)
@@ -114,9 +122,27 @@ class GpuExportActiveOwnershipAndroidTest {
                 assertNotEquals(sourceB.fingerprint, saveA.request.source.fingerprint)
                 fixture.assertWorkingSource(saveA)
                 assertEquals(B_VALUES, AndroidPhotoEditRecipes(fixture.app).read(sourceB))
+                if (InstrumentationRegistry.getArguments().getString("gpuExportSwitchContended") == "true") {
+                    // Controlled A contention, not an extension of B's admission/test deadlines.
+                    val until = SystemClock.elapsedRealtime() + GPU_INPUT_READINESS_TIMEOUT_MS + 1_000
+                    trace.mark("begin-fixed-a-contention")
+                    while (SystemClock.elapsedRealtime() < until) {
+                        assertSame(ticket, ForegroundExports.gate.active())
+                        assertFalse(ticket.stopRequested)
+                        assertNull(fixture.journal(saveA).read())
+                        Thread.sleep(100)
+                    }
+                    val preparationError = find {
+                        it.text?.toString() == "入力の準備を確認できません。再試行してください"
+                    } != null
+                    trace.mark("end-fixed-a-contention-bPreparationError=$preparationError")
+                }
+                trace.mark("release-a-band")
                 barrier.release.countDown()
                 await("old export finishes after photo switch", 180_000) { ForegroundExports.gate.active() == null }
+                trace.mark("a-gate-cleared")
                 fixture.verifyPublication(saveA)
+                trace.mark("a-publication-verified")
                 // verifyPublication reads back the actual JPEG fingerprint, dimensions and owner.
                 // Bind that same publication record to A's immutable original identity, not just a UI name.
                 val publicationA = requireNotNull(fixture.journal(saveA).read())
@@ -159,8 +185,63 @@ class GpuExportActiveOwnershipAndroidTest {
                 fixture.verifyOriginals()
             } finally { barrier.release.countDown() }
         }
+        }
     }
 
+    /** Test-only sampling; diagnostic overhead is evidence, not a performance measurement.
+     * Never touches admission, queue ordering or retry/timeout values. */
+    private class SwitchTrace(private val env: EditorEnvironment) : AutoCloseable {
+        val save = AtomicReference<AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle>()
+        private val enabled = InstrumentationRegistry.getArguments().getString("gpuExportSwitchTrace") == "true"
+        private val executor = if (enabled) Executors.newSingleThreadScheduledExecutor { task ->
+            Thread(task, "gpu-switch-test-trace").apply { isDaemon = true }
+        } else null
+        private val started = SystemClock.elapsedRealtime()
+        init { executor?.scheduleAtFixedRate({ sample("sample", SystemClock.elapsedRealtime()) }, 0, 2, TimeUnit.SECONDS) }
+        fun mark(stage: String) {
+            if (!enabled) return
+            val eventAt = SystemClock.elapsedRealtime()
+            try { executor?.execute { sample(stage, eventAt) } } catch (_: Throwable) { /* Diagnostics cannot replace evidence. */ }
+        }
+        private fun sample(stage: String, eventAt: Long) {
+            val now = SystemClock.elapsedRealtime()
+            try {
+                val current = save.get()
+                val publication = env.publications.value
+                val owners = env.owners.mapIndexed { index, owner ->
+                    "owner$index(surface=${owner.session.renderer.surfaceAttached.value}," +
+                        "presented=${owner.session.presented.value},failure=${owner.session.failure.value?.javaClass?.simpleName})"
+                }.joinToString(";")
+                val stacks = Thread.getAllStackTraces().entries.filter { (thread, frames) ->
+                    thread.name == "auto-develop" || frames.any {
+                        it.className.endsWith("ManualTrialPhotoRollRenderer") && it.methodName == "openGpu"
+                    }
+                }.joinToString(";") { (thread, frames) ->
+                    "${thread.name}:${thread.state}:" + frames.take(24).joinToString("|") {
+                        "${it.className}.${it.methodName}:${it.lineNumber}"
+                    }
+                }
+                output("eventAt=$eventAt observedAt=$now elapsed=${now - started} stage=$stage " +
+                    "gateActive=${ForegroundExports.gate.active() != null} " +
+                    "aPhase=${current?.state?.value?.phase} aHeld=${current?.hasUnreleasedResources} " +
+                    "publication=${publication.sequence}:${publication.observation.cameraState}:" +
+                    "${AutoDevelopPolicy.previewBlockers(publication.observation.conditions)} $owners stacks=$stacks")
+            } catch (failure: Throwable) {
+                output("eventAt=$eventAt observedAt=$now stage=$stage diagnosticFailure=${failure.javaClass.simpleName}")
+            }
+        }
+        private fun output(value: String) {
+            try { InstrumentationRegistry.getInstrumentation().sendStatus(0,
+                Bundle().apply { putString("stream", "\nGpuSwitchTrace $value\n") }) }
+            catch (_: Throwable) { /* Never replace a test failure with a reporting failure. */ }
+        }
+        override fun close() {
+            mark("trace-close")
+            executor?.shutdown()
+            try { if (executor?.awaitTermination(5, TimeUnit.SECONDS) == false) executor.shutdownNow() }
+            catch (_: InterruptedException) { executor?.shutdownNow(); Thread.currentThread().interrupt() }
+        }
+    }
     private class BandBarrier {
         val entered = CountDownLatch(1)
         val release = CountDownLatch(1)
