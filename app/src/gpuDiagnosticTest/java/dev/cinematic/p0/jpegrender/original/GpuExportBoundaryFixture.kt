@@ -24,8 +24,9 @@ import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 
-/** Small real-DNG factory fixture. Four 256-row bands include a two-row tail. No pixel oracle. */
-internal class GpuExportBoundaryFixture(val app: Context) {
+/** Real-DNG factory fixture. Default small size has four bands with a two-row tail. No pixel oracle.
+ * Explicit dimensions are used only by the opt-in concurrent memory probe. */
+internal class GpuExportBoundaryFixture(val app: Context, val width: Int = WIDTH, val height: Int = HEIGHT) {
     private data class OwnedRow(val uri: Uri, val name: String)
     private val rows = mutableListOf<OwnedRow>()
     val sources = mutableListOf<SharedOriginalReference>()
@@ -47,7 +48,7 @@ internal class GpuExportBoundaryFixture(val app: Context) {
                 put(MediaStore.MediaColumns.IS_PENDING, 1)
             }))
         val bytes = requireNotNull(resolver.openOutputStream(uri, "w")).use {
-            writeSyntheticTrialDng(it, WIDTH, HEIGHT, 1) { x, y -> 164 + (x * 65 + y * 25 + seed * 97) % 3500 }
+            writeSyntheticTrialDng(it, width, height, 1) { x, y -> 164 + (x * 65 + y * 25 + seed * 97) % 3500 }
         }
         assertEquals(1, resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null))
         rows += OwnedRow(uri, name)
@@ -61,7 +62,7 @@ internal class GpuExportBoundaryFixture(val app: Context) {
                 handles += save
                 assertEquals(ManualOriginalTrialSavePhase.READY, save.state.value.phase)
                 assertEquals(source, save.request.source)
-                assertEquals(Original24PreflightGeometry(WIDTH, HEIGHT, WIDTH, HEIGHT, 1, WIDTH, HEIGHT), save.geometry)
+                assertEquals(Original24PreflightGeometry(width, height, width, height, 1, width, height), save.geometry)
                 assertFalse(save.hasUnreleasedResources)
             }
 
@@ -78,7 +79,7 @@ internal class GpuExportBoundaryFixture(val app: Context) {
         val source = save.request.source
         val snapshot = File(work, "source-snapshot.dng")
         assertEquals(source.fingerprint.bytes, snapshot.length())
-        assertEquals(WIDTH.toLong() * HEIGHT * 6, File(work, "source-linear.rgb16").length())
+        assertEquals(width.toLong() * height * 6, File(work, "source-linear.rgb16").length())
         assertEquals(source.fingerprint, DngContentVerifier.verify(source.fingerprint, { snapshot.inputStream() }))
         assertFalse("Named GPU boundary must precede JPEG output-open", File(directory(save), "output.jpg").exists())
         assertNull(journal(save).read())
@@ -109,14 +110,14 @@ internal class GpuExportBoundaryFixture(val app: Context) {
         assertEquals(save.request.recipe, proof.request.recipe)
         assertEquals(save.appliedStrength, proof.appliedStrength, 0.0)
         assertEquals(save.appliedAdjustments, proof.adjustments)
-        assertEquals(OriginalRasterGeometry(WIDTH, HEIGHT, 1, WIDTH, HEIGHT, true), proof.geometry)
+        assertEquals(OriginalRasterGeometry(width, height, 1, width, height, true), proof.geometry)
         assertNotEquals(Uri.parse(save.request.source.uri), uri)
         requireOwned(row)
         val inspection = AndroidJpegInspector().inspect(
             { requireNotNull(resolver.openInputStream(uri)) }, record.fingerprint.bytes) { false }
         assertEquals(record.fingerprint, inspection.fingerprint)
         assertEquals(proof.request.output, inspection.output)
-        assertEquals(WIDTH, inspection.output.width); assertEquals(HEIGHT, inspection.output.height)
+        assertEquals(width, inspection.output.width); assertEquals(height, inspection.output.height)
         assertEquals(1, inspection.output.orientation); assertEquals("sRGB", inspection.output.color)
         verifyOriginals()
     }
@@ -188,7 +189,7 @@ internal class GpuExportBoundaryFixture(val app: Context) {
         private const val ENGINE_KEY = "develop/engine"
         val ALLOWED = AutoDevelopConditions(true, false, false, false, true, true, true, true, previewMemoryAvailable = true)
         fun run(expectedGpuFailures: Long = 0, expectedReason: GpuSaveFailureReason? = null,
-            body: (GpuExportBoundaryFixture) -> Unit) {
+            width: Int = WIDTH, height: Int = HEIGHT, body: (GpuExportBoundaryFixture) -> Unit) {
             val target = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
             val args = InstrumentationRegistry.getArguments()
             assumeTrue(BuildConfig.BUILD_TYPE == "gpuDiagnostic" && target.packageName == "dev.cinematic.p0.gpudiagnostic")
@@ -201,7 +202,8 @@ internal class GpuExportBoundaryFixture(val app: Context) {
             val prefs = target.getSharedPreferences("capture-probe", Context.MODE_PRIVATE)
             val hadEngine = prefs.contains(ENGINE_KEY)
             val oldEngine = prefs.getString(ENGINE_KEY, null)
-            val fixture = GpuExportBoundaryFixture(target)
+            require(width > 0 && height > 0 && width.toLong() * height <= 24_000_000)
+            val fixture = GpuExportBoundaryFixture(target, width, height)
             var success = false
             var failure: Throwable? = null
             try {
