@@ -585,7 +585,7 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                 ForegroundSaveNotice(jpegSave, foreground)
                 importConditions?.let { conditions ->
                     DngImportPanel(foreground && !pickerPending && !viewerPending && !permissionPending,
-                        conditions, { importBusy = it }) { uri ->
+                        conditions, { importBusy = it }, gpuPublications) { uri ->
                         importBusy = false
                         chooseDng(uri, false)
                     }
