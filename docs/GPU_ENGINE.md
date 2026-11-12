@@ -409,6 +409,26 @@ CIは通常の `debugRuntimeClasspath` / `debugUnitTestRuntimeClasspath` の依�
 EGL/GLES bindingは [LWJGL公式](https://www.lwjgl.org/guide) と
 [EGL API](https://javadoc.lwjgl.org/org/lwjgl/egl/EGL15.html) を利用する。
 
+#### D0 着手前の対応表と CPU 整理境界（計画）
+
+管理先は既存の #290 / #276。#349 の Android 手動基準登録と Mesa 全工程 CI は別段階であり、#355 の既知共通黒化は未修正のまま追跡する。本節は計画であり、以下の実装・削除を済んだものとしない。
+
+| 領域 | 再利用するものと次の作業 |
+| --- | --- |
+| shader / 共通 pass | 現 Mesa の全 asset compile/link、color/copy、部分 resample/band を再利用する |
+| R7 から最終表示 | Android の実 graph を Mesa から呼ぶ binding 境界を設計する。別 shader や CI 専用 renderer で代用しない |
+| 基準比較 | driver 差を別評価し、本人の基準採用を記録する。自動更新・CPU 閾値流用はしない |
+| 安全契約 | Android owner/取消/HOLD と Mesa finite/shape/帯 full を別層で維持し、missing/zero/failure/skip を拒否する |
+
+CPU 整理は参照関係を確認して別 PR に分割する。GLSL 正本化を raw/session の一括削除へ広げない。
+
+- **将来の削除候補（現在は維持）**: ManualTrialPhotoRollRenderer の CPU draft/exact、StageClearTrialPipeline/Renderer、R7Base/StageClear の画素実行、OriginalStageClear24/JpegGenerationAttempt の CPU 経路。診断・旧世代・試験依存を先に照合する。
+- **GPU と共有するため維持**: LibRaw、OriginalRaster/Fields、Original24PreviewSession の AS_SHOT、R7PreviewInputs、PhotoAdjustments/画像型、StageClearBlur の係数、ShaderConstants が参照する V1 定数。
+- **保存安全は別扱い**: 原本・世代/engine 固定・journal/publication・FGS・owner・retry/HOLD、既存 CPU 世代と診断 CPU 取消を削除候補と混同しない。
+- **参照と履歴**: KotlinReference、CPU golden、旧診断履歴は自動削除しない。代替・保存・削除の範囲を別々に確認する。
+
+各削除・リファクタリング PR 前に手動 GPU 回帰を行う。出力変更、所有権やメモリの悪化、新依存、既存世代の再解釈、安全試験の欠落があれば停止して報告する。CPU 差だけの停止基準は復活させない。
+
 ### 4.12 失敗時の扱い
 
 - GPU能力不足・context喪失・予算超過等は見える失敗にし、**CPUへ自動fallbackしない**。previewは選択写真の画像領域に理由と明示retryを示し、旧owner終了確認と原本再確認後だけ新sessionを開く。
