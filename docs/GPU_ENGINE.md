@@ -108,7 +108,7 @@ internal data class GpuDecisions(val mistAutoStrength: Double, val faceCutFactor
   - Compute シェーダー（ES 3.1 以上）
 - **精度**: シェーダーは `precision highp float;`。中間テクスチャは RGBA32F（色）・R32F（平面）を既定とする。RGBA16F は Gate 1 の計測で差が基準内と確認できたものだけに使う。
 - **スレッド**: GL の呼び出しはすべて `GlThread` 上。UI スレッドからは要求をキューに積むだけ。要求は**最新の1件だけ**を残して合流する（Choreographer のフレームごとに1回描画）。
-- **コンテキスト**: #341の製品GPU接続はpreviewとexportを独立owner/thread/contextにする。保存前にpreview owner終了を確認し、保存中はpreviewを停止する。保存後のpreview再開は明示操作。初期案の共有context・同時描画は採用していない。原本展開と表示の所有期間を重ねず、解放不明なら次ownerを開始しないためである。
+- **コンテキスト**: #341の製品GPU接続はpreviewとexportを独立owner/thread/contextにする。保存前に保存対象Aのpreview owner終了を確認し、保存中は同じAのpreviewを停止する。保存後のAのpreview再開は明示操作。別写真Bは独立した入力・preview ownerで準備・表示できる。初期案の共有context・同じAの同時描画は採用していない。同じAの原本展開と表示の所有期間を重ねず、解放不明ならその次ownerを開始しないためである。
 - **メモリ**: `GpuTexture` がバイト数を記録し、合計を `GpuMemoryLedger` に報告する。上限はプレビュー 128MiB 以下、書き出し 192MiB 以下（12MP）。超える要求は失敗させる（黙って縮小しない）。台帳は登録されたGPU textureの論理byteであり、CPU入力・Bitmap・driver・PSSや全工程のRAM上限ではない。`peakAllocatedBytes` は成功した予約の最大値を解放後も保持する。AS_SHOT を含む全工程の最大と予算との差を計測する。予算変更の判断と Gate 1 基準は [#276](https://github.com/reitojike/cinematic-camera/issues/276)・[#285](https://github.com/reitojike/cinematic-camera/issues/285) に記録する。
 - **解放**: 写真切替・背景化・画面終了と `onTrimMemory >= TRIM_MEMORY_UI_HIDDEN`（20）でpreview ownerを閉じる。trim10はこの契約による解放をせず、foreground exportのownerも閉じない。製品previewのcontext喪失は見える失敗とし、queue済み要求では再生成しない。明示retry/離脱/trimで旧ownerの終了を確認する。失敗直後のGL写真/画面surface解放と、旧owner終了時の縮小CPU入力/thread/EGL解放を区別する。低水準診断の次要求によるcontext再生成契約は製品retry契約と別。
 
@@ -296,7 +296,7 @@ blur-owned縮小画像は第1拡大軸後に解放済み。[全85テクスチャ
 - 入力は既存LibRawの未調整RGB16原寸ラスタを行順に読み、CPUで有限RGBA Floatへ詰めてRGBA32Fの帯textureへアップロードする。初期案のR16整数texture直接入力は使っていない。欠落・追加・順序不正の行を拒否し、warmthはGPU内で一度だけ適用する。
 - 最終RGBA8を帯/行ごとに読み戻し、既存Bitmapの `setPixels`、JPEG95の `Bitmap.compress`、出力再読取・原本前後照合・publicationを共用する。Bitmapを含む全RAMはtexture台帳と別。24MPの行JPEG/省メモリ化は [Phase 2](GPU_EXPORT_PHASE2.md) の別範囲で、ここでは採用しない。
 - 帯ごとに取消とfence完了を確認し、未処理帯を大量にqueueへ先行投入しない。投入済みGL/native処理の即時停止や一定ms以内の停止は保証しない。
-- `Original24Attempt` は最初の実保存時にengineを固定する。GPUではpreview owner終了後に専用GL ownerを開始し、原本照合・durable intent・Foreground Service・`Original24Resources` の確認を共用する。GPU_FAILEDの明示retryと取消/HOLDの境界は§4.12に従う。
+- `Original24Attempt` は最初の実保存時にengineを固定する。GPUでは保存対象Aのpreview owner終了後に専用GL ownerを開始し、原本照合・durable intent・Foreground Service・`Original24Resources` の確認を共用する。GPU_FAILEDの明示retryと取消/HOLDの境界は§4.12に従う。
 
 ### 4.9 プレビュー（表示と操作）
 
