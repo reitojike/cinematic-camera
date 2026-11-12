@@ -8,7 +8,8 @@ internal fun canBeginStrengthEdit(mode: PhotoRollPreviewMode, foreground: Boolea
     savePhase: PhotoRollSavePhase?): Boolean = foreground && when (mode) {
     PhotoRollPreviewMode.PRIVATE_TRIAL -> true
     PhotoRollPreviewMode.STAGE_CLEAR, PhotoRollPreviewMode.MANUAL_TRIAL ->
-        !savePending && savePhase in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED)
+        !savePending && (savePhase in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED) ||
+            (mode == PhotoRollPreviewMode.MANUAL_TRIAL && savePhase == PhotoRollSavePhase.CANCELLED))
     else -> false
 }
 
