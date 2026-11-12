@@ -3,8 +3,8 @@
 [親 Issue #276](https://github.com/reitojike/cinematic-camera/issues/276) §4 と
 [契約 Issue #277](https://github.com/reitojike/cinematic-camera/issues/277) PR1 を転記した設計の正本。
 現行の API・GLSL・実装設計を記録する。Draft PR中の変更はマージまで提案であり、mainの契約を置き換えない。
-進捗・検証結果・採否は Issue / PR に記録する。通常debug/releaseの既定はCPUで、Gate 2承認だけでは変えない。
-#291は記録された診断APKの実写確認と本人承認を完了した。#289と#290前段Aを確認後、GPU既定化は別途承認する。
+進捗・検証結果・採否は Issue / PR に記録する。通常debug/releaseの新規プレビュー・保存をGPU既定とする #353 の変更は、マージまで提案として扱う。
+#291は記録された診断APKの実写確認と本人承認を完了した。GPU既定化PRのマージには別途本人の承認を必要とする。
 CPU数値差は参考値。#290のGPU基準画像回帰は現行GPU出力を対象にAndroidで先行し、既定切替や様子見期間の終了を待たない（§4.11）。
 以下は親Issueの節番号を維持し、実装との差を各節に記す。
 
@@ -419,8 +419,9 @@ EGL/GLES bindingは [LWJGL公式](https://www.lwjgl.org/guide) と
 ### 4.13 切り替えフラグ
 
 - `DevelopEngine { CPU, GPU }` をpreviewとexportで共用し、保存は最初の実保存時にengineを固定する。
-- 専用gpuDiagnosticのHubだけでGPUを選べる。通常debug/releaseはCPUで、通常設定画面にselectorを追加しない。
-- Gate 2本人承認済みでも、#289と#290前段Aの受入後に別途GPU既定化PRを作り、マージ前に本人確認する。GPU基準画像のAndroid先行試験は既定切替を待たず並行して進め、採用は本人の目視確認後とする。
+- 通常debug/releaseの新規プレビュー・保存はGPU固定。診断用保存値は読まず、設定UIとCPU自動回避は作らない。gpuDiagnosticは明示CPU/GPU選択、その他診断variantと低水準試験はCPU既定を維持する。保存ownerの固定engineと既存データは移行しない。
+- 問題時はCPU既定へ戻す別のレビュー済み変更とversionCodeを上げた新ビルドで戻す。旧APKへのdowngradeはしない。
+- Gate 2本人承認とGPU既定化PRのマージ承認は別であり、マージ前に本人確認する。GPU基準画像のAndroid先行試験は既定切替を待たず並行して進め、採用は本人の目視確認後とする。
 
 ---
 

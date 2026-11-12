@@ -27,7 +27,7 @@ import kotlinx.coroutines.sync.withLock
 
 internal enum class DevelopEngine { CPU, GPU }
 
-/** 通常 debug/release は保存済みの診断値からも GPU を有効にしない。Gate 2 で別途変更する。 */
+/** エンジン選択 UI は専用診断版だけに表示する。 */
 @Suppress("UNUSED_PARAMETER")
 internal fun developEngineSettingVisible(debug: Boolean, buildType: String): Boolean =
     buildType == "gpuDiagnostic"
@@ -38,11 +38,18 @@ internal sealed interface GpuAvailability {
     data class Unavailable(val reason: String) : GpuAvailability
 }
 
-/** プレビューと保存の唯一の設定入口。通常版の既定は CPU のまま。 */
+/** 通常版だけを GPU にし、他の診断 variant の既存契約は維持する。 */
+internal fun defaultDevelopEngine(buildType: String): DevelopEngine = when (buildType) {
+    "debug", "release" -> DevelopEngine.GPU
+    else -> DevelopEngine.CPU
+}
+
+/** プレビューと新規保存の共通入口。既存保存 owner の固定値は変更しない。 */
 internal class DevelopEngineSetting(
     private val read: () -> String,
     private val write: (String) -> Unit,
     val visible: Boolean,
+    private val defaultEngine: DevelopEngine = DevelopEngine.CPU,
 ) {
     constructor(context: Context) : this(CapturePreferences(context))
 
@@ -50,10 +57,11 @@ internal class DevelopEngineSetting(
         read = { preferences.text(KEY, DevelopEngine.CPU.name) },
         write = { preferences.put(KEY, it) },
         visible = developEngineSettingVisible(BuildConfig.DEBUG, BuildConfig.BUILD_TYPE),
+        defaultEngine = defaultDevelopEngine(BuildConfig.BUILD_TYPE),
     )
 
-    fun current(): DevelopEngine = if (visible && read() == DevelopEngine.GPU.name)
-        DevelopEngine.GPU else DevelopEngine.CPU
+    fun current(): DevelopEngine = if (!visible) defaultEngine
+        else if (read() == DevelopEngine.GPU.name) DevelopEngine.GPU else DevelopEngine.CPU
 
     /** 保存ownerが開始時に1回取得し、完了までこの値を保持する。 */
     fun beginExport(): DevelopEngine = current()
@@ -145,7 +153,7 @@ internal class DevelopEngineSettingView(
         addView(status.apply { setTextColor(CaptureDesign.Muted.toArgb()) })
         addView(retry)
         addView(TextView(context).apply {
-            text = "プレビュー・保存で共通。保存中の変更は次回から。通常版の既定は CPU です。GPU 失敗時も CPU に自動で切り替えません。"
+            text = "プレビュー・保存で共通。保存中の変更は次回から。通常版の既定は GPU です。GPU 失敗時も CPU に自動で切り替えません。"
             setTextColor(CaptureDesign.Muted.toArgb())
         })
         cpu.setOnClickListener { select(DevelopEngine.CPU) }
