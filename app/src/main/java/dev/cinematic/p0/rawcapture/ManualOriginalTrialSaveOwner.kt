@@ -7,7 +7,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-internal enum class ManualOriginalTrialSavePhase { READY, SAVING, PUBLISHED, UNCONFIRMED, HOLD }
+internal enum class ManualOriginalTrialSavePhase { READY, SAVING, PUBLISHED, UNCONFIRMED, GPU_FAILED, HOLD }
 internal enum class ManualOriginalTrialSaveReason {
     STOPPED, SUPERSEDED, GENERATION_STARTED, RESOURCES_HELD, PUBLICATION_UNKNOWN, OPERATION_FAILED,
 }
@@ -15,6 +15,7 @@ internal data class ManualOriginalTrialSaveState(
     val phase: ManualOriginalTrialSavePhase,
     val uri: String? = null,
     val reason: ManualOriginalTrialSaveReason? = null,
+    val gpuFailure: GpuSaveFailure? = null,
 )
 
 /** Thin adapters retain the existing Android operation and publisher; neither API creates a queue. */
@@ -50,6 +51,8 @@ internal class ManualOriginalTrialSaveOwner(
     private var publication: ManualOriginalTrialPublication? = null
     private var renderStarted = false
     private var terminalHold = false
+    private var gpuRetryAvailable = false
+    private var gpuFailure: GpuSaveFailure? = null
     var lastFailure: Throwable? = null
         private set
     val hasUnreleasedResources get() = backend.hasUnreleasedResources || publication?.hasUnreleasedResources == true
@@ -57,8 +60,8 @@ internal class ManualOriginalTrialSaveOwner(
     init { ManualOriginalTrialRequestCodec.encode(request) }
     fun matches(source: SharedOriginalReference) = request.source == source
 
-    fun advance(stop: () -> Boolean = { false }): ManualOriginalTrialSaveState = exclusive {
-        if (terminalHold) return@exclusive state.value
+    fun advance(retryGpuFailure: Boolean = false, stop: () -> Boolean = { false }): ManualOriginalTrialSaveState = exclusive {
+        if (terminalHold || (gpuRetryAvailable && !retryGpuFailure)) return@exclusive state.value
         try {
             if (!isCurrent()) return@exclusive hold(ManualOriginalTrialSaveReason.SUPERSEDED)
             val previous = backend.readPublication()
@@ -75,15 +78,23 @@ internal class ManualOriginalTrialSaveOwner(
             }
             if (hasUnreleasedResources) return@exclusive update(ManualOriginalTrialSavePhase.HOLD, previous?.uri,
                 ManualOriginalTrialSaveReason.RESOURCES_HELD)
-            if (stop()) return@exclusive update(if (proof == null) ManualOriginalTrialSavePhase.READY else
+            if (stop()) return@exclusive update(if (gpuRetryAvailable) ManualOriginalTrialSavePhase.GPU_FAILED
+                else if (proof == null) ManualOriginalTrialSavePhase.READY else
                 ManualOriginalTrialSavePhase.UNCONFIRMED, previous?.uri, ManualOriginalTrialSaveReason.STOPPED)
             update(ManualOriginalTrialSavePhase.SAVING, previous?.uri)
             if (proof == null) {
-                if (renderStarted || attemptStorage.read(ManualOriginalTrialRequestCodec.MAX_BYTES) != null)
+                val intent = ManualOriginalTrialRequestCodec.encode(request)
+                val previousIntent = attemptStorage.read(ManualOriginalTrialRequestCodec.MAX_BYTES)
+                if (gpuRetryAvailable) {
+                    // This in-process permit exists only for a confirmed failed GPU producer.
+                    // Keep the durable intent: a restarted owner must still HOLD, never rerender.
+                    gpuRetryAvailable = false
+                    if (!retryGpuFailure || !renderStarted || previousIntent?.contentEquals(intent) != true)
+                        return@exclusive hold(ManualOriginalTrialSaveReason.GENERATION_STARTED)
+                } else if (renderStarted || previousIntent != null)
                     return@exclusive hold(ManualOriginalTrialSaveReason.GENERATION_STARTED)
                 // Intent is durable and read back BEFORE admission to any heavy source/render IO.
                 renderStarted = true
-                val intent = ManualOriginalTrialRequestCodec.encode(request)
                 attemptStorage.replace(intent)
                 if (attemptStorage.read(ManualOriginalTrialRequestCodec.MAX_BYTES)?.contentEquals(intent) != true)
                     throw IOException("Manual trial generation intent unconfirmed")
@@ -111,6 +122,16 @@ internal class ManualOriginalTrialSaveOwner(
             }, result.uri, if (result.phase == JpegPublicationPhase.UNKNOWN) ManualOriginalTrialSaveReason.PUBLICATION_UNKNOWN else null)
         } catch (failure: Throwable) {
             lastFailure = failure
+            if (failure is GpuSaveRenderException) {
+                val count = gpuFailure?.count ?: 0
+                gpuFailure = GpuSaveFailure(failure.reason, if (count == Long.MAX_VALUE) count else count + 1)
+                if (proof == null && publication == null && failure.cleanupConfirmed && failure.suppressed.isEmpty() &&
+                    !hasUnreleasedResources && !stop() && isCurrent()) {
+                    gpuRetryAvailable = true
+                    return@exclusive update(ManualOriginalTrialSavePhase.GPU_FAILED,
+                        reason = ManualOriginalTrialSaveReason.OPERATION_FAILED)
+                }
+            }
             val next = if (proof == null || failure is CaptureJournalConflict) hold(ManualOriginalTrialSaveReason.OPERATION_FAILED)
             else if (hasUnreleasedResources) update(ManualOriginalTrialSavePhase.HOLD, state.value.uri,
                 ManualOriginalTrialSaveReason.RESOURCES_HELD)
@@ -145,7 +166,7 @@ internal class ManualOriginalTrialSaveOwner(
         return update(ManualOriginalTrialSavePhase.HOLD, uri, reason)
     }
     private fun update(phase: ManualOriginalTrialSavePhase, uri: String? = null, reason: ManualOriginalTrialSaveReason? = null) =
-        ManualOriginalTrialSaveState(phase, uri, reason).also { mutableState.value = it }
+        ManualOriginalTrialSaveState(phase, uri, reason, gpuFailure).also { mutableState.value = it }
     private inline fun <T> exclusive(action: () -> T): T {
         if (!active.compareAndSet(false, true)) throw IOException("Manual trial save already active")
         try { return action() } finally { active.set(false) }

@@ -46,6 +46,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
     phase == PhotoRollSavePhase.READY -> "保存前"
     phase == PhotoRollSavePhase.PUBLISHED -> "公開確認済み · 開く前に照合"
     phase == PhotoRollSavePhase.UNCONFIRMED -> "保存未確認 · 再照合"
+    phase == PhotoRollSavePhase.GPU_FAILED -> "GPU 保存失敗 · 再試行"
     phase == PhotoRollSavePhase.HOLD -> "保存保留"
     else -> "保存準備未確認"
 }
@@ -74,7 +75,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
     val saveTone = when {
         savePending || savePhase == PhotoRollSavePhase.SAVING -> CaptureChromeTone.WARNING
         savePhase == PhotoRollSavePhase.PUBLISHED -> CaptureChromeTone.ACCEPTED
-        savePhase in setOf(PhotoRollSavePhase.UNCONFIRMED, PhotoRollSavePhase.HOLD) -> CaptureChromeTone.FAILURE
+        savePhase in setOf(PhotoRollSavePhase.UNCONFIRMED, PhotoRollSavePhase.GPU_FAILED, PhotoRollSavePhase.HOLD) -> CaptureChromeTone.FAILURE
         saveEnabled -> CaptureChromeTone.READY
         else -> CaptureChromeTone.DISABLED
     }
@@ -167,7 +168,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                 TextButton(onClick = { session?.let { cancel(it.inputToken) } }, enabled = foreground && session != null,
                     modifier = Modifier.width(88.dp), shape = RectangleShape) { Text("取消") }
                 Box(Modifier.size(76.dp).semantics { contentDescription = when (savePhase) {
-                    PhotoRollSavePhase.PUBLISHED -> "保存したJPEGを照合して開く"; PhotoRollSavePhase.UNCONFIRMED -> "同じ保存を再照合"; else -> "JPEGを保存" }
+                    PhotoRollSavePhase.GPU_FAILED -> "同じ GPU 保存を再試行"; PhotoRollSavePhase.PUBLISHED -> "保存したJPEGを照合して開く"; PhotoRollSavePhase.UNCONFIRMED -> "同じ保存を再照合"; else -> "JPEGを保存" }
                     stateDescription = saveLabel
                     if (!saveEnabled) disabled() }.clickable(enabled = saveEnabled, role = Role.Button, onClick = save), contentAlignment = Alignment.Center) {
                     Canvas(Modifier.fillMaxSize()) {
@@ -176,7 +177,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                             if (dashed) PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 4.dp.toPx())) else null))
                         drawCircle(saveColor.copy(alpha = if (saveEnabled) .85f else .15f), radius = size.minDimension / 2 - 8.dp.toPx())
                     }
-                    Text(if (savePhase == PhotoRollSavePhase.PUBLISHED) "↗" else "↓", color = if (saveEnabled) CaptureDesign.Ink else saveColor, fontSize = 26.sp)
+                    Text(when (savePhase) { PhotoRollSavePhase.PUBLISHED -> "↗"; PhotoRollSavePhase.GPU_FAILED -> "↻"; else -> "↓" }, color = if (saveEnabled) CaptureDesign.Ink else saveColor, fontSize = 26.sp)
                 }
                 CaptureModeSwitchSurface(comparing, Modifier.alpha(if (compareEnabled) 1f else .4f)) {
                     listOf(false, true).forEach { before -> TextButton(onClick = { comparing = before }, enabled = compareEnabled,

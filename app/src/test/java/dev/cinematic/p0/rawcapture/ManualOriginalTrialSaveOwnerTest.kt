@@ -244,23 +244,369 @@ class ManualOriginalTrialSaveOwnerTest {
         }
     }
 
+    @Test fun cleanGpuFailureRecordsTheReasonAndCountWithoutAnImplicitRetry() {
+        for (reason in GpuSaveFailureReason.entries) {
+            val failure = gpuFailure(reason)
+            val backend = Backend().also { it.renderFailure = failure }
+            val storage = Storage()
+            val owner = ManualOriginalTrialSaveOwner(request, backend, storage) { true }
+            val failed = owner.advance()
+            assertEquals(ManualOriginalTrialSavePhase.GPU_FAILED, failed.phase)
+            assertEquals(ManualOriginalTrialSaveReason.OPERATION_FAILED, failed.reason)
+            assertEquals(GpuSaveFailure(reason, 1), failed.gpuFailure)
+            assertNull(failed.uri)
+            assertSame(failure, owner.lastFailure)
+            assertFalse(owner.hasUnreleasedResources)
+            assertArrayEquals(ManualOriginalTrialRequestCodec.encode(request), storage.bytes)
+            backend.renderFailure = null
+            owner.releaseResources()
+            repeat(3) { assertEquals(failed, owner.advance()) }
+            assertEquals(1, backend.publicationReads)
+            assertEquals(1, backend.renders)
+            assertEquals(1, storage.writes)
+            assertEquals(0, backend.publisherCreations)
+        }
+    }
+
+    @Test fun explicitGpuRetryRevalidatesTheIntentAndPublishesOnlyTheSuccessfulRender() {
+        val backend = Backend().also { it.renderFailure = gpuFailure() }
+        val storage = Storage()
+        val owner = ManualOriginalTrialSaveOwner(request, backend, storage) { true }
+        owner.advance()
+        val intent = storage.bytes!!.clone()
+        backend.beforeRender = {
+            assertArrayEquals(intent, storage.bytes)
+            assertEquals(0, backend.publisherCreations)
+        }
+        backend.renderFailure = null
+        val published = owner.advance(retryGpuFailure = true)
+        assertEquals(ManualOriginalTrialSavePhase.PUBLISHED, published.phase)
+        assertEquals(GpuSaveFailure(GpuSaveFailureReason.RENDER_FAILED, 1), published.gpuFailure)
+        assertEquals(uri, published.uri)
+        assertEquals(2, backend.renders)
+        assertEquals(2, storage.writes)
+        assertArrayEquals(intent, storage.bytes)
+        assertEquals(1, backend.publisherCreations)
+        repeat(2) { assertEquals(published, owner.advance(retryGpuFailure = true)) }
+        assertEquals(2, backend.renders)
+        assertEquals(1, backend.publisherCreations)
+    }
+
+    @Test fun eachExplicitGpuFailureUpdatesTheCountAndLatestReasonOnce() {
+        val backend = Backend()
+        val owner = ManualOriginalTrialSaveOwner(request, backend, Storage()) { true }
+        for ((index, reason) in GpuSaveFailureReason.entries.withIndex()) {
+            backend.renderFailure = gpuFailure(reason)
+            val failed = owner.advance(retryGpuFailure = index > 0)
+            assertEquals(ManualOriginalTrialSavePhase.GPU_FAILED, failed.phase)
+            assertEquals(GpuSaveFailure(reason, index + 1L), failed.gpuFailure)
+            repeat(2) { assertEquals(failed, owner.advance()) }
+            assertEquals(index + 1, backend.renders)
+            assertEquals(0, backend.publisherCreations)
+        }
+    }
+
+    @Test fun gpuRetryPermissionDoesNotSurviveRestartEvenWithExplicitRetryRequested() {
+        for (explicit in listOf(false, true)) {
+            val backend = Backend().also { it.renderFailure = gpuFailure() }
+            val storage = Storage()
+            val owner = ManualOriginalTrialSaveOwner(request, backend, storage) { true }
+            assertEquals(ManualOriginalTrialSavePhase.GPU_FAILED, owner.advance().phase)
+            val restartedBackend = Backend()
+            val restarted = ManualOriginalTrialSaveOwner(request, restartedBackend, storage) { true }
+            val held = restarted.advance(retryGpuFailure = explicit)
+            assertEquals(ManualOriginalTrialSavePhase.HOLD, held.phase)
+            assertEquals(ManualOriginalTrialSaveReason.GENERATION_STARTED, held.reason)
+            assertEquals(held, restarted.advance(retryGpuFailure = true))
+            assertEquals(0, restartedBackend.renders)
+            assertEquals(0, restartedBackend.publisherCreations)
+            assertEquals(1, storage.writes)
+        }
+    }
+
+    @Test fun explicitRetryCannotBypassMissingCorruptOrForeignIntentAfterGpuFailure() {
+        for (changed in listOf<ByteArray?>(null, byteArrayOf(1, 2, 3),
+            ManualOriginalTrialRequestCodec.encode(request.copy(generation = 2)),
+            ManualOriginalTrialRequestCodec.encode(request.copy(strength = .5)))) {
+            val backend = Backend().also { it.renderFailure = gpuFailure() }
+            val storage = Storage()
+            val owner = ManualOriginalTrialSaveOwner(request, backend, storage) { true }
+            owner.advance()
+            storage.bytes = changed
+            backend.renderFailure = null
+            val held = owner.advance(retryGpuFailure = true)
+            assertEquals(ManualOriginalTrialSavePhase.HOLD, held.phase)
+            assertEquals(ManualOriginalTrialSaveReason.GENERATION_STARTED, held.reason)
+            storage.bytes = ManualOriginalTrialRequestCodec.encode(request)
+            assertEquals(held, owner.advance(retryGpuFailure = true))
+            assertEquals(1, backend.renders)
+            assertEquals(1, storage.writes)
+            assertEquals(0, backend.publisherCreations)
+        }
+    }
+
+    @Test fun gpuRetryIntentWriteOrReadbackAmbiguityIsTerminalWithoutAnotherRender() {
+        for (mode in listOf("before", "after", "readback", "retryReadback", "retryMismatch")) {
+            val backend = Backend().also { it.renderFailure = gpuFailure() }
+            val storage = Storage()
+            val owner = ManualOriginalTrialSaveOwner(request, backend, storage) { true }
+            owner.advance()
+            backend.renderFailure = null
+            storage.mode = mode
+            val held = owner.advance(retryGpuFailure = true)
+            assertEquals(ManualOriginalTrialSavePhase.HOLD, held.phase)
+            assertEquals(ManualOriginalTrialSaveReason.OPERATION_FAILED, held.reason)
+            storage.mode = "none"
+            assertEquals(held, owner.advance(retryGpuFailure = true))
+            assertEquals(1, backend.renders)
+            assertEquals(0, backend.publisherCreations)
+        }
+    }
+
+    @Test fun gpuFailureWithUnconfirmedCleanupSuppressedFailureOrLiveResourcesIsTerminal() {
+        for (ambiguity in listOf("cleanup", "suppressed", "resources")) {
+            val failure = gpuFailure(cleanupConfirmed = ambiguity != "cleanup")
+            if (ambiguity == "suppressed") failure.addSuppressed(IOException("cleanup unconfirmed"))
+            val backend = Backend().also {
+                it.renderFailure = failure
+                if (ambiguity == "resources") it.beforeRender = { it.held = true }
+            }
+            val owner = ManualOriginalTrialSaveOwner(request, backend, Storage()) { true }
+            val held = owner.advance()
+            assertEquals(ManualOriginalTrialSavePhase.HOLD, held.phase)
+            assertEquals(GpuSaveFailure(GpuSaveFailureReason.RENDER_FAILED, 1), held.gpuFailure)
+            backend.renderFailure = null
+            backend.beforeRender = {}
+            owner.releaseResources()
+            assertFalse(owner.hasUnreleasedResources)
+            assertEquals(held, owner.advance(retryGpuFailure = true))
+            assertEquals(1, backend.renders)
+            assertEquals(0, backend.publisherCreations)
+        }
+    }
+
+    @Test fun ordinaryFailureAfterExplicitGpuRetryDoesNotCreateAnotherRetryPermit() {
+        val backend = Backend().also { it.renderFailure = gpuFailure() }
+        val owner = ManualOriginalTrialSaveOwner(request, backend, Storage()) { true }
+        owner.advance()
+        backend.renderFailure = IOException("JPEG or source verification failed")
+        val held = owner.advance(retryGpuFailure = true)
+        assertEquals(ManualOriginalTrialSavePhase.HOLD, held.phase)
+        assertEquals(GpuSaveFailure(GpuSaveFailureReason.RENDER_FAILED, 1), held.gpuFailure)
+        backend.renderFailure = null
+        assertEquals(held, owner.advance(retryGpuFailure = true))
+        assertEquals(2, backend.renders)
+        assertEquals(0, backend.publisherCreations)
+    }
+
+    @Test fun gpuExceptionAfterProofOrPublisherCreationCannotAuthorizeRerender() {
+        for (boundary in listOf("publisher", "publication")) {
+            val backend = Backend()
+            val failure = gpuFailure()
+            if (boundary == "publisher") backend.publisherFailure = failure
+            else backend.publication.failure = failure
+            val owner = ManualOriginalTrialSaveOwner(request, backend, Storage()) { true }
+            assertEquals(ManualOriginalTrialSavePhase.UNCONFIRMED, owner.advance().phase)
+            backend.publisherFailure = null
+            backend.publication.failure = null
+            assertEquals(ManualOriginalTrialSavePhase.PUBLISHED, owner.advance(retryGpuFailure = true).phase)
+            assertEquals(1, backend.renders)
+        }
+    }
+
+    @Test fun cancellationOrSupersessionAtGpuFailureCannotOfferRetry() {
+        for (cancelled in listOf(false, true)) {
+            var stopped = false
+            var current = true
+            val backend = Backend().also {
+                it.renderFailure = gpuFailure()
+                it.beforeRender = { if (cancelled) stopped = true else current = false }
+            }
+            val owner = ManualOriginalTrialSaveOwner(request, backend, Storage()) { current }
+            val held = owner.advance { stopped }
+            assertEquals(ManualOriginalTrialSavePhase.HOLD, held.phase)
+            assertEquals(GpuSaveFailure(GpuSaveFailureReason.RENDER_FAILED, 1), held.gpuFailure)
+            stopped = false; current = true; backend.renderFailure = null
+            assertEquals(held, owner.advance(retryGpuFailure = true))
+            assertEquals(1, backend.renders)
+            assertEquals(0, backend.publisherCreations)
+        }
+    }
+
+    @Test fun stoppedExplicitRetryDoesNotWriteIntentOrConsumeAnotherRender() {
+        val backend = Backend().also { it.renderFailure = gpuFailure() }
+        val storage = Storage()
+        val owner = ManualOriginalTrialSaveOwner(request, backend, storage) { true }
+        owner.advance()
+        backend.renderFailure = null
+        val stopped = owner.advance(retryGpuFailure = true) { true }
+        assertEquals(ManualOriginalTrialSavePhase.GPU_FAILED, stopped.phase)
+        assertEquals(ManualOriginalTrialSaveReason.STOPPED, stopped.reason)
+        assertEquals(1, backend.renders)
+        assertEquals(1, storage.writes)
+        assertEquals(stopped, owner.advance())
+        assertEquals(ManualOriginalTrialSavePhase.PUBLISHED, owner.advance(retryGpuFailure = true).phase)
+        assertEquals(2, backend.renders)
+    }
+
+    @Test fun supersededGpuFailureCannotBeRetriedEvenIfAuthorityLaterReturns() {
+        var current = true
+        val backend = Backend().also { it.renderFailure = gpuFailure() }
+        val owner = ManualOriginalTrialSaveOwner(request, backend, Storage()) { current }
+        owner.advance()
+        backend.renderFailure = null
+        current = false
+        val held = owner.advance(retryGpuFailure = true)
+        assertEquals(ManualOriginalTrialSavePhase.HOLD, held.phase)
+        assertEquals(ManualOriginalTrialSaveReason.SUPERSEDED, held.reason)
+        current = true
+        assertEquals(held, owner.advance(retryGpuFailure = true))
+        assertEquals(1, backend.renders)
+        assertEquals(0, backend.publisherCreations)
+    }
+
+    @Test fun cancellationOrSupersessionAfterRetryIntentReadbackPreventsAnotherRender() {
+        for (cancelled in listOf(false, true)) {
+            var stopped = false
+            var current = true
+            val backend = Backend().also { it.renderFailure = gpuFailure() }
+            val storage = Storage()
+            val owner = ManualOriginalTrialSaveOwner(request, backend, storage) { current }
+            owner.advance()
+            backend.renderFailure = null
+            storage.afterReplace = { if (cancelled) stopped = true else current = false }
+            val held = owner.advance(retryGpuFailure = true) { stopped }
+            assertEquals(ManualOriginalTrialSavePhase.HOLD, held.phase)
+            stopped = false; current = true; storage.afterReplace = {}
+            assertEquals(held, owner.advance(retryGpuFailure = true))
+            assertEquals(1, backend.renders)
+            assertEquals(2, storage.writes)
+            assertEquals(0, backend.publisherCreations)
+        }
+    }
+
+    @Test fun explicitRetryWithRecoveredPublishedOrUnknownProofNeverRendersAgain() {
+        for (phase in listOf(JpegPublicationPhase.PUBLISHED, JpegPublicationPhase.UNKNOWN)) {
+            val backend = Backend().also { it.renderFailure = gpuFailure() }
+            val storage = Storage()
+            val owner = ManualOriginalTrialSaveOwner(request, backend, storage) { true }
+            owner.advance()
+            backend.renderFailure = null
+            backend.existing = record(phase)
+            val recovered = owner.advance(retryGpuFailure = true)
+            assertEquals(if (phase == JpegPublicationPhase.PUBLISHED) ManualOriginalTrialSavePhase.PUBLISHED
+                else ManualOriginalTrialSavePhase.UNCONFIRMED, recovered.phase)
+            assertEquals(1, backend.renders)
+            assertEquals(1, storage.writes)
+            assertEquals(if (phase == JpegPublicationPhase.PUBLISHED) 1 else 0, backend.publisherCreations)
+        }
+    }
+
+    @Test fun conflictingPublicationAfterGpuFailureHoldsWithoutRetryingTheProducer() {
+        val backend = Backend().also { it.renderFailure = gpuFailure() }
+        val storage = Storage()
+        val owner = ManualOriginalTrialSaveOwner(request, backend, storage) { true }
+        owner.advance()
+        backend.existing = record(JpegPublicationPhase.PUBLISHED).copy(render = render.copy(
+            request = render.request.copy(source = source.copy(uri = "content://test/original/2"))))
+        val held = owner.advance(retryGpuFailure = true)
+        assertEquals(ManualOriginalTrialSavePhase.HOLD, held.phase)
+        assertEquals(ManualOriginalTrialSaveReason.OPERATION_FAILED, held.reason)
+        backend.existing = null; backend.renderFailure = null
+        assertEquals(held, owner.advance(retryGpuFailure = true))
+        assertEquals(1, backend.renders)
+        assertEquals(0, backend.publisherCreations)
+        assertEquals(1, storage.writes)
+    }
+
+    @Test fun explicitRetryCannotBypassAnOrdinaryProducerFailure() {
+        val backend = Backend().also { it.renderFailure = IOException("JPEG close unconfirmed") }
+        val owner = ManualOriginalTrialSaveOwner(request, backend, Storage()) { true }
+        val held = owner.advance()
+        backend.renderFailure = null
+        assertEquals(ManualOriginalTrialSavePhase.HOLD, held.phase)
+        assertNull(held.gpuFailure)
+        assertEquals(held, owner.advance(retryGpuFailure = true))
+        assertEquals(1, backend.renders)
+        assertEquals(0, backend.publisherCreations)
+    }
+
+    @Test fun explicitRetryWaitsForResourcesAndCleanupAloneDoesNotRetry() {
+        val backend = Backend().also { it.renderFailure = gpuFailure() }
+        val storage = Storage()
+        val owner = ManualOriginalTrialSaveOwner(request, backend, storage) { true }
+        owner.advance()
+        backend.renderFailure = null
+        backend.held = true
+        val held = owner.advance(retryGpuFailure = true)
+        assertEquals(ManualOriginalTrialSavePhase.HOLD, held.phase)
+        assertEquals(ManualOriginalTrialSaveReason.RESOURCES_HELD, held.reason)
+        assertEquals(1, backend.renders)
+        assertEquals(1, storage.writes)
+        owner.releaseResources()
+        assertEquals(held, owner.advance())
+        assertEquals(1, backend.renders)
+        assertEquals(ManualOriginalTrialSavePhase.PUBLISHED, owner.advance(retryGpuFailure = true).phase)
+        assertEquals(2, backend.renders)
+        assertEquals(1, backend.publisherCreations)
+    }
+
+    @Test fun successfulRetryStoppedAfterPrivateProofReusesProofWithoutAnotherRender() {
+        val backend = Backend().also { it.renderFailure = gpuFailure() }
+        val owner = ManualOriginalTrialSaveOwner(request, backend, Storage()) { true }
+        owner.advance()
+        var stopped = false
+        backend.renderFailure = null
+        backend.beforeRender = { stopped = true }
+        val paused = owner.advance(retryGpuFailure = true) { stopped }
+        assertEquals(ManualOriginalTrialSavePhase.UNCONFIRMED, paused.phase)
+        assertEquals(ManualOriginalTrialSaveReason.STOPPED, paused.reason)
+        assertEquals(0, backend.publisherCreations)
+        stopped = false
+        backend.beforeRender = {}
+        assertEquals(ManualOriginalTrialSavePhase.PUBLISHED, owner.advance().phase)
+        assertEquals(2, backend.renders)
+        assertEquals(1, backend.publisherCreations)
+    }
+
+    @Test fun successfulGpuRetryCannotPublishMismatchedProofOrRetryThatConflict() {
+        val backend = Backend().also { it.renderFailure = gpuFailure() }
+        val owner = ManualOriginalTrialSaveOwner(request, backend, Storage()) { true }
+        owner.advance()
+        backend.renderFailure = null
+        backend.generated = render.copy(request = render.request.copy(generation = 2))
+        val held = owner.advance(retryGpuFailure = true)
+        assertEquals(ManualOriginalTrialSavePhase.HOLD, held.phase)
+        assertEquals(ManualOriginalTrialSaveReason.OPERATION_FAILED, held.reason)
+        backend.generated = render
+        assertEquals(held, owner.advance(retryGpuFailure = true))
+        assertEquals(2, backend.renders)
+        assertEquals(0, backend.publisherCreations)
+    }
+
+    private fun gpuFailure(reason: GpuSaveFailureReason = GpuSaveFailureReason.RENDER_FAILED,
+        cleanupConfirmed: Boolean = true) = GpuSaveRenderException(reason, cleanupConfirmed, IOException("GPU producer failed"))
+
     private inner class Backend : ManualOriginalTrialSaveBackend {
         var existing: JpegPublicationRecord? = null
         var generated = render
         var renders = 0
         var publisherCreations = 0
+        var publicationReads = 0
         var renderFailure: IOException? = null
+        var publisherFailure: IOException? = null
         var beforeRender: () -> Unit = {}
         var held = false
         override val hasUnreleasedResources get() = held
         val publication = Publication()
-        override fun readPublication() = existing
+        override fun readPublication(): JpegPublicationRecord? { publicationReads++; return existing }
         override fun render(stop: () -> Boolean): ManualOriginalTrialRender {
             renders++; beforeRender(); renderFailure?.let { throw it }
             return generated
         }
         override fun publisher(render: ManualOriginalTrialRender): ManualOriginalTrialPublication {
             publisherCreations++
+            publisherFailure?.let { throw it }
             return publication
         }
         override fun releaseResources() { held = false }
@@ -289,8 +635,11 @@ class ManualOriginalTrialSaveOwnerTest {
         var bytes: ByteArray? = null
         var writes = 0
         var mode = "none"
+        var afterReplace: () -> Unit = {}
         override fun read(maxBytes: Int): ByteArray? {
-            if (mode == "readback" && writes > 0) throw IOException("readback")
+            if ((mode == "readback" && writes > 0) || (mode == "retryReadback" && writes > 1))
+                throw IOException("readback")
+            if (mode == "retryMismatch" && writes > 1) return byteArrayOf(1, 2, 3)
             return bytes?.clone()
         }
         override fun replace(contents: ByteArray) {
@@ -298,6 +647,7 @@ class ManualOriginalTrialSaveOwnerTest {
             if (mode == "before") throw IOException("before")
             bytes = contents.clone()
             if (mode == "after") throw IOException("after")
+            afterReplace()
         }
     }
 }

@@ -1,6 +1,7 @@
 package dev.cinematic.p0.jpegrender.original
 
 import android.graphics.Bitmap
+import dev.cinematic.p0.gpu.DevelopEngine
 import android.content.Context
 import android.os.CancellationSignal
 import android.os.Looper
@@ -39,7 +40,8 @@ internal class Original24Attempt(context: Context, private val request: Original
     private val ortonRowProbe: ((Int) -> Unit)? = null,
     private val parallelCharacterWorkers: Int = 2, private val parallelFoundationWorkers: Int = 1, private val parallelGlowWorkers: Int = 1,
     private val fuseR7ColorRows: Boolean = false,
-    private val parallelToneWorkers: Int = 1, private val parallelMistWorkers: Int = 1) : AutoCloseable {
+    private val parallelToneWorkers: Int = 1, private val parallelMistWorkers: Int = 1,
+    private val developEngine: DevelopEngine = DevelopEngine.CPU) : AutoCloseable {
     private val context = context.applicationContext
     private val active = AtomicBoolean(false)
     private var started = false
@@ -50,8 +52,9 @@ internal class Original24Attempt(context: Context, private val request: Original
     private var rasterFd: ParcelFileDescriptor? = null
     private var workspace: OriginalRasterWorkspace? = null
     private var rawRaster: OriginalRasterFile? = null
+    private var gpuOutput: Original24GpuOutput? = null
     val hasUnreleasedResources get() = sourceFd != null || rasterFd != null || resources.hasOpenResources ||
-        rawRaster?.hasPendingOwners == true || workspace != null
+        rawRaster?.hasPendingOwners == true || workspace != null || gpuOutput?.hasUnreleasedResources == true
     fun requestStop() = signal.cancel()
 
     fun render(shouldStop: () -> Boolean): Original24TrialJpeg {
@@ -126,8 +129,8 @@ internal class Original24Attempt(context: Context, private val request: Original
                     consume(y, row)
                 }
             }
-            val rendered = OriginalStageClear24(work, trace, parallelOrtonWorkers, ortonRowProbe, parallelCharacterWorkers, parallelFoundationWorkers = parallelFoundationWorkers, parallelGlowWorkers = parallelGlowWorkers, fuseR7ColorRows = fuseR7ColorRows, parallelToneWorkers = parallelToneWorkers, parallelMistWorkers = parallelMistWorkers)
-                .render(adjusted, ev, request.strength, stop = stop)
+            val rendered = if (developEngine == DevelopEngine.CPU) OriginalStageClear24(work, trace, parallelOrtonWorkers, ortonRowProbe, parallelCharacterWorkers, parallelFoundationWorkers = parallelFoundationWorkers, parallelGlowWorkers = parallelGlowWorkers, fuseR7ColorRows = fuseR7ColorRows, parallelToneWorkers = parallelToneWorkers, parallelMistWorkers = parallelMistWorkers)
+                .render(adjusted, ev, request.strength, stop = stop) else null
             checkpoint(); Original24Resources.requireAvailable(context)
             val digest = MessageDigest.getInstance("SHA-256")
             var encodedBytes = 0L
@@ -137,11 +140,20 @@ internal class Original24Attempt(context: Context, private val request: Original
                 // Retain before invoking the observer: a reporting failure must also recycle it.
                 val packed = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { bitmap = it }
                 packed.setHasAlpha(false)
-                val row = IntArray(width)
-                rendered.raster.rows(stop) { y, rgb ->
-                    row.indices.forEach { x -> row[x] = (255 shl 24) or (channel(rgb[x * 3]) shl 16) or
-                        (channel(rgb[x * 3 + 1]) shl 8) or channel(rgb[x * 3 + 2]) }
-                    packed.setPixels(row, 0, width, 0, y, width, 1)
+                if (developEngine == DevelopEngine.GPU) {
+                    val gpu = Original24GpuOutput(context.assets).also { gpuOutput = it }
+                    // source is still as-shot. GPU applies the same gains exactly once before R7.
+                    gpu.render(source, ev, gains, request.strength, stop) { y, row ->
+                        packed.setPixels(row, 0, width, 0, y, width, 1)
+                    }
+                    gpu.close(); gpuOutput = null
+                } else {
+                    val row = IntArray(width)
+                    requireNotNull(rendered).raster.rows(stop) { y, rgb ->
+                        row.indices.forEach { x -> row[x] = (255 shl 24) or (channel(rgb[x * 3]) shl 16) or
+                            (channel(rgb[x * 3 + 1]) shl 8) or channel(rgb[x * 3 + 2]) }
+                        packed.setPixels(row, 0, width, 0, y, width, 1)
+                    }
                 }
                 }
                 originalStage(trace, OriginalStage.JPEG_ENCODE) { resources.output(io.openOutput()).use { output ->
@@ -192,6 +204,8 @@ internal class Original24Attempt(context: Context, private val request: Original
         rasterFd?.close(); rasterFd = null
     }
     private fun closeOwners() {
+        // Never tear down files while a GPU owner has an unconfirmed drain/close.
+        gpuOutput?.close(); gpuOutput = null
         var failure: Throwable? = null
         fun close(action: () -> Unit) { try { action() } catch (e: Throwable) { if (failure == null) failure = e else if (failure !== e) failure!!.addSuppressed(e) } }
         close { sourceFd?.close(); sourceFd = null }

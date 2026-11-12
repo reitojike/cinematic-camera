@@ -17,14 +17,15 @@ internal fun manualSaveSnapshot(state: ManualOriginalTrialSaveState): PhotoRollS
     ManualOriginalTrialSavePhase.SAVING -> PhotoRollSaveSnapshot(PhotoRollSavePhase.SAVING)
     ManualOriginalTrialSavePhase.PUBLISHED -> if (state.uri != null)
         PhotoRollSaveSnapshot(PhotoRollSavePhase.PUBLISHED, state.uri) else PhotoRollSaveSnapshot(PhotoRollSavePhase.HOLD)
-    ManualOriginalTrialSavePhase.UNCONFIRMED -> PhotoRollSaveSnapshot(PhotoRollSavePhase.UNCONFIRMED)
-    ManualOriginalTrialSavePhase.HOLD -> PhotoRollSaveSnapshot(PhotoRollSavePhase.HOLD)
+    ManualOriginalTrialSavePhase.UNCONFIRMED -> PhotoRollSaveSnapshot(PhotoRollSavePhase.UNCONFIRMED, gpuFailure = state.gpuFailure)
+    ManualOriginalTrialSavePhase.GPU_FAILED -> PhotoRollSaveSnapshot(PhotoRollSavePhase.GPU_FAILED, gpuFailure = state.gpuFailure)
+    ManualOriginalTrialSavePhase.HOLD -> PhotoRollSaveSnapshot(PhotoRollSavePhase.HOLD, gpuFailure = state.gpuFailure)
 }
 
 internal fun manualSaveVisibleSnapshot(core: ManualOriginalTrialSaveState,
     local: PhotoRollSaveSnapshot?): PhotoRollSaveSnapshot {
     val observed = manualSaveSnapshot(core)
-    return if (observed.phase == PhotoRollSavePhase.HOLD) observed else local ?: observed
+    return if (observed.phase in setOf(PhotoRollSavePhase.HOLD, PhotoRollSavePhase.GPU_FAILED)) observed else local ?: observed
 }
 
 /** A UI view of one durable generation. The raw owner keeps publication and retry authority. */
@@ -36,6 +37,7 @@ internal class ManualTrialJpegSaveOwner(
     override val supportsForegroundSave = true
     private val running = AtomicBoolean(false)
     private val localFailure = MutableStateFlow<PhotoRollSaveSnapshot?>(null)
+    private var retryGpuFailure = false
     private val exportWork = object : ForegroundExportWork {
         override val identity get() = handle
         private var request: dev.cinematic.p0.rawcapture.AutoDevelopCoordinator.ForegroundExportRequest? = null
@@ -45,12 +47,13 @@ internal class ManualTrialJpegSaveOwner(
         }
         override val resourcesClosed get() = !handle.hasUnreleasedResources
         override fun advance(conditions: () -> dev.cinematic.p0.rawcapture.AutoDevelopConditions, stop: () -> Boolean) =
-            handle.advanceForegroundExport(requireNotNull(request), conditions, stop).thenApply { Unit }
+            handle.advanceForegroundExport(requireNotNull(request), conditions, retryGpuFailure = retryGpuFailure, stop = stop).thenApply { Unit }
         override fun observe(conditions: dev.cinematic.p0.rawcapture.AutoDevelopConditions) = handle.updateExportConditions(conditions)
         override fun requestStop() { request?.let(handle::stopForegroundExport) }
         override fun finished(failure: Throwable?) {
             request?.let(handle::abandonForegroundExport)
             request = null
+            retryGpuFailure = false
             localFailure.value = if (failure == null) null else if (handle.hasUnreleasedResources)
                 PhotoRollSaveSnapshot(PhotoRollSavePhase.HOLD) else PhotoRollSaveSnapshot(PhotoRollSavePhase.UNCONFIRMED)
         }
@@ -73,7 +76,8 @@ internal class ManualTrialJpegSaveOwner(
 
     override fun startForegroundSave(context: android.content.Context): Boolean {
         if (snapshot.phase == PhotoRollSavePhase.PUBLISHED) return false
-        if (snapshot.phase !in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.UNCONFIRMED)) return true
+        if (snapshot.phase !in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.UNCONFIRMED, PhotoRollSavePhase.GPU_FAILED)) return true
+        retryGpuFailure = snapshot.phase == PhotoRollSavePhase.GPU_FAILED
         localFailure.value = null
         if (!ForegroundExports.start(context, exportWork, resources().developConditions(rendererAvailable = true)))
             localFailure.value = PhotoRollSaveSnapshot(PhotoRollSavePhase.UNCONFIRMED)
@@ -85,9 +89,10 @@ internal class ManualTrialJpegSaveOwner(
     override fun advance(shouldStop: () -> Boolean): PhotoRollSaveSnapshot {
         if (!running.compareAndSet(false, true)) return PhotoRollSaveSnapshot(PhotoRollSavePhase.SAVING)
         try {
+            val explicitGpuRetry = snapshot.phase == PhotoRollSavePhase.GPU_FAILED
             localFailure.value = null
             if (shouldStop()) return uncertain()
-            val future = handle.advance(resources().developConditions(rendererAvailable = true), shouldStop)
+            val future = handle.advance(resources().developConditions(rendererAvailable = true), retryGpuFailure = explicitGpuRetry, stop = shouldStop)
             var stopRequested = false
             while (true) {
                 if (shouldStop() && !stopRequested) { stopRequested = true; handle.requestStop() }
@@ -108,7 +113,7 @@ internal class ManualTrialJpegSaveOwner(
 
     private fun uncertain(): PhotoRollSaveSnapshot {
         val core = manualSaveSnapshot(handle.state.value)
-        return (if (core.phase == PhotoRollSavePhase.HOLD) core else
+        return (if (core.phase in setOf(PhotoRollSavePhase.HOLD, PhotoRollSavePhase.GPU_FAILED)) core else
             PhotoRollSaveSnapshot(PhotoRollSavePhase.UNCONFIRMED)).also { localFailure.value = it }
     }
 }

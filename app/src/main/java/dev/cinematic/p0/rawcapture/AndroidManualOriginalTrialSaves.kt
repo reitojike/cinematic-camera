@@ -1,6 +1,8 @@
 package dev.cinematic.p0.rawcapture
 
 import android.content.Context
+import dev.cinematic.p0.gpu.DevelopEngine
+import dev.cinematic.p0.gpu.DevelopEngineSetting
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.CancellationSignal
@@ -22,7 +24,6 @@ import java.nio.file.LinkOption
 import java.nio.file.StandardOpenOption
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.io.Closeable
 
@@ -142,7 +143,7 @@ internal object AndroidManualOriginalTrialSaves {
             val handle = handles[previous.generation]
             if (handle?.hasUnreleasedResources == true || handle?.state?.value?.phase in
                 setOf(ManualOriginalTrialSavePhase.HOLD, ManualOriginalTrialSavePhase.UNCONFIRMED,
-                    ManualOriginalTrialSavePhase.SAVING)) return false
+                    ManualOriginalTrialSavePhase.SAVING, ManualOriginalTrialSavePhase.GPU_FAILED)) return false
             val publication = journal(previous).read()
             if (publication != null) return publication.phase == JpegPublicationPhase.PUBLISHED
             return storage(previous, CaptureJournalFile.MANUAL_REQUEST).read(ManualOriginalTrialRequestCodec.MAX_BYTES) == null
@@ -333,12 +334,15 @@ internal object AndroidManualOriginalTrialSaves {
         private val operation = AndroidRenderedJpegOperation.get(app, request.captureId, request.generation)
         @Volatile private var attempt: Original24Attempt? = null
         private var outputCleanupPending = false
-        private val stopped = AtomicBoolean(false)
+        private var selectedEngine: DevelopEngine? = null
         override val hasUnreleasedResources get() = attempt?.hasUnreleasedResources == true || outputCleanupPending
-        fun requestStop() { stopped.set(true); attempt?.requestStop() }
+        // The admitted coordinator owns the cancellation latch. Do not retain it across retries.
+        fun requestStop() { attempt?.requestStop() }
         override fun readPublication() = journal(request).read()
         override fun render(stop: () -> Boolean): ManualOriginalTrialRender {
             check(attempt == null)
+            // Freeze once at the first actual save, including any explicit GPU retry.
+            val selected = selectedEngine ?: DevelopEngineSetting(app).beginExport().also { selectedEngine = it }
             val io = object : AutoRenderIo {
                 override fun openOriginal() = app.contentResolver.openInputStream(Uri.parse(request.source.uri))
                     ?: throw IOException("Shared original unavailable")
@@ -352,8 +356,8 @@ internal object AndroidManualOriginalTrialSaves {
             // Only this production save opts in; low-level and diagnostic serial baselines stay explicit.
             val engine = Original24Attempt(app, request, io, File(directory, "original-work"),
                 parallelFoundationWorkers = 2, parallelGlowWorkers = 2,
-                parallelToneWorkers = 2, parallelMistWorkers = 2).also { attempt = it }
-            if (stopped.get() || stop()) engine.requestStop()
+                parallelToneWorkers = 2, parallelMistWorkers = 2, developEngine = selected).also { attempt = it }
+            if (stop()) engine.requestStop()
             outputCleanupPending = true
             try {
                 val result = engine.render(stop)
@@ -369,19 +373,31 @@ internal object AndroidManualOriginalTrialSaves {
                 try { releaseResources() } catch (cleanup: Throwable) {
                     if (cleanup !== failure) failure.addSuppressed(cleanup)
                 }
-                throw failure
+                throw reportFailure(failure)
             }
         }
         override fun publisher(render: ManualOriginalTrialRender): ManualOriginalTrialPublication {
             val publisher = operation.publisher(render, setOf(ManualOriginalTrialRender.CONTRACT), isCurrent)
             return object : ManualOriginalTrialPublication {
                 override val hasUnreleasedResources get() = publisher.hasUnreleasedResources
-                override fun advance(stop: () -> Boolean) = publisher.advance(stop)
+                override fun advance(stop: () -> Boolean) = try { publisher.advance(stop) }
+                    catch (failure: Throwable) { throw reportFailure(failure) }
                 override fun releaseResources() = publisher.releaseResources()
             }
         }
+        private fun reportFailure(failure: Throwable): Throwable {
+            if (selectedEngine != DevelopEngine.GPU || (failure !is Exception && failure !is OutOfMemoryError) ||
+                failure is java.util.concurrent.CancellationException || failure is android.os.OperationCanceledException ||
+                failure is CaptureJournalConflict) return failure
+            val reported = failure as? GpuSaveRenderException
+                ?: GpuSaveRenderException(GpuSaveFailureReason.SAVE_FAILED, false, failure)
+            try { AndroidGpuSaveFailures.record(app, reported.reason) } catch (record: Throwable) {
+                if (record !== reported) reported.addSuppressed(record)
+            }
+            return reported
+        }
         override fun releaseResources() {
-            attempt?.close()
+            attempt?.let { it.close(); check(!it.hasUnreleasedResources); attempt = null }
             if (outputCleanupPending) {
                 operation.discardFailedOutput()
                 outputCleanupPending = false
@@ -403,13 +419,14 @@ internal object AndroidManualOriginalTrialSaves {
         fun matches(source: SharedOriginalReference) = owner.matches(source)
         val hasUnreleasedResources get() = owner.hasUnreleasedResources
         @Volatile private var slot: AutoDevelopCoordinator.Attempt? = null // Written by IO; stop reads identity only.
-        fun advance(conditions: AutoDevelopConditions, stop: () -> Boolean): CompletableFuture<ManualOriginalTrialSaveState> =
-            advanceOwned({ conditions }, null, stop)
+        fun advance(conditions: AutoDevelopConditions, retryGpuFailure: Boolean = false, stop: () -> Boolean): CompletableFuture<ManualOriginalTrialSaveState> =
+            advanceOwned({ conditions }, null, stop, retryGpuFailure)
 
         /** Same owner, journal, queue and slot; only a foreground-started service uses this entry. */
         fun reserveForegroundExport(conditions: AutoDevelopConditions) = DevelopExecution.reserveForegroundExport(this, conditions)
         fun advanceForegroundExport(request: AutoDevelopCoordinator.ForegroundExportRequest,
-            conditions: () -> AutoDevelopConditions, stop: () -> Boolean) = advanceOwned(conditions, request, stop)
+            conditions: () -> AutoDevelopConditions, retryGpuFailure: Boolean = false, stop: () -> Boolean) =
+            advanceOwned(conditions, request, stop, retryGpuFailure)
         fun stopForegroundExport(request: AutoDevelopCoordinator.ForegroundExportRequest) {
             DevelopExecution.stopForegroundExport(request); requestStop()
         }
@@ -420,7 +437,7 @@ internal object AndroidManualOriginalTrialSaves {
         }
 
         private fun advanceOwned(conditions: () -> AutoDevelopConditions, foregroundExport: AutoDevelopCoordinator.ForegroundExportRequest?,
-            stop: () -> Boolean): CompletableFuture<ManualOriginalTrialSaveState> = queue.manualOriginalIo {
+            stop: () -> Boolean, retryGpuFailure: Boolean): CompletableFuture<ManualOriginalTrialSaveState> = queue.manualOriginalIo {
             if (slot != null) {
                 owner.releaseResources()
                 if (hasUnreleasedResources) throw IOException("Trial resources remain held")
@@ -435,7 +452,7 @@ internal object AndroidManualOriginalTrialSaves {
                 ?: throw IOException("Trial save admission blocked")
             slot = admitted
             DevelopExecution.registerStop(admitted, backend::requestStop)
-            try { owner.advance { stop() || DevelopExecution.shouldStop(admitted) } }
+            try { owner.advance(retryGpuFailure = retryGpuFailure) { stop() || DevelopExecution.shouldStop(admitted) } }
             catch (failure: OutOfMemoryError) { throw IOException("Original rendering memory unavailable", failure) }
             finally {
                 try { owner.releaseResources() }
