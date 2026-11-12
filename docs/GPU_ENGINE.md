@@ -243,7 +243,7 @@ blur-owned縮小画像は第1拡大軸後に解放済み。[全85テクスチャ
 
 1. **重みの計算は CPU（Kotlin）で行う。** `StageClearBlur.samples(inputSize, outputSize, filter)` をそのまま呼び、各出力位置の `first` と正規化済み重みを、R32F のテクスチャ（行=出力位置、列=タップ）と R32I（`first`）にしてアップロードする。重みは画像サイズと半径だけで決まるので、写真ごとにキャッシュする。
 2. **軸の順番**は `StageClearBlur.resize` と同じ規則（`verticalFirst` の条件）で決める。軸ごとに1パス。
-3. 各パスは「出力1画素 = Σ 入力[first+i] × w[i]」。BOX 縮小は1出力あたりのタップ数が多い（例: 1024px で半径 7% なら約70タップ）ため、**縮小パスは Compute シェーダー**で、行（列）単位にワークグループを割り当て、共有メモリで部分和を取る。拡大（BILINEAR 2〜3タップ、BICUBIC 4〜5タップ）はフラグメントシェーダー。
+3. 各パスは「出力1画素 = Σ 入力[first+i] × w[i]」。BOX 縮小は1出力あたりのタップ数が多い（例: 1024px で半径 7% なら約70タップ）ため、**縮小パスは Compute シェーダー**で、行（列）単位にワークグループを割り当てる。各invocationは出力画素を担当し、タップを元の順で単精度累積する。初期案の共有メモリ部分和は使わない。拡大（BILINEAR 2〜3タップ、BICUBIC 4〜5タップ）はフラグメントシェーダー。
 4. 軸と軸の間で値を単精度に丸める（Pillow と同じ）。累積は単精度（Kotlinは倍精度）。CPUとの差は参考記録とし、GPU帯/fullの演算順序は一致させる。
 5. `plane(input, radius)` = BOX で `reducedSize` へ縮小 → BILINEAR で原寸へ。`rgb()` は**色を分けずに** RGBA テクスチャのまま処理する（Kotlin の色ごとのコピーは不要）。
 
@@ -267,7 +267,7 @@ blur-owned縮小画像は第1拡大軸後に解放済み。[全85テクスチャ
 | skinChromaCap | `StageClearProtections.skinChromaCap` | 1パス | 顔マスクは現状すべて 0。uniform で 0 を渡せる形にしておく |
 | face cut | `StageClearProtections.faceCut` | Phase 0・1 では実装しない | 製品の顔マスクが NONE のため発生しない。インターフェースだけ用意し、呼ばれたら失敗させる |
 | shoulder | `StageClearProtections.shoulder` | 1パス | |
-| 表示 | `TrialDisplayPixels.byte` | 1パス（sRGB エンコード、8bit 丸め） | 書き出しの `channel()` と同じ式であることを試験で確認 |
+| 表示 | `TrialDisplayPixels.byte` | 1パス（sRGB エンコード、8bit 丸め） | GPU表示/encodeの一致を検査し、CPUの `channel()` との差は参考記録 |
 
 ### 4.7 統計（写真全体の値）
 
@@ -275,7 +275,7 @@ blur-owned縮小画像は第1拡大軸後に解放済み。[全85テクスチャ
 |---|---|---|---|
 | 自動露出 p97 | 中央 1/2×1/2 の輝度、NumPy float32 linear（近い端点から補間） | 入力は CPU にもあるので、**CPU で求める**（`R7PreviewInputs.prepare` をそのまま呼ぶ） | 両モードとも写真open時に1回。初回準備として①から除外（#323） |
 | 局所トーン p50/p92 | 原寸に拡大した平滑 log 輝度の全画素 | Compute シェーダーで `OriginalQuantiles` と同じ2段の基数ヒストグラム（上位16bit → 該当バケット内の下位16bit）を作り、厳密に選ぶ | FULL_RECOMPUTEは毎frame。NORMALはR7の既存cache条件に従う。CPU分位点との差は参考記録、GPU full/bandの判定値一致を維持 |
-| 白に近い画素の割合 | Glow 後の線形輝度 > NEAR_WHITE の画素数 | Compute シェーダーで原子的に数える | 強さ・調整値が変わるたび。CPU countとの差は参考記録、同じGPU入力のfull/band count一致を検査 |
+| 白に近い画素の割合 | Glow 後の線形輝度 > NEAR_WHITE の画素数 | Compute シェーダーで原子的に数える | 強さ・調整値が変わるたび。CPU countとの差とGPU full/bandのcount差は記録のみ。GPU同士の最終DISPLAY8・分位点・Mist factor一致は別に検査 |
 
 ### 4.8 書き出し（帯ごとの計算と「場の境界」）
 
