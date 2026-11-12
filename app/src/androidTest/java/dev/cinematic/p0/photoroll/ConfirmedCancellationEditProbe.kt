@@ -1,0 +1,97 @@
+package dev.cinematic.p0.photoroll
+
+import android.content.Context
+import android.os.Build
+import android.os.SystemClock
+import android.view.accessibility.AccessibilityNodeInfo
+import androidx.test.core.app.ActivityScenario
+import androidx.test.platform.app.InstrumentationRegistry
+import dev.cinematic.p0.photoedit.AndroidPhotoEditRecipes
+import dev.cinematic.p0.photoedit.PhotoEditValues
+import dev.cinematic.p0.raw.PhotoAdjustments
+import dev.cinematic.p0.rawcapture.AndroidManualOriginalTrialSaves
+import dev.cinematic.p0.rawcapture.ManualOriginalTrialSavePhase
+import dev.cinematic.p0.rawcapture.SharedOriginalReference
+import java.util.concurrent.TimeUnit
+import org.junit.Assert.*
+
+/** Used only after the caller confirms an actual pre-JPEG synthetic cancellation. The source,
+ * publication and cleanup assertions remain in Original24CancellationRetryInstrumentationTest. */
+internal object ConfirmedCancellationEditProbe {
+    private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
+
+    fun publish(app: Context, source: SharedOriginalReference, name: String,
+        cancelled: AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle): AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle {
+        check(Build.HARDWARE in setOf("ranchu", "goldfish") && app.packageName == "dev.cinematic.p0")
+        check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
+        val request = cancelled.request
+        AndroidPhotoEditRecipes(app).save(source, PhotoEditValues(request.strength,
+            request.adjustments.warmth, request.adjustments.exposureEv)).get(30, TimeUnit.SECONDS)
+        cameraRollReadPermissions(Build.VERSION.SDK_INT).forEach {
+            instrumentation.uiAutomation.grantRuntimePermission(app.packageName, it)
+        }
+        var camera: PhotoRollCameraOwners.Owner? = null
+        var published: AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle? = null
+        instrumentation.runOnMainSync {
+            camera = AndroidPhotoRollCameraObservations.register { PhotoRollCameraSnapshot(false, false, false, false) }
+        }
+        try {
+            ActivityScenario.launch(PhotoRollActivity::class.java).use {
+                click(name)
+                await("confirmed cancellation remains retryable and editable") {
+                    action("取り消した保存を同じ設定で再試行") != null && action("STRENGTH") != null
+                }
+                assertEquals(ManualOriginalTrialSavePhase.CANCELLED, cancelled.state.value.phase)
+                click("一覧へ戻る")
+                click(name)
+                click("STRENGTH")
+                click("RESET")
+                click("目盛りを閉じる")
+                await("new recipe ready") { action("JPEGを保存") != null }
+                val next = requireNotNull(AndroidManualOriginalTrialSaves.knownPrepared(source))
+                assertEquals(request.generation + 1, next.request.generation)
+                assertEquals(.5, next.request.strength, 0.0)
+                assertEquals(PhotoAdjustments.NONE, next.request.adjustments)
+                click("JPEGを保存")
+                await("new recipe publication", 180_000) {
+                    next.state.value.phase == ManualOriginalTrialSavePhase.PUBLISHED && ForegroundExports.gate.active() == null
+                }
+                assertEquals("Old cancelled recipe must never publish", ManualOriginalTrialSavePhase.CANCELLED, cancelled.state.value.phase)
+                assertNull(cancelled.state.value.uri)
+                published = next
+            }
+            GpuPhotoRollRetiredOwners.releaseBeforeOpen()
+            return requireNotNull(published)
+        } finally {
+            instrumentation.runOnMainSync { camera?.close() }
+        }
+    }
+
+    private fun action(label: String): AccessibilityNodeInfo? {
+        fun find(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+            if (node == null || !node.refresh()) return null
+            if (node.text?.toString() == label || node.contentDescription?.toString() == label) return node
+            for (i in 0 until node.childCount) find(node.getChild(i))?.let { return it }
+            return null
+        }
+        instrumentation.uiAutomation.clearCache()
+        var node = find(instrumentation.uiAutomation.rootInActiveWindow)
+        while (node != null && !node.isClickable && node.isEnabled) node = node.parent
+        return node?.takeIf { it.refresh() && it.isVisibleToUser && it.isClickable && it.isEnabled }
+    }
+    private fun click(label: String) {
+        var node: AccessibilityNodeInfo? = null
+        await(label) { action(label).also { node = it } != null }
+        assertTrue(requireNotNull(node).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+        instrumentation.waitForIdleSync()
+    }
+    private fun await(label: String, timeout: Long = 60_000, condition: () -> Boolean) {
+        val deadline = SystemClock.elapsedRealtime() + timeout
+        do {
+            instrumentation.waitForIdleSync()
+            if (condition()) return
+            Thread.sleep(50)
+        } while (SystemClock.elapsedRealtime() < deadline)
+        error("Cancelled save editor did not reach: $label")
+    }
+}

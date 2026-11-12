@@ -6,7 +6,7 @@ import org.junit.Test
 class GpuPhotoRollSavePolicyTest {
     @Test fun recreatedEditorsPauseUnresolvedOwnersBeforeOpeningTheGpuPhoto() {
         for (phase in PhotoRollSavePhase.entries) {
-            assertEquals(phase.name, phase !in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED),
+            assertEquals(phase.name, phase !in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED, PhotoRollSavePhase.CANCELLED),
                 gpuSaveMustPauseLoadedPreview(phase))
         }
     }
@@ -20,7 +20,7 @@ class GpuPhotoRollSavePolicyTest {
     }
     @Test fun activeHeldOrUncertainSaveCannotStartAnotherPreview() {
         for (phase in PhotoRollSavePhase.entries) {
-            assertEquals(phase.name, phase in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED), gpuSaveCanResumePreview(phase))
+            assertEquals(phase.name, phase in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED, PhotoRollSavePhase.CANCELLED), gpuSaveCanResumePreview(phase))
         }
         assertFalse(gpuSaveCanResumePreview(null))
     }
