@@ -40,7 +40,7 @@ class ForegroundExportOwnerTest {
 
     /** Picker-result integration only: no DocumentsUI, external provider, or persistable grant proof. */
     @Test fun importedSyntheticDngEditsAndPublishesThroughRealForegroundService() {
-        org.junit.Assume.assumeTrue(context.packageName == "dev.cinematic.p0.gpudiagnostic")
+        org.junit.Assume.assumeTrue(context.packageName == "dev.cinematic.p0" && dev.cinematic.p0.BuildConfig.DEBUG)
         org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("importUiFgs") == "true")
         cameraRollReadPermissions(Build.VERSION.SDK_INT).forEach {
             check(context.checkSelfPermission(it) == android.content.pm.PackageManager.PERMISSION_GRANTED) {

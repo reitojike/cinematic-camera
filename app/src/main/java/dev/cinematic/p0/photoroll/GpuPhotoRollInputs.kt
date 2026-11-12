@@ -36,7 +36,7 @@ internal object GpuPhotoRollInputs {
     }
     private val observer = AtomicReference<DiagnosticObserver?>()
     internal fun observeForDiagnostics(value: DiagnosticObserver): AutoCloseable {
-        check(BuildConfig.BUILD_TYPE == "gpuDiagnostic")
+        check(BuildConfig.DEBUG || BuildConfig.BUILD_TYPE == "gpuDiagnostic")
         check(observer.compareAndSet(null, value))
         return AutoCloseable { check(observer.compareAndSet(value, null)) }
     }
@@ -109,7 +109,7 @@ internal object GpuPhotoRollInputs {
         private var descriptor: ParcelFileDescriptor? = null
         private var snapshot: File? = null
         private var released = false
-        private val diagnostic = if (BuildConfig.BUILD_TYPE == "gpuDiagnostic") observer.get() else null
+        private val diagnostic = if (BuildConfig.DEBUG || BuildConfig.BUILD_TYPE == "gpuDiagnostic") observer.get() else null
         fun stop() { signal.cancel(); session?.requestStop() }
         fun stopped() = cancellation.isCanceled || signal.isCanceled || stale() || DevelopExecution.shouldStop(token)
         private fun original(source: SharedOriginalReference) = app.contentResolver.openInputStream(Uri.parse(source.uri))
