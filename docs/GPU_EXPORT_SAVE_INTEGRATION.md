@@ -104,7 +104,8 @@ count差1が出た。その後の最新ユーザー判断でCPU差（count/Mist/
 
 ## 今回の移行範囲と残る旧試験
 
-今回の参考値化はexport対象の `GpuExportParityAndroidTest` / `GpuExportRendererAndroidTest` に限定する。
-旧 `StageClearGpuPipelineAndroidTest` / `GlowMistParityAndroidTest` 等の広範なCPU parity試験には旧assertが残る。
-これは移行前の試験範囲の差であり、CPU差をGate2条件へ戻す意味ではない。今回の#341結合に広げず、
-GPU既定化後の#290でGPU基準画像回帰への置換を扱う。純粋なcount集計関数自体の正しさ試験は別物として保持する。
+#341での参考値化はexport対象の `GpuExportParityAndroidTest` / `GpuExportRendererAndroidTest` に限定した。
+その時点で旧assertが残った `StageClearGpuPipelineAndroidTest` / `GlowMistParityAndroidTest` 等は、#290前段Aで広範なCPU差の参考記録化を扱う。CPU差をGate2条件へ戻す意味ではない。
+GPU基準画像回帰は現行GPU出力を対象にAndroidで先行し、既定切替を待たず並行して進める。基準採用は本人目視確認後とし、GPU/ルック変更PRのマージ前とCPU削除・リファクタリングの各PR前に手動実行する。
+v0.1.0前のD0でMesaの全工程呼び出しと基準画像比較のCI移行を扱う。環境版・差分・承認の詳細は [GPUエンジン契約](GPU_ENGINE.md#gpu基準画像回帰-android先行とd0のmesa移行) を参照する。
+純粋なcount集計関数自体の正しさ試験は別物として保持する。

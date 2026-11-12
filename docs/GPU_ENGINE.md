@@ -5,7 +5,7 @@
 現行の API・GLSL・実装設計を記録する。Draft PR中の変更はマージまで提案であり、mainの契約を置き換えない。
 進捗・検証結果・採否は Issue / PR に記録する。通常debug/releaseの既定はCPUで、Gate 2承認だけでは変えない。
 #291は記録された診断APKの実写確認と本人承認を完了した。#289と#290前段Aを確認後、GPU既定化は別途承認する。
-CPU数値差は参考値、GPU基準画像への回帰移行は既定化後の#290後段Bとする（§4.11）。
+CPU数値差は参考値。#290のGPU基準画像回帰は現行GPU出力を対象にAndroidで先行し、既定切替や様子見期間の終了を待たない（§4.11）。
 以下は親Issueの節番号を維持し、実装との差を各節に記す。
 
 ## 4. 詳細設計
@@ -389,11 +389,15 @@ display/previewの中間色、合成DNG、旧GPU合成診断。GPUコピー・�
 係数のuniform転送、CPU入力準備値の受渡し、純粋な集計器、CPU goldenと保存安全試験は維持する。
 この層の区分と個々の最終headの実行件数はPRへ記録する。過去にhostで成功した全Look行列を継続Mesaへ統合済みとは書かない。
 
-#### 後段B: GPU既定化後のルック正本・基準画像
+#### GPU基準画像回帰: Android先行とD0のMesa移行
 
-- #289と前段Aの受入後、別途本人承認されたGPU既定化commitを確認してから開始する。今回GLSL正本への切替、golden生成/採用は行わない。
-- 既存の決定論的合成fixtureを使い、入力/seed/寸法・調整値・GLSLと注入定数の版・色空間/8bit化・Mesa/driver/実ES・基準hash・比較方法を管理する。実写を公開goldenに入れない。
-- 同一環境のGPU回帰と異なるdriverの比較を区別し、CPU閾値を無断転用しない。意図した見た目の変更は本人確認後にbaseline更新し、失敗を消す自動再生成は禁止。製品Kotlinの数式・CPU golden削除は含めない。
+- 現行GPU出力を比較対象とし、Android opt-inによる候補生成・比較をGPU既定切替前から様子見期間と並行して進める。#290前段AのCPU差参考記録化と、基準画像の候補生成・本人採用・継続比較は別々に検証・記録する。前段Aだけで基準画像を作成・採用済みとはしない。
+- 既存の決定論的合成fixtureを使い、入力/seed/寸法・調整値・対象commit・GLSLと注入定数の版・色空間/8bit化・基準hash・比較方法を管理する。実写・個人情報を公開goldenに入れない。
+- Android先行時はホストGPU/driver版、AVD名・system image/API/ABI/版、emulator版、描画設定、実EGL/GLES vendor/renderer/ES版も基準画像と一緒に記録する。driverやAVD等の版が変わって差が出た場合は差の場所と大きさを示し、本人の目視確認後に基準を作り直す。環境差を無断の閾値緩和や自動baseline更新で消さない。
+- 基準候補は本人の目視確認後に採用する。同一環境のGPU回帰と異なるdriverの比較を区別し、CPU閾値を無断転用しない。意図した見た目変更時も本人確認後にbaseline更新し、失敗を消す自動再生成は禁止する。
+- この全工程の基準画像比較は現時点ではCI自動実行ではない。少なくともGPUやルックに触れるPRのマージ前、およびCPU経路の削除・リファクタリングの各PR前に手動実行する。対象head、基準hashと環境、条件数・成功/失敗/skip、差分と本人確認の要否をPRへ記録し、未実行をCI成功で代替しない。
+- v0.1.0前のリファクタリングD0に、Mesaから全工程を呼べるようにする作業と、基準画像比較をMesa CIへ移す作業を含める。現在のMesaは上表のpass範囲であり、全工程の基準画像比較を移行済みとはしない。MesaとAndroidのdriver差は別に評価し、Android基準へのbit完全一致を無断で条件にしない。
+- 製品のGPU既定切替・GLSL正本化・Kotlin数式変更・CPU経路/既存CPU golden削除は、この先行試験や基準採用の許可に含めない。各変更は範囲と承認を分ける。
 
 JVM bindingは **LWJGL 3.4.3** の `org.lwjgl:lwjgl`、`lwjgl-egl`、`lwjgl-opengles` と
 `lwjgl` / `lwjgl-opengles` の `natives-linux`。明示フラグ時の `testDebugImplementation` / `testDebugRuntimeOnly` だけに隔離し、APK・製品依存・通常のJVM試験・他variantには加えない。
@@ -416,7 +420,7 @@ EGL/GLES bindingは [LWJGL公式](https://www.lwjgl.org/guide) と
 
 - `DevelopEngine { CPU, GPU }` をpreviewとexportで共用し、保存は最初の実保存時にengineを固定する。
 - 専用gpuDiagnosticのHubだけでGPUを選べる。通常debug/releaseはCPUで、通常設定画面にselectorを追加しない。
-- Gate 2本人承認済みでも、#289と#290前段Aの受入後に別途GPU既定化PRを作り、マージ前に本人確認する。後段BのGPU基準画像はその後に進める。
+- Gate 2本人承認済みでも、#289と#290前段Aの受入後に別途GPU既定化PRを作り、マージ前に本人確認する。GPU基準画像のAndroid先行試験は既定切替を待たず並行して進め、採用は本人の目視確認後とする。
 
 ---
 
