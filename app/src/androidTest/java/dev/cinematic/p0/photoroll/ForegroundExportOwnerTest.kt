@@ -39,9 +39,14 @@ class ForegroundExportOwnerTest {
     }
 
     /** Picker-result integration only: no DocumentsUI, external provider, or persistable grant proof. */
-    @Test fun importedSyntheticDngEditsAndPublishesThroughRealForegroundService() {
+    @Test fun importedSyntheticDngEditsAndPublishesThroughRealForegroundService() = importedSyntheticDng(false)
+
+    /** Real system picker, restricted to one uniquely named self-created Downloads source. */
+    @Test fun documentsUiSyntheticDngEditsAndPublishesThroughRealForegroundService() = importedSyntheticDng(true)
+
+    private fun importedSyntheticDng(documentsUi: Boolean) {
         org.junit.Assume.assumeTrue(context.packageName == "dev.cinematic.p0" && dev.cinematic.p0.BuildConfig.DEBUG)
-        org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("importUiFgs") == "true")
+        org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString(if (documentsUi) "importUiFgsDocuments" else "importUiFgs") == "true")
         cameraRollReadPermissions(Build.VERSION.SDK_INT).forEach {
             check(context.checkSelfPermission(it) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
                 "Reuse an already-authorized synthetic fixture app; do not change permissions"
@@ -50,6 +55,7 @@ class ForegroundExportOwnerTest {
         check(ForegroundExports.gate.active() == null)
         val app = context.applicationContext
         val resolver = app.contentResolver
+        val originalGrants = resolver.persistedUriPermissions.map { Triple(it.uri, it.isReadPermission, it.isWritePermission) }.toSet()
         val imports = AndroidDngImports.get(app)
         val files = DngImportJournalFiles(File(app.noBackupFilesDir.canonicalFile, "dng-imports"))
         val beforeImports = files.records()
@@ -77,11 +83,13 @@ class ForegroundExportOwnerTest {
                 override fun preflightOpened() { opened.incrementAndGet() }
                 override fun released() { released.incrementAndGet() }
             })
-            val uri = requireNotNull(resolver.insert(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
+            val collection = if (documentsUi) MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                else MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            val uri = requireNotNull(resolver.insert(collection,
                 ContentValues().apply {
                     put(MediaStore.MediaColumns.DISPLAY_NAME, name)
                     put(MediaStore.MediaColumns.MIME_TYPE, "image/x-adobe-dng")
-                    put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/Cinematic Camera Synthetic Tests/")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, if (documentsUi) "Download/" else "Pictures/Cinematic Camera Synthetic Tests/")
                     put(MediaStore.MediaColumns.IS_PENDING, 1)
                 })).also { sourceUri = it }
             // Unique bytes prevent reusing an earlier completed import with the same fingerprint.
@@ -95,19 +103,20 @@ class ForegroundExportOwnerTest {
             instrumentation.runOnMainSync {
                 observation = AndroidPhotoRollCameraObservations.register { PhotoRollCameraSnapshot(false, false, false, false) }
             }
-            monitor = instrumentation.addMonitor(android.content.IntentFilter(android.content.Intent.ACTION_OPEN_DOCUMENT).apply {
+            if (!documentsUi) monitor = instrumentation.addMonitor(android.content.IntentFilter(android.content.Intent.ACTION_OPEN_DOCUMENT).apply {
                 addCategory(android.content.Intent.CATEGORY_OPENABLE); addDataType("*/*")
             }, android.app.Instrumentation.ActivityResult(android.app.Activity.RESULT_OK,
                 android.content.Intent().setData(uri).addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)), true)
             scenario = ActivityScenario.launch(PhotoRollActivity::class.java)
             click("外部DNGを取り込む")
             click("DNGを選ぶ・選び直す")
+            if (documentsUi) selectSyntheticDownloadThroughDocumentsUi(name)
             try {
                 await {
-                    val hits = requireNotNull(monitor).hits
+                    val pickerReturned = documentsUi || requireNotNull(monitor).hits == 1
                     val state = imports.state.value
                     val items = state.items.filter { it.id !in beforeIds }
-                    hits == 1 && !state.busy && items.any { it.ready }
+                    pickerReturned && !state.busy && items.any { it.ready }
                 }
             } catch (error: Throwable) {
                 // A single pre-cleanup snapshot, no source name/URI/hash or arbitrary screen dump.
@@ -126,7 +135,18 @@ class ForegroundExportOwnerTest {
             }
             imported = files.records().filter { it.target.operationId !in beforeIds }.single()
             val copy = requireNotNull(imported)
-            assertEquals(uri.toString(), copy.sourceUri)
+            if (documentsUi) {
+                val selected = Uri.parse(copy.sourceUri)
+                check(android.provider.DocumentsContract.isDocumentUri(app, selected))
+                check(selected.authority == "com.android.providers.downloads.documents")
+                // Never print a provider URI or document name on mismatch.
+                requireNotNull(resolver.query(selected, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)).use {
+                    check(it.count == 1 && it.moveToFirst() && it.getString(0) == name)
+                }
+                check(resolver.persistedUriPermissions.map { Triple(it.uri, it.isReadPermission, it.isWritePermission) }.toSet() == originalGrants) {
+                    "Import changed retained read-grant ownership"
+                }
+            } else assertEquals(uri.toString(), copy.sourceUri)
             assertEquals(fingerprint, copy.fingerprint)
             assertNotEquals(uri.toString(), copy.uri)
             assertEquals(DngImportGrant.SESSION_ONLY, copy.grant)
@@ -210,6 +230,14 @@ class ForegroundExportOwnerTest {
                 val first = primary ?: cleanup
                 if (first == null) cleanup = error else if (first !== error) first.addSuppressed(error)
             } }
+            if (documentsUi) attempt {
+                val device = androidx.test.uiautomator.UiDevice.getInstance(instrumentation)
+                var backs = 0
+                while (device.currentPackageName?.endsWith(".documentsui") == true && backs++ < 3) {
+                    device.pressBack(); device.waitForIdle(1000)
+                }
+                check(device.currentPackageName?.endsWith(".documentsui") != true) { "System picker closure unconfirmed" }
+            }
             attempt { scenario?.close() }
             attempt { imports.pause(); await { !imports.state.value.busy } }
             attempt { ForegroundExports.gate.active()?.value?.let { ForegroundExports.cancel(it) } }
@@ -243,6 +271,52 @@ class ForegroundExportOwnerTest {
             }
             if (primary == null) cleanup?.let { throw it }
         }
+    }
+
+    private fun selectSyntheticDownloadThroughDocumentsUi(name: String) {
+        val device = androidx.test.uiautomator.UiDevice.getInstance(instrumentation)
+        await { device.currentPackageName?.endsWith(".documentsui") == true }
+        val pickerPackage = requireNotNull(device.currentPackageName)
+        val roots = androidx.test.uiautomator.By.res(pickerPackage, "roots_list")
+        fun unique(selector: androidx.test.uiautomator.BySelector): androidx.test.uiautomator.UiObject2 {
+            var found: androidx.test.uiautomator.UiObject2? = null
+            await {
+                check(device.currentPackageName == pickerPackage) { "System picker lost foreground" }
+                val matches = device.findObjects(selector)
+                check(matches.size <= 1) { "Ambiguous system picker target" }
+                found = matches.singleOrNull(); found != null
+            }
+            return requireNotNull(found)
+        }
+        if (!device.hasObject(roots)) unique(androidx.test.uiautomator.By.pkg(pickerPackage)
+            .clazz("android.widget.ImageButton").desc(java.util.regex.Pattern.compile(
+                "Show roots|Open navigation drawer|ルートを表示|ルートを表示する|ナビゲーション ドロワーを開く"))).click()
+        unique(androidx.test.uiautomator.By.pkg(pickerPackage).text(java.util.regex.Pattern.compile("Downloads|ダウンロード"))
+            .hasAncestor(roots)).click()
+        await { !device.hasObject(roots) }
+        val directory = androidx.test.uiautomator.By.res(pickerPackage, "dir_list")
+        val exact = androidx.test.uiautomator.By.pkg(pickerPackage).text(name).hasAncestor(directory)
+        // No fallback to Recents, Images, other roots, screenshots, or arbitrary document clicks.
+        val list = unique(directory)
+        var rewinds = 0
+        while (list.isScrollable && list.scroll(androidx.test.uiautomator.Direction.UP, .8f)) {
+            check(++rewinds <= 20) { "Synthetic directory navigation bound exceeded" }
+        }
+        var selected: androidx.test.uiautomator.UiObject2? = null
+        var pages = 0
+        await {
+            check(device.currentPackageName == pickerPackage) { "System picker lost foreground" }
+            val matches = device.findObjects(exact)
+            check(matches.size <= 1) { "Ambiguous synthetic document" }
+            selected = matches.singleOrNull()
+            if (selected == null && list.isScrollable) {
+                check(++pages <= 20) { "Synthetic document not found within navigation bound" }
+                check(list.scroll(androidx.test.uiautomator.Direction.DOWN, .8f)) { "Synthetic document absent" }
+            }
+            selected != null
+        }
+        requireNotNull(selected).click()
+        await { device.currentPackageName == context.packageName }
     }
 
     private fun verifySyntheticRow(uri: Uri, name: String) {

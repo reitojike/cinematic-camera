@@ -30,3 +30,18 @@ GPU診断variantはread権限をmanifestから除外しているため全画面�
 選択結果は、現在の復帰世代の最初の既存resourceObserved通知まで消費しない。共通coordinator更新後の既存通知を再利用し、固定sleepや条件上書きは行わない。既存入力準備の10秒上限内で観測が届かなければ選択を破棄して理由を示す。取消・閉じる・待機開始後の背景移行も未受付選択を破棄する。最初の観測にblockerがあっても、その解消を待つ自動再試行はせず、従来の受付判定に委ねる。
 
 JVM回帰は復帰時unknownの再現と観測後の一回受付、古い世代/背景通知の拒否、実blockerの拒否保持、取消後の非受付、観測不能時の上限終了を確認する。64MiB/メモリguard、コピー所有・公開調停・原本保護の実装は変更しない。実DocumentsUIと実機/実写の確認は別途残る。
+
+
+## 実DocumentsUIの小型合成限定ケース
+
+`ForegroundExportOwnerTest#documentsUiSyntheticDngEditsAndPublishesThroughRealForegroundService` は `isolated=true` と `importUiFgsDocuments=true` の明示時だけ実行する。新provider・新権限・依存は追加せず、既存UiAutomatorで標準pickerを操作する。通常の取込Panelから起動し、Downloads root内の今回だけの一意な自作64×48 DNGを完全一致で選ぶ。結果注入・別rootへのfallback・任意ファイル選択・画面dumpは行わない。見つからない/曖昧なら停止する。
+
+sourceは自身がMediaStore.Downloadsへ作成した1件。DocumentsProviderのdocument URIと選択名、既存copy fingerprint/原本不変、取り込み終了後のpersisted grant集合不変を検査する。後段は既存ケースと同じ編集/実FGS保存/公開JPEG/owner解放検査を再利用する。実pickerによるアプリ間のURI受渡しを検証するが、persistable grantの取得途中を観測した証拠ではなく、任意の外部providerやSD抜去を保証しない。
+
+成功・解放確認後だけ自身source/copy/JPEGの正確な3行を回収する。失敗時は保持し、pickerはBackを最大3回に限定して終了確認する。閉じられない場合も全消去や強制終了で隠さず、保持して報告する。既存の他データ/journal/permissionを変更しない。UIは英語/日本語の既存navigation labelに限定し、未知のUIでは停止する。
+
+```powershell
+adb -s $serial shell am instrument -w -r -e isolated true -e importUiFgsDocuments true -e class dev.cinematic.p0.photoroll.ForegroundExportOwnerTest#documentsUiSyntheticDngEditsAndPublishesThroughRealForegroundService dev.cinematic.p0.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+実機・実写・24MP全UI・Pixel RAM/768MiBは別許可による確認を残す。合成PASSだけで#101/#260をcloseしない。
