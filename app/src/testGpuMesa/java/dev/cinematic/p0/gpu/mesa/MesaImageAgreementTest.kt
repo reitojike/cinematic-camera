@@ -80,7 +80,7 @@ class MesaImageAgreementTest(private val width: Int, private val height: Int) {
     }
 
     companion object {
-        @JvmStatic @Parameterized.Parameters(name = "{0}x{1}")
+        @JvmStatic @Parameterized.Parameters(name = "{0,number,0}x{1,number,0}")
         fun sizes(): List<Array<Int>> = (GpuReferenceImages.FAST_SIZES + GpuReferenceImages.EXPORT_SIZE)
             .map { arrayOf(it.width, it.height) }
     }
