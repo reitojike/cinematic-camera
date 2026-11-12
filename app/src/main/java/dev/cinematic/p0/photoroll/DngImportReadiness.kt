@@ -13,15 +13,18 @@ import kotlinx.coroutines.withTimeout
 internal suspend fun awaitDngImportObservation(publications: StateFlow<GpuInputPublication>,
     timeoutMillis: Long = GPU_INPUT_READINESS_TIMEOUT_MS, stillSelected: () -> Boolean = { true }): Boolean {
     val initial = publications.value
-    withTimeout(timeoutMillis) {
+    val observed = withTimeout(timeoutMillis) {
         publications.first { event ->
             val value = event.observation
             val floor = initial.observation
-            event.sequence >= initial.sequence && value.resourceObserved && value.conditions.foreground == true &&
-                (value.registrationGeneration > floor.registrationGeneration ||
-                    value.registrationGeneration == floor.registrationGeneration && value.foregroundEpoch >= floor.foregroundEpoch)
+            val newer = value.registrationGeneration > floor.registrationGeneration ||
+                value.registrationGeneration == floor.registrationGeneration && value.foregroundEpoch > floor.foregroundEpoch
+            val same = value.registrationGeneration == floor.registrationGeneration && value.foregroundEpoch == floor.foregroundEpoch
+            event.sequence >= initial.sequence && (newer || same && value.resourceObserved && value.conditions.foreground == true)
         }
     }
     currentCoroutineContext().ensureActive()
-    return stillSelected()
+    // A short pause/resume may be conflated by Compose; epoch identity still invalidates the request.
+    return observed.observation.registrationGeneration == initial.observation.registrationGeneration &&
+        observed.observation.foregroundEpoch == initial.observation.foregroundEpoch && stillSelected()
 }

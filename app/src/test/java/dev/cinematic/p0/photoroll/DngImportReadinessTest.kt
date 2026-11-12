@@ -89,6 +89,19 @@ class DngImportReadinessTest {
         assertFalse(dispatched)
     }
 
+    @Test fun conflatedPauseResumeCannotDispatchInANewerForegroundEpoch() = runBlocking {
+        for (newRegistration in listOf(false, true)) {
+            val flow = MutableStateFlow(event(2, epoch = 2, observed = false))
+            var dispatched = false
+            val job = launch { if (awaitDngImportObservation(flow)) dispatched = true }
+            withTimeout(1000) { flow.subscriptionCount.first { it > 0 } }
+            // Skip the intermediate pause event entirely, as StateFlow/Compose may conflate it.
+            flow.value = event(5, epoch = if (newRegistration) 1 else 4, generation = if (newRegistration) 2 else 1)
+            withTimeout(1000) { job.join() }
+            assertFalse(dispatched)
+        }
+    }
+
     @Test fun unavailableObservationEndsWithinExistingBoundWithoutAdmission() = runBlocking {
         val flow = MutableStateFlow(event(2, observed = false))
         val failure = runCatching { awaitDngImportObservation(flow, timeoutMillis = 20) }.exceptionOrNull()
