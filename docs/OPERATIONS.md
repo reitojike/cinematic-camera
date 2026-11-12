@@ -1,5 +1,7 @@
 # リポジトリ運用とP0 APK配布
 
+ロードマップv2（2026-11-12）の範囲内で本人が包括許可した一般試験・文書・CI・挙動不変整理等は、以下の「マージ許可」に含む。個別承認が必要な変更と安全停止条件は除外し、最終CI・canonical・独立レビュー・未解決0の条件は常に維持する。承認の範囲は末尾の「作業と承認の境界」を参照する。
+
 2026-11-01に`reitojike/think-canvas`の現在のmain、実際のruleset、CIと配布手順を読み取りで確認した。
 独立した`reitojike/cinematic-camera`をprivateで初期化し、公開前検査後に利用者の明示承認でpublicへ変更した。
 think-canvasのソース・設定・署名秘密は変更・コピーしない。
@@ -89,21 +91,23 @@ think-canvasのclassic branch-protection APIは接続機能の権限で403とな
 
 versionNameはtag、versionCodeはこのrelease workflowのrun_numberとする。同じrunの再実行は同じversionCode。固定ファイル名、明示tag、commit・run・hashによる識別、`releases/latest`を使わない点をthink-canvasに揃える。release jobだけ`contents: write`を使い、GitHubが発行するそのrunの標準tokenでReleaseを保存する。
 
-**P0ではrunnerの一時debug署名を使う。継続更新用の固定署名は未導入。** think-canvasの固定PR鍵・internal鍵は一切流用しない。新しい固定鍵の生成・保管・Secrets登録・継続利用は別途確認が必要なため実行しない。通常製品のinternal release buildやObtainiumによる継続更新も今回の対象外。
+**旧P0配布経路ではrunnerの一時debug署名を使う。現在の固定署名配布とは別経路。** think-canvasの固定PR鍵・internal鍵は一切流用しない。新しい固定鍵の生成・保管・Secrets登録・継続利用は別途確認が必要なため実行しない。通常製品のinternal release buildやObtainiumによる継続更新は、旧P0経路導入時の対象外だった。
 
-同じapplicationIdでも、別runやローカル版と署名が違うと上書き更新できない。現配布版の一時鍵は
+同じapplicationIdでも、別runやローカル版と署名が違うと上書き更新できない。旧P0配布版の一時鍵は
 継続用として保持していない。今回の旧内部テスト写真についてだけ、利用者が消失を許可した。
 署名が違う候補を試す場合は、上書き不可と旧内部写真/ログが失われることを説明し、利用者自身が
 旧アプリを削除・再インストールする。一般的なデータ消失の許可には広げず、こちらから端末を操作しない。
 固定鍵生成/継続利用の条件は変えない。新しいMediaStore保存画像はアプリ内ファイルとは別に扱う。
 
-## Draft提案: 専用固定署名（Issue #27、未承認・未適用）
+## 専用固定署名の配布
 
-この節と `internal-release.yml` は承認前の提案。現行の `p0-release.yml` は一時debug署名のまま維持する。
-think-canvasの現行internal-releaseはEnvironment・専用4Secrets・証明書pin・main限定dispatch・一時鍵cleanupを使う。
-その構造だけを本repoへ適合し、既存projectの鍵/Secret値/Environment設定をコピーしない。
+現行の `internal-release.yml` は専用固定署名の配布に使用している。Environment `internal-release` / main 限定、applicationId `dev.cinematic.p0`、非 debuggable を維持し、他 project の鍵を流用しない。旧 P0 の一時 debug 署名配布は別経路である。
 
-承認対象は次の一式。mainへの本Draft取り込み、専用key生成/安全な保管、Environment設定と継続利用、初回stable配布を含む。
+2026-11-12 の [v0.1.0-dev.1](https://github.com/reitojike/cinematic-camera/releases/tag/v0.1.0-dev.1) は versionCode 15、署名 1、既存公開証明書 SHA-256 `2E84FE61E2D9E71CD35F8D3235BE7F606E622B89F29EDCD9925E4BDA6BCE193C` と一致。公開 APK の hash / SHA256SUMS / GitHub asset digest を照合した。配布物は `cinematic-camera-internal.apk` / `SHA256SUMS.txt` / `SIGNING.txt`。この照合は端末更新、写真・設定保持、バックアップ復旧の確認を代替しない。
+
+### 導入時の提案記録（Issue #27）
+
+以下の未作成・未承認・未実施という記述は導入当時の状態を残したもの。現在の配布状態は上記と実 Release を参照する。新規鍵、署名設定変更、復旧操作への継続許可を意味しない。
 
 | 対象 | 提案する具体値/条件 |
 |---|---|
@@ -172,17 +176,39 @@ Play App Signingの鍵再設定や署名rotationはこの経路には導入し�
 
 不具合版から戻す場合は、レビューした既知の正常ソースを同じ鍵・より大きなversionCodeで改めて配布する。
 旧APKへのdowngradeやデータ消去で戻さず、データ形式の後方互換性を確認できない場合は配布を止める。
-端末での初回導入、同一署名の2版間更新、写真/設定保持、復旧は未検証であり、CI成功と区別する。
+端末の初回導入・同一署名の2版間更新・写真/設定保持・復旧は各確認記録で判断する。CIや公開APK照合だけで確認済みとしない。
 
 根拠: [Androidのアプリ署名](https://developer.android.com/studio/publish/app-signing)、
 [versionCode](https://developer.android.com/studio/publish/versioning)、
 [GitHub run_number / run_attempt](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts)、
 [Gradle Actions cache設定](https://github.com/gradle/actions/blob/main/docs/setup-gradle.md)。
 
+## v0.1.0 正式版の配布方法（計画・未実装）
+
+現行 `internal-release.yml` は `vX.Y.Z-alpha.N` / `vX.Y.Z-dev.N` のみを受け付け、常に pre-release を作る。正式版 v0.1.0 は現行のままでは配布できない。
+
+- 既存 workflow の最小拡張として、正式タグの厳密検証と正式タグ時だけの非 pre-release 分岐を別 PR でレビューする。署名・main 限定・秘密の扱い・公開前検証は維持する。dev 版の表示だけを変更せず、APK versionName が正式タグと一致する新規 build を行う。
+- 同じ固定署名・applicationId・workflow run_number 採番を維持する。全ページ・draft を含む既存配布の最大番号より大きい versionCode だけを許可する。dev.1 の 15 を根拠に次を 16 と予約しない。
+- v0.1.0 はロードマップv2のCPU/診断経路削除・試験移動・GPU前提整理を対象とする。D0で設計し、GPU回帰を前提に数日の本人使用結果と致命的不具合なしを確認してCPU削除、その後D1〜Dnの小PR、続いてMesa全工程の基準画像比較CI移行へ進む。詳細は #290 / [GPU_ENGINE](GPU_ENGINE.md)。基準の採用・更新は本人判断。
+- 24MP/SIGMA fpを最優先とし、別ファイルならv0.1.0と並行、競合箇所は24MPを先にする。v0.1.0は24MP完成を待たず、完成済みなら含める。24MP完成時のdev.N配布も都度承認を得る。
+- 様子見結果、未解決 Issue の扱い、最終 head の CI/review/未解決 thread、必要回帰を確認し、対象 main SHA と残課題を提示して正式配布の承認を得る。計画や dev 配布の承認を正式配布へ広げない。
+- 承認後、未使用タグと指定 SHA で実行する。公開 APK の署名・package・version・非 debuggable・hash、tag commit を再照合する。既存タグ・配布物は上書きしない。
+- 問題時は既知の正常 source を同じ署名・より大きな versionCode で再配布する。旧 APK への downgrade やアプリ削除で戻さない。
+
+正式配布前の最低限の本人実機確認はプレビューと保存を各1回とし、実機操作・配布は個別承認する。applicationIdを変えると既存アプリの更新ではなく別アプリとなり、同一IDでも署名が異なると通常の上書き更新はできない。IDや署名の変更だけで既存データが自動消失するわけではないが、アンインストールすると内部データは消失するため回避手段として行わない。
+
+本節は方法の計画のみ。workflow、鍵、署名設定、Release、端末の操作は変更していない。
+
+### 作業と承認の境界（ロードマップ v2）
+
+計画内の一般試験・文書・CI、挙動不変の整理、依存を確認した診断/旧資料の整理、前提達成後のCPU削除、承認範囲で意図した挙動に戻す不具合修正は自律的に進め、結果を報告する。通常のCI・canonical/独立レビュー等のマージ条件は省略しない。
+新機能・UI・見た目、GPU基準画像採用/更新、配布、実機操作、原本/保存データ影響、権限・通信・容量へ大きく影響する依存追加は都度承認する。「迷う場合は進めて報告」はこの個別承認と安全停止条件を除く範囲に限る。
+原本変化、別写真混入、不正な資源解放、意図しない再試行、GPU帯/full不一致は停止して確認する。CPU参考差や旧速度目標未達と混同しない。
+
 ## Pixel 9aで受け取る
 
 1. Androidのブラウザーで該当pre-releaseを開く。現在はpublic。Actions artifactはGitHubのrun画面から取得する。
-2. Assetsの`cinematic-camera-p0.apk`と`SHA256SUMS.txt`を取得する。正確なtagのページを使う。artifactを使う場合はActions runのArtifactsからZIPを取得・展開する。
+2. 固定署名配布ではAssetsの`cinematic-camera-internal.apk`と`SHA256SUMS.txt`を取得する。旧P0配布のAPK名は`cinematic-camera-p0.apk`であり混同しない。正確なtagのページを使う。artifactを使う場合はActions runのArtifactsからZIPを取得・展開する。
 3. 初回はダウンロードに使ったアプリの「不明なアプリのインストール」をAndroid設定で許可する。署名不一致なら、既存P0の撮影物・ログを先に退避する。
 4. APKを手動インストールし、Camera permissionを許可する。P0の撮影は利用者の操作で行う。
 5. [P0_REPORT.md](P0_REPORT.md)の許可・lifecycle・AUTO・RAW5回・ISO2値・露光時間2値・AUTO復帰を実施する。DNGはPC viewerで全件開く。

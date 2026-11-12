@@ -396,8 +396,8 @@ display/previewの中間色、合成DNG、旧GPU合成診断。GPUコピー・�
 - Android先行時はホストGPU/driver版、AVD名・system image/API/ABI/版、emulator版、描画設定、実EGL/GLES vendor/renderer/ES版も基準画像と一緒に記録する。driverやAVD等の版が変わって差が出た場合は差の場所と大きさを示し、本人の目視確認後に基準を作り直す。環境差を無断の閾値緩和や自動baseline更新で消さない。
 - 基準候補は本人の目視確認後に採用する。同一環境のGPU回帰と異なるdriverの比較を区別し、CPU閾値を無断転用しない。意図した見た目変更時も本人確認後にbaseline更新し、失敗を消す自動再生成は禁止する。
 - この全工程の基準画像比較は現時点ではCI自動実行ではない。少なくともGPUやルックに触れるPRのマージ前、およびCPU経路の削除・リファクタリングの各PR前に手動実行する。対象head、基準hashと環境、条件数・成功/失敗/skip、差分と本人確認の要否をPRへ記録し、未実行をCI成功で代替しない。
-- v0.1.0前のリファクタリングD0に、Mesaから全工程を呼べるようにする作業と、基準画像比較をMesa CIへ移す作業を含める。現在のMesaは上表のpass範囲であり、全工程の基準画像比較を移行済みとはしない。MesaとAndroidのdriver差は別に評価し、Android基準へのbit完全一致を無断で条件にしない。
-- 製品のGPU既定切替・GLSL正本化・Kotlin数式変更・CPU経路/既存CPU golden削除は、この先行試験や基準採用の許可に含めない。各変更は範囲と承認を分ける。
+- v0.1.0前のD0ではMesaから実全工程を呼べる境界を設計する。CPU/診断削除・試験移動後のD1〜Dnを経て、基準画像比較をMesa CIへ移す。現在のMesaは上表のpass範囲であり、全工程の基準画像比較を移行済みとはしない。MesaとAndroidのdriver差は別に評価し、Android基準へのbit完全一致を無断で条件にしない。
+- 基準採用だけでは製品変更や削除を許可したことにはしない。GPU既定化は#354で実施済み。今後のGLSL正本化・CPU整理は以下のロードマップv2の条件に従い、見た目・原本/保存データに影響する変更は個別承認する。
 
 JVM bindingは **LWJGL 3.4.3** の `org.lwjgl:lwjgl`、`lwjgl-egl`、`lwjgl-opengles` と
 `lwjgl` / `lwjgl-opengles` の `natives-linux`。明示フラグ時の `testDebugImplementation` / `testDebugRuntimeOnly` だけに隔離し、APK・製品依存・通常のJVM試験・他variantには加えない。
@@ -408,6 +408,31 @@ CIは通常の `debugRuntimeClasspath` / `debugUnitTestRuntimeClasspath` の依�
 追加や版変更時は依存名と版をPRへ記載し、**利用者の承認前はマージしない**。
 EGL/GLES bindingは [LWJGL公式](https://www.lwjgl.org/guide) と
 [EGL API](https://javadoc.lwjgl.org/org/lwjgl/egl/EGL15.html) を利用する。
+
+#### D0 と D1〜Dn、CPU 整理の順序（ロードマップ v2）
+
+管理先は既存 #290 / #276。#349 の Android 手動基準登録は main に反映済み。#355 の既知共通黒化は未修正のまま実機の様子を見て再調査する。CPUへ戻す運用は想定しないが、削除は次の条件と手順を満たしてから行う。
+
+1. **D0 は今から並行して進める設計文書**: GPU前提で切替機構の撤去、preview/export shader構成の共通化、責任分担、失敗型、命名、試験の配置、Mesaから実全工程を呼べるbinding境界、shader定数の正本を決める。D0完了をMesa実装完了と呼ばない。
+2. #290後段BでGLSLを正本とし、GPU基準画像との回帰をCPU削除・リファクタリングの前提にする。CPU削除前にshader定数の出どころも確定する。Mesa全工程CIの完成はCPU削除の前提に加えない。旧CPU数値閾値を合否へ戻さない。
+3. 数日の様子見後、本人から明暗各12MP保存、保存中の次写真表示、取消→やり直し、#352の再発有無という最低限操作の結果を確認する。経過日数だけで完了とせず、データ損失・保存不能継続など致命的不具合がないことを確認してCPU描画経路削除へ進む。小さい問題はIssueで並行追跡する。
+4. 安全に削除できる旧spec/計測/RAW診断/rawprobeは依存棚卸し後に小PRで整理する。共有部分を先に分離する。gpuDiagnosticはGPU試験を通常の試験側へ移した後に削除する。
+5. CPU/診断経路の削除と試験移動後に、D0範囲の挙動不変なリファクタリングをD1〜Dnの小PRで進める。24MPと同じファイルは24MPを先にする。
+6. **Mesa全工程の基準画像比較CI移行はD1〜Dnの後**。それまではGPU/ルックPRのマージ前、CPU削除・リファクタリングの各PR前にAndroid手動回帰を必須とする。AVDは1枠で24MP→v0.1.0クリティカルパス→その他の順。
+
+| 領域 | 再利用・維持する契約 |
+| --- | --- |
+| shader / 共通pass | 現Mesaの全asset compile/link、color/copy、部分resample/bandを再利用。実graphを呼び、別shaderやCI専用rendererで代用しない |
+| 基準比較 | 同一環境の回帰とdriver差の評価を分ける。基準採用・更新は本人確認、自動更新やCPU閾値流用は禁止 |
+| 安全契約 | Android owner/取消/HOLDとMesa finite/shape/帯fullは別層。missing/zero/failure/skip拒否を維持 |
+
+CPU整理の境界:
+- **削除候補**: ManualTrialPhotoRollRendererのCPU draft/exact、StageClearTrialPipeline/Renderer、R7Base/StageClear画素実行、OriginalStageClear24/JpegGenerationAttemptのCPU経路。診断・試験・既存保存世代の依存を先に照合する。
+- **GPU共有で維持**: LibRaw、OriginalRaster/Fields、Original24PreviewSessionのAS_SHOT、R7PreviewInputs、PhotoAdjustments/画像型、StageClearBlur係数。ShaderConstants参照V1定数は新しい正本をD0で決めてから移す。raw/sessionを一括削除しない。
+- **保存安全・互換**: 原本、世代/engine固定、journal/publication、FGS、owner、retry/HOLDを維持。永続化済みCPU保存世代をGPU世代と再解釈せず、安全な復旧・完了互換を確認する。原本/保存データに影響しうる変更は個別承認する。
+- **参照と履歴**: KotlinReference、CPU golden、旧診断履歴は代替試験と保存先・削除範囲を確認する。GLSL正本化だけを根拠に無差別削除しない。
+
+初回表示 #233/#241 と顔検出 #79 は調査・設計を先行し、実装は24MPと整理が落ち着いてから。初回表示は#260と競合するため24MP後、顔のGPU連携はリファクタリング後。性能は計測計画・分析を並行可とするが改善実装、撮影look #80、追加look #83 は後段とする。顔検出ライブラリ採用、実機計測、見た目変更は別途本人承認する。
 
 ### 4.12 失敗時の扱い
 
@@ -420,7 +445,7 @@ EGL/GLES bindingは [LWJGL公式](https://www.lwjgl.org/guide) と
 
 - `DevelopEngine { CPU, GPU }` をpreviewとexportで共用し、保存は最初の実保存時にengineを固定する。
 - 通常debug/releaseの新規プレビュー・保存はGPU固定。診断用保存値は読まず、設定UIとCPU自動回避は作らない。gpuDiagnosticは明示CPU/GPU選択、その他診断variantと低水準試験はCPU既定を維持する。保存ownerの固定engineと既存データは移行しない。
-- 問題時はCPU既定へ戻す別のレビュー済み変更とversionCodeを上げた新ビルドで戻す。旧APKへのdowngradeはしない。
+- CPU既定への復帰は想定しない。問題時はレビュー済み修正または既知正常のGPUソースを、同じ署名・より大きいversionCodeの新ビルドで配布する方法を検討する。データ互換を確認し、配布は都度本人承認を得る。旧APKへのdowngradeや内部データを失うアンインストールで回避しない。
 - Gate 2本人承認とGPU既定化PRのマージ承認は別であり、マージ前に本人確認する。GPU基準画像のAndroid先行試験は既定切替を待たず並行して進め、採用は本人の目視確認後とする。
 
 ---
