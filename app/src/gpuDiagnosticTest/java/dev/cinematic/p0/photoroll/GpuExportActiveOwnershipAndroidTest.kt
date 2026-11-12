@@ -8,7 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
+import androidx.activity.compose.LocalActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -199,7 +199,7 @@ class GpuExportActiveOwnershipAndroidTest {
         private val repository = PhotoRollRepository(fixture.app.contentResolver, fixture.app.packageName)
         fun install() {
             ui.content = {
-                val host = LocalContext.current as PhotoRollActivity
+                val host = requireNotNull(LocalActivity.current) as PhotoRollActivity
                 val lifecycle = LocalLifecycleOwner.current.lifecycle
                 val state by lifecycle.currentStateFlow.collectAsState()
                 DisposableEffect(lifecycle) {
