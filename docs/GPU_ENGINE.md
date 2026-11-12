@@ -438,7 +438,7 @@ CPU整理の境界:
 
 #### D0: 現行コードに対する責務・依存の棚卸し
 
-照合基点は main `579500f`（#356 / #359 反映後）。以下は削除・分離の設計案であり、コード変更、CPU廃止、Mesa全工程CI移行の完了を表さない。現行契約は [develop](../specs/develop/spec.md)・[storage](../specs/storage/spec.md)・[diagnostics](../specs/diagnostics/spec.md) を優先する。後続PRはその時点のmainへ再照合し、未マージの #355 / #357 / #360 の成果を実装済みに数えない。
+初回照合基点は main `579500f`（#356 / #359 反映後）。main `3a92047` への取込み時に、#357（PR #364）・#360・#367・#369の反映を再照合した。以下は削除・分離の設計案であり、コード変更、CPU廃止、Mesa全工程CI移行の完了を表さない。現行契約は [develop](../specs/develop/spec.md)・[storage](../specs/storage/spec.md)・[diagnostics](../specs/diagnostics/spec.md) を優先する。後続PRはその時点のmainへ再照合し、未マージの #355 の成果を実装済みに数えない。#357の確認済み取消後の新世代受付と#360の診断追加は反映済みだが、旧CPU更新互換・24MP性能の動的合格を意味しない。
 
 表のコードパスは `app/src/main/java/dev/cinematic/p0/` からの相対。保持は永久固定という意味ではなく、挙動・互換性を置換する根拠が揃うまで削除不可という意味である。
 
@@ -462,10 +462,10 @@ CPU整理の境界:
 | 観測状態 | 保持する扱い・削除前の検証 |
 | --- | --- |
 | 同プロセスのCPU ownerが実保存開始済み | 固定engineをGPUへ変更しない。旧owner・workerが残る状態でCPU producerを差し替えない。更新/再起動と同プロセス再試行を別ケースにする |
-| JPEG入口前の確認済み取消/producer failure | mainでは同一requestの明示retry許可をプロセス内だけに保持。intent一致・全cleanup確認が必要。新recipeを許す条件は #357 の最終契約を待ち、取消表示だけで世代を捨てない |
+| JPEG入口前の確認済み取消/producer failure | 同一requestの明示retry許可はプロセス内だけに保持。#357 / PR #364で確認済み取消に限り新recipe受付を追加済み。旧ownerの取消許可・全cleanup・intent一致・publication不存在を再確認し、新request確定後に旧世代を失効させる。旧intentは消さない。producer failureには新recipe許可を広げず、取消表示だけで世代を捨てない |
 | 再起動時にintentだけが残る、解放/JPEG入口/公開結果が不明 | intentだけのrestartはHOLD。既存公開記録がUNKNOWNならUNCONFIRMED/PUBLICATION_UNKNOWNとして同一publicationの再照合を維持する。intent削除、GPU再描画、旧世代の自動成功/自動retryへ変換しない。engineを復元できないことを正常GPU新規保存の証拠にしない |
 | 完成JPEG/proof・publicationがある | 既存成果物と同じ公開記録を再照合。CPU成果物をGPU成果物へ再生成せず、重複公開しない。原本照合/読取権限失効・改変時の停止を維持 |
-| 未開始request・別recipe受付 | request保存と実producer開始を分けて確認。generation fenceと原本同一性を維持し、#357の変更後mainでケースを再列挙する |
+| 未開始request・別recipe受付 | request保存と実producer開始を分けて確認。generation fenceと原本同一性を維持する。#357の確認済み取消からの新世代受付を含め、CPU削除PRで更新互換ケースを再列挙する |
 
 CPU削除のPRには、旧codec bytesの読取、同recipe再利用、異なるrecipeのfence、intentありrestart、既存JPEG再照合、publication不明、cleanup失敗のfixture対応表を付ける。`ManualOriginalTrialRequestsTest` / `ManualOriginalTrialSaveOwnerTest`、Androidの原本・GPU保存境界試験を維持する。現在の静的照合を更新互換の動的検証済みとはしない。旧データの移行・消去や復旧契約の変更は個別承認が必要。
 
