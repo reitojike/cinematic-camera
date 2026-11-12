@@ -409,24 +409,11 @@ jobs:
           started=$SECONDS
           ./gradlew :app:testDebugUnitTest -PcinematicGpuMesa=true --tests 'dev.cinematic.p0.gpu.mesa.*' --no-daemon --max-workers=2
           echo "GPU_MESA_GRADLE_SECONDS=$((SECONDS - started))"
-      - name: Mesa test counts (zero tests or any skip is a failure)
+      - name: Mesa report contract unit tests
+        run: python3 -B -m unittest discover -s tools/gpu-diagnostic -v
+      - name: Mesa required cases (missing, zero, failure, or skip is a failure)
         if: ${{ !cancelled() }}
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import xml.etree.ElementTree as ET
-          reports = list(Path('app/build/test-results/gpuMesa/testDebugUnitTest').glob('TEST-*.xml'))
-          assert reports, 'Mesa tests did not produce JUnit reports'
-          totals = dict.fromkeys(('tests', 'failures', 'errors', 'skipped'), 0)
-          seconds = 0.0
-          for path in reports:
-              suite = ET.parse(path).getroot()
-              for key in totals:
-                  totals[key] += int(suite.get(key, '0'))
-              seconds += float(suite.get('time', '0'))
-          print(f'GPU_MESA_JUNIT {totals} seconds={seconds:.3f}', flush=True)
-          assert totals['tests'] > 0 and not any(totals[key] for key in ('failures', 'errors', 'skipped')), totals
-          PY
+        run: python3 -B tools/gpu-diagnostic/check_mesa_reports.py app/build/test-results/gpuMesa/testDebugUnitTest
       - name: Mesa shader regression reports
         if: always()
         uses: actions/upload-artifact@v7

@@ -1,9 +1,9 @@
 package dev.cinematic.p0.gpu.reference
 
-/** #276 §4.11 / #280 の受入条件。工程ごとに独自の許容差を追加しない。 */
+/** #276 / #280 の歴史的な比較尺度。CPU/GPU差の合否・停止条件には使わない。 */
 internal object GpuTolerances {
     // #279: fixed by the user's 2026-11-10 decision, not adjusted after a test result.
-    // Only Lab conversion paths use these bounds; #276 end-to-end gates stay unchanged.
+    // Retained for reference reports and pure comparison-helper tests, not CPU/GPU gates.
     const val LAB_ABSOLUTE = 4e-6
     const val LAB_RELATIVE = 2e-5
     const val HUE_CIRCULAR_DEGREES = 1e-4

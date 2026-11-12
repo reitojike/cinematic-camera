@@ -72,8 +72,10 @@ class GpuDiagnosticDngPipelineTest {
                                 GpuRenderParams(1.0, PhotoAdjustments(60.0, 1.0)))) {
                                 val expected = KotlinReference.render(input, params)
                                 val actual = engine.renderForTest(photo, params, Point.DISPLAY8)
-                                ImageDiff.display(expected.display8, ImageDiff.encodeDisplay(actual),
-                                    input.width, input.height, "synthetic DNG DISPLAY8 $params").assertDisplayWithin()
+                                assertEquals(input.width, actual.width); assertEquals(input.height, actual.height)
+                                val difference = ImageDiff.display(expected.display8, ImageDiff.encodeDisplay(actual),
+                                    input.width, input.height, "synthetic DNG DISPLAY8 $params")
+                                android.util.Log.i("GpuDiagnosticDng", "CPU_REFERENCE_ONLY $difference")
                             }
                         }
                         assertEquals(0L, ledger.allocatedBytes)

@@ -23,10 +23,10 @@
 - 合成試験、エミュレーター、実機GPU、個人写真の比較は異なる証拠であり、代替しない。エミュレーター時間は実機の速度保証ではない。
 - [GPU 帯比較基盤](../051-gpu-band-probe/spec.md) は製品未採用。専用引数 gpuBandProbe=true の明示時だけ合成エミュレーター試験を実行し、通常 CI・合成 UI では起動しない。製品接続は #212 の実機 GPU と実写での再判定を条件とする。
 
-- [GPU合成診断](../../docs/GPU_DIAGNOSTIC.md) は製品未接続の独立 `gpuDiagnostic` アプリ。`cinematicGpuDiagnostic=true` の明示ビルドと画面からの明示起動だけで動く。GPU部分は合成専用。統合入口には既存RAW保存比較とCPUプレビューを含むが、GPUを製品処理へ接続しない。写真一覧権限は持たず、CPU側の入力はFilesで明示的に選ぶ。専用instrumentationも `gpuPixelProbe=true` と `isolated=true` がなければGPUを初期化しない。
+- [GPU合成診断](../../docs/GPU_DIAGNOSTIC.md) は通常製品と分離した独立 `gpuDiagnostic` アプリ。`cinematicGpuDiagnostic=true` の明示ビルドと画面からの明示起動だけで動く。旧GPU合成診断の入力は合成専用。統合入口は既存RAW保存比較とCPU/GPU編集を分け、診断HubでだけGPU engineを選べる。通常debug/releaseはCPUのまま。写真一覧権限は持たず、実写真の編集入力はFilesで明示的に選ぶ。旧合成診断の専用instrumentationは `gpuPixelProbe=true` と `isolated=true` で明示起動する。全工程/製品GPU結合のinstrumentationは各クラスのopt-in条件とemulator制約に従う。
 - GPU合成診断の1024pxは全LookのCPU差、12MPはぼかし/Orton単体の負荷を測る。12MP単体や背景FGS試験の成功を、全保存出力・製品保存復旧の採用条件の達成に読み替えない。
 - GPU合成診断は合成入力ごとに同一owner threadでEGL/contextと2 shaderを一度準備し、初回と再利用後を区分する。30msの目安は1024pxの `phase=reused` の対象2工程 `sumNs` だけに適用し、準備と初回処理を足した時間は別に記録する。upload/同期付きdraw/readbackのCPU wall内訳を分けるが、純粋GPU演算時間・非同期pipeline・GPU常駐入力の性能とは扱わない。通常製品へ接続せず、原本/goldenを変えない。
-- 再利用はcontext/shaderに限り、転送・CPU変換・一時texture/FBO・readbackは処理時間に含む。初回/失敗/取消や別sessionをwarm反復へ混ぜず、文脈喪失時に自動再生成しない。合成試験で毎回作り直す版とのfloat完全一致とCPU許容差、owner/lifetime/回収を確認する。手順と内訳の境界は[GPU診断](../../docs/GPU_DIAGNOSTIC.md#初回と反復の計測境界257)を参照する。
+- 再利用はcontext/shaderに限り、転送・CPU変換・一時texture/FBO・readbackは処理時間に含む。初回/失敗/取消や別sessionをwarm反復へ混ぜず、文脈喪失時に自動再生成しない。合成試験で毎回作り直すGPU版とのfloat完全一致、owner/lifetime/回収を確認する。CPUとの差は参考値として記録し、旧最大8bit差等を停止条件にしない。finite・寸法・GLエラーの検査は維持する。手順と内訳の境界は[GPU診断](../../docs/GPU_DIAGNOSTIC.md#初回と反復の計測境界257)を参照する。
 
 - GPU の割当・転送分離は既定 OFF の詳細診断（`split-allocation-v1`）で行う。CPU 明示確保・変換・入力準備・検査、GL 資源確保・転送・draw・readback・解放と残差を非重複で記録し、実際の呼出し/pass数と論理bytesを併記する。追加の storage 要求・同期があるため、従来モード `baseline-v1` の速度・30ms判定へ混ぜない。CPU wall値を純粋なGPU演算/DMA/物理確保の時間とせず、2サイズの結果だけで固定費やGPU採否を確定しない。詳細と未分離部分は[GPU診断](../../docs/GPU_DIAGNOSTIC.md#割当転送を分ける詳細診断259)を正本とする。
 

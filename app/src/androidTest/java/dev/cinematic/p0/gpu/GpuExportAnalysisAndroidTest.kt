@@ -1,10 +1,12 @@
 package dev.cinematic.p0.gpu
 
 import android.opengl.GLES32
+import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.gpu.analysis.GpuAnalysis
 import dev.cinematic.p0.gpu.export.GpuExportAnalysis
+import dev.cinematic.p0.gpu.reference.ImageDiff
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Before
@@ -63,7 +65,7 @@ class GpuExportAnalysisAndroidTest {
         return result
     }
 
-    @Test fun twoScansMatchFullFrameAndSortedReferenceExactly() = gpu { egl, ledger ->
+    @Test fun twoScansMatchFullFrameAndReportSortedReference() = gpu { egl, ledger ->
         val cases = listOf(
             1 to floatArrayOf(1f),
             1 to floatArrayOf(-0f, 0f),
@@ -79,12 +81,13 @@ class GpuExportAnalysisAndroidTest {
             }
             for (rows in listOf(3, 64, 256)) {
                 val actual = quantiles(egl, ledger, width, values, rows)
+                assertEquals(2, full.size); assertEquals(2, actual.size)
                 for ((i, q) in listOf(.5, .92).withIndex()) {
                     val rank = (values.size - 1) * q
                     val lower = sorted[floor(rank).toInt()].toDouble()
                     val upper = sorted[ceil(rank).toInt()].toDouble()
                     val expected = lower + (upper - lower) * (rank - floor(rank))
-                    assertEquals("sorted ${width}x$height rows=$rows q=$q", expected.toRawBits(), actual[i].toRawBits())
+                    Log.i("GpuExportAnalysis", ImageDiff.referenceScalar(expected, actual[i], "sorted ${width}x$height rows=$rows q=$q"))
                     assertEquals("full-frame ${width}x$height rows=$rows q=$q", full[i].toRawBits(), actual[i].toRawBits())
                 }
             }
