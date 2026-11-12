@@ -1,7 +1,9 @@
 package dev.cinematic.p0.jpegrender.original
 
 import android.content.res.AssetManager
+import dev.cinematic.p0.BuildConfig
 import dev.cinematic.p0.gpu.*
+import dev.cinematic.p0.gpu.diag.GpuStageTap
 import dev.cinematic.p0.gpu.export.GpuExportRenderer
 import dev.cinematic.p0.raw.original.OriginalRaster
 import dev.cinematic.p0.rawcapture.GpuSaveFailureReason
@@ -11,6 +13,7 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /** A save owns its GL thread/context. No preview context, full-frame Float image or CPU fallback.
  * A caller interrupt requests cancellation but still drains the GL work before raw/Bitmap cleanup.
@@ -24,6 +27,8 @@ internal class Original24GpuOutput(private val assets: AssetManager) : AutoClose
     fun render(source: OriginalRaster, ev: Double, gains: DoubleArray, strength: Double,
         stop: () -> Boolean, consume: (Int, IntArray) -> Unit) {
         check(!started); started = true
+        // Freeze one observer for this attempt. Normal builds cannot register or invoke it.
+        val observer = if (BuildConfig.BUILD_TYPE == "gpuDiagnostic") diagnosticObserver.get() else null
         val interrupted = AtomicBoolean(false)
         var failure: Throwable? = null
         var cleanupConfirmed = false
@@ -37,10 +42,24 @@ internal class Original24GpuOutput(private val assets: AssetManager) : AutoClose
             thread.post {
                 var egl: EglContexts? = null
                 var error: Throwable? = null
+                val ledger = GpuMemoryLedger(GpuMemoryLedger.EXPORT_BUDGET)
+                fun snapshot() = TextureBalance(ledger.allocatedBytes, ledger.textureCount, ledger.peakAllocatedBytes)
                 try {
                     egl = EglContexts(thread, assets)
-                    GpuExportRenderer(egl).render(source, ev, gains, strength,
-                        stop = { interrupted.get() || stop() }, consumeRow = consume)
+                    try {
+                        GpuExportRenderer(egl, ledger).render(source, ev, gains, strength,
+                            stop = { interrupted.get() || stop() },
+                            tap = observer?.let { observation -> { point, origin, texture ->
+                                observation.insideBand(point, origin, texture.height, snapshot())
+                            } },
+                            onBandComplete = observer?.let { observation -> { boundary, origin, rows ->
+                                observation.bandComplete(boundary, origin, rows, snapshot())
+                            } }, consumeRow = consume)
+                    } finally {
+                        // Renderer.use has returned/unwound. Observe before EGL teardown; this is
+                        // a texture balance, not a claim that context/thread cleanup has succeeded.
+                        observer?.rendererReleased(snapshot())
+                    }
                 } catch (caught: Throwable) { error = caught }
                 finally {
                     try {
@@ -89,5 +108,23 @@ internal class Original24GpuOutput(private val assets: AssetManager) : AutoClose
         is GpuContextLostException -> GpuSaveFailureReason.CONTEXT_LOST
         is GpuMemoryBudgetException -> GpuSaveFailureReason.MEMORY_BUDGET
         else -> GpuSaveFailureReason.RENDER_FAILED
+    }
+
+    /** Aggregate-only GPU diagnostic seam. No textures, source pixels, URI or owner can escape. */
+    internal data class TextureBalance(val bytes: Long, val textures: Int, val peakBytes: Long)
+    internal interface DiagnosticObserver {
+        fun insideBand(point: GpuStageTap.Point, origin: Int, rows: Int, balance: TextureBalance) {}
+        fun bandComplete(boundary: String, origin: Int, rows: Int, balance: TextureBalance) {}
+        fun rendererReleased(balance: TextureBalance) {}
+    }
+    companion object {
+        private val diagnosticObserver = AtomicReference<DiagnosticObserver?>()
+        internal fun observeForDiagnostics(observer: DiagnosticObserver): AutoCloseable {
+            check(BuildConfig.BUILD_TYPE == "gpuDiagnostic")
+            check(diagnosticObserver.compareAndSet(null, observer)) { "Export diagnostic observer already installed" }
+            return AutoCloseable {
+                check(diagnosticObserver.compareAndSet(observer, null)) { "Export diagnostic observer changed" }
+            }
+        }
     }
 }
