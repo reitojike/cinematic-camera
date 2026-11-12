@@ -106,10 +106,29 @@ class GpuExportActiveOwnershipAndroidTest {
                 assertFalse(ticket.stopRequested)
                 assertNull(fixture.journal(saveA).read())
                 assertNull(action("保存したJPEGを照合して開く"))
-                assertNull("New editor must not inherit old owner's cancel control", action("保存を取り消す"))
+                // ForegroundSaveNotice is intentionally process-wide, including after source changes.
+                assertNotNull("The global notice still controls A's active export", action("保存を取り消す"))
+                assertSame(ticket, ForegroundExports.gate.active())
+                assertSame(saveA, ticket.value.identity)
+                assertEquals(sourceA.fingerprint, saveA.request.source.fingerprint)
+                assertNotEquals(sourceB.fingerprint, saveA.request.source.fingerprint)
+                fixture.assertWorkingSource(saveA)
+                assertEquals(B_VALUES, AndroidPhotoEditRecipes(fixture.app).read(sourceB))
                 barrier.release.countDown()
                 await("old export finishes after photo switch", 180_000) { ForegroundExports.gate.active() == null }
                 fixture.verifyPublication(saveA)
+                // verifyPublication reads back the actual JPEG fingerprint, dimensions and owner.
+                // Bind that same publication record to A's immutable original identity, not just a UI name.
+                val publicationA = requireNotNull(fixture.journal(saveA).read())
+                val renderedA = publicationA.render as ManualOriginalTrialRender
+                assertEquals(requestA.captureId, renderedA.request.captureId)
+                assertEquals(requestA.generation, renderedA.request.generation)
+                assertEquals(requestA.recipe, renderedA.request.recipe)
+                assertEquals(publicationA.fingerprint, renderedA.outputFingerprint)
+                assertEquals(sourceA, renderedA.request.source)
+                assertEquals(sourceA.fingerprint, renderedA.request.source.fingerprint)
+                assertNotEquals(sourceB.fingerprint, renderedA.request.source.fingerprint)
+                assertEquals(publicationA.uri, saveA.state.value.uri)
                 barrier.witness.assertReleased()
                 assertEquals(requestA, saveA.request)
                 await("new photo presents its own persisted recipe", 120_000) {
@@ -126,6 +145,11 @@ class GpuExportActiveOwnershipAndroidTest {
                     .get(60, TimeUnit.SECONDS).also { fixture.handles += it }
                 assertNotSame(saveA, saveB)
                 assertEquals(sourceB, saveB.request.source)
+                assertEquals(sourceB.fingerprint, saveB.request.source.fingerprint)
+                assertNotEquals(renderedA.request.source.fingerprint, saveB.request.source.fingerprint)
+                assertNotEquals(requestA.captureId, saveB.request.captureId)
+                assertEquals(B_VALUES.strength, saveB.appliedStrength, 0.0)
+                assertEquals(PhotoAdjustmentPolicy.adjustments(B_VALUES), saveB.appliedAdjustments)
                 assertEquals(ManualOriginalTrialSavePhase.READY, saveB.state.value.phase)
                 assertNull(saveB.state.value.uri)
                 assertNull(fixture.journal(saveB).read())
@@ -227,6 +251,9 @@ class GpuExportActiveOwnershipAndroidTest {
                     }
                     body(fixture, env, scenario)
                 }
+            } catch (error: Throwable) {
+                fixture.reportFailure("editor-failure-before-owner-cleanup", error)
+                throw error
             } finally {
                 ForegroundExports.gate.active()?.let { ticket ->
                     val save = ticket.value.identity as? AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle

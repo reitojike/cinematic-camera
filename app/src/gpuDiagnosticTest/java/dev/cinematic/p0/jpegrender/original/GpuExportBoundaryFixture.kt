@@ -6,6 +6,8 @@ import android.content.Context
 import android.net.Uri
 import android.opengl.EGL14
 import android.os.Build
+import android.os.Bundle
+import android.util.Base64
 import android.provider.MediaStore
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.BuildConfig
@@ -127,6 +129,36 @@ internal class GpuExportBoundaryFixture(val app: Context) {
         assertEquals(failureCount, failures.getLong("count", 0))
         assertEquals(failureReason, failures.getString("lastReason", null))
     }
+    /** Only this fixture's synthetic sources/handles. Stream output survives a non-debuggable APK. */
+    fun reportDiagnostics(stage: String) {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        fun emit(label: String, value: String) {
+            instrumentation.sendStatus(0, Bundle().apply {
+                putString("stream", "\nGpuExportBoundaryEvidence stage=$stage $label=$value\n")
+            })
+        }
+        emit("sources", sources.joinToString { "${it.uri}:${it.fingerprint}" })
+        handles.distinct().forEach { save ->
+            val key = "${save.request.captureId}:${save.request.generation}"
+            emit("handle[$key]", "request=${save.request} state=${save.state.value} held=${save.hasUnreleasedResources}")
+            fun record(name: String, read: () -> ByteArray?) {
+                val bytes = try { read() } catch (error: Exception) {
+                    emit("$key/$name", "READ_FAILED:${error.javaClass.name}:${error.message}")
+                    return
+                }
+                emit("$key/$name", bytes?.let { Base64.encodeToString(it, Base64.NO_WRAP) } ?: "ABSENT")
+            }
+            // Preserve exact bounded binary records, including malformed bytes, rather than only toString.
+            record("manualRequestBase64") { intent(save).read(ManualOriginalTrialRequestCodec.MAX_BYTES) }
+            record("jpegPublicationBase64") { storage(save, CaptureJournalFile.JPEG_PUBLICATION).read(JpegPublicationCodec.MAX_BYTES) }
+        }
+    }
+
+    fun reportFailure(stage: String, primary: Throwable) {
+        try { reportDiagnostics(stage) }
+        catch (reporting: Throwable) { if (reporting !== primary) primary.addSuppressed(reporting) }
+    }
+
     private fun requireOwned(row: OwnedRow) {
         require(row.uri.scheme == "content" && row.uri.authority == "media" && ContentUris.parseId(row.uri) > 0)
         requireNotNull(resolver.query(row.uri, arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME,
@@ -175,8 +207,13 @@ internal class GpuExportBoundaryFixture(val app: Context) {
                 body(fixture)
                 fixture.verifyOriginals()
                 fixture.assertNoGpuFailureRecorded()
+                fixture.reportDiagnostics("success-before-cleanup")
                 success = true
-            } catch (error: Throwable) { failure = error; throw error }
+            } catch (error: Throwable) {
+                failure = error
+                fixture.reportFailure("failure-before-fixture-cleanup", error)
+                throw error
+            }
             finally {
                 try {
                     fixture.handles.forEach { it.requestStop() }
