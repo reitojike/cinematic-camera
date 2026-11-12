@@ -104,12 +104,13 @@ count差1が出た。その後の最新ユーザー判断でCPU差（count/Mist/
 
 ## 今回の移行範囲と残る旧試験
 
-今回の参考値化はexport対象の `GpuExportParityAndroidTest` / `GpuExportRendererAndroidTest` に限定する。
-旧 `StageClearGpuPipelineAndroidTest` / `GlowMistParityAndroidTest` 等の広範なCPU parity試験には旧assertが残る。
-これは移行前の試験範囲の差であり、CPU差をGate2条件へ戻す意味ではない。今回の#341結合に広げず、
-GPU既定化後の#290でGPU基準画像回帰への置換を扱う。純粋なcount集計関数自体の正しさ試験は別物として保持する。
+#341での参考値化はexport対象の `GpuExportParityAndroidTest` / `GpuExportRendererAndroidTest` に限定した。
+その時点で旧assertが残った `StageClearGpuPipelineAndroidTest` / `GlowMistParityAndroidTest` 等は、#290前段Aで広範なCPU差の参考記録化を扱う。CPU差をGate2条件へ戻す意味ではない。
+GPU基準画像回帰は現行GPU出力を対象にAndroidで先行し、既定切替を待たず並行して進める。基準採用は本人目視確認後とし、GPU/ルック変更PRのマージ前とCPU削除・リファクタリングの各PR前に手動実行する。
+v0.1.0前のD0でMesaの全工程呼び出しと基準画像比較のCI移行を扱う。環境版・差分・承認の詳細は [GPUエンジン契約](GPU_ENGINE.md#gpu基準画像回帰-android先行とd0のmesa移行) を参照する。
+純粋なcount集計関数自体の正しさ試験は別物として保持する。
 
-## #350: 保存中の別写真入力と中断の受入（実装・試験準備中）
+## #350: 保存中の別写真入力と中断の受入
 
 GPU の別写真入力は保存の serial queue と別の単一 IO owner / admission 枠で準備する。
 保存世代・intent・publication は従来の保存 owner に残し、入力表示の完了と保存可能状態を分ける。
@@ -131,6 +132,6 @@ A の保存中に B の入力・表示が成立しても、B の同一原本・�
   AのGPU_FAILED・未公開・解放と、B snapshot/tokenの継続保持・解放・表示・保存可能を確認する。
   このケースだけ固定reason CONTEXT_LOSTの累積増分1件を要求し、失敗記録を消去しない。
 
-追加試験は実行前であり、合格を示さない。OSによる実context loss、
+試験結果は [PR #351](https://github.com/reitojike/cinematic-camera/pull/351)、初回失敗の追跡は [#352](https://github.com/reitojike/cinematic-camera/issues/352) に記録する。OSによる実context loss、
 実12MP同時decode/保存の資源量はこの小型試験では未確認。既存context-loss明示retry試験と
-CPUのA→B・取消/retry・原本保護回帰も最終headで再確認する。実機操作の許可は別途必要。
+CPUのA→B・取消/retry・原本保護回帰を維持する。実機操作の許可は別途必要。

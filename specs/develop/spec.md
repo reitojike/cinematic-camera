@@ -68,9 +68,12 @@
 - 選択後の失敗は選択した写真の画像領域に表示する。GPU能力不足・context喪失・メモリ予算・表示面解放未確認は「GPU を使えません」と再試行を示し、CPUへ自動で切り替えない。
 - Surface破棄は最大2秒で区切り、時間超過をアプリの未処理例外にしない。未完了の破棄ownerを保持し、旧Surfaceへの表示を止める。再試行/写真切替は旧ownerの終了確認後だけ新しく開く。
 - 写真切替・画面終了・背景化ではGL写真/表示面/入力/コールバックを閉じる。UI_HIDDEN（20）以上のtrimも同じプレビューownerだけを終了し、10ではこのtrim契約による解放を行わない。foreground exportの所有資源を解放しない。
-- GPUプレビューと原寸保存は同じ DevelopEngine 設定を参照する。診断用ビルド限定のプレビュー接続は #339 で先行統合した。#353 は通常版の新規プレビュー・保存を GPU 既定にする提案であり、マージまで通常版の現行契約は変更しない。実機品質・速度や追加の合格をこの仕様変更だけで主張しない。
+- context喪失後は、失敗前にqueueへ入った入力・調整値でengineを自動再生成しない。明示retryで旧ownerの終了を待ち、原本を再確認して新sessionを開く。失敗直後のGL写真/画面surface解放と、retry・離脱・trim時の縮小CPU入力/GL thread/EGL終了を分ける。失敗表示だけで全owner終了とは扱わない。
+- GPUプレビューと原寸保存は同じ DevelopEngine 設定を参照し、保存のengineは最初の実保存時に固定する。#341の接続では保存対象Aのpreview ownerの終了を確認してから専用GL ownerで保存し、保存中は同じAのpreviewを停止する。共有contextでの同時実行は行わず、保存後の再開は明示操作とする。失敗・取消・HOLD中の迂回再開はしない。
+- Gate 2は本人の実写の見た目で判断する。CPUとの差（count、Mist、分位点、最終8bit等）は参考記録であり、停止・合否条件にしない。GPU帯/full、cache/fresh、shader compile、原本保護・retry・資源解放の自動検査は維持する。
+- [Gate 2の本人承認](https://github.com/reitojike/cinematic-camera/issues/291#issuecomment-6813411664) は記録された診断APKと実施範囲に限る。他の版、24MP、故障/取消、速度・メモリの確認へ広げない。通常版のGPU既定化は #353 の提案であり、マージ前に別途本人の承認を得る。#290のGPU基準画像回帰は現行GPU出力を対象にAndroidで先行し、既定切替を待たず様子見期間と並行して進める。基準候補は本人の目視確認後に採用する。GPU/ルック変更PRのマージ前とCPU経路の削除・リファクタリングの各PR前に手動実行し、環境版・差分・結果を記録する。v0.1.0前のD0でMesaから全工程を呼び、基準画像比較をMesa CIへ移す。GLSL正本化や既存CPU goldenの置換・削除をこの先行試験の許可に含めない。詳細は [GPU回帰の運用契約](../../docs/GPU_ENGINE.md#gpu基準画像回帰-android先行とd0のmesa移行) を参照する。
 
-### Draft: GPU入力準備と保存の並行動作（#350）
+### GPU入力準備と保存の並行動作（#350）
 
 GPU経路では、別写真の原本確認・preflight・入力生成を専用の単一ownerで行い、foreground exportと並行できる。保存用の世代・journal・publicationは従来のqueueで直列に扱い、GPU入力が確認した原本とgeometryを保存準備へ渡す。通常CPUの受付・入力準備は変えない。写真を開く際の768MiB条件や撮影優先・温度・取消・確実な資源解放は維持する。同じ保存中写真の再選択は暗黙のプレビュー再開にせず、未確定保存の確認とREADY/PUBLISHED後の明示再開を必要とする。詳細と検証待ちの条件は[保存仕様](../storage/spec.md)と[GPU保存統合](../../docs/GPU_EXPORT_SAVE_INTEGRATION.md)を参照する。この既定化変更は PR のマージまで提案であり、実機合格を意味しない。
 

@@ -1,6 +1,7 @@
 package dev.cinematic.p0.gpu
 
 import android.opengl.GLES32
+import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.gpu.look.StageClearFinishGpu
@@ -39,6 +40,7 @@ class GpuDisplayEncodingAndroidTest {
     }
 
     private fun compare(egl: EglContexts, ledger: GpuMemoryLedger, image: LinearSrgbImage) {
+        var cpuMaximum = 0
         val expected = TrialDisplayPixels.encode(image, maxOf(image.width, image.height)) { false }
         val rgba = ByteBuffer.allocateDirect(image.pixelCount * 16).order(ByteOrder.nativeOrder()).asFloatBuffer()
         repeat(image.pixelCount) { p -> repeat(3) { rgba.put(image[p * 3 + it]) }; rgba.put(1f) }; rgba.flip()
@@ -61,7 +63,8 @@ class GpuDisplayEncodingAndroidTest {
                                     assertEquals("display/encode at $x,$y/$channel linear=$linear", actual,
                                         displayed[flipped * 4 + channel].toInt() and 255)
                                     val cpu = if (channel == 3) 255 else (expected[p] ushr (16 - 8 * channel)) and 255
-                                    assertTrue("CPU display byte at $x,$y/$channel expected=$cpu actual=$actual", abs(cpu - actual) <= 1)
+                                    if (channel == 3) assertEquals("opaque alpha", 255, actual)
+                                    cpuMaximum = maxOf(cpuMaximum, abs(cpu - actual))
                                 }
                             } }
                         }
@@ -69,6 +72,7 @@ class GpuDisplayEncodingAndroidTest {
                 }
             }
         }
+        Log.i("GpuDisplayEncoding", "CPU_REFERENCE_ONLY max8=$cpuMaximum")
         assertEquals(0L, ledger.allocatedBytes)
     }
 

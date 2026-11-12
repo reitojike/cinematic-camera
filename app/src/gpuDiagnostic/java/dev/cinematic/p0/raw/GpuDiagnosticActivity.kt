@@ -208,6 +208,7 @@ class GpuDiagnosticService : Service() {
                     }
                     val records=if(comparisonReversed){val g=gpuRun();cpuRun() to g}else{val c=cpuRun();c to gpuRun()}
                     val (cpu,cpuNs)=records.first;val (gpu,gpuNs)=records.second
+                    check(cpu.width == gpu.width && cpu.height == gpu.height) { "GPU comparison dimensions differ" }
                     var max = 0; var changed = 0; var flatEdges = 0
                     for (p in 0 until cpu.pixelCount) {
                         var delta = 0
@@ -215,8 +216,7 @@ class GpuDiagnosticService : Service() {
                         max = maxOf(max,delta); if(delta>0) changed++
                         if (dark && p%width>0 && quantize(cpu[p*3])!=quantize(cpu[(p-1)*3]) && quantize(gpu[p*3])==quantize(gpu[(p-1)*3])) flatEdges++
                     }
-                    log("全Look timingMode=$timingMode session=$sessionId phase=$phase iteration=$iteration reverse=$comparisonReversed width=$width dark=$dark strength=$strength cpuNs=$cpuNs gpuNs=$gpuNs max8=$max changed=$changed pixels=${cpu.pixelCount} newFlatEdges=$flatEdges")
-                    check(max<=2) { "プレビュー許容差を超えました" }
+                    log("CPU_REFERENCE_ONLY 全Look timingMode=$timingMode session=$sessionId phase=$phase iteration=$iteration reverse=$comparisonReversed width=$width dark=$dark strength=$strength cpuNs=$cpuNs gpuNs=$gpuNs max8=$max changed=$changed pixels=${cpu.pixelCount} newFlatEdges=$flatEdges")
                 }
             }
         }
@@ -276,15 +276,15 @@ class GpuDiagnosticService : Service() {
                     }
                     val records=if(reverse){val g=gpuRun();cpuRun() to g}else{val c=cpuRun();c to gpuRun()}
                     val cpu=records.first;val gpu=records.second
+                    check(cpu.width == gpu.width && cpu.height == gpu.height) { "GPU comparison dimensions differ" }
                     for(p in 0 until image.pixelCount){
                         var delta=0;repeat(3){c->delta=maxOf(delta,abs(quantize(cpu[p*3+c])-quantize(gpu[p*3+c])))}
                         max=maxOf(max,delta);if(delta>0)changed++
                     }
-                    check(max<=1){"Orton単体の保存候補許容差を超えました"}
                 }
                 if(iteration==0)log("GPU初回 timingMode=$timingMode session=$runId mode=orton12 preparationNs=${session.preparationNs} firstIncludingPreparationNs=${session.preparationNs+totalNs} teardownExcluded=true")
                 detail?.let { log("GPU内訳 stage=orton12 session=$runId phase=$phase iteration=$iteration reverse=$reverse ${it.copy(totalNs = totalNs).fields()}") }
-                log("12MPOrton単体 timingMode=$timingMode session=$runId phase=$phase iteration=$iteration reverse=$reverse gpuNs=$totalNs uploadNs=$uploadNs drawNs=$drawNs readbackNs=$readbackNs cpuPreparedNs=$cpuTotalNs contexts=1 max8=$max changed=$changed pixels=${width*height} 一定色・全保存経路ではない")
+                log("CPU_REFERENCE_ONLY 12MPOrton単体 timingMode=$timingMode session=$runId phase=$phase iteration=$iteration reverse=$reverse gpuNs=$totalNs uploadNs=$uploadNs drawNs=$drawNs readbackNs=$readbackNs cpuPreparedNs=$cpuTotalNs contexts=1 max8=$max changed=$changed pixels=${width*height} 一定色・全保存経路ではない")
             }
         }
     }

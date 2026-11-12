@@ -1,6 +1,6 @@
 # GPU 合成診断（製品未採用）
 
-この診断は #237 の実機判断材料を用意する独立アプリです。1つの入口から GPU 合成診断、既存の保存4候補比較、CPU プレビュー確認を選べます。GPU は合成データだけを使い、製品の描画・保存処理には接続しません。CPU の golden は変更しません。
+この診断は #237 の実機判断材料を用意する独立アプリです。1つの入口から GPU 合成診断、既存の保存4候補比較、CPU/GPU 編集を選べます。本書の旧GPU合成診断メニューは合成データだけを使います。#339/#341の診断Hub限定GPU編集・保存は [GPUエンジン契約](GPU_ENGINE.md) を参照してください。通常debug/releaseのCPU既定とCPU goldenは変更しません。
 
 ## ビルドと通常試験からの隔離
 
@@ -10,7 +10,7 @@
 .\gradlew.bat :app:assembleGpuDiagnostic -PcinematicGpuDiagnostic=true --no-daemon
 ```
 
-applicationId は `dev.cinematic.p0.gpudiagnostic` です。既存の一時デバッグ署名を使い、署名鍵の新規作成や配布先の変更はしません。`profileable` な非 debuggable 版で、撮影Activityと写真一覧・カメラ・音声の権限を除外します。CPUプレビューには既存PhotoRollActivityと保存サービスを含めますが、入力はFilesで明示的に選択する方式です。GPU側からそれらを呼び出しません。
+applicationId は `dev.cinematic.p0.gpudiagnostic` です。既存の一時デバッグ署名を使い、署名鍵の新規作成や配布先の変更はしません。`profileable` な非 debuggable 版で、撮影Activityと写真一覧・カメラ・音声の権限を除外します。CPU/GPU編集には既存PhotoRollActivityと保存サービスを含め、入力はFilesで明示的に選択します。旧GPU合成診断の負荷メニューから写真を読み出すことはありません。
 
 合成 instrumentation はさらに `cinematicGpuDiagnosticTests=true` を指定してコンパイルします。専用テストでも `gpuPixelProbe=true` がなければ EGL 初期化前にスキップします。`isolated=true` も必要です。1024px・12MP入口の完走試験は別クラス `GpuDiagnosticLoadTest` で、さらに `gpuPixelLoadProbe=true` を明示します。これは時間の採否ではなく、各入口の完走だけを確認します。実機を使用するときは、その回のユーザー許可と接続を確認してから行います。
 
@@ -36,7 +36,7 @@ applicationId は `dev.cinematic.p0.gpudiagnostic` です。既存の一時デ�
 
 各ボタン実行は新しいsessionで始まる。`iteration=0` が初回で、1〜12は強度ごとの再利用4回。ボタンを押し直した最初の回をwarmへ付け替えない。全26回の品質確認と完了/FGS終了を照合し、欠測・失敗・context再生成を成功反復へ補完しない。端末の冷間/温間と初期化済み/未初期化は別条件である。
 
-専用合成試験はHDR/暗部×強度0.25/0.5/1.0/0.25で、毎回新しいEGL/context/shaderを作る版と同じsessionを保持する版のfloat出力完全一致を要求する。CPUとの差2/255以内、取消/消費側例外後の解放、次session、閉じたsession/別thread拒否も別に確認する。実機GPU性能や実写一致の証拠ではない。
+専用合成試験はHDR/暗部×強度0.25/0.5/1.0/0.25で、毎回新しいEGL/context/shaderを作る版と同じsessionを保持する版のfloat出力完全一致を要求する。CPUとの差は `CPU_REFERENCE_ONLY` として記録し、旧2/255等の超過だけでは停止しません。有限値・寸法、取消/消費側例外後の解放、次session、閉じたsession/別thread拒否は引き続き検査します。実機GPU性能や実写一致の証拠ではない。
 
 標準APIの参照: [EGL14](https://developer.android.com/reference/android/opengl/EGL14)、[GLES30](https://developer.android.com/reference/android/opengl/GLES30)、[glFinish](https://registry.khronos.org/OpenGL-Refpages/es3.0/html/glFinish.xhtml)、[glReadPixels](https://registry.khronos.org/OpenGL-Refpages/es3.0/html/glReadPixels.xhtml)。
 
@@ -90,8 +90,8 @@ callback・係数生成内部・小 object・driver の確保、GC、RSS/PSS/pea
 ## 判定と制約
 
 - 30msの比較は従来モード `timingMode=baseline-v1` に限る。1024pxの対象ぼかし＋Orton GPU合成は、同じsessionの2回目以降（`phase=reused`）の `sumNs` を30msの目安と比較します。転送・同期・readback・その処理内のCPU変換/割当/一時資源回収を含み、EGL/context/shader初期化とsession最終解放は除きます。初回準備込み・CPU側Orton field準備・全Look時間は別記します。異なる入力/強度/順序・メモリ観測ONを混ぜて集計しません。
-- プレビューは全Lookで最大2段以内。そのうえで実機GPUと実写で目視の再判定が必要です。数値だけでは製品採用しません。
-- 保存採用は現像全経路で最大1段以内が条件です。12MPの単体試験はこの条件を検証しません。DNGデコードからJPEGまでの合格へ読み替えません。
+- CPUとの差は参考値です。旧プレビュー最大2段・保存候補最大1段は現在の停止・採否条件に使いません。Gate 2の品質判断は本人の実写の見た目とし、GPU帯/full・shader・有限値/寸法・安全契約の検査を維持します。
+- 12MPの単体負荷試験はDNGデコードからJPEG/publicationまでの全保存経路ではありません。診断完走を実写品質・製品復旧の合格へ読み替えません。
 - 暗部の平坦化カウントは検出補助であり、目視のバンディング判定の代わりではありません。
 - メモリは観測最大で、100msより短いピークを保証しません。GPUテクスチャ量とプロセス全体のPSSは別の量です。
 - エミュレーターのGPU rendererと実機は異なります。時間は参考値であり、採否はPixel 9aで決めます。
@@ -101,7 +101,7 @@ callback・係数生成内部・小 object・driver の確保、GC、RSS/PSS/pea
 
 API 35以降は `mediaProcessing`、API 33–34は `dataSync` の Foreground Service を使います。通知を出したあと専用スレッドで EGL の所有権を保持します。ホームへ戻る・画面消灯と、前面に残す場合を区別して記録します。
 
-「取り消す」は協調取消で、帯とGPU処理の区切りで観測します。EGL文脈と2つのshader programは合成写真1枚のsession内だけで保持し、全処理・取消・失敗の終了時に同じ所有スレッドで解放します。12MPは1ボタンの全帯/反復が1 sessionです。閉じたsessionの再使用と別スレッド使用/解放を拒否し、文脈が失われたらその回を失敗にします。自動再作成で反復へ混ぜません。メモリ採取スレッドも終了を待ちます。プロセス終了後に処理を自動再開しません。GPU合成診断では写真・一時JPEG・MediaStoreへの書き込みはありません。CPUプレビューからの保存操作は従来の製品保存経路であり、GPU診断と区別します。背景診断の成功は、製品保存の中断・復旧・撮影との両立の合格を意味しません。
+「取り消す」は協調取消で、帯とGPU処理の区切りで観測します。EGL文脈と2つのshader programは合成写真1枚のsession内だけで保持し、全処理・取消・失敗の終了時に同じ所有スレッドで解放します。12MPは1ボタンの全帯/反復が1 sessionです。閉じたsessionの再使用と別スレッド使用/解放を拒否し、文脈が失われたらその回を失敗にします。自動再作成で反復へ混ぜません。メモリ採取スレッドも終了を待ちます。プロセス終了後に処理を自動再開しません。GPU合成診断では写真・一時JPEG・MediaStoreへの書き込みはありません。HubのCPU/GPU編集からの保存操作は別の原寸保存経路であり、この合成診断と区別します。背景診断の成功は、製品保存の中断・復旧・撮影との両立の合格を意味しません。
 
 当日の熱停止・GPU失敗時の最大試行回数・CPUへ進める条件は[統合手順の停止条件](RAW4_DEVICE_CHECKLIST.md#途中で止める条件と次の進み方)に従う。GPUは初回を含む最大2回で、二度失敗したら残りGPUを止める。熱が続く場合や資源回収を確認できない場合はCPUにも進まず別日に回す。
 

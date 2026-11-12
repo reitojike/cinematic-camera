@@ -2,20 +2,22 @@
 
 [親 Issue #276](https://github.com/reitojike/cinematic-camera/issues/276) §4 と
 [契約 Issue #277](https://github.com/reitojike/cinematic-camera/issues/277) PR1 を転記した設計の正本。
-本 PR のマージまでは提案であり、マージ後はこの文書を API・GLSL・実装設計の正本とする。
-進捗・検証結果・採否は Issue / PR に記録する。通常 debug/release の既定は GPU とし、専用診断版だけ CPU/GPU の明示選択を残す。PR 上の変更はマージまで提案として扱う。
-以下の §4 は親 Issue の節番号・本文を維持する。
+現行の API・GLSL・実装設計を記録する。Draft PR中の変更はマージまで提案であり、mainの契約を置き換えない。
+進捗・検証結果・採否は Issue / PR に記録する。通常debug/releaseの新規プレビュー・保存をGPU既定とする #353 の変更は、マージまで提案として扱う。
+#291は記録された診断APKの実写確認と本人承認を完了した。GPU既定化PRのマージには別途本人の承認を必要とする。
+CPU数値差は参考値。#290のGPU基準画像回帰は現行GPU出力を対象にAndroidで先行し、既定切替や様子見期間の終了を待たない（§4.11）。
+以下は親Issueの節番号を維持し、実装との差を各節に記す。
 
 ## 4. 詳細設計
 
 ### 4.1 パッケージ・ファイル構成
 
-すべて新規。既存ファイルの変更は §5 の各 Issue で明示したものに限る。
+初期設計の構成。実装の入口と責務を示し、進捗は対応Issue/PRを参照する。
 
 ```
 app/src/main/java/dev/cinematic/p0/gpu/
   GlThread.kt              専用スレッドとキュー。GL 呼び出しはすべてこのスレッドで行う
-  EglContexts.kt           EGLDisplay、共有コンテキスト、オフスクリーン（1x1 pbuffer）、画面用 EGLSurface
+  EglContexts.kt           EGLDisplay、owner単位のコンテキスト、オフスクリーン（1x1 pbuffer）、画面用 EGLSurface
   GlCapabilities.kt        起動時に拡張・上限を検査（§4.3）
   GpuTexture.kt            テクスチャと FBO の所有。close で必ず解放。解放漏れを数える
   ShaderLibrary.kt         assets/gpu/*.glsl の読み込み、#include 解決、#define 注入、プログラムのキャッシュ
@@ -42,7 +44,7 @@ app/src/main/assets/gpu/
   analysis/*.comp          ヒストグラム、数え上げ（Compute シェーダー）
   display/*.frag           sRGB エンコード、フィット・回転、比較表示
 
-app/src/androidTest/java/dev/cinematic/p0/gpu/   CPU 基準との一致試験（§4.11）
+app/src/androidTest/java/dev/cinematic/p0/gpu/   GPU同士・安全契約の検査とCPU差の参考記録（§4.11）
 app/src/gpuDiagnostic/java/dev/cinematic/p0/gpu/ 実機計測用の画面・ログ
 ```
 
@@ -106,11 +108,13 @@ internal data class GpuDecisions(val mistAutoStrength: Double, val faceCutFactor
   - Compute シェーダー（ES 3.1 以上）
 - **精度**: シェーダーは `precision highp float;`。中間テクスチャは RGBA32F（色）・R32F（平面）を既定とする。RGBA16F は Gate 1 の計測で差が基準内と確認できたものだけに使う。
 - **スレッド**: GL の呼び出しはすべて `GlThread` 上。UI スレッドからは要求をキューに積むだけ。要求は**最新の1件だけ**を残して合流する（Choreographer のフレームごとに1回描画）。
-- **コンテキスト**: 1つの共有コンテキストを持ち、プレビューの画面用サーフェスと書き出しのオフスクリーンで共有する。プレビューと書き出しが同時に走る場合、書き出しは帯ごとに区切って GlThread のキューに積み、プレビューのフレームを優先する。
-- **メモリ**: `GpuTexture` がバイト数を記録し、合計を `GpuMemoryLedger` に報告する。上限はプレビュー 128MiB 以下、書き出し 192MiB 以下（12MP）。超える要求は失敗させる（黙って縮小しない）。`peakAllocatedBytes` は成功した予約の最大値を解放後も保持する。AS_SHOT を含む全工程の最大と予算との差を計測する。予算変更の判断と Gate 1 基準は [#276](https://github.com/reitojike/cinematic-camera/issues/276)・[#285](https://github.com/reitojike/cinematic-camera/issues/285) に記録する。
-- **解放**: 写真を閉じる、画面を離れる、`onTrimMemory`（`TRIM_MEMORY_UI_HIDDEN` 以上）で写真の GPU 状態を解放する。コンテキスト喪失（`EGL_CONTEXT_LOST`）は失敗として扱い、次の要求で作り直す。
+- **コンテキスト**: #341の製品GPU接続はpreviewとexportを独立owner/thread/contextにする。保存前に保存対象Aのpreview owner終了を確認し、保存中は同じAのpreviewを停止する。保存後のAのpreview再開は明示操作。別写真Bは独立した入力・preview ownerで準備・表示できる。初期案の共有context・同じAの同時描画は採用していない。同じAの原本展開と表示の所有期間を重ねず、解放不明ならその次ownerを開始しないためである。
+- **メモリ**: `GpuTexture` がバイト数を記録し、合計を `GpuMemoryLedger` に報告する。上限はプレビュー 128MiB 以下、書き出し 192MiB 以下（12MP）。超える要求は失敗させる（黙って縮小しない）。台帳は登録されたGPU textureの論理byteであり、CPU入力・Bitmap・driver・PSSや全工程のRAM上限ではない。`peakAllocatedBytes` は成功した予約の最大値を解放後も保持する。AS_SHOT を含む全工程の最大と予算との差を計測する。予算変更の判断と Gate 1 基準は [#276](https://github.com/reitojike/cinematic-camera/issues/276)・[#285](https://github.com/reitojike/cinematic-camera/issues/285) に記録する。
+- **解放**: 写真切替・背景化・画面終了と `onTrimMemory >= TRIM_MEMORY_UI_HIDDEN`（20）でpreview ownerを閉じる。trim10はこの契約による解放をせず、foreground exportのownerも閉じない。製品previewのcontext喪失は見える失敗とし、queue済み要求では再生成しない。明示retry/離脱/trimで旧ownerの終了を確認する。失敗直後のGL写真/画面surface解放と、旧owner終了時の縮小CPU入力/thread/EGL解放を区別する。低水準診断の次要求によるcontext再生成契約は製品retry契約と別。
 
 #### 資源再利用と全工程計測モード（#323）
+
+この節の数値・採否待ち表記は当時の候補の履歴。CPU差の現行の扱いは§4.11を優先し、過去の失敗を新条件の成功に書き換えない。
 
 **予算の事後変更**: 利用者は第1部の結果と資源再利用案のMesa結果を見た後、
 プレビュー上限を96MiBから128MiB（134,217,728B）へ変更した。資源持越時のpeakが約96MiBに
@@ -219,9 +223,9 @@ blur-owned縮小画像は第1拡大軸後に解放済み。[全85テクスチャ
 - MAX 値による除算は指定 Android で両成分が0となったため使わない。GLSL ES §8.3 は `ldexp` の指数>+128を未定義、指数<-126を0へflush可とするので、単純な `ldexp(x,-最大指数)` も使わない。仮数から共通指数との差（非正）で揃えれば支配成分の指数差は0となり、方向を失わない。ゼロ成分の指数0は共通指数の選択から除外し、正の指数差も0で抑える。
 - 色相の利用側は円周上の距離を使う。試験も `min(abs(ref-actual) % 360, 360 - abs(ref-actual) % 360)` で比較し、0°と360°を同じ角度とする。線形のULP距離は診断値であり、色相の合否には使わない。
 
-工程専用の許容差は利用者判断時に次の値で固定し、結果を見て追加緩和しない。正本の定数は `GpuTolerances` に置く。
+次の値は#279時点のCPU比較の旧判定値。現在は `GpuTolerances` に参考基準として保持し、超過だけで停止・不合格にしない。数式や値を差分消去のために変更しない。finite・寸法・hue範囲等の出力契約は維持する。
 
-| 工程 | 固定した受入条件 |
+| 工程 | 旧CPU比較基準（現在は参考値） |
 | --- | --- |
 | RGB→Lab、Lab→RGB、および往復 | 参照の絶対値≤1では絶対差≤4e-6、絶対値>1では相対差≤2e-5 |
 | 色相 | 円周上の絶対差≤1e-4度 |
@@ -230,17 +234,17 @@ blur-owned縮小画像は第1拡大軸後に解放済み。[全85テクスチャ
 | plane/RGB blur、BICUBIC | #279 の従来基準を維持 |
 
 根拠: [GLSL ES 3.20.8 §4.7.1](https://registry.khronos.org/OpenGL/specs/es/3.2/GLSL_ES_Specification_3.20.html) は、pow の精度要件を `exp2(y * log2(x))` から継承させ、三角関数の精度を同表で定義しない。subnormal の0へのflushも許す。powが必ずその式で実装されるという規定ではなく、Math.cbrt/atan2 と同じ丸めを保証するものでもない。
-今回の閾値は規格から得られる保証値ではなく、測定と利用者承認に基づく契約である。Newton後の往復最大差は Android 2.682209e-6 / Mesa 2.592802e-6、B2後のMesa色相最大差は約3.05176e-5度だった。最終の exact head を両環境で検証して記録する。
+これらの旧閾値は規格から得られる保証値ではなく、当時の測定と利用者承認に基づく値である。Newton後の往復最大差は Android 2.682209e-6 / Mesa 2.592802e-6、B2後のMesa色相最大差は約3.05176e-5度だった。最終の exact head を両環境で検証して記録する。
 
-**全工程の基準は #276 §2.1 に従う。** 表示8bit最大差2・全RGBの99.9パーセンタイル差1を維持し、Orton入力の境界画素だけに下記§4.11の承認済み最大差例外を適用する。Mist自動強度0.005、局所分位点1e-4とOrton以外の工程判定は変更しない。単体の表示差やエミュレーター成功を最終画質・実機速度の合格へ読み替えない。
+**現在の品質判断は§4.11に従う。** 全工程のCPUとの差・旧Orton境界除外は参考記録であり、Gate 2は本人の実写判断とする。GPU帯/full・cache/fresh一致、shader、安全契約を自動検査する。合成結果を実機の画質・速度の合格へ読み替えない。
 ### 4.5 Pillow 互換のリサンプル（GPU）
 
 `StageClearBlur.resize` と `OriginalField` が真実の源。GPU 版は次の通りに実装する。
 
 1. **重みの計算は CPU（Kotlin）で行う。** `StageClearBlur.samples(inputSize, outputSize, filter)` をそのまま呼び、各出力位置の `first` と正規化済み重みを、R32F のテクスチャ（行=出力位置、列=タップ）と R32I（`first`）にしてアップロードする。重みは画像サイズと半径だけで決まるので、写真ごとにキャッシュする。
 2. **軸の順番**は `StageClearBlur.resize` と同じ規則（`verticalFirst` の条件）で決める。軸ごとに1パス。
-3. 各パスは「出力1画素 = Σ 入力[first+i] × w[i]」。BOX 縮小は1出力あたりのタップ数が多い（例: 1024px で半径 7% なら約70タップ）ため、**縮小パスは Compute シェーダー**で、行（列）単位にワークグループを割り当て、共有メモリで部分和を取る。拡大（BILINEAR 2〜3タップ、BICUBIC 4〜5タップ）はフラグメントシェーダー。
-4. 軸と軸の間で値を単精度に丸める（Pillow と同じ）。累積は単精度（Kotlin は倍精度。差は許容範囲で吸収）。
+3. 各パスは「出力1画素 = Σ 入力[first+i] × w[i]」。BOX 縮小は1出力あたりのタップ数が多い（例: 1024px で半径 7% なら約70タップ）ため、**縮小パスは Compute シェーダー**で、行（列）単位にワークグループを割り当てる。各invocationは出力画素を担当し、タップを元の順で単精度累積する。初期案の共有メモリ部分和は使わない。拡大（BILINEAR 2〜3タップ、BICUBIC 4〜5タップ）はフラグメントシェーダー。
+4. 軸と軸の間で値を単精度に丸める（Pillow と同じ）。累積は単精度（Kotlinは倍精度）。CPUとの差は参考記録とし、GPU帯/fullの演算順序は一致させる。
 5. `plane(input, radius)` = BOX で `reducedSize` へ縮小 → BILINEAR で原寸へ。`rgb()` は**色を分けずに** RGBA テクスチャのまま処理する（Kotlin の色ごとのコピーは不要）。
 
 ### 4.6 工程の対応表（パス構成）
@@ -263,19 +267,19 @@ blur-owned縮小画像は第1拡大軸後に解放済み。[全85テクスチャ
 | skinChromaCap | `StageClearProtections.skinChromaCap` | 1パス | 顔マスクは現状すべて 0。uniform で 0 を渡せる形にしておく |
 | face cut | `StageClearProtections.faceCut` | Phase 0・1 では実装しない | 製品の顔マスクが NONE のため発生しない。インターフェースだけ用意し、呼ばれたら失敗させる |
 | shoulder | `StageClearProtections.shoulder` | 1パス | |
-| 表示 | `TrialDisplayPixels.byte` | 1パス（sRGB エンコード、8bit 丸め） | 書き出しの `channel()` と同じ式であることを試験で確認 |
+| 表示 | `TrialDisplayPixels.byte` | 1パス（sRGB エンコード、8bit 丸め） | GPU表示/encodeの一致を検査し、CPUの `channel()` との差は参考記録 |
 
 ### 4.7 統計（写真全体の値）
 
 | 値 | 現行の定義 | GPU 版の方法 | 結果の扱い |
 |---|---|---|---|
 | 自動露出 p97 | 中央 1/2×1/2 の輝度、NumPy float32 linear（近い端点から補間） | 入力は CPU にもあるので、**CPU で求める**（`R7PreviewInputs.prepare` をそのまま呼ぶ） | 両モードとも写真open時に1回。初回準備として①から除外（#323） |
-| 局所トーン p50/p92 | 原寸に拡大した平滑 log 輝度の全画素 | Compute シェーダーで `OriginalQuantiles` と同じ2段の基数ヒストグラム（上位16bit → 該当バケット内の下位16bit）を作り、厳密に選ぶ | FULL_RECOMPUTEは毎frame。NORMALはR7の既存cache条件に従う。式/許容差不変（#323） |
-| 白に近い画素の割合 | Glow 後の線形輝度 > NEAR_WHITE の画素数 | Compute シェーダーで原子的に数える | 強さ・調整値が変わるたび。厳密に一致させる |
+| 局所トーン p50/p92 | 原寸に拡大した平滑 log 輝度の全画素 | Compute シェーダーで `OriginalQuantiles` と同じ2段の基数ヒストグラム（上位16bit → 該当バケット内の下位16bit）を作り、厳密に選ぶ | FULL_RECOMPUTEは毎frame。NORMALはR7の既存cache条件に従う。CPU分位点との差は参考記録、GPU full/bandの判定値一致を維持 |
+| 白に近い画素の割合 | Glow 後の線形輝度 > NEAR_WHITE の画素数 | Compute シェーダーで原子的に数える | 強さ・調整値が変わるたび。CPU countとの差とGPU full/bandのcount差は記録のみ。GPU同士の最終DISPLAY8・分位点・Mist factor一致は別に検査 |
 
 ### 4.8 書き出し（帯ごとの計算と「場の境界」）
 
-12MP・24MP の中間画像を GPU に丸ごと置かない。工程の途中に、写真全体から作る縮小場が必要になる箇所（**場の境界**）があるため、次のように区切る。
+原寸の中間画像を GPU に丸ごと置かない。12MPの製品接続と24MPのPhase 2検証は区別する。工程の途中に、写真全体から作る縮小場が必要になる箇所（**場の境界**）があるため、次のように区切る。
 
 | 境界 | 必要な場 | 境界より前に計算する工程 |
 |---|---|---|
@@ -286,14 +290,13 @@ blur-owned縮小画像は第1拡大軸後に解放済み。[全85テクスチャ
 | B5 | Orton の縮小場 | B4 まで ＋ Mist 合成 |
 | 最終 | なし | B5 まで ＋ Orton → Character → skinChromaCap → shoulder → sRGB 8bit |
 
-- **各境界で、原寸の入力を帯（例: 高さ 256 行）ごとに最初から計算し直す。** 原寸の中間画像を保存しない代わりに、前の工程を再計算する。GPU では1画素ずつの計算が軽いため、ディスクへの中間ファイル書き出し（現行）より速く、メモリも一定になる。
-- 縮小場（BOX）は帯ごとに部分和を加算していく（縮小の重みは軸ごとに分かれているので、帯の行がどの縮小行にどれだけ寄与するかを事前に計算できる）。縮小場は小さい（数十〜数百px四方）ので GPU に常駐させる。
-  - 帯ごとの加算は「横に縮小 → 縦に加算」の順になる。Pillow の規則で縦を先にする条件（`verticalFirst`）に当たる場合は、軸の間の単精度への丸めの位置が現行と変わる。この差は §4.11 の許容範囲で判定し、範囲を超える場合は G1-1 で止めて親 Issue に報告する。
-- 拡大（BILINEAR/BICUBIC）は、帯の各画素から縮小場を直接サンプリングする。継ぎ目の処理は不要。
-- 入力は既存の RGB16 原寸ラスタ（私有ファイル）を帯ごとに読み、R16 系の整数テクスチャとしてアップロードし、シェーダーで float に変換する。
-- 最終パスの出力は RGBA8 で帯ごとに読み戻し、既存の Bitmap に `setPixels` で詰め、既存の `Bitmap.compress` で JPEG にする（12MP では現行のまま）。24MP の省メモリ化（libjpeg-turbo による行ごとの書き出し）は Phase 2 で、依存関係の承認を得てから。
-- 取消は帯ごとに確認する（取消から停止まで最大で帯1つ分）。
-- 原本の照合、保存と公開の記録、前面サービス、`Original24Resources` の確認は既存のまま呼ぶ。`Original24Attempt` の中で `OriginalStageClear24.render` を呼んでいる箇所だけを、フラグで `GpuExportRenderer` に切り替える。
+- **各境界で、原寸入力を帯ごとに最初から計算し直す。** 既定256行、試験は64行と最終端数帯も扱う。原寸のGPU中間画像や中間Float32ファイルを残さず、前工程を再計算する。再計算の速度・全RAM一定を仕様だけで保証しない。
+- 縮小場（BOX）は帯を順に加算しGPUへ保持する。`verticalFirst` も全画面GPUと同じ軸順・Float丸めを保つ。初期案の常時「横→縦」では縦長/一定色等で全画面GPUと異なったため、#338の順序修正を使う。帯64/256、継ぎ目・端・端数帯を含めGPU同士を比較し、不一致は失敗とする。CPU倍精度との差は別の参考値。
+- 拡大（BILINEAR/BICUBIC）は画像全体の座標と縮小場から帯を計算する。帯ごとにローカル座標へ丸め直さない。
+- 入力は既存LibRawの未調整RGB16原寸ラスタを行順に読み、CPUで有限RGBA Floatへ詰めてRGBA32Fの帯textureへアップロードする。初期案のR16整数texture直接入力は使っていない。欠落・追加・順序不正の行を拒否し、warmthはGPU内で一度だけ適用する。
+- 最終RGBA8を帯/行ごとに読み戻し、既存Bitmapの `setPixels`、JPEG95の `Bitmap.compress`、出力再読取・原本前後照合・publicationを共用する。Bitmapを含む全RAMはtexture台帳と別。24MPの行JPEG/省メモリ化は [Phase 2](GPU_EXPORT_PHASE2.md) の別範囲で、ここでは採用しない。
+- 帯ごとに取消とfence完了を確認し、未処理帯を大量にqueueへ先行投入しない。投入済みGL/native処理の即時停止や一定ms以内の停止は保証しない。
+- `Original24Attempt` は最初の実保存時にengineを固定する。GPUでは保存対象Aのpreview owner終了後に専用GL ownerを開始し、原本照合・durable intent・Foreground Service・`Original24Resources` の確認を共用する。GPU_FAILEDの明示retryと取消/HOLDの境界は§4.12に従う。
 
 ### 4.9 プレビュー（表示と操作）
 
@@ -302,13 +305,13 @@ blur-owned縮小画像は第1拡大軸後に解放済み。[全85テクスチャ
   - rendererとStageClearGpu.openPhotoは、この寸法決定済み入力を受け取る。どちらかの上限を超えた場合は、既存checkと同じ明示失敗にし、GPU内部で再縮小しない。
   - 理由: 長辺だけでは1024×1024も許容され、1024×769のメモリ計測から最大面積の安全性を保証できなかった。撮影の4:3/16:9を維持しつつ、ユーザー判断でGPUプレビューの面積も制限する。当時のpreview 96MiB（#323で128MiBへ事後変更）、書き出し192MiB、ルックの式、画素差の基準は不変。
   - 最大メモリの確認形状は1024×768、768×1024、1024×576、886×886。従来1024×769は上限外の履歴比較として旧診断候補でAndroid実測と照合し、現行入力の受け入れに含めない。画面サイズへの拡大は表示パスで行う。
-- **表示面**: Compose の `AndroidExternalSurface`（または `AndroidView` + `SurfaceView`）。EGLSurface は表示面の生成・破棄に合わせて作り直す。
+- **表示面**: Composeの `AndroidView` + 非再利用 `SurfaceView` を使う。正のlayoutサイズ確定時に描画を1回要求し、接続済みSurfaceからのrenderer交換でも作成通知が届くようにする（#339）。EGLSurfaceは生成/破棄に追従し、detachは2秒で区切る。時間超過はtyped GPU failureで表示し、終了不明ownerを捨てない。
 - **描画の流れ**: スライダーの値が変わる → `GpuRenderParams` を GlThread のキューに置き換え → 次のフレームで1回描画。
   - NORMALは強さ変更時にR7/Glowを保持し、色温度/明るさで無効化。FULL_RECOMPUTEはR7分位点・Glowの場・Mist判定・最終表示まで毎frame再計算する。写真の自動露出は両モードで初回のみ（#323）。
-- **二段構えはなくす**: ドラッグ中も指を離した後も同じ正確な描画。256px の粗い描画、古い要求の破棄・取消の仕組みは、GPU 経路では使わない（CPU 経路には残す）。
+- **二段構えはなくす**: ドラッグ中も指を離した後も同じ正確な描画。CPUの256px粗表示actorはGPU経路では使わない。GPU自身の最新要求への合流、古い写真/世代の失効、取消・lifecycle検査は維持する。
 - **比較表示**: `showBefore = true` のときは AS_SHOT 入力をそのまま sRGB 表示する（現行の比較画像の定義と同じ）。
 - **原本の照合**: 写真を開くときと保存の前後で行う（#268 の境界のまま）。フレームごとには行わない（入力は GPU に常駐し、ファイルを読まないため）。
-- Phase 0 では製品の画面には組み込まず、診断版の画面で動かす。
+- #339/#341で既存編集画面へ接続したが、専用gpuDiagnostic Hubからの明示選択に限る。通常debug/releaseはCPU。Files復帰時はforeground・camera受付・Surfaceをeventで待ち、10秒で明示失敗とする。受付後native展開はこの10秒に含めない。
 
 ### 4.10 計測
 
@@ -317,18 +320,20 @@ blur-owned縮小画像は第1拡大軸後に解放済み。[全85テクスチャ
 
 ### 4.11 正しさの検証
 
+2026-11-11の[本人判断](https://github.com/reitojike/cinematic-camera/issues/276#issuecomment-6809283080)により、CPU数値差は参考記録のみ。旧閾値の超過をGate 2やGPU結合試験の停止・不合格にしない。finite/shape/type、コピー、GPU同士、資源・安全性の失敗は別であり、削除しない。
+
 | 種類 | 内容 | 場所 |
 |---|---|---|
 | 合成画像セット | 決まった乱数で作る合成画像（グラデーション、白飛び、肌色、彩度の高い色、暗部、ノイズ）。Mesa CI は64×48・256×192・1600×1200。Androidは256×192と公開入力上限内の1024×768など各工程の受入寸法。単体passの旧1024×769 fixtureは履歴比較として保持 | 共通の `androidTest/.../reference/GpuReferenceImages.kt` を直接利用 |
-| 工程ごとの一致 | `GpuStageTap` で各工程の出力を読み戻し、Kotlin の同じ工程（`R7Base.stages()` など既存の関数）と比べる | 下記のMesa計算回帰とAndroid結合検証を別々に記録 |
-| 最終出力の一致 | 表示8bitで境界対象外の最大差≤2、**全RGB**の99.9パーセンタイル≤1。下記CPU-only境界画素の比率上限も必須。全画素最大・平均も記録 | 同上 |
-| 判定値の一致 | Mist 自動強度は差 ≤0.005、局所トーン p50/p92 は絶対差 ≤1e-4。`GpuTolerances` を正本とする | 同上 |
-| 実写 | ユーザーの写真で、手元だけで比較（非公開の比較ページ、タップで切り替え）。数値・写真は Git に入れない | 実機・PC |
+| 工程ごとのCPU参考値 | `GpuStageTap`で読み戻し、Kotlinとの差・最大位置・旧基準比を `CPU_REFERENCE_ONLY` として記録。差だけで失敗させない | MesaとAndroidを別々に記録 |
+| 最終出力のCPU参考値 | 全画素最大・平均・全RGB p99.9・変更画素数を記録。旧Orton除外判定も履歴用。超過は停止理由にしない | 同上 |
+| 判定値のCPU参考値 | nearWhite count、Mist自動強度、局所p50/p92を記録。GPU readbackをCPU sortで計算した分位点もCPU参考値 | 同上 |
+| 自動判定を維持 | GPU帯/full・64/256・cache/freshの一致、shader compile/link、有限値・寸法・入力保護・retry・解放 | 下記実行範囲を区別 |
+| Gate 2 | 本人の実写の見た目でGPU previewと保存JPEGを判断。CPU JPEGは比較参考。写真・写真別数値・素材名・個人パスは公開しない | 本人が確認した指定APK/実施範囲 |
 
-#### Orton の1.0境界に対する承認済み表示判定
+#### Orton の1.0境界に対する旧表示判定（履歴・現在は参考値）
 
-[#276 §2.1](https://github.com/reitojike/cinematic-camera/issues/276) と
-[#285 Gate 1 基準②](https://github.com/reitojike/cinematic-camera/issues/285) のユーザー判断に従う。
+以下は[#276](https://github.com/reitojike/cinematic-camera/issues/276)・[#285](https://github.com/reitojike/cinematic-camera/issues/285)で当時承認された判定と測定の履歴。旧判定器自体の集計試験を維持するが、現在のCPU/GPU比較はこれを参考記録に使い、assertPassedを呼ばない。
 対象は **Kotlin見本の `StageClearOrton.mixOrton` に渡すimage（MIST）だけ** から決める。
 いずれかのRGB成分について `abs(component.toDouble() - 1.0) <= 1e-5` の画素を対象とし、GPU値では選ばない。
 
@@ -349,7 +354,7 @@ Kotlinだけで選んだ対象は(248,102)と(142,121)の2/49,152画素（0.0040
 対象外最大1、全RGB p99.9最大1、対象比率最大0.0081380208%を確認した。
 指定Android全行列と最終候補の受け入れは別途検証し、Gate1全体・実機の合格とは扱わない。
 
-許容範囲を超えた工程は、式の写し間違いとして直す。許容範囲そのものを後から広げない（広げる場合はユーザーの判断として記録する）。
+CPU差の超過だけを式の誤りと断定しない。shader/原本保護の不具合は別に調査し、差を消すための無断の式変更・閾値拡大・baseline自動更新は行わない。
 
 #### 2層の実行環境（#290）
 
@@ -359,19 +364,40 @@ host GPU + `GuestAngle,Vulkan` の通常AVDでの成功を、GPUのないGMDで�
 
 - **Mesa CI**: MesaのEGLでGLES 3.2 contextを実際に作り、GLSLの計算と回帰を検証する。
   実assetを現行 `ShaderSource` / `ShaderConstants` で展開し、コピー・CI専用の書換えはしない。
-  共有 `GpuReferenceImages` / `ImageDiff` / `GpuTolerances` とKotlin計算をそのまま使い、Mesa向けの閾値緩和はしない。
-  超過した工程・条件・入力・Kotlin/GPU値・差を報告する。Mesa版、EGL driver名、renderer、実ES版、件数、失敗、skip、所要時間をCIログへ出す。
+  共有 `GpuReferenceImages` / `ImageDiff` / `GpuTolerances` とKotlin計算を参考観測に使い、旧閾値そのものをMesa向けに変えない。GPU帯/fullの一致とfinite等は必須に保つ。
+  CPU差は工程・条件・Kotlin/GPU値・差を参考値として報告する。Mesa版、EGL driver名、renderer、実ES版、件数、失敗、skip、所要時間をCIログへ出す。
 - **Android opt-in**: host GPU + `GuestAngle,Vulkan` の通常AVDで、対象Android instrumentation試験を**GPU PRごと**に実行する。
   最終候補head、実行件数・成功/失敗/skip、実contextのES版、環境をPRに記録する。記録がないPRはマージしない。
   AndroidのEGL/GLES binding、resource寿命、pass graphとの結合はこの層で検証し、Mesa用host harnessの成功では代替しない。
-- 4000×3000以上は引き続きopt-in。Pixel 9aの画質・速度・メモリ・目視は #285 Gate 1 で判断し、Gate 1/2と依存順を飛ばさない。
+- 4000×3000以上は引き続きopt-in。[Gate 2本人承認](https://github.com/reitojike/cinematic-camera/issues/291#issuecomment-6813411664)は指定APKの実写2場面のGPU preview/保存JPEGと参考CPU JPEG1枚に限る。#289/#290とは並行で実施済み。性能・メモリ・故障/取消・他の版の実機合格を含めない。
 
-先行CI基盤は `-PcinematicGpuMesa=true --tests 'dev.cinematic.p0.gpu.mesa.*'` を付けた
-`:app:testDebugUnitTest` だけで有効になる。全製品assetのcompile/link、共有10fixtureのRGBA32F往復、
-実 `common/color.glsl` のRGB→Lab / Lab→RGB / 往復を上記3サイズで検証する。
-stage wrapperは実関数を呼ぶだけで、GLSLの計算式を持たない。これは #278/#279 の一部の継続回帰であり、
-R7・Glow/Mist・Orton/Character・全工程・書き出しの一致試験統合とLiving Spec更新は依存後の #290 残件である。
-この先行基盤だけで #290 全体完了、GPU製品採用、実機合格とはしない。
+Mesaは既存の独立必須ジョブで `-PcinematicGpuMesa=true --tests 'dev.cinematic.p0.gpu.mesa.*'` を付けた
+`:app:testDebugUnitTest` を実行する。必要suite/試験種別の欠落、0件、failure/error/skipは失敗。
+assetは全件compile/linkし、未知拡張子や未検査assetも拒否する。追加Mesaクラスもwildcardの対象になる。
+
+| 実行場所 | 継続対象 | 実行していない範囲 |
+| --- | --- | --- |
+| Mesa `MesaShaderAssetsTest` | 全製品asset compile/link、include読取網羅 | compileだけでは数値pass graphの実行を証明しない |
+| Mesa `MesaImageAgreementTest` | 64×48・256×192・1600×1200×共通10fixtureのRGBA32F copy完全一致と実color assetのCPU参考差 | R7/全Lookはここでは描画しない |
+| Mesa `MesaExportBandsTest` | 実reduce/accumulate/upsample shader、64/256/端数帯、縦長/一定色/縞/impulse、GPU full/band一致とCPU参考差 | B1〜最終保存の全pass graph、DNG/JPEG/publicationは実行しない |
+| Mesa `MesaReferencePolicyTest` | 大きいCPU差が参考値のまま、非finite/shape不正は拒否 | 実写品質の判定ではない |
+| 通常/診断CI | JVM安全・設定・集計・CPU golden、lint、APKとinstrumentationのcompile、依存隔離 | Android instrumentationはCIでは実行しない |
+| Android opt-in | 対象PRに応じたR7、Glow/Mist、finish、全工程、帯/full、preview/export owner、安全試験 | 継続Mesa CIや未実施の実機測定へ読み替えない |
+
+旧CPU数値assertの棚卸し対象は色/resample、R7/分位点、Glow/Mist/nearWhite、finish/Orton、全工程、
+display/previewの中間色、合成DNG、旧GPU合成診断。GPUコピー・画面配置、cache/fresh、帯/full、
+係数のuniform転送、CPU入力準備値の受渡し、純粋な集計器、CPU goldenと保存安全試験は維持する。
+この層の区分と個々の最終headの実行件数はPRへ記録する。過去にhostで成功した全Look行列を継続Mesaへ統合済みとは書かない。
+
+#### GPU基準画像回帰: Android先行とD0のMesa移行
+
+- 現行GPU出力を比較対象とし、Android opt-inによる候補生成・比較をGPU既定切替前から様子見期間と並行して進める。#290前段AのCPU差参考記録化と、基準画像の候補生成・本人採用・継続比較は別々に検証・記録する。前段Aだけで基準画像を作成・採用済みとはしない。
+- 既存の決定論的合成fixtureを使い、入力/seed/寸法・調整値・対象commit・GLSLと注入定数の版・色空間/8bit化・基準hash・比較方法を管理する。実写・個人情報を公開goldenに入れない。
+- Android先行時はホストGPU/driver版、AVD名・system image/API/ABI/版、emulator版、描画設定、実EGL/GLES vendor/renderer/ES版も基準画像と一緒に記録する。driverやAVD等の版が変わって差が出た場合は差の場所と大きさを示し、本人の目視確認後に基準を作り直す。環境差を無断の閾値緩和や自動baseline更新で消さない。
+- 基準候補は本人の目視確認後に採用する。同一環境のGPU回帰と異なるdriverの比較を区別し、CPU閾値を無断転用しない。意図した見た目変更時も本人確認後にbaseline更新し、失敗を消す自動再生成は禁止する。
+- この全工程の基準画像比較は現時点ではCI自動実行ではない。少なくともGPUやルックに触れるPRのマージ前、およびCPU経路の削除・リファクタリングの各PR前に手動実行する。対象head、基準hashと環境、条件数・成功/失敗/skip、差分と本人確認の要否をPRへ記録し、未実行をCI成功で代替しない。
+- v0.1.0前のリファクタリングD0に、Mesaから全工程を呼べるようにする作業と、基準画像比較をMesa CIへ移す作業を含める。現在のMesaは上表のpass範囲であり、全工程の基準画像比較を移行済みとはしない。MesaとAndroidのdriver差は別に評価し、Android基準へのbit完全一致を無断で条件にしない。
+- 製品のGPU既定切替・GLSL正本化・Kotlin数式変更・CPU経路/既存CPU golden削除は、この先行試験や基準採用の許可に含めない。各変更は範囲と承認を分ける。
 
 JVM bindingは **LWJGL 3.4.3** の `org.lwjgl:lwjgl`、`lwjgl-egl`、`lwjgl-opengles` と
 `lwjgl` / `lwjgl-opengles` の `natives-linux`。明示フラグ時の `testDebugImplementation` / `testDebugRuntimeOnly` だけに隔離し、APK・製品依存・通常のJVM試験・他variantには加えない。
@@ -383,17 +409,19 @@ CIは通常の `debugRuntimeClasspath` / `debugUnitTestRuntimeClasspath` の依�
 EGL/GLES bindingは [LWJGL公式](https://www.lwjgl.org/guide) と
 [EGL API](https://javadoc.lwjgl.org/org/lwjgl/egl/EGL15.html) を利用する。
 
-### 4.12 失敗時の扱い（Gate 2 で最終決定）
+### 4.12 失敗時の扱い
 
-- 提案: GPU が使えない（能力不足・コンテキスト喪失・メモリ不足）場合、プレビューは「GPU を使えません」の表示と再試行、書き出しは既存の失敗・再試行の流れに乗せる。**黙って CPU 経路に切り替えない**（見た目が変わるため）。
-- 代案: CPU 経路に切り替え、その旨を表示する。Gate 2 でユーザーが選ぶ。
+- GPU能力不足・context喪失・予算超過等は見える失敗にし、**CPUへ自動fallbackしない**。previewは選択写真の画像領域に理由と明示retryを示し、旧owner終了確認と原本再確認後だけ新sessionを開く。
+- 保存は固定理由/当該ownerの回数を表示する。JPEG入口前のGPU producer failureでGPU・原本・作業領域・出力の全cleanupが確認できた時だけ、同じsource/recipe/generation/engineで明示retryする。失敗中の別編集世代・別engineへの迂回はしない。
+- #346の取消契約もJPEG入口前・全cleanup完了が確認できた同プロセスの同世代だけ明示retryを許す。解放不明・JPEG入口後・restart・intent不一致はHOLD/既存publication再照合を維持する。durable intentを消して回避しない。
+- 原本の強い照合、Foreground Service、既存publicationは共用する。画面の取消/失敗表示とowner回収を分け、実施していない故障注入をGate 2承認へ含めない。
 
 ### 4.13 切り替えフラグ
 
-- `DevelopEngine { CPU, GPU }` を1つだけ持ち、プレビューと書き出しの両方がこれを見る。
-- 通常 debug/release の新規プレビュー・保存は GPU 固定。診断用の保存値は読まず、設定 UI と CPU 自動回避は作らない。gpuDiagnostic は既存の明示 CPU/GPU 選択、その他診断 variant と低水準試験は CPU 既定を維持する。保存 owner が開始時に固定した engine と既存データは移行しない。
-- 問題時の戻し方は CPU 既定へ戻す別のレビュー済み変更と versionCode を上げた新しいビルドとする。旧 APK への downgrade では戻さない。
-- Gate 2 の承認後、既定を GPU に変える PR を別に作る（製品の既定の変更なので、ユーザーの確認を挟む）。
+- `DevelopEngine { CPU, GPU }` をpreviewとexportで共用し、保存は最初の実保存時にengineを固定する。
+- 通常debug/releaseの新規プレビュー・保存はGPU固定。診断用保存値は読まず、設定UIとCPU自動回避は作らない。gpuDiagnosticは明示CPU/GPU選択、その他診断variantと低水準試験はCPU既定を維持する。保存ownerの固定engineと既存データは移行しない。
+- 問題時はCPU既定へ戻す別のレビュー済み変更とversionCodeを上げた新ビルドで戻す。旧APKへのdowngradeはしない。
+- Gate 2本人承認とGPU既定化PRのマージ承認は別であり、マージ前に本人確認する。GPU基準画像のAndroid先行試験は既定切替を待たず並行して進め、採用は本人の目視確認後とする。
 
 ---
 
