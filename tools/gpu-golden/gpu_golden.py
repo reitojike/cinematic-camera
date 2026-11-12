@@ -71,7 +71,7 @@ def validate(root):
     if {p.name for p in root.glob('*.rgb8.gz')} != files:
         raise ValueError('Unexpected image files')
     host = load_json(root / 'host.json')
-    if host['schema'] != 1 or host['instrumentationPassed'] is not True or host['sourceDirty'] is not False:
+    if host['schema'] != 1 or host['instrumentationPassed'] is not True or host['sourceDirty'] is not False or host.get('phase') != 'complete':
         raise ValueError('Host run did not pass against a clean source')
     for field in ('sourceCommit', 'sourceTree'):
         if not re.fullmatch('[0-9a-f]{40}', host[field]):

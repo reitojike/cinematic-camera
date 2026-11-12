@@ -44,16 +44,16 @@ CI では自動実行しない。以下の各 PR は最終候補 head で必ず�
 ## 実行手順（Windows、共有AVDの使用許可が取れてから）
 
 1. 最終ソースを commit し、作業treeをcleanにする。既存 ephemeral_debug 署名を使用し、署名鍵の作成・移動はしない。
-2. 共有AVDの先行試験が終了したことを確認する。通常AVDを host GPU + `GuestAngle,Vulkan` で起動した証跡を用意する。このツールはAVDの起動・停止・設定変更・実機操作をしない。
+2. 共有AVDの先行試験が終了したことを確認する。通常AVDを host GPU + `GuestAngle,Vulkan` で起動する。runner は serial からの AVD 名、実行中 QEMU の port/name/flags、AVD 内に emulator が生成した起動記録とその時刻を照合し、異なる枠・古い記録なら停止する。このツールはAVDの起動・停止・設定変更・実機操作をしない。
 3. `JAVA_HOME` / `ANDROID_HOME` を既存SDK/JDKへ設定し、次を実行する。パスはローカル環境で指定する。
 
 ```powershell
-./tools/gpu-golden/capture_android.ps1 -Serial emulator-5580 -AvdConfig <AVDのconfig.ini> -SdkRoot <既存SDK> -LaunchRecord <AVD起動記録>
+./tools/gpu-golden/capture_android.ps1 -Serial emulator-5580 -AvdConfig <AVDのconfig.ini> -SdkRoot <既存SDK>
 ```
 
 APKをそのclean treeから構築し、指定したエミュレーターだけに導入する。`isolated=true` と `gpuGolden=true` が必須。通常CI/通常UI試験では走らない。対象は `GpuGoldenAndroidTest#captureNinetyFullFramesAndCompareBothBandSizes` の1 method、正式90条件、帯比較28件。0件・skip・途中終了を成功にしない。
 
-4. `build/gpu-golden/<run>/` の記録と review/index.html を確認し、全画像の目視を本人へ依頼する。失敗時は証跡を保持し、自動で再実行しない。
+4. `build/gpu-golden/<run>/` の記録と review/index.html を確認し、全画像の目視を本人へ依頼する。失敗時はrun直下のhost.jsonにsource・取得済みAPK hash・AVD/driver版・失敗した工程を保持し、自動で再実行しない。PIDと個人パスを含むruntime-link.local.jsonはローカル証拠だけで、baseline採用には含めない。
 5. 本人が対象候補を目視承認した後だけ、承認出典とともに次を実行する。出力先が既存なら上書きせず失敗する。
 
 ```text

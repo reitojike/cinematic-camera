@@ -33,7 +33,7 @@ class GoldenToolsTest(unittest.TestCase):
                 case[f'bands{rows}'] = {'changedPixels': 0, 'maxDelta': 0}
             self.capture['cases'].append(case)
         self.capture['totalImageBytes'] = sum(c['compressedBytes'] for c in self.capture['cases'])
-        self.host = {'schema': 1, 'instrumentationPassed': True, 'sourceDirty': False,
+        self.host = {'schema': 1, 'instrumentationPassed': True, 'sourceDirty': False, 'phase': 'complete',
                      'sourceCommit': 'a' * 40, 'sourceTree': 'b' * 40,
                      'appApkSha256': 'c' * 64, 'testApkSha256': 'd' * 64,
                      'environment': dict.fromkeys(('emulatorVersion', 'systemImageRevision', 'avdImage', 'gpuMode', 'gpuFeatures', 'hostGpuDrivers'), 'test')}
@@ -61,6 +61,11 @@ class GoldenToolsTest(unittest.TestCase):
         with self.assertRaises(ValueError): g.validate(self.candidate)
         self.capture['status'] = 'complete'
         self.capture['cases'].pop()
+        self.save()
+        with self.assertRaises(ValueError): g.validate(self.candidate)
+
+    def test_failed_host_phase_cannot_be_adopted(self):
+        self.host['phase'] = 'failed_pull_pending'
         self.save()
         with self.assertRaises(ValueError): g.validate(self.candidate)
 
