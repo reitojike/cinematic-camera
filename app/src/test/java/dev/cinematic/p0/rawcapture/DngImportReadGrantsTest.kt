@@ -36,6 +36,43 @@ class DngImportReadGrantsTest {
         fun current() = journal.read()!!
     }
 
+    @Test fun cancelledRecordRemainsRecoverableAfterReleaseFailureAndRestart() {
+        val f = Fixture(); f.grants.retain(f.current(), true)
+        f.journal.advance(f.journal.stop(f.current()), DngImportPhase.CANCELLED)
+        f.failRelease = true
+        assertThrows(IOException::class.java) { f.grants.release(f.current(), false) }
+        // Decode the persisted bytes as a fresh process would; no in-memory completion flag is used.
+        val recovered = DngImportCodec.decode(requireNotNull(f.bytes))
+        assertTrue(recovered.importItem()!!.cancelled)
+        assertTrue(recovered.importItem()!!.grantPending)
+        f.failRelease = false
+        val finished = DngImportReadGrants(f.journal, f.port).release(recovered, false)
+        assertNull(finished.importItem())
+        assertTrue(f.held.isEmpty())
+    }
+    @Test fun readyOriginalKeepsItsItemAfterOwnedGrantRecovery() {
+        val f = Fixture(); f.grants.retain(f.current(), true)
+        var r = f.journal.advance(f.current(), DngImportPhase.INSERTING)
+        r = f.journal.advance(r, DngImportPhase.COPYING, "content://media/external_primary/images/media/9")
+        r = f.journal.advance(r, DngImportPhase.VERIFIED)
+        r = f.journal.advance(r, DngImportPhase.PUBLISHING)
+        r = f.journal.advance(r, DngImportPhase.READY)
+        assertTrue(r.importItem()!!.grantPending)
+        val finished = f.grants.release(r, false)
+        assertTrue(finished.importItem()!!.ready)
+        assertFalse(finished.importItem()!!.grantPending)
+        assertEquals(r.uri, finished.uri)
+    }
+
+    @Test fun terminalGrantUsedElsewhereStaysVisibleUntilExplicitRelease() {
+        val f = Fixture(); f.grants.retain(f.current(), true)
+        val cancelled = f.journal.advance(f.journal.stop(f.current()), DngImportPhase.CANCELLED)
+        val held = f.grants.release(cancelled, true)
+        assertTrue(held.importItem()!!.grantPending)
+        assertEquals(0, f.releases)
+        assertNull(f.grants.release(held, false).importItem())
+    }
+
     @Test fun noOfferDoesNotAcquireAndDenialKeepsSessionOnly() {
         val f = Fixture()
         assertEquals(DngImportGrant.SESSION_ONLY, f.grants.retain(f.current(), false).grant)

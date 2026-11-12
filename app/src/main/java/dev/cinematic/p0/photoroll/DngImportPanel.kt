@@ -70,11 +70,13 @@ internal fun DngImportPanel(foreground: Boolean, conditions: () -> AutoDevelopCo
                 state.items.forEachIndexed { index, item ->
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("取り込み ${index + 1}", modifier = Modifier.weight(1f))
-                        TextButton(enabled = foreground && !state.busy, onClick = { imports.resume(item.id) { currentConditions() } }) {
+                        if (!item.cancelled) TextButton(enabled = foreground && !state.busy, onClick = { imports.resume(item.id) { currentConditions() } }) {
                             Text(if (item.ready) "編集へ" else "再開")
                         }
-                        if (!item.ready) TextButton(enabled = foreground && !state.busy,
-                            onClick = { imports.cancel(item.id) { currentConditions() } }) { Text("取消") }
+                        if (item.grantPending || !item.ready) TextButton(enabled = foreground && !state.busy,
+                            onClick = { imports.cancel(item.id) { currentConditions() } }) {
+                            Text(if (item.grantPending) "権限を解放" else "取消")
+                        }
                     }
                 }
             }

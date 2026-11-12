@@ -28,7 +28,7 @@
 - `DngImportSource`: URIをread-onlyでopen。`DngImportRows`: target限定insert/find/inspect/read/pending write/publish/discard。`MediaStoreDngPendingRows`は撮影と共通のtarget/owner/pending照合を使い、更新/取消削除にも条件を付ける。fake成功はprovider原子性の証明ではない。
 - `DngContentVerifier`の64KiB stream/全hash/短読・余剰・close契約を再利用。source byte上限64MiB（既存編集上限）は維持する。
 - `DngHandoffCoordinator`は撮影受領・内部原本削除を含むので呼ばない。撮影codec/受領契約は変更しない。共有行adapterの照合のみ共用する。
-- grantはSESSION_ONLY/ALREADY_HELD/ACQUIRED/UNAVAILABLEを記録。READのみを要求し、PERSISTABLEが提示された場合のみ取得を試す。取得前にACQUIRED意図を記録し、拒否時はSESSION_ONLYへ戻す。既存grantを解放せず、今回取得したgrantのみ完了/取消後に解放する。同URI再選択では所有を維持し、別URIへの付け替え前に旧所有grantを解放する。revokeはread失敗として停止し、同じfingerprintの再選択で同targetを再利用する。
+- grantはSESSION_ONLY/ALREADY_HELD/ACQUIRED/UNAVAILABLEを記録。READのみを要求し、PERSISTABLEが提示された場合のみ取得を試す。取得前にACQUIRED意図を記録し、拒否時はSESSION_ONLYへ戻す。既存grantを解放せず、今回取得したgrantのみ完了/取消後に解放する。終端phaseでもACQUIREDが残れば「権限を解放」の明示操作を残し、新規copyの資源受付を通さず解放を再試行する。取消済み記録はgrant解放後に非表示にする。同URI再選択では所有を維持し、別URIへの付け替え前に旧所有grantを解放する。revokeはread失敗として停止し、同じfingerprintの再選択で同targetを再利用する。
 - `spaceAvailable`は既存リソース観測と外部primaryの空き容量を使い、必要bytesと既存64MiBの余裕を確認する。新しい制限値・timeoutは追加しない。新規copyは既存`DevelopExecution`の撮影優先/資源受付を通す。取消・資源回収は新規copy受付から分離し、低容量でも既存pendingを回収できる。
 
 ## 実接続の境界

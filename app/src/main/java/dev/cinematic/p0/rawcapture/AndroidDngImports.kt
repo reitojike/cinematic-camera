@@ -16,7 +16,6 @@ import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
-internal data class DngImportItem(val id: String, val ready: Boolean, val cancelled: Boolean)
 internal data class DngImportScreenState(val busy: Boolean = false, val message: String? = null,
     val items: List<DngImportItem> = emptyList(), val readyUri: String? = null)
 
@@ -46,7 +45,7 @@ internal class AndroidDngImports private constructor(context: Context) {
         mutable.update { it.copy(readyUri = null) }
     }
     @Synchronized fun consumeReady(uri: String): Boolean {
-        if (paused.get() || requestGeneration != screenGeneration || mutable.value.readyUri != uri) return false
+        if (stopped() || mutable.value.busy || requestGeneration != screenGeneration || mutable.value.readyUri != uri) return false
         mutable.update { it.copy(readyUri = null) }
         return true
     }
@@ -88,16 +87,24 @@ internal class AndroidDngImports private constructor(context: Context) {
         advance(requireNotNull(journal(id).read()), conditions)
     }
 
-    fun cancel(id: String?, conditions: () -> AutoDevelopConditions) {
+    @Synchronized fun cancel(id: String?, conditions: () -> AutoDevelopConditions) {
+        // A late tap from the busy UI must invalidate delivery even after the worker finished.
+        cancelled.set(true)
+        mutable.update { it.copy(readyUri = null) }
         if (admitted.get()) {
-            cancelled.set(true); owner?.requestStop()
+            owner?.requestStop()
             return
         }
         if (id == null) return
         // Closure/reconciliation must remain possible after ENOSPC. A durable stop forbids copying.
         submit(null) {
             val record = requireNotNull(journal(id).read())
-            if (record.phase == DngImportPhase.READY) { publish("取り込み済み原本は保持します"); return@submit }
+            if (record.phase in setOf(DngImportPhase.READY, DngImportPhase.CANCELLED)) {
+                val released = grants(record).release(record, otherGrantUses(record))
+                publish(if (released.grant == DngImportGrant.ACQUIRED) "別の取り込みで使用中のため権限の解放を保留しました"
+                    else "取り込みの読み取り権限を確認しました。共有原本は保持します")
+                return@submit
+            }
             journal(id).stop(record)
             advance(requireNotNull(journal(id).read()), conditions, openCompleted = false)
         }
@@ -189,9 +196,7 @@ internal class AndroidDngImports private constructor(context: Context) {
 
     private fun journal(id: String) = files.journal(id)
     private fun records() = files.records()
-    private fun items() = records().map {
-        DngImportItem(it.target.operationId, it.phase == DngImportPhase.READY, it.phase == DngImportPhase.CANCELLED)
-    }.filterNot { it.cancelled }
+    private fun items() = records().mapNotNull { it.importItem() }
     @Synchronized private fun publish(message: String, uri: String? = null) {
         mutable.update { it.copy(message = message, items = items(), readyUri = uri.takeIf { requestGeneration == screenGeneration && !stopped() }) }
     }
