@@ -205,16 +205,46 @@ class OriginalParallelRowsTest {
         }
     }
 
-    @Test fun executorTerminationCanPrecedeJavaThreadExit() {
+    // shutdown may leave its idle-worker interrupt set when the executor's run returns.
+    // This is only the test-owned witness wait, not production cancellation handling.
+    private fun awaitWitnessRelease(release: CountDownLatch) {
+        Thread.interrupted()
+        assertTrue("Witness release timed out", release.await(5, TimeUnit.SECONDS))
+    }
+
+    @Test fun witnessReleaseAcceptsResidualExecutorInterrupt() {
+        try {
+            Thread.currentThread().interrupt()
+            // CountDownLatch.await checks interruption even when already released.
+            awaitWitnessRelease(CountDownLatch(0))
+            assertFalse(Thread.currentThread().isInterrupted)
+        } finally {
+            Thread.interrupted()
+        }
+    }
+
+    @Test fun executorTerminationCanPrecedeJavaThreadExit() =
+        verifyExecutorTerminationWitness(injectInterrupt = false)
+
+    @Test fun executorTerminationWitnessSurvivesResidualInterrupt() =
+        verifyExecutorTerminationWitness(injectInterrupt = true)
+
+    private fun verifyExecutorTerminationWitness(injectInterrupt: Boolean) {
         val afterExecutor = CountDownLatch(1)
         val releaseThread = CountDownLatch(1)
         val worker = AtomicReference<Thread>()
+        val workerFailure = AtomicReference<Throwable>()
         val executor = Executors.newSingleThreadExecutor { task ->
             object : Thread(task, "executor-termination-witness") {
                 override fun run() {
-                    super.run()
-                    afterExecutor.countDown()
-                    releaseThread.await(5, TimeUnit.SECONDS)
+                    try {
+                        super.run()
+                        if (injectInterrupt) Thread.currentThread().interrupt()
+                        afterExecutor.countDown()
+                        awaitWitnessRelease(releaseThread)
+                    } catch (failure: Throwable) {
+                        workerFailure.set(failure)
+                    }
                 }
             }.also(worker::set)
         }
@@ -230,6 +260,7 @@ class OriginalParallelRowsTest {
             worker.get()?.join(5000)
         }
         assertFalse(worker.get().isAlive)
+        workerFailure.get()?.let { throw AssertionError("Witness worker failed", it) }
     }
 
     @Test fun timedOutWorkerRemainsOwnedUntilRetryConfirmsTermination() {
