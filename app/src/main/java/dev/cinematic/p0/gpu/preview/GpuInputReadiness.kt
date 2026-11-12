@@ -63,7 +63,7 @@ internal class GpuInputAdmissionRefused(val snapshot: AutoDevelopCoordinator.Gpu
     val canWaitForCamera: Boolean get() {
         val blockers = snapshot.freshPreviewBlockers +
             if (snapshot.conditionsObserved) snapshot.storedGlobalPreviewBlockers else emptySet()
-        return !snapshot.hasActiveSlot && snapshot.captureCount == 0 && !snapshot.hasPendingExport &&
+        return !snapshot.hasConflictingWork && snapshot.captureCount == 0 &&
             blockers == setOf(AutoDevelopBlocker.CAMERA_SESSION)
     }
 }

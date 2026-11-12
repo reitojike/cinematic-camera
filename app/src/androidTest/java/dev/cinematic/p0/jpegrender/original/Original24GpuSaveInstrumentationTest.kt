@@ -8,6 +8,10 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.opengl.EGL14
 import android.os.Build
+import android.os.CancellationSignal
+import android.os.SystemClock
+import dev.cinematic.p0.photoroll.*
+import dev.cinematic.p0.gpu.preview.GpuInputRequestDeadline
 import android.provider.MediaStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -98,10 +102,18 @@ class Original24GpuSaveInstrumentationTest {
 
             // This tiny source is not downscaled. Read the same as-shot input without a CPU look
             // or JPEG baseline, and check the existing diagnostic EV plus the manual exposure.
-            val input = AndroidManualOriginalTrialSaves.loadGpuPreview(app, source, strength, allowed, edits,
-                { _, _ -> }, stopped::get).get(30, TimeUnit.SECONDS)
-            assertSame(save, input.save)
-            val expectedEv = R7PreviewInputs.prepare(R7PreviewInputs.AsShotInput(input.input,
+            val ready = PhotoRollResources(true, 0, false, 2L * 1024 * 1024 * 1024,
+                PhotoRollCameraSnapshot(false, false, false, false), true, true)
+            val input = GpuPhotoRollInputs.open(app, { ready }, PhotoRollRepository(resolver, app.packageName),
+                originalUri, false, 64L * 1024 * 1024, CancellationSignal(),
+                GpuInputRequestDeadline(nowMillis = SystemClock::elapsedRealtime), {}) { stopped.get() }
+                .get(30, TimeUnit.SECONDS)
+            assertEquals(source, input.original.reference)
+            assertEquals(save.geometry, input.geometry)
+            assertSame(save, AndroidManualOriginalTrialSaves.prepareGpu(app, source, input.geometry, strength,
+                allowed, edits, stopped::get).get(30, TimeUnit.SECONDS))
+            assertSame(save, AndroidManualOriginalTrialSaves.knownPrepared(source))
+            val expectedEv = R7PreviewInputs.prepare(R7PreviewInputs.AsShotInput(input.image,
                 R7PreviewInputs.Source.LIBRAW_PRELIMINARY_AS_SHOT), emptyList()).exposure.externalBaseEv + edits.exposureEv
             val directory = RenderedJpegFiles(File(app.noBackupFilesDir, "raw-captures"),
                 save.request.captureId, save.request.generation).generationRoot()

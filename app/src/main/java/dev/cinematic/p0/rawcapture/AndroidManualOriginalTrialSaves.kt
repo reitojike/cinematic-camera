@@ -32,6 +32,9 @@ import java.io.Closeable
 @RequiresApi(29)
 internal object AndroidManualOriginalTrialSaves {
     private val authorities = mutableMapOf<Pair<String, SharedOriginalReference>, Authority>() // Queue IO only.
+    // Queue-published immutable index; readers never access Authority's mutable maps.
+    @Volatile private var prepared = emptyMap<SharedOriginalReference, ManualOriginalTrialHandle>()
+    fun knownPrepared(source: SharedOriginalReference): ManualOriginalTrialHandle? = prepared[source]
     private val previewEpoch = AtomicLong(0)
     @Volatile private var activePreview: Original24PreviewSession? = null
     private var previewAuthority: Authority? = null // Queue IO only; bounded to one cached source.
@@ -67,27 +70,6 @@ internal object AndroidManualOriginalTrialSaves {
         }
     }
 
-    /** Product GPU input uses the exact snapshot → RGB16 → BOX path, without a CPU look.
-     * The queued owner closes the one-shot session before transferring its immutable input. */
-    fun loadGpuPreview(context: Context, source: SharedOriginalReference, strength: Double,
-        conditions: AutoDevelopConditions, adjustments: PhotoAdjustments,
-        checkPreviewSource: (DngIoResources, () -> Boolean) -> Unit,
-        shouldStop: () -> Boolean): CompletableFuture<GpuOriginalPreview> {
-        val app = context.applicationContext
-        val queue = AndroidAutoDevelopQueue.get(app)
-        return queue.manualOriginalIo {
-            if (shouldStop()) throw java.util.concurrent.CancellationException("GPU preview stopped")
-            val authority = authorities.getOrPut(app.noBackupFilesDir.canonicalPath to source) { Authority(app, source) }
-            val handle = authority.prepare(queue, strength, adjustments, conditions, shouldStop)
-            previewAuthority?.discardPreview()
-            previewAuthority = authority
-            GpuOriginalPreview(handle, authority.loadGpuInput(handle, conditions, checkPreviewSource, shouldStop))
-        }
-    }
-
-    internal data class GpuOriginalPreview(val save: ManualOriginalTrialHandle,
-        val input: dev.cinematic.p0.raw.LinearSrgbImage)
-
     /** Drafts borrow only an existing exact session. They never allocate a durable save request. */
     fun renderDraftPreview(context: Context, source: SharedOriginalReference, strength: Double,
         conditions: AutoDevelopConditions, adjustments: PhotoAdjustments, diagnosticWorkers: Int? = null,
@@ -112,6 +94,21 @@ internal object AndroidManualOriginalTrialSaves {
             val key = app.noBackupFilesDir.canonicalPath to source
             val authority = authorities.getOrPut(key) { Authority(app, source) }
             authority.prepare(queue, strength, adjustments, conditions, shouldStop)
+        }
+    }
+
+    /** GPU input already proved this exact fingerprint and native geometry on its own owner.
+     * Only metadata is serialized here; never re-enter the CPU preview/preflight admission. */
+    fun prepareGpu(context: Context, source: SharedOriginalReference, geometry: Original24PreflightGeometry,
+        strength: Double, conditions: AutoDevelopConditions, adjustments: PhotoAdjustments,
+        shouldStop: () -> Boolean): CompletableFuture<ManualOriginalTrialHandle> {
+        val app = context.applicationContext
+        val queue = AndroidAutoDevelopQueue.get(app)
+        return queue.manualOriginalIo {
+            if (shouldStop()) throw java.util.concurrent.CancellationException("GPU save preparation stopped")
+            val authority = authorities.getOrPut(app.noBackupFilesDir.canonicalPath to source) { Authority(app, source) }
+            authority.prepare(queue, strength, adjustments, conditions, shouldStop, geometry)
+                .also { prepared = prepared + (source to it) }
         }
     }
 
@@ -150,11 +147,15 @@ internal object AndroidManualOriginalTrialSaves {
         }
 
         fun prepare(queue: AutoDevelopQueue, strength: Double, adjustments: PhotoAdjustments,
-            conditions: AutoDevelopConditions, stop: () -> Boolean): ManualOriginalTrialHandle {
+            conditions: AutoDevelopConditions, stop: () -> Boolean,
+            verifiedGpuGeometry: Original24PreflightGeometry? = null): ManualOriginalTrialHandle {
             if (preflightSlot != null) releasePreflight()
             if (source.fingerprint.bytes > 64L * 1024 * 1024) throw IOException("Original source byte limit")
             // Header admission precedes durable request allocation, so >24MP never creates a held generation.
-            if (geometry == null) geometry = inspect(conditions, stop)
+            if (verifiedGpuGeometry != null) {
+                if (geometry != null && geometry != verifiedGpuGeometry) throw IOException("GPU input geometry changed")
+                geometry = verifiedGpuGeometry
+            } else if (geometry == null) geometry = inspect(conditions, stop)
             if (stop()) throw java.util.concurrent.CancellationException("Trial preparation stopped")
             currentRequest = null // A failed/uncertain metadata change cannot leave an older owner authoritative.
             val request = requests.prepare(strength, adjustments).also { currentRequest = it }
@@ -205,38 +206,6 @@ internal object AndroidManualOriginalTrialSaves {
                 if (!delivered) { bitmap?.recycle(); comparison?.recycle(); previewSession?.close(); previewSession = null }
                 if (previewSession?.hasUnreleasedResources != true) {
                     DevelopExecution.completeAfterResourcesClosed(slot); previewSlot = null
-                }
-            }
-        }
-
-        fun loadGpuInput(handle: ManualOriginalTrialHandle, conditions: AutoDevelopConditions,
-            checkPreviewSource: (DngIoResources, () -> Boolean) -> Unit,
-            stop: () -> Boolean): dev.cinematic.p0.raw.LinearSrgbImage {
-            discardPreview()
-            val admission = DevelopExecution.tryStartGpuDiagnosticPreviewObserved(conditions)
-            val slot = admission.attempt ?: throw dev.cinematic.p0.gpu.preview.GpuInputAdmissionRefused(admission.snapshot)
-            previewSlot = slot
-            sessionEpoch = previewEpoch.get()
-            var failure: Throwable? = null
-            try {
-                val parent = File(app.noBackupFilesDir.canonicalFile, "manual-original24-previews")
-                if (Files.isSymbolicLink(parent.toPath()) || parent.canonicalFile != parent ||
-                    (!parent.isDirectory && !parent.mkdirs())) throw IOException("GPU preview directory unavailable")
-                val session = Original24PreviewSession(source, File(parent, UUID.randomUUID().toString()),
-                    { stage -> Original24Resources.requireAvailable(app, stage) }, handle.geometry,
-                    checkPreviewSource, ::readOriginal).also { previewSession = it; activePreview = it }
-                DevelopExecution.registerStop(slot, session::requestStop)
-                val stopped = { stop() || DevelopExecution.shouldStop(slot) || currentRequest != handle.request ||
-                    sessionEpoch != previewEpoch.get() }
-                return session.loadGpuAsShotInput(stopped).also {
-                    if (stopped()) throw java.util.concurrent.CancellationException("GPU preview stopped")
-                }
-            } catch (error: Throwable) { failure = error; throw error }
-            finally {
-                activePreview = null
-                try { discardPreview() } catch (cleanup: Throwable) {
-                    if (failure == null) throw cleanup
-                    if (failure !== cleanup) failure.addSuppressed(cleanup)
                 }
             }
         }
