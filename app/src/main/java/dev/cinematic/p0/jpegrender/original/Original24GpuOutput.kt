@@ -42,9 +42,9 @@ internal class Original24GpuOutput(private val assets: AssetManager) : AutoClose
             thread.post {
                 var egl: EglContexts? = null
                 var error: Throwable? = null
-                val ledger = GpuMemoryLedger(GpuMemoryLedger.EXPORT_BUDGET)
-                fun snapshot() = TextureBalance(ledger.allocatedBytes, ledger.textureCount, ledger.peakAllocatedBytes)
                 try {
+                    val ledger = GpuMemoryLedger(GpuMemoryLedger.EXPORT_BUDGET)
+                    fun snapshot() = TextureBalance(ledger.allocatedBytes, ledger.textureCount, ledger.peakAllocatedBytes)
                     egl = EglContexts(thread, assets)
                     try {
                         GpuExportRenderer(egl, ledger).render(source, ev, gains, strength,
