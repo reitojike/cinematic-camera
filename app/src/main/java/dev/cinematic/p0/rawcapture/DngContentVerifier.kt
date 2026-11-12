@@ -22,6 +22,15 @@ internal class DngVerificationStopped : IOException("Original verification stopp
  * Stop is cooperative between reads; it cannot interrupt an already blocked provider read.
  */
 internal object DngContentVerifier {
+    /** SAF size hints may be absent. Count with the same bounded buffer before preparing any row. */
+    fun identifyBounded(maxBytes: Long, openReadOnly: () -> InputStream,
+        shouldStop: () -> Boolean = { false }): OriginalFingerprint {
+        require(maxBytes > 0)
+        checkContinue(shouldStop)
+        val observed = openReadOnly().use { input -> consume(input, maxBytes, shouldStop, exact = false) { _, _ -> } }
+        checkContinue(shouldStop)
+        return observed
+    }
     fun identify(
         expectedBytes: Long,
         openReadOnly: () -> InputStream,
@@ -65,7 +74,8 @@ internal object DngContentVerifier {
         checkContinue(shouldStop)
     }
 
-    private fun consume(input: InputStream, expectedBytes: Long, shouldStop: () -> Boolean, chunk: (ByteArray, Int) -> Unit): OriginalFingerprint {
+    private fun consume(input: InputStream, expectedBytes: Long, shouldStop: () -> Boolean, exact: Boolean = true,
+        chunk: (ByteArray, Int) -> Unit): OriginalFingerprint {
         val digest = MessageDigest.getInstance("SHA-256")
         val buffer = ByteArray(64 * 1024)
         var total = 0L
@@ -80,7 +90,7 @@ internal object DngContentVerifier {
             digest.update(buffer, 0, count)
             total += count
         }
-        if (total != expectedBytes) throw DngContentChanged()
+        if (total == 0L || (exact && total != expectedBytes)) throw DngContentChanged()
         return OriginalFingerprint(total, digest.digest().joinToString("") { "%02x".format(it) })
     }
 

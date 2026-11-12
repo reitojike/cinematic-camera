@@ -256,6 +256,33 @@ class DngImportContractTest {
         assertEquals(DngImportResult.READY, f.owner.advance()); assertEquals(1, f.rows.inserts)
     }
 
+    @Test fun backgroundInterruptionRetainsSameTargetForExplicitResume() {
+        val f = Fixture()
+        var paused = false
+        val operation = f.restart { paused }
+        f.rows.onWrite = { paused = true }
+        assertThrows(DngVerificationStopped::class.java) { operation.advance() }
+        operation.releaseResources()
+        assertFalse(operation.hasUnreleasedResources)
+        assertFalse(f.journal.read()!!.stopRequested)
+        assertEquals(0, f.rows.publishes)
+        paused = false
+        f.rows.onWrite = {}
+        assertEquals(DngImportResult.READY, operation.advance())
+        assertEquals(1, f.rows.inserts)
+        assertArrayEquals(original, f.rows.bytes)
+    }
+
+    @Test fun cancellationOfPartialCopyDoesNotRequireCapacityOrSource() {
+        val f = Fixture(); f.partial()
+        f.space = false; f.access = false
+        f.journal.stop(f.journal.read()!!)
+        assertEquals(DngImportResult.CANCELLED, f.restart().advance())
+        assertEquals(1, f.rows.inserts)
+        assertEquals(1, f.rows.discards)
+        assertEquals(0, f.rows.publishes)
+    }
+
     private class Death : Error("simulated process death")
     private class MemoryStorage : AtomicJournalStorage {
         var bytes: ByteArray? = null
@@ -277,7 +304,7 @@ class DngImportContractTest {
             }
         }
         val owner = restart()
-        fun restart() = DngImportOwner(journal, source, rows) { space }
+        fun restart(interrupted: () -> Boolean = { false }) = DngImportOwner(journal, source, rows, interrupted) { space }
         fun partial() {
             rows.failWrite = true
             assertThrows(IOException::class.java) { owner.advance() }

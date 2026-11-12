@@ -77,3 +77,9 @@
   capture優先・原本照合・既存メモリ/熱guardを保ち、入力期限を延長して競合を隠さない。
 - 保存のため閉じた同じAのpreviewはREADY/PUBLISHED時の明示再開を維持する。
   別写真Bの初回入力とは区別し、保存の暗黙retry、未確定publicationの解除、二重保存を追加しない。
+
+## 外部DNG取り込み（#101 partial・接続案）
+
+外部原本はREADのみで取得し、内部恒久DNGを作らず共有pendingへコピーする。完成/close/readback/hashを確認してから公開する。独立した小さいjournalでinsert/publish/取消の意図を保持し、公開不明時は再insertしない。取消は自作pendingだけに限定し、公開原本・SD原本を削除しない。close不明ならownerを保持する。
+
+未知サイズも既存64MiB上限で実byteを検証する。process復旧はmetadataを読むだけで、自動copyしない。同素材は既存fingerprint/targetから再発見する。新規copyの資源受付と取消/回収を区別する。標準SAF/MediaStore/AtomicFileを使い、新権限・新依存・バックアップ設定変更を追加しない。実機でのSD抜去/再起動とfp実写真は別の未確認項目として[取り込み契約](../../docs/DNG_IMPORT_CONTRACT.md)で追跡する。

@@ -8,7 +8,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 /** Read only: an external original can never be deleted or replaced through this port. */
 internal fun interface DngImportSource { fun openReadOnly(sourceUri: String): InputStream }
 
-/** No Android implementation yet. Every mutation must atomically constrain the expected pending target. */
+/** Every mutation must atomically constrain the expected pending target. */
 internal interface DngImportRows {
     fun insert(target: DngImportTarget): String?
     fun find(target: DngImportTarget): List<DngPendingRow>
@@ -21,11 +21,12 @@ internal interface DngImportRows {
 
 internal enum class DngImportResult { READY, CANCELLED, WAIT_SOURCE, HOLD }
 
-/** Unconnected synchronous core. READY describes bytes, not editability. Caller supplies admission/explicit resume. */
+/** Synchronous import core. READY describes bytes, not editability. Caller supplies admission/explicit resume. */
 internal class DngImportOwner(
     private val journal: DngImportJournal,
     private val source: DngImportSource,
     private val rows: DngImportRows,
+    private val interrupted: () -> Boolean = { false },
     private val spaceAvailable: (Long) -> Boolean,
 ) {
     private val active = AtomicBoolean(false)
@@ -35,6 +36,12 @@ internal class DngImportOwner(
 
     /** Signal only. CANCELLED requires a subsequent advance and positive cleanup/reconciliation. */
     fun requestStop() { stop.set(true) }
+
+    /** Retry only resource closure, never another copy/publication effect. */
+    fun releaseResources() {
+        check(active.compareAndSet(false, true)) { "Import owner busy" }
+        try { releaseHeld() } finally { active.set(false) }
+    }
 
     fun advance(): DngImportResult {
         check(active.compareAndSet(false, true)) { "Import owner busy" }
@@ -174,7 +181,7 @@ internal class DngImportOwner(
             { resources.input(rows.openRead(record.target, requireNotNull(record.uri), pending)) },
             { cancellable && stopped() })
     }
-    private fun stopped() = stop.get()
+    private fun stopped() = stop.get() || interrupted()
     private fun checkStop() { if (stopped()) throw DngVerificationStopped() }
     private fun released(resources: DngIoResources) { check(!resources.hasOpenResources) { "Import resources remain open" } }
     private fun releaseHeld() {
