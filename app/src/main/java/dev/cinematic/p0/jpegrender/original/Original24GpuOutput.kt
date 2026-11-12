@@ -55,10 +55,17 @@ internal class Original24GpuOutput(private val assets: AssetManager) : AutoClose
                             onBandComplete = observer?.let { observation -> { boundary, origin, rows ->
                                 observation.bandComplete(boundary, origin, rows, snapshot())
                             } }, consumeRow = consume)
-                    } finally {
+                    } catch (caught: Throwable) { error = caught; throw caught }
+                    finally {
                         // Renderer.use has returned/unwound. Observe before EGL teardown; this is
                         // a texture balance, not a claim that context/thread cleanup has succeeded.
-                        observer?.rendererReleased(snapshot())
+                        try { observer?.rendererReleased(snapshot()) }
+                        catch (observation: Throwable) {
+                            // Reporting must never replace the render failure or its cleanup evidence.
+                            val primary = error
+                            if (primary == null) throw observation
+                            if (primary !== observation) primary.addSuppressed(observation)
+                        }
                     }
                 } catch (caught: Throwable) { error = caught }
                 finally {
