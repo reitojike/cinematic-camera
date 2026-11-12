@@ -320,6 +320,7 @@ class GpuExportActiveOwnershipAndroidTest {
             check(ForegroundExports.gate.active() == null)
             var camera: PhotoRollCameraOwners.Owner? = null
             val env = EditorEnvironment(fixture)
+            var primaryFailure: Throwable? = null
             try {
                 instrumentation.runOnMainSync { camera = AndroidPhotoRollCameraObservations.register {
                     PhotoRollCameraSnapshot(false, false, false, false)
@@ -333,25 +334,38 @@ class GpuExportActiveOwnershipAndroidTest {
                     body(fixture, env, scenario)
                 }
             } catch (error: Throwable) {
+                primaryFailure = error
                 fixture.reportFailure("editor-failure-before-owner-cleanup", error)
                 throw error
             } finally {
-                ForegroundExports.gate.active()?.let { ticket ->
-                    val save = ticket.value.identity as? AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle
-                    // Only cancel this test's source, never an unrelated active save.
-                    if (save?.request?.source in fixture.sources) {
-                        if (save != null && save !in fixture.handles) fixture.handles += save
-                        ForegroundExports.cancel(ticket.value)
+                var retained = primaryFailure
+                fun cleanup(action: () -> Unit) {
+                    try { action() } catch (failure: Throwable) {
+                        val primary = retained
+                        if (primary == null) retained = failure
+                        else if (primary !== failure) primary.addSuppressed(failure)
                     }
                 }
-                env.owners.forEach { it.session.close() }
-                env.owners.forEach(::assertPreviewClosed)
-                GpuPhotoRollRetiredOwners.releaseBeforeOpen()
-                env.renderer.discardTransientInputs()
-                AndroidManualOriginalTrialSaves.discardPreview(fixture.app).get(60, TimeUnit.SECONDS)
-                await("test FGS cleanup") { ForegroundExports.gate.active() == null }
-                env.observer.stop()
-                instrumentation.runOnMainSync { camera?.close() }
+                cleanup {
+                    ForegroundExports.gate.active()?.let { ticket ->
+                        val save = ticket.value.identity as? AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle
+                        // Only cancel this test's source, never an unrelated active save.
+                        if (save?.request?.source in fixture.sources) {
+                            if (save != null && save !in fixture.handles) fixture.handles += save
+                            ForegroundExports.cancel(ticket.value)
+                        }
+                    }
+                }
+                env.owners.forEach { owner -> cleanup { owner.session.close() } }
+                env.owners.forEach { owner -> cleanup { assertPreviewClosed(owner) } }
+                cleanup { GpuPhotoRollRetiredOwners.releaseBeforeOpen() }
+                cleanup { env.renderer.discardTransientInputs() }
+                cleanup { AndroidManualOriginalTrialSaves.discardPreview(fixture.app).get(60, TimeUnit.SECONDS) }
+                cleanup { await("test FGS cleanup") { ForegroundExports.gate.active() == null } }
+                cleanup { env.observer.stop() }
+                cleanup { instrumentation.runOnMainSync { camera?.close() } }
+                // Cleanup-only failure fails the test; otherwise keep the original assertion primary.
+                if (primaryFailure == null) retained?.let { throw it }
             }
         }
 
