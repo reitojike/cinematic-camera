@@ -25,34 +25,52 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.Assume.assumeTrue
 
 /** Synthetic emulator input → real product GPU owner. No physical device, camera or shared save. */
 class GpuProductInputAndroidTest {
-    @Test fun originalIsReadOnlyAtOpenAndAllPreviewOwnersReleaseAcrossPhotosAndResume() {
+    @Test fun originalIsReadOnlyAtOpenAndAllPreviewOwnersReleaseAcrossPhotosAndResume() = exercise(256, 192)
+
+    @Test fun optIn24MpOpenEditCompareAndResumeKeepGeometryAndOwners() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("gpuProduct24") == "true")
+        exercise(6000, 4000)
+    }
+
+    private fun exercise(width: Int, height: Int) {
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
         check(Build.HARDWARE in setOf("ranchu", "goldfish")) { "Synthetic emulator only" }
         val target = InstrumentationRegistry.getInstrumentation().targetContext
-        val provider = Provider(target)
-        val resolver = ContentResolver.wrap(provider)
-        val root = File.createTempFile("gpu-product-private-", ".tmp", target.cacheDir)
-        check(root.delete() && root.mkdir())
-        val app = object : ContextWrapper(target) {
-            override fun getApplicationContext(): Context = this
-            override fun getContentResolver(): ContentResolver = resolver
-            override fun getNoBackupFilesDir(): File = root
-        }
-        val ready = PhotoRollResources(true, 0, false, 2L * 1024 * 1024 * 1024,
-            PhotoRollCameraSnapshot(false, false, false, false), true, true)
-        val queue = AndroidAutoDevelopQueue.get(app)
-        queue.manualOriginalIo { Unit }.get(60, TimeUnit.SECONDS)
-        DevelopExecution.updateConditions(ready.developConditions(true))
-        val renderer = ManualTrialPhotoRollRenderer(app, { ready }, developEngine = DevelopEngine.GPU)
-        val repository = PhotoRollRepository(resolver, target.packageName)
-        val drain = HandlerThread("synthetic-gpu-surface").apply { start() }
-        val imageReader = ImageReader.newInstance(320, 240, PixelFormat.RGBA_8888, 3)
-        imageReader.setOnImageAvailableListener({ it.acquireLatestImage()?.close() }, Handler(drain.looper))
+        val root = File.createTempFile("gpu-product-private-", ".tmp", target.cacheDir.canonicalFile)
+        var heldProvider: Provider? = null
+        var heldApp: Context? = null
+        var heldRenderer: ManualTrialPhotoRollRenderer? = null
+        var heldDrain: HandlerThread? = null
+        var heldReader: ImageReader? = null
         var session: GpuPhotoRollSession? = null
+        var primary: Throwable? = null
         try {
+            check(root.delete() && root.mkdir())
+            val fixtureContext = object : ContextWrapper(target) {
+                override fun getCacheDir(): File = root
+            }
+            val provider = Provider(fixtureContext, width, height).also { heldProvider = it }
+            val resolver = ContentResolver.wrap(provider)
+            val app = object : ContextWrapper(target) {
+                override fun getApplicationContext(): Context = this
+                override fun getContentResolver(): ContentResolver = resolver
+                override fun getNoBackupFilesDir(): File = root
+            }
+            val ready = PhotoRollResources(true, 0, false, 2L * 1024 * 1024 * 1024,
+                PhotoRollCameraSnapshot(false, false, false, false), true, true)
+            val queue = AndroidAutoDevelopQueue.get(app)
+            queue.manualOriginalIo { Unit }.get(60, TimeUnit.SECONDS)
+            heldApp = app // Cleanup must not initialize/restart a queue whose startup failed.
+            DevelopExecution.updateConditions(ready.developConditions(true))
+            val renderer = ManualTrialPhotoRollRenderer(app, { ready }, developEngine = DevelopEngine.GPU).also { heldRenderer = it }
+            val repository = PhotoRollRepository(resolver, target.packageName)
+            val drain = HandlerThread("synthetic-gpu-surface").also { heldDrain = it; it.start() }
+            val imageReader = ImageReader.newInstance(320, 240, PixelFormat.RGBA_8888, 3).also { heldReader = it }
+            imageReader.setOnImageAvailableListener({ it.acquireLatestImage()?.close() }, Handler(drain.looper))
             // Second photo and foreground re-open must each perform a fresh strong original check.
             for ((index, id) in listOf(1, 2, 2).withIndex()) {
                 renderer.discardTransientInputs()
@@ -64,6 +82,13 @@ class GpuProductInputAndroidTest {
                     CancellationSignal(), GpuInputRequestDeadline(nowMillis = SystemClock::elapsedRealtime),
                     { failure -> assertNull(failure); admitted.incrementAndGet() }) { PhotoAdjustmentPolicy.defaults }
                 assertEquals(1, admitted.get())
+                assertEquals(width, loaded.geometry.rawWidth); assertEquals(height, loaded.geometry.rawHeight)
+                assertEquals(width, loaded.geometry.sourceWidth); assertEquals(height, loaded.geometry.sourceHeight)
+                assertEquals(if (id == 1) 1 else 6, loaded.geometry.orientation)
+                assertEquals(if (id == 1) width else height, loaded.geometry.outputWidth)
+                assertEquals(if (id == 1) height else width, loaded.geometry.outputHeight)
+                assertTrue(loaded.input.width in 1..1024 && loaded.input.height in 1..1024)
+                assertTrue(loaded.input.width.toLong() * loaded.input.height <= 1024L * 768)
                 assertTrue(provider.opens.get() > opensBefore)
                 val prepared = prepareMetadataWhileGpuOwnsInput(app, renderer, loaded, ready, provider, firstPrepare = index < 2)
                 assertTrue(prepared.matches(loaded.original.reference, PhotoRollPreviewMode.MANUAL_TRIAL))
@@ -94,15 +119,36 @@ class GpuProductInputAndroidTest {
                 GpuPhotoRollRetiredOwners.releaseBeforeOpen()
             }
             assertEquals(0, provider.writes.get())
-        } finally {
-            session?.close()
-            session?.renderer?.awaitClosed(10_000)
-            renderer.discardTransientInputs()
-            AndroidManualOriginalTrialSaves.discardPreview(app).get(30, TimeUnit.SECONDS)
-            GpuPhotoRollRetiredOwners.releaseBeforeOpen()
-            imageReader.close(); drain.quitSafely(); drain.join(5_000)
-            provider.verifyUnchanged()
-            assertTrue("all source descriptors closed", provider.readers.none { it.fileDescriptor.valid() })
+        } catch (failure: Throwable) { primary = failure; throw failure }
+        finally {
+            var cleanup: Throwable? = null
+            fun attempt(action: () -> Unit) {
+                try { action() } catch (failure: Throwable) {
+                    val first = cleanup
+                    if (first == null) cleanup = failure else if (first !== failure) first.addSuppressed(failure)
+                }
+            }
+            attempt { session?.close() }
+            attempt { session?.let { check(it.renderer.awaitClosed(10_000)) } }
+            attempt { heldRenderer?.discardTransientInputs() }
+            attempt { heldApp?.let { AndroidManualOriginalTrialSaves.discardPreview(it).get(30, TimeUnit.SECONDS) } }
+            attempt { GpuPhotoRollRetiredOwners.releaseBeforeOpen() }
+            attempt { heldReader?.close() }
+            attempt { heldDrain?.let { it.quitSafely(); it.join(5_000); check(!it.isAlive) } }
+            attempt { heldProvider?.verifyUnchanged() }
+            attempt { heldProvider?.let { assertTrue("all source descriptors closed", it.readers.none { fd -> fd.fileDescriptor.valid() }) } }
+            // A failed open may retain a private native/snapshot owner outside this test's FD list.
+            // Keep this fixture on any primary or cleanup failure; remove it only after success.
+            if (primary == null && cleanup == null) attempt {
+                check(root.canonicalFile == root.absoluteFile && root.parentFile.canonicalFile == target.cacheDir.canonicalFile)
+                check(root.name.startsWith("gpu-product-private-"))
+                check(root.deleteRecursively())
+            }
+            cleanup?.let { failure ->
+                val first = primary
+                if (first == null) throw failure
+                if (first !== failure) first.addSuppressed(failure)
+            }
         }
     }
 
