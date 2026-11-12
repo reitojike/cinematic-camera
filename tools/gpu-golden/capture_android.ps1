@@ -65,13 +65,13 @@ if ($launchModified -lt $started.AddSeconds(-5) -or $launchModified -gt $started
     configPath=$AvdConfig; launchPath=$launchPath; launchSha256=(Hash $launchPath) } |
     ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $output 'runtime-link.local.json')
 $config = Get-Content -LiteralPath $AvdConfig
-$imageLine = $config | Where-Object { $_ -match '^image.sysdir.1=' }
+$imageLine = $config | Where-Object { $_ -match '^image\.sysdir\.1\s*=' }
 if (@($imageLine).Count -ne 1) { throw 'AVD system image path missing or ambiguous' }
 $image = ($imageLine -split '=',2)[1].Trim()
 if ($image -notmatch 'system-images[\\/]([^\r\n]+)') { throw 'Unknown Android system image layout' }
 $imageRelative = 'system-images/' + $Matches[1].Replace('\','/').TrimEnd('/')
 $imagePath = if ([IO.Path]::IsPathRooted($image)) { $image } else { Join-Path $SdkRoot $image }
-$revisionLine = Get-Content -LiteralPath (Join-Path $imagePath 'source.properties') | Where-Object { $_ -match '^Pkg.Revision=' }
+$revisionLine = Get-Content -LiteralPath (Join-Path $imagePath 'source.properties') | Where-Object { $_ -match '^Pkg\.Revision\s*=' }
 $revision = ($revisionLine -split '=',2)[1].Trim()
 if (!$revision) { throw 'Missing Android system image revision' }
 $emulatorVersion = (Run-Checked $emulator @('-version') | Where-Object { $_ -match '^Android emulator version ' } | Select-Object -First 1).Trim()
