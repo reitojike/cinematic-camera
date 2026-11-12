@@ -106,18 +106,18 @@ class ForegroundExportOwnerTest {
                 await {
                     val hits = requireNotNull(monitor).hits
                     val state = imports.state.value
-                    val records = if (state.busy) null else files.records().filter { it.target.operationId !in beforeIds }
-                    hits == 1 && !state.busy && records?.any { it.phase == DngImportPhase.READY } == true
+                    val items = state.items.filter { it.id !in beforeIds }
+                    hits == 1 && !state.busy && items.any { it.ready }
                 }
             } catch (error: Throwable) {
                 // A single pre-cleanup snapshot, no source name/URI/hash or arbitrary screen dump.
                 try {
                     val state = imports.state.value
-                    val records = if (state.busy) null else files.records().filter { it.target.operationId !in beforeIds }
+                    val items = state.items.filter { it.id !in beforeIds }
                     error.addSuppressed(AssertionError("Synthetic import checkpoint: hits=${monitor?.hits} " +
                         "lifecycle=${scenario.state} busy=${state.busy} message=${state.message} " +
-                        "readyUriPresent=${state.readyUri != null} newRecords=${records?.size} " +
-                        "phases=${records?.map { it.phase }} inputOpened=${opened.get()} inputReleased=${released.get()} " +
+                        "readyUriPresent=${state.readyUri != null} newItems=${items.size} " +
+                        "readyItems=${items.count { it.ready }} inputOpened=${opened.get()} inputReleased=${released.get()} " +
                         "fgsActive=${ForegroundExports.gate.active() != null}"))
                 } catch (observationFailure: Throwable) {
                     if (observationFailure !== error) error.addSuppressed(observationFailure)
