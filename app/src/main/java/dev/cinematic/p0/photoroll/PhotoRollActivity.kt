@@ -39,7 +39,8 @@ class PhotoRollActivity : ComponentActivity() {
                 PhotoRollRenderResult.Unavailable("私有試験JPEGの現像はAndroid 10以降で利用できます")
         }
         setContent {
-            CaptureTheme { PhotoRollScreen(repository, renderer, foreground, gpuPublications, gpuTrimEpoch, ::finish) }
+            CaptureTheme { PhotoRollScreen(repository, renderer, foreground, gpuPublications, gpuTrimEpoch,
+                importConditions = { resourceObserver.snapshot().developConditions(rendererAvailable = true) }, close = ::finish) }
         }
     }
 

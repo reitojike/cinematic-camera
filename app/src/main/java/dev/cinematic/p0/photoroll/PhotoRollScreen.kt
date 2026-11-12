@@ -53,13 +53,14 @@ import java.util.Locale
 @Composable
 internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRollRenderer, foreground: Boolean,
     gpuPublications: kotlinx.coroutines.flow.StateFlow<dev.cinematic.p0.gpu.preview.GpuInputPublication>? = null,
-    gpuTrimEpoch: Int = 0, close: () -> Unit) {
+    gpuTrimEpoch: Int = 0, importConditions: (() -> dev.cinematic.p0.rawcapture.AutoDevelopConditions)? = null, close: () -> Unit) {
     var selectedUri by rememberSaveable { mutableStateOf<String?>(null) }
     DisposableEffect(selectedUri, foreground) {
         dev.cinematic.p0.diagnostics.PreviewPresentationTrace.invalidate()
         onDispose { dev.cinematic.p0.diagnostics.PreviewPresentationTrace.invalidate() }
     }
     var fromFiles by rememberSaveable { mutableStateOf(false) }
+    var importBusy by remember { mutableStateOf(false) }
     var pickerPending by rememberSaveable { mutableStateOf(false) }
     var retry by remember { mutableIntStateOf(0) }
     var explicitRetry by remember { mutableStateOf(false) }
@@ -582,11 +583,18 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
             // Process save status survives selection/lifecycle reloads; cancel must not wait for preview IO.
             if (selectedUri == null) {
                 ForegroundSaveNotice(jpegSave, foreground)
+                importConditions?.let { conditions ->
+                    DngImportPanel(foreground && !pickerPending && !viewerPending && !permissionPending,
+                        conditions, { importBusy = it }) { uri ->
+                        importBusy = false
+                        chooseDng(uri, false)
+                    }
+                }
                 CameraRollBrowser(listing, access, kindFilter, folderKey, loading, viewerPending, notice, renderer.mode,
-                    foreground && !viewerPending && !permissionPending,
-                    foreground && !loading && !viewerPending && !permissionPending,
-                    foreground && access.supported && !permissionPending && !pickerPending && !viewerPending,
-                    foreground && !pickerPending && !viewerPending && !permissionPending,
+                    foreground && !importBusy && !viewerPending && !permissionPending,
+                    foreground && !importBusy && !loading && !viewerPending && !permissionPending,
+                    foreground && !importBusy && access.supported && !permissionPending && !pickerPending && !viewerPending,
+                    foreground && !importBusy && !pickerPending && !viewerPending && !permissionPending,
                     folderMenu = folderMenu, setFolderMenu = { folderMenu = it }, close = ::closeRoll,
                     refresh = { pageCursor = null; retry++ },
                     chooseFolder = { key -> folderKey = key; pageCursor = null; listing = PhotoRollListing(emptyList()); retry++ },

@@ -137,5 +137,5 @@ internal class PhotoRollResourceObserver(context: Context,
             AndroidPhotoRollCameraObservations.snapshot(), foreground, storage)
     }
 
-    companion object { private const val PRIVATE_REQUIRED_BYTES = 64L * 1024 * 1024 }
+    companion object { internal const val PRIVATE_REQUIRED_BYTES = 64L * 1024 * 1024 }
 }
