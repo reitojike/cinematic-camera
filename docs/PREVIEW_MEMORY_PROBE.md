@@ -67,17 +67,29 @@ heap上限、OSのlow-memory閾値、実RAM、出力寸法もJSONに含めます
   温度・空き容量を読む。内側の768MiB guardとGPU予算は変更しない。
 
 共有AVDはロードマップの1枠を事前調整して単独使用する。初回はSMALLだけを実行する。
+GPU probeの正規実行先は、[GPUエンジンのAndroid opt-in手順](GPU_ENGINE.md)に従う
+既存の通常API37 AVD（host GPU、`GuestAngle,Vulkan`）である。
+ATDはhardware renderingが無効なため、このGPU試験の実行先にしない。
+予約した既存AVDの起動引数 `-gpu host -feature GuestAngle,Vulkan`、実際のGL vendor/renderer/version、
+GPU capabilityを確認する。既存端末の起動・停止や設定変更は予約担当と調整し、本手順で新規作成しない。
 12MP/24MPは別途枠・時間を確保し、別プロセスで1条件ずつ実行する。新規AVD作成、
 全クラス一括実行、SDK更新、圧迫用割当、強制GC、guard変更は含めない。
 
 ```powershell
-.\gradlew.bat :app:pixel9aapi37atdGpuDiagnosticAndroidTest --rerun --no-daemon --max-workers=1 `
-  -PcinematicGpuDiagnostic=true -PcinematicGpuDiagnosticTests=true `
-  "-Pandroid.testInstrumentationRunnerArguments.class=dev.cinematic.p0.jpegrender.original.GpuConcurrentMemoryProbeTest" `
-  "-Pandroid.testInstrumentationRunnerArguments.isolated=true" `
-  "-Pandroid.testInstrumentationRunnerArguments.gpuExportBoundaries=true" `
-  "-Pandroid.testInstrumentationRunnerArguments.gpuConcurrentMemory=true" `
-  "-Pandroid.testInstrumentationRunnerArguments.gpuConcurrentMemorySize=SMALL"
+.\gradlew.bat :app:assembleGpuDiagnostic :app:assembleGpuDiagnosticAndroidTest `
+  -PcinematicGpuDiagnostic=true -PcinematicGpuDiagnosticTests=true --no-daemon --max-workers=1
+
+# 予約・確認済みの通常API37 AVDのserialを設定する。実機を指定しない。
+if (-not $env:GPU_PROBE_SERIAL -or $env:GPU_PROBE_SERIAL -notmatch '^emulator-[0-9]+$') {
+  throw 'Set the reserved GPU emulator serial'
+}
+adb -s $env:GPU_PROBE_SERIAL install -r app/build/outputs/apk/gpuDiagnostic/app-gpuDiagnostic.apk
+adb -s $env:GPU_PROBE_SERIAL install -r app/build/outputs/apk/androidTest/gpuDiagnostic/app-gpuDiagnostic-androidTest.apk
+adb -s $env:GPU_PROBE_SERIAL shell am instrument -w `
+  -e class dev.cinematic.p0.jpegrender.original.GpuConcurrentMemoryProbeTest `
+  -e isolated true -e gpuExportBoundaries true -e gpuConcurrentMemory true `
+  -e gpuConcurrentMemorySize SMALL `
+  dev.cinematic.p0.gpudiagnostic.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 大判のselectorは同classの `#measureSaveBandAndNextPhoto` に限定し、sizeを `12MP` または

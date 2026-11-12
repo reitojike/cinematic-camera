@@ -163,53 +163,57 @@ class GpuConcurrentMemoryProbeTest {
                 report.put("outcome", "SUCCESS").put("originalsUnchanged", true)
             } catch (error: Throwable) {
                 primary = error
-                report.put("outcome", "FAILED").put("failureType", error.javaClass.simpleName)
+                try { report.put("outcome", "FAILED").put("failureType", error.javaClass.simpleName) }
+                catch (reporting: Throwable) { if (reporting !== error) error.addSuppressed(reporting) }
                 throw error
             } finally {
-                // Never abandon blocked producers or remove observer ownership before draining.
-                cancellation.cancel()
-                if (primary != null) save.requestStop()
-                resume.countDown()
-                try {
-                    var closeFailure: Throwable? = null
-                    fun closePart(action: () -> Unit) {
-                        try { action() } catch (error: Throwable) {
-                            val earlier = closeFailure
-                            if (earlier == null) closeFailure = error else if (earlier !== error) earlier.addSuppressed(error)
-                        }
+                // Each shutdown/reporting action is attempted without replacing the original failure.
+                var endingFailure: Throwable? = primary
+                fun closePart(action: () -> Unit) {
+                    try { action() } catch (error: Throwable) {
+                        val earlier = endingFailure
+                        if (earlier == null) endingFailure = error else if (earlier !== error) earlier.addSuppressed(error)
                     }
-                    closePart { input?.let { future ->
-                        try { future.get(timeout, TimeUnit.SECONDS) }
-                        catch (expected: ExecutionException) { if (primary == null && !cancelInput) throw expected }
-                    } }
-                    closePart { export?.get(timeout, TimeUnit.SECONDS) }
-                    var previewClosed = session == null
-                    closePart { session?.let { preview ->
-                        preview.close()
-                        check(preview.renderer.awaitClosed(10_000)) { "B preview owner did not close" }
-                        previewClosed = true
-                    } }
-                    closePart { GpuPhotoRollRetiredOwners.releaseBeforeOpen() }
-                    // Keep the consumer alive if GL teardown is unconfirmed.
-                    if (previewClosed) {
-                        closePart { reader?.close() }
-                        closePart { drain?.let { it.quitSafely(); it.join(5000); check(!it.isAlive) } }
-                    }
-                    closePart { save.abandonForegroundExport(reservation) }
-                    closePart { fixture.assertClosed(save) }
-                    closePart { fixture.verifyOriginals() }
-                    closeFailure?.let { throw it }
-                    stage("ALL_OBSERVED_OWNERS_CLOSED")
-                } catch (cleanup: Throwable) {
-                    report.put("outcome", "CLEANUP_FAILED").put("cleanupFailureType", cleanup.javaClass.simpleName)
-                    if (primary == null) throw cleanup else if (primary !== cleanup) primary.addSuppressed(cleanup)
-                } finally {
-                    inputObserver?.close()
-                    exportObserver?.close()
-                    metrics.stop()
-                    val parts = metrics.appendTo(report).toString().chunked(3000)
-                    parts.forEachIndexed { index, part -> println("GPU_CONCURRENT_MEMORY_PART=$index/${parts.size}:$part") }
                 }
+                closePart { cancellation.cancel() }
+                closePart { if (primary != null) save.requestStop() }
+                closePart { resume.countDown() }
+                closePart { input?.let { future ->
+                    try { future.get(timeout, TimeUnit.SECONDS) }
+                    catch (expected: ExecutionException) { if (primary == null && !cancelInput) throw expected }
+                } }
+                closePart { export?.get(timeout, TimeUnit.SECONDS) }
+                var previewClosed = session == null
+                closePart { session?.let { preview ->
+                    preview.close()
+                    check(preview.renderer.awaitClosed(10_000)) { "B preview owner did not close" }
+                    previewClosed = true
+                } }
+                closePart { GpuPhotoRollRetiredOwners.releaseBeforeOpen() }
+                // Keep the consumer alive if GL teardown is unconfirmed.
+                if (previewClosed) {
+                    closePart { reader?.close() }
+                    closePart { drain?.let { it.quitSafely(); it.join(5000); check(!it.isAlive) } }
+                }
+                closePart { save.abandonForegroundExport(reservation) }
+                closePart { fixture.assertClosed(save) }
+                closePart { fixture.verifyOriginals() }
+                if (endingFailure == null) closePart { stage("ALL_OBSERVED_OWNERS_CLOSED") }
+                closePart { inputObserver?.close() }
+                closePart { exportObserver?.close() }
+                closePart { metrics.stop() }
+                closePart { metrics.appendTo(report) }
+                closePart { endingFailure?.let { failure ->
+                    report.put("outcome", "FAILED").put("failureType", failure.javaClass.simpleName)
+                        .put("suppressedFailureCount", failure.suppressed.size)
+                } }
+                // Failed enrichment must not skip serialization; a failed chunk must not skip later ones.
+                var parts = listOf("{\"outcome\":\"REPORT_SERIALIZATION_FAILED\"}")
+                closePart { parts = report.toString().chunked(3000) }
+                parts.forEachIndexed { index, part ->
+                    closePart { println("GPU_CONCURRENT_MEMORY_PART=$index/${parts.size}:$part") }
+                }
+                if (primary == null) endingFailure?.let { throw it }
             }
         }
     }
