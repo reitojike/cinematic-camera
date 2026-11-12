@@ -37,8 +37,13 @@ class Original24CancellationRetryInstrumentationTest {
 
     @Test fun normalGpuSaveCancellationRequiresExplicitRetryBeforePublication() = runCase(DevelopEngine.GPU, ordinary = true)
     @Test fun normalGpuSaveCancellationAfterJpegEntryRemainsHeld() = runCase(DevelopEngine.GPU, afterJpegEntry = true, ordinary = true)
+    @Test fun normalGpuConfirmedCancellationCanPublishChangedRecipeWithoutRetryingOldSave() =
+        runCase(DevelopEngine.GPU, ordinary = true, newGeneration = true)
+    @Test fun normalGpuConfirmedCancellationCanChangeRecipeThroughOrdinaryUi() =
+        runCase(DevelopEngine.GPU, ordinary = true, newGeneration = true, editThroughUi = true)
 
-    private fun runCase(engine: DevelopEngine, afterJpegEntry: Boolean = false, ordinary: Boolean = false) {
+    private fun runCase(engine: DevelopEngine, afterJpegEntry: Boolean = false, ordinary: Boolean = false,
+        newGeneration: Boolean = false, editThroughUi: Boolean = false) {
         val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
         val args = InstrumentationRegistry.getArguments()
         assumeTrue(args.getString("isolated") == "true" && args.getString("saveCancellationRetry") == "true")
@@ -133,6 +138,59 @@ class Original24CancellationRetryInstrumentationTest {
             assertSame("Same source/recipe must retain this immutable owner", save,
                 AndroidManualOriginalTrialSaves.prepare(app, reference, request.strength, ALLOWED, request.adjustments)
                     .get(30, TimeUnit.SECONDS))
+
+            if (newGeneration) {
+                val next = if (editThroughUi) dev.cinematic.p0.photoroll.ConfirmedCancellationEditProbe.publish(app,
+                    reference, sourceName, save) else AndroidManualOriginalTrialSaves.prepare(app, reference, .35, ALLOWED,
+                        PhotoAdjustments(-10.0, -.2)).get(30, TimeUnit.SECONDS)
+                // Closing the UI publishes foreground=false; subsequent factory-only assertions
+                // use the same explicit fixture admission as this test's initial cancellation.
+                DevelopExecution.updateConditions(ALLOWED)
+                assertEquals(request.generation + 1, next.request.generation)
+                assertEquals(reference, next.request.source)
+                assertNotEquals(request.recipe, next.request.recipe)
+                assertSame(next, AndroidManualOriginalTrialSaves.prepare(app, reference, next.request.strength, ALLOWED, next.request.adjustments)
+                    .get(30, TimeUnit.SECONDS))
+                val retired = assertThrows(java.util.concurrent.ExecutionException::class.java) {
+                    save.advance(ALLOWED, retryCancellation = true) { false }.get(30, TimeUnit.SECONDS)
+                }
+                assertTrue(retired.cause is CaptureJournalConflict)
+                val witness = Witness(engine)
+                val published = if (editThroughUi) next.state.value
+                    else next.advance(ALLOWED) { witness.observe(); false }.get(180, TimeUnit.SECONDS)
+                assertEquals(ManualOriginalTrialSavePhase.PUBLISHED, published.phase)
+                if (!editThroughUi) {
+                    assertTrue(witness.seen.get())
+                    witness.assertGpuThreadEnded()
+                }
+                assertFalse(next.hasUnreleasedResources)
+                val nextDirectory = RenderedJpegFiles(File(app.noBackupFilesDir, "raw-captures"),
+                    next.request.captureId, next.request.generation).generationRoot()
+                val nextJournal = JpegPublicationJournal(next.request.captureId, next.request.generation,
+                    AndroidAtomicJournalStorage(requireNotNull(nextDirectory.parentFile), next.request.generation.toString(),
+                        CaptureJournalFile.JPEG_PUBLICATION))
+                val record = requireNotNull(nextJournal.read())
+                val proof = record.render as ManualOriginalTrialRender
+                assertEquals(next.request.recipe, proof.request.recipe)
+                assertEquals(next.request.generation, proof.request.generation)
+                assertEquals(reference, proof.request.source)
+                val jpeg = Uri.parse(requireNotNull(published.uri))
+                output = OwnedRow(jpeg, record.target.displayName)
+                requireOwnedRow(resolver, requireNotNull(output), app.packageName)
+                val inspection = AndroidJpegInspector().inspect({ requireNotNull(resolver.openInputStream(jpeg)) }, record.fingerprint.bytes) { false }
+                assertEquals(record.fingerprint, inspection.fingerprint)
+                assertEquals(proof.request.output, inspection.output)
+                assertFalse(File(nextDirectory, "original-work").exists())
+                val reconciled = Witness(engine)
+                assertEquals(published, next.advance(ALLOWED) { reconciled.observe(); false }.get(30, TimeUnit.SECONDS))
+                assertFalse(reconciled.seen.get())
+                assertNull(journal.read())
+                assertArrayEquals(originalIntent, intent.read(ManualOriginalTrialRequestCodec.MAX_BYTES))
+                assertEquals(fingerprint, DngContentVerifier.verify(fingerprint, { requireNotNull(resolver.openInputStream(original)) }))
+                AndroidManualOriginalTrialSaves.discardPreview(app).get(30, TimeUnit.SECONDS)
+                success = true
+                return
+            }
 
             if (afterJpegEntry) {
                 assertTrue("Negative control must cross the real output-open boundary", jpegEntrySeen.get())

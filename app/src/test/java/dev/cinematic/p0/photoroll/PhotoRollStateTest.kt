@@ -13,6 +13,10 @@ class PhotoRollStateTest {
                 assertFalse(canBeginStrengthEdit(mode, true, true, phase))
                 assertFalse(canBeginStrengthEdit(mode, false, false, phase))
             }
+            assertEquals(mode == PhotoRollPreviewMode.MANUAL_TRIAL,
+                canBeginStrengthEdit(mode, true, false, PhotoRollSavePhase.CANCELLED))
+            assertFalse(canBeginStrengthEdit(mode, true, true, PhotoRollSavePhase.CANCELLED))
+            assertFalse(canBeginStrengthEdit(mode, false, false, PhotoRollSavePhase.CANCELLED))
         }
         assertTrue(canBeginStrengthEdit(PhotoRollPreviewMode.PRIVATE_TRIAL, true, false, null))
         assertFalse(canBeginStrengthEdit(PhotoRollPreviewMode.PRIVATE_TRIAL, false, false, null))
