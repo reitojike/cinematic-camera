@@ -41,4 +41,15 @@ class CaptureScreenMessagesTest {
         assertEquals(CaptureChromeTone.WARNING, applying.inline.single().tone)
         assertEquals(ScreenMessages(), captureSettingsMessages())
     }
+    @Test fun genericFailureUsesOnlyExistingDiagnosticPermission() {
+        for (enabled in listOf(false, true)) {
+            val fallback = captureFailureFallback(enabled)
+            assertEquals(MessageSlot.PROBLEM, fallback.slot)
+            assertEquals(MessageAction.OPEN_DIAGNOSTICS, fallback.primary!!.action)
+            assertEquals(enabled, fallback.primary.enabled)
+            assertNull(fallback.secondary)
+            assertEquals(enabled, captureMessages(captureFailed = true,
+                diagnosticsEnabled = enabled).banner!!.primary!!.enabled)
+        }
+    }
 }

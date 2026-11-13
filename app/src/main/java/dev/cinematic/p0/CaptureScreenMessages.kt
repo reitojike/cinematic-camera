@@ -12,6 +12,7 @@ internal fun captureMessages(
     controlRecovery: Boolean = false,
     captureRecovery: Boolean = false,
     canReconnect: Boolean = false,
+    diagnosticsEnabled: Boolean = true,
     thermalWarning: Boolean = false,
     microphoneWarning: Boolean = false,
     captureFailed: Boolean = false,
@@ -29,7 +30,7 @@ internal fun captureMessages(
         primary = if (canReconnect) MessageControl(MessageAction.RECONNECT, "再接続") else null))
     if (waitingForConnection) add(UiMessage(MessageSlot.CENTER, CaptureChromeTone.NORMAL,
         "接続待ち・プレビュー停止中", "preview.connection"))
-    val diagnostics = MessageControl(MessageAction.OPEN_DIAGNOSTICS, "詳細は診断へ")
+    val diagnostics = MessageControl(MessageAction.OPEN_DIAGNOSTICS, "詳細は診断へ", enabled = diagnosticsEnabled)
     if (captureFailed) add(UiMessage(MessageSlot.BANNER, CaptureChromeTone.FAILURE,
         "撮影または設定を完了できませんでした。診断を確認してください。", "capture.failure", primary = diagnostics))
     if (recordingFailed) add(UiMessage(MessageSlot.BANNER, CaptureChromeTone.FAILURE,
@@ -43,30 +44,31 @@ internal fun captureMessages(
     if (notice != null) add(UiMessage(MessageSlot.TOAST,
         if (notice == "保存しました" || notice.startsWith("設定API受付完了")) CaptureChromeTone.ACCEPTED else CaptureChromeTone.NORMAL,
         notice, "capture.notice"))
-})
+}, failureFallback = captureFailureFallback(diagnosticsEnabled))
 
 /** Shared by the actual preview and synthetic visual regression. Does not own any state or action. */
 @Composable
 internal fun BoxScope.CaptureMessageOverlay(messages: ScreenMessages, horizontal: Boolean,
-    captureRecovery: Boolean, onAction: (MessageAction) -> Unit, rotation: Modifier = Modifier) {
+    captureRecovery: Boolean, onAction: (MessageAction) -> Unit, rotation: Modifier = Modifier,
+    failureFallback: UiMessage? = null) {
     if (horizontal && messages.center != null && messages.banner != null) {
         // Both describe different facts. Stack in the existing central area instead of overlapping.
         Column(Modifier.align(Alignment.Center).widthIn(max = 220.dp).then(rotation),
             verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             CaptureCenter(messages.center, onAction)
-            CaptureBanner(messages.banner, onAction)
+            CaptureBanner(messages.banner, onAction, failureFallback = failureFallback)
         }
     } else {
         messages.center?.let { message ->
             val placement = Modifier.align(Alignment.Center)
                 .then(if (captureRecovery) Modifier.widthIn(max = 300.dp) else Modifier).then(rotation)
-            if (message.slot == MessageSlot.PROBLEM) CaptureProblem(message, onAction, placement)
+            if (message.slot == MessageSlot.PROBLEM) CaptureProblem(message, onAction, placement, failureFallback = failureFallback)
             else CaptureCenter(message, onAction, placement)
         }
         messages.banner?.let { message ->
             CaptureBanner(message, onAction, Modifier.align(if (horizontal) Alignment.Center else Alignment.TopCenter)
                 .padding(top = if (horizontal) 0.dp else 48.dp)
-                .widthIn(max = if (horizontal) 220.dp else 380.dp).then(rotation))
+                .widthIn(max = if (horizontal) 220.dp else 380.dp).then(rotation), failureFallback = failureFallback)
         }
     }
     messages.toast?.let { message ->
@@ -82,3 +84,11 @@ internal fun captureSettingsMessages(busy: Boolean = false, applying: String? = 
         if (applying != null) add(UiMessage(MessageSlot.INLINE, CaptureChromeTone.WARNING,
             applying, "settings.applying"))
     })
+
+/** No camera mutation: use the same diagnostics gate as the existing settings sheet. */
+internal fun captureFailureFallback(diagnosticsEnabled: Boolean = true): UiMessage = UiMessage(
+    MessageSlot.PROBLEM, CaptureChromeTone.FAILURE,
+    "画面の表示を確認できません。診断を確認してください。", "capture.display_failure",
+    title = "状態を表示できません",
+    primary = MessageControl(MessageAction.OPEN_DIAGNOSTICS, "詳細は診断へ", enabled = diagnosticsEnabled),
+)

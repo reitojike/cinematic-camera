@@ -32,6 +32,8 @@ class CaptureMessagesScreenshotTest {
             "08-saved" to captureMessages(notice = "保存しました"),
             "09-connecting-thermal" to captureMessages(waitingForConnection = true, thermalWarning = true),
             "10-reset" to ScreenMessages(),
+            "13-display-fallback" to ScreenMessages(center = captureFailureFallback()),
+            "14-display-fallback-busy" to ScreenMessages(center = captureFailureFallback(false)),
             "11-settings-busy" to captureSettingsMessages(busy = true),
             "12-settings-applying" to captureSettingsMessages(applying = "適用中：保存形式 JPEG → DNG · 再接続中（プレビュー一時停止・ロック解除）"),
         )

@@ -216,11 +216,14 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                         onSettings = { if (unlocked || recoveryRequired) { editor = editor.close(); panel = if (panel == CapturePanel.SETTINGS) CapturePanel.NONE else CapturePanel.SETTINGS } },
                         rotation = animatedAngle, horizontal = orientation.horizontal)
                     val recoveryEpoch = probe.currentEpoch
+                    val diagnosticsEnabled = unlocked || recoveryRequired
+                    val displayFailureFallback = captureFailureFallback(diagnosticsEnabled)
                     val messages = captureMessages(
                         waitingForConnection = !probe.bound && permission,
                         controlRecovery = probe.bound && !probe.controlReady && !probe.busy && !recoveryRequired,
                         captureRecovery = recoveryRequired,
                         canReconnect = probe.canRecoverControls,
+                        diagnosticsEnabled = diagnosticsEnabled,
                         thermalWarning = ProbeControls.shouldStopRecording(probe.thermalSeverity),
                         microphoneWarning = probe.mode == CaptureMode.CINE && probe.audioWanted && probe.audioPermissionDenied,
                         captureFailed = probe.lastFailure != null,
@@ -232,12 +235,12 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                         when (action) {
                             MessageAction.RECONNECT -> probe.recoverControls(recoveryEpoch)
                             MessageAction.STOP_AND_RECOVER -> probe.stop()
-                            MessageAction.OPEN_DIAGNOSTICS -> { panel = CapturePanel.DIAGNOSTICS }
+                            MessageAction.OPEN_DIAGNOSTICS -> { if (diagnosticsEnabled) panel = CapturePanel.DIAGNOSTICS }
                             else -> Unit
                         }
                     }
                     CaptureMessageOverlay(messages, orientation.horizontal, recoveryRequired,
-                        messageAction, Modifier.sensorRotation())
+                        messageAction, Modifier.sensorRotation(), failureFallback = displayFailureFallback)
                     if (panel == CapturePanel.NONE) Column(Modifier.align(Alignment.BottomCenter)) {
                         if (editor.selected != null) Box(Modifier.weight(1f, fill = false)
                             .then(if (orientation.horizontal) Modifier.height(48.dp + landscapeDialHeight).background(CaptureDesign.Ruler) else Modifier)) {
