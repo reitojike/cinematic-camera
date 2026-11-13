@@ -54,7 +54,8 @@ class CaptureMessagesScreenshotTest {
                     }
                     Column(Modifier.fillMaxWidth().padding(16.dp)) {
                         if (before) LegacySettingsNote(currentName.value)
-                        else shown.value.inline.forEach { CaptureInlineNote(it, {}) }
+                        else shown.value.inline.forEach { CaptureInlineNote(it, {}, Modifier.fillMaxWidth().then(
+                            if (currentName.value == "12-settings-applying") Modifier.captureOutline(true) else Modifier)) }
                     }
                     if (reset.value) {
                         if (before) LegacyCaptureResetDialog(dismiss = {}, reset = {})
