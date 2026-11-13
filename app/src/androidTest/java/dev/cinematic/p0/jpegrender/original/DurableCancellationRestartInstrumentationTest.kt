@@ -44,6 +44,7 @@ class DurableCancellationRestartInstrumentationTest {
     @Test fun seedAfterJpeg() = seed("jpeg")
     @Test fun seedLegacyIntent() = seed("legacy")
     @Test fun seedStartedAwaitHostKill() = seed("started")
+    @Test fun seedRetryStartedAwaitHostKill() = seed("retrystarted")
 
     private fun seed(kind: String) {
         val dir = checkpoint()
@@ -92,12 +93,31 @@ class DurableCancellationRestartInstrumentationTest {
                 }
             }.get(180, TimeUnit.SECONDS)
             assertTrue(gpuSeen.get())
-            assertEquals(if (kind == "clean") ManualOriginalTrialSavePhase.CANCELLED else ManualOriginalTrialSavePhase.HOLD, result.phase)
+            assertEquals(if (kind in setOf("clean", "retrystarted")) ManualOriginalTrialSavePhase.CANCELLED else ManualOriginalTrialSavePhase.HOLD, result.phase)
             assertFalse(handle.hasUnreleasedResources)
             val record = ManualTrialAttemptCodec.decode(requireNotNull(storage(request, CaptureJournalFile.MANUAL_ATTEMPT).read(ManualTrialAttemptCodec.MAX_BYTES)))
-            assertEquals(if (kind == "clean") ManualTrialAttemptPhase.CANCELLED_CLEAN else ManualTrialAttemptPhase.STARTED, record.phase)
+            assertEquals(if (kind in setOf("clean", "retrystarted")) ManualTrialAttemptPhase.CANCELLED_CLEAN else ManualTrialAttemptPhase.STARTED, record.phase)
             assertFalse(File(generation(request), "original-work").exists())
             assertFalse(output.exists())
+            if (kind == "retrystarted") {
+                assertEquals(1L, record.attempt)
+                File(dir, "clean-before-retry.bin").writeBytes(ManualTrialAttemptCodec.encode(record))
+                verifyOriginal(request)
+                assertNull(publication(request))
+                handle.advance(ALLOWED, retryCancellation = true) {
+                    val latest = ManualTrialAttemptCodec.decode(requireNotNull(storage(request,
+                        CaptureJournalFile.MANUAL_ATTEMPT).read(ManualTrialAttemptCodec.MAX_BYTES)))
+                    if (latest.attempt == 2L && latest.phase == ManualTrialAttemptPhase.STARTED) {
+                        assertEquals(request, latest.request)
+                        assertFalse(handle.hasUnreleasedResources)
+                        assertFalse(output.exists())
+                        File(dir, "armed.txt").writeText("STARTED pid=${Process.myPid()} attempt=2")
+                        check(CountDownLatch(1).await(120, TimeUnit.SECONDS)) { "Host must kill after retry proof invalidation" }
+                    }
+                    false
+                }.get(180, TimeUnit.SECONDS)
+                fail("Host must kill the retry before any producer starts")
+            }
         }
         verifyOriginal(request)
         assertNull(publication(request))
@@ -117,6 +137,11 @@ class DurableCancellationRestartInstrumentationTest {
         val oldIntent = storage(request, CaptureJournalFile.MANUAL_REQUEST).read(ManualOriginalTrialRequestCodec.MAX_BYTES)
         val oldLedger = storage(request, CaptureJournalFile.MANUAL_ATTEMPT).read(ManualTrialAttemptCodec.MAX_BYTES)
         verifyOriginal(request)
+        if (File(dir, "kind.txt").readText() == "retrystarted") {
+            val clean = ManualTrialAttemptCodec.decode(File(dir, "clean-before-retry.bin").readBytes())
+            val started = ManualTrialAttemptCodec.decode(requireNotNull(oldLedger))
+            assertEquals(clean.copy(attempt = 2, phase = ManualTrialAttemptPhase.STARTED), started)
+        }
         DevelopExecution.updateConditions(ALLOWED)
         if (mode == "ui" || mode == "uisame") {
             val next = if (mode == "ui") ConfirmedCancellationEditProbe.publishCold(app, request.source, File(dir, "name.txt").readText(), request)
