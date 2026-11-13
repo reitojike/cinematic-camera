@@ -1,6 +1,8 @@
 import json
 import unittest
 from collector import parse_log, parse_memory, parse_package_uid, stop_reason, preflight_evidence as actual_preflight
+from collector import ObservationError, sampler_failure
+from types import SimpleNamespace
 
 
 def preflight_evidence(events):
@@ -12,6 +14,23 @@ def log(message, pid='11', tag='CinematicMemory'):
 
 
 class CollectorTest(unittest.TestCase):
+    def test_memory_failure_classifies_without_disclosing_adb_or_exception_text(self):
+        for output, expected in [('', 'ABSENT'), ('11', 'SAME'), ('22', 'CHANGED'), ('private text', 'UNKNOWN')]:
+            event = sampler_failure(ObservationError('MEMORY_TOTALS_MISSING'), 'PROCESS_MEMORY', '11',
+                lambda: SimpleNamespace(returncode=0, stdout=output))
+            self.assertEqual(expected, event['pid_state_after_failure'])
+            self.assertEqual('MEMORY_TOTALS_MISSING', event['reason'])
+            self.assertEqual('STOP_SAMPLER_FAILURE', stop_reason(event))
+            self.assertNotIn('private', json.dumps(event))
+        event = sampler_failure(ValueError('private exception'), 'PID', None, lambda: self.fail('unexpected read'))
+        self.assertEqual('UNCLASSIFIED', event['reason'])
+        self.assertNotIn('private', json.dumps(event))
+        for text, reason in [('private', 'MEMORY_IDENTITY_MISMATCH'),
+                ('** MEMINFO in pid 11 [dev.cinematic.p0.memorydiagnostic] **', 'MEMORY_TOTALS_MISSING')]:
+            with self.assertRaises(ObservationError) as caught:
+                parse_memory(text, '11')
+            self.assertEqual(reason, caught.exception.reason)
+
     def test_package_uid_matches_exact_current_user_package_not_test_package(self):
         target = 'package:dev.cinematic.p0.memorydiagnostic uid:110240\n'
         test = 'package:dev.cinematic.p0.memorydiagnostic.test uid:110241\n'

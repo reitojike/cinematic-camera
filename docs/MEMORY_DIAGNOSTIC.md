@@ -90,6 +90,10 @@ PCのみのfake sourceで20分以上・複数の対話区切りと段階を跨�
 採取/監視が欠落した場合、所有する試験controlディレクトリ `cache/memory-rehearsal-<token>/stop` だけに停止要求を置く。
 試験は現在の合成処理の回収後、待機中/次サイクル前に失敗終了し、自動再試行しない。アプリkillで保存を中断しない。
 各cycleのBEGIN/RELEASEDはinstrumentationの固定形式statusに記録する。3件の解放・20分以上の採取・監視正常終了・試験正常終了の全てを照合する。
+PC側の `am instrument` がexit0でもJUnit失敗の場合があるため、`rehearsal_result.evaluate` で `OK (1 test)`、3周期のBEGIN/RELEASED、監視STOPPED、採取境界・20分以上・PSS欠落なしを集約する。終了コードだけを合格判定にしない。
+最終判定は `overall_passed` でdriver自身の失敗/cleanup失敗/停止未確認/残存processも除外する。証拠のaggregateだけがtrueでも合格にしない。
+クリックは対象の親ノードも送信前にrefreshし、falseの操作を再送しない。失敗時は固定対象分類・fresh/enabled/visible/clickable/同一window/CLICK actionの有無だけを記録する。ノード失効は試験側の可能性、freshでのfalseは製品側も含む未確定として分離する。
+採取失敗は固定phase/reasonと失敗直後のPID存否分類を記録し、meminfoの生出力や例外messageは残さない。プロセス終了後の採取不成立と、対象が残る間のPSS欠落を混同せず、いずれもセッション失敗を維持する。
 テスト側は自分で作成したcontrolだけを回収し、既存journal/他fixture/設定を変更しない。異常の所有状態が不明なら保持して報告する。
 
 ## OS回収・終了の観測（詳細）

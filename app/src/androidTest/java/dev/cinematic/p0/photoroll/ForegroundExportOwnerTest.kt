@@ -512,7 +512,7 @@ class ForegroundExportOwnerTest {
             instrumentation.waitForIdleSync()
             var node = find(instrumentation.uiAutomation.rootInActiveWindow)
             while (node != null && !node.isClickable) node = node.parent
-            result = node?.takeIf { it.isEnabled && it.isVisibleToUser }
+            result = node?.takeIf { it.refresh() && it.isClickable && it.isEnabled && it.isVisibleToUser }
             // Compose can omit off-screen semantics entirely until its container scrolls.
             if ((node == null || !node.isVisibleToUser) && ++attempts % 10 == 0) scroll(instrumentation.uiAutomation.rootInActiveWindow)
             result != null
@@ -528,7 +528,31 @@ class ForegroundExportOwnerTest {
         }
         return requireNotNull(result)
     }
-    private fun click(label: String) { assertTrue(action(label).performAction(AccessibilityNodeInfo.ACTION_CLICK)) }
+    private fun click(label: String) {
+        val node = action(label)
+        val target = if (label == "目盛りを閉じる") "RULER_CLOSE" else "OTHER_FIXED_ACTION"
+        fun state(): String {
+            val refreshed = node.refresh()
+            val root = instrumentation.uiAutomation.rootInActiveWindow
+            return "fresh=$refreshed enabled=${node.isEnabled} visible=${node.isVisibleToUser} " +
+                "clickable=${node.isClickable} sameWindow=${root?.windowId == node.windowId} " +
+                "clickAction=${node.actionList.any { it.id == AccessibilityNodeInfo.ACTION_CLICK }}"
+        }
+        val before = state()
+        check(node.refresh() && node.isEnabled && node.isVisibleToUser && node.isClickable) {
+            "UI_CLICK target=$target phase=BEFORE_NOT_SENT $before"
+        }
+        val accepted = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        // Never replay a false/ambiguous action; retain evidence of a possible product failure.
+        if (!accepted) {
+            val failure = AssertionError("UI_CLICK target=$target phase=ACTION_RETURNED_FALSE before=[$before]")
+            try { failure.addSuppressed(IllegalStateException("UI_CLICK after=[${state()}]")) }
+            catch (diagnostic: Throwable) {
+                failure.addSuppressed(IllegalStateException("UI_CLICK after=UNAVAILABLE exception=${diagnostic.javaClass.simpleName}"))
+            }
+            throw failure
+        }
+    }
 
     @Test fun acceptedSavePublishesSameRecipeAfterActivityStopsAndRetryDoesNotDuplicate() = foreground { scenario ->
         Fixture().use { f ->

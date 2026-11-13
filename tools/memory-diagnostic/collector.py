@@ -48,10 +48,16 @@ def parse_log(line, own_pids):
     return {'kind': kind, 'device_epoch': stamp, 'process_pid': pid, 'fields': fields}
 
 
+class ObservationError(ValueError):
+    def __init__(self, reason):
+        super().__init__(reason)
+        self.reason = reason
+
+
 def parse_memory(text, expected_pid):
     header = re.search(r'MEMINFO in pid (\d+) \[([^\]]+)\]', text)
     if not header or header[1] != expected_pid or header[2] != PACKAGE:
-        raise ValueError('Process memory identity mismatch')
+        raise ObservationError('MEMORY_IDENTITY_MISMATCH')
     fields = {}
     for name in ['Java Heap', 'Native Heap', 'Code', 'Stack', 'Graphics', 'Private Other', 'System', 'Unknown']:
         match = re.search(r'^\s*' + re.escape(name) + r':\s+(\d+)', text, re.M)
@@ -62,8 +68,24 @@ def parse_memory(text, expected_pid):
         if match:
             fields[name.replace(' ', '_') + '_KiB'] = int(match[1])
     if 'TOTAL_PSS_KiB' not in fields:
-        raise ValueError('Missing process memory totals')
+        raise ObservationError('MEMORY_TOTALS_MISSING')
     return fields
+
+
+def sampler_failure(failure, phase, expected_pid, read_pid):
+    """Fixed classifications only; never include exception text or raw adb output."""
+    event = {'kind': 'STOP_SAMPLER_FAILURE', 'exception': type(failure).__name__,
+             'phase': phase, 'reason': failure.reason if isinstance(failure, ObservationError) else 'UNCLASSIFIED'}
+    if phase == 'PROCESS_MEMORY' and expected_pid:
+        try:
+            result = read_pid()
+            value = result.stdout.strip()
+            event['pid_state_after_failure'] = ('UNKNOWN' if result.returncode not in (0, 1) else
+                'ABSENT' if not value else 'SAME' if value == expected_pid else
+                'CHANGED' if re.fullmatch(r'\d+', value) else 'UNKNOWN')
+        except Exception:
+            event['pid_state_after_failure'] = 'UNKNOWN'
+    return event
 
 
 def stop_reason(event, prior_pid=None):
@@ -184,13 +206,16 @@ def main():
     thread.start()
     prior_pid = None
     iteration = 0
+    phase = 'PID'
+    pid = None
     try:
         while not stop.is_set() and not stop_file.exists() and time.time() - started < args.seconds:
             tick = time.monotonic()
+            phase = 'PID'
             result = adb('shell', 'pidof', PACKAGE)
             pid = result.stdout.strip()
             if pid and not re.fullmatch(r'\d+', pid):
-                raise ValueError('Unexpected process identity')
+                raise ObservationError('PID_RESPONSE_INVALID')
             reason = stop_reason({'kind': 'PID', 'pid': pid}, prior_pid)
             if reason:
                 write({'kind': reason, 'cause': 'unknown'})
@@ -198,12 +223,14 @@ def main():
             if pid:
                 own_pids.add(pid)
                 prior_pid = pid
+                phase = 'PROCESS_MEMORY'
                 memory = adb('shell', 'dumpsys', 'meminfo', pid)
                 if memory.returncode:
                     raise RuntimeError('Memory read failed')
                 write({'kind': 'PROCESS_MEMORY_SAMPLE', 'process_pid': pid, 'fields': parse_memory(memory.stdout, pid),
                        'command_seconds': round(time.monotonic() - tick, 3)})
             if iteration % 10 == 0:
+                phase = 'THERMAL'
                 thermal = adb('shell', 'dumpsys', 'thermalservice')
                 match = re.search(r'Thermal Status:\s*(\d+)', thermal.stdout)
                 if thermal.returncode or not match:
@@ -212,7 +239,7 @@ def main():
             iteration += 1
             stop.wait(max(0, 1 - (time.monotonic() - tick)))
     except Exception as failure:
-        write({'kind': 'STOP_SAMPLER_FAILURE', 'exception': type(failure).__name__})
+        write(sampler_failure(failure, phase, pid, lambda: adb('shell', 'pidof', PACKAGE)))
     finally:
         stop.set()
         try:
