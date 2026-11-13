@@ -110,6 +110,13 @@ internal suspend fun awaitGpuInputReadiness(
                 val result = start(ready).await()
                 val failure = result.failure
                 if (failure == null) { check(request.isAdmitted()); return@withTimeout }
+                if (failure is GpuInputAdmissionRefused &&
+                    AutoDevelopBlocker.MEMORY in (failure.snapshot.freshPreviewBlockers +
+                        if (failure.snapshot.conditionsObserved) failure.snapshot.storedGlobalPreviewBlockers else emptySet())) {
+                    // A newer IO observation can reject after a ready UI publication.
+                    // Classify only a current OS rejection; if recovered, preserve the original refusal.
+                    checkMemoryAdmission()
+                }
                 if (failure !is GpuInputAdmissionRefused || !failure.canWaitForCamera) throw failure
                 // Consume only the observation that started this attempt. A publication can arrive
                 // after coordinator refusal but before its callback; it must remain eligible.

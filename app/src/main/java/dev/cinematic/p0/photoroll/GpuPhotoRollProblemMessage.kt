@@ -14,7 +14,7 @@ internal fun gpuPhotoRollProblemMessage(problem: Throwable?, notice: String? = n
         }
         is dev.cinematic.p0.jpegrender.original.Original24MemoryUnavailable ->
             if (problem.observation != null)
-                "メモリ不足のため現像を開始・継続できません（空きメモリが受付条件未満、またはOSの低メモリ状態）。原本は変更していません。時間をおいて再試行してください"
+                "OSがメモリ不足と判断しているため現像を開始できません。原本は変更していません。時間をおいて再試行してください"
             else "現像用のメモリを確保できませんでした。原本は変更していません。時間をおいて再試行してください"
         is PhotoRollSourceFailure -> problem.userMessage
         is dev.cinematic.p0.rawcapture.DngContentChanged -> "原本の内容が変わりました。Filesから選び直してください"
@@ -30,3 +30,22 @@ internal inline fun <T> gpuPhotoRollInputResult(block: () -> T): Result<T> = try
 } catch (failure: Throwable) {
     Result.failure(failure)
 }
+
+/** Only a typed memory failure gets the memory card; no save command is generated. */
+internal fun gpuPhotoRollMemoryProblem(problem: Throwable?, retryEnabled: Boolean): dev.cinematic.p0.UiMessage? {
+    if (problem !is dev.cinematic.p0.jpegrender.original.Original24MemoryUnavailable) return null
+    return dev.cinematic.p0.UiMessage(
+        slot = dev.cinematic.p0.MessageSlot.PROBLEM,
+        tone = dev.cinematic.p0.CaptureChromeTone.FAILURE,
+        fact = "develop.memory",
+        title = "メモリ不足",
+        body = requireNotNull(gpuPhotoRollProblemMessage(problem)),
+        note = "再試行では、このアプリの不要な一時メモリだけを解放して状態を確認します。保存は自動でやり直しません。",
+        primary = dev.cinematic.p0.MessageControl(dev.cinematic.p0.MessageAction.RETRY, "再試行", retryEnabled),
+    )
+}
+
+
+// A save-admission rejection must not discard its existing preview or retained export owner.
+internal fun gpuMemoryRetryNeedsReopen(exportPaused: Boolean, hasInput: Boolean, sessionFailed: Boolean): Boolean =
+    !exportPaused && (!hasInput || sessionFailed)

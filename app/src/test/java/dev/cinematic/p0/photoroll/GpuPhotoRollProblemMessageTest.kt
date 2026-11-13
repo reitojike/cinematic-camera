@@ -7,12 +7,34 @@ import org.junit.Test
 import java.io.IOException
 
 class GpuPhotoRollProblemMessageTest {
+    @Test fun memoryRetryPreservesExportOwnerAndUsablePreview() {
+        for (hasInput in listOf(true, false)) for (failed in listOf(true, false))
+            assertFalse(gpuMemoryRetryNeedsReopen(true, hasInput, failed))
+        assertFalse(gpuMemoryRetryNeedsReopen(false, true, false))
+        assertTrue(gpuMemoryRetryNeedsReopen(false, false, false))
+        assertTrue(gpuMemoryRetryNeedsReopen(false, true, true))
+    }
+
+    @Test fun memoryCardIsTypedAndRetryNeverImpliesSave() {
+        assertNull(gpuPhotoRollMemoryProblem(IOException("memory"), true))
+        assertNull(gpuPhotoRollMemoryProblem(null, true))
+        val failure = Original24MemoryUnavailable(OutOfMemoryError())
+        val card = requireNotNull(gpuPhotoRollMemoryProblem(failure, false))
+        assertEquals(dev.cinematic.p0.MessageSlot.PROBLEM, card.slot)
+        assertEquals("メモリ不足", card.title)
+        assertEquals(dev.cinematic.p0.MessageAction.RETRY, card.primary?.action)
+        assertFalse(requireNotNull(card.primary).enabled)
+        assertNull(card.secondary)
+        assertTrue(requireNotNull(card.note).contains("保存は自動でやり直しません"))
+        assertTrue(requireNotNull(gpuPhotoRollMemoryProblem(failure, true)?.primary).enabled)
+    }
+
     @Test fun rejectedMemoryIsSpecificWithoutLeakingObservationOrExceptionText() {
         val observation = Original24MemoryObservation(Original24MemoryStage.ORIGINAL_DECODE, 123456L, false, 456L)
         val failure = Original24MemoryUnavailable(IOException("private-source"), observation)
         val message = requireNotNull(gpuPhotoRollProblemMessage(failure))
-        assertTrue(message.contains("空きメモリ"))
-        assertTrue(message.contains("受付条件"))
+        assertTrue(message.contains("OSがメモリ不足"))
+        assertTrue(message.contains("開始できません"))
         assertTrue(message.contains("原本は変更していません"))
         assertTrue(message.contains("再試行"))
         assertFalse(message.contains("123456"))

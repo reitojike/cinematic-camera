@@ -261,7 +261,9 @@ import kotlinx.coroutines.flow.StateFlow
             PhotoRollSavePhase.UNCONFIRMED, PhotoRollSavePhase.GPU_FAILED, PhotoRollSavePhase.CANCELLED)
     val saveMessage = if (saveState?.phase == PhotoRollSavePhase.CANCELLED)
         "保存を取り消しました。同じ設定で再試行するか、プレビューを再開して設定を変更できます" else saveState?.gpuFailure?.description
-    val visibleMessage = saveMessage ?: problemMessage ?: if (exportPaused)
+    val memoryProblem = if (saveState?.phase !in setOf(PhotoRollSavePhase.HOLD, PhotoRollSavePhase.UNCONFIRMED))
+        gpuPhotoRollMemoryProblem(problem, foreground && !saving && !savingRecipe) else null
+    val visibleMessage = memoryProblem?.body ?: saveMessage ?: problemMessage ?: if (exportPaused)
         "保存のため GPU プレビューを終了しました。保存後にプレビューを再開できます" else null
     if (recoveryChoices) androidx.compose.material3.AlertDialog(
         onDismissRequest = { if (!saving) recoveryChoices = false },
@@ -310,7 +312,9 @@ import kotlinx.coroutines.flow.StateFlow
         },
     )
     PhotoRollDevelopView(name, PhotoRollPreviewMode.MANUAL_TRIAL, editor, { editor }, phase,
-        stage = null, message = visibleMessage, preview = null, comparison = null, comparisonLabel = null,
+        stage = null, message = visibleMessage,
+        memoryProblem = memoryProblem,
+        preview = null, comparison = null, comparisonLabel = null,
         foreground = foreground && !savingRecipe, savePhase = saveState?.phase, savePending = saving || savingRecipe,
         saveEnabled = canSave, beginEnabled = ready && metadataRestored && !exportPaused && !saving && !savingRecipe &&
             !(save?.isExplicitRecoveryRequest == true && saveState?.phase == PhotoRollSavePhase.READY) &&
@@ -348,10 +352,20 @@ import kotlinx.coroutines.flow.StateFlow
         },
         begin = { if (!exportPaused && !saving && !savingRecipe) editor = editor.begin(.01, adjustments = true) },
         back = { if (!savingRecipe) back() },
-        retry = { if (!savingRecipe && !saving) {
-            if (problem is dev.cinematic.p0.jpegrender.original.Original24MemoryUnavailable)
-                renderer.releaseUnusedMemoryForRetry()
-            trimBlocked = false; retry++
+        retry = { if (foreground && !savingRecipe && !saving) {
+            if (problem is dev.cinematic.p0.jpegrender.original.Original24MemoryUnavailable) {
+                try {
+                    renderer.releaseUnusedMemoryForRetry()
+                    dev.cinematic.p0.jpegrender.original.Original24Resources.requireAvailable(context)
+                    error = null
+                    if (gpuMemoryRetryNeedsReopen(exportPaused, input != null, failure != null)) {
+                        trimBlocked = false; retry++
+                    }
+                } catch (failure: Exception) { error = failure }
+                catch (failure: OutOfMemoryError) {
+                    error = dev.cinematic.p0.jpegrender.original.Original24MemoryUnavailable(failure)
+                }
+            } else { trimBlocked = false; retry++ }
         } },
         change = { token, parameter, value -> if (!savingRecipe) editor = editor.change(token, parameter, value) },
         reset = { token -> if (!savingRecipe) {

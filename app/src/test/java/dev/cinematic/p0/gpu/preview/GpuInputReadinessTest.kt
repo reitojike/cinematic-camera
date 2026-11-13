@@ -37,6 +37,26 @@ class GpuInputReadinessTest {
         return CompletableDeferred(GpuInputAdmissionResult(null))
     }
 
+    @Test fun memoryRefusalAfterReadyPublicationRechecksActualOsPressure() = runBlocking {
+        val memory = setOf(dev.cinematic.p0.rawcapture.AutoDevelopBlocker.MEMORY)
+        for (stored in listOf(false, true)) for (recovered in listOf(false, true)) {
+            val refused = GpuInputAdmissionRefused(refusal().snapshot.copy(
+                freshPreviewBlockers = if (stored) emptySet() else memory,
+                conditionsObserved = true,
+                storedGlobalPreviewBlockers = if (stored) memory else emptySet()))
+            val typed = dev.cinematic.p0.jpegrender.original.Original24MemoryUnavailable()
+            var checks = 0
+            val actual = runCatching {
+                awaitGpuInputReadiness(MutableStateFlow(publication()), MutableStateFlow(true), request(),
+                    checkMemoryAdmission = { checks++; if (!recovered) throw typed }) {
+                    CompletableDeferred(GpuInputAdmissionResult(refused))
+                }
+            }.exceptionOrNull()
+            assertEquals(1, checks)
+            assertEquals(if (recovered) refused.javaClass else typed.javaClass, actual?.javaClass)
+        }
+    }
+
     @Test fun pressureCanReportTypedFailureWithoutStartingOrWaitingForTimeout() = runBlocking {
         val failure = dev.cinematic.p0.jpegrender.original.Original24MemoryUnavailable()
         var starts = 0
