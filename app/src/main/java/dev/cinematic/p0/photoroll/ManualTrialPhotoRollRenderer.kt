@@ -101,6 +101,15 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
             AndroidManualOriginalTrialSaves.knownPrepared(loaded.original.reference)?.let { ManualTrialJpegSaveOwner(it, resources) })
     }
 
+    /** Metadata may wait behind another photo's export. Never put this on the input/display path. */
+    fun restoreGpuSave(loaded: GpuInput, cancellation: CancellationSignal): PhotoRollJpegSaveOwner? {
+        val epoch = originalEpoch.get()
+        val restored = awaitTrialPreview(AndroidManualOriginalTrialSaves.restorePreparedGpu(app,
+            loaded.original.reference, loaded.geometry) { cancellation.isCanceled || epoch != originalEpoch.get() }, cancellation)
+        cancellation.throwIfCanceled()
+        return restored?.let { ManualTrialJpegSaveOwner(it, resources) }
+    }
+
     /** URI is used only to pause this exact live export, never to authorize new source content. */
     internal data class ActiveGpuSave(val source: dev.cinematic.p0.rawcapture.SharedOriginalReference,
         val save: PhotoRollJpegSaveOwner, val values: dev.cinematic.p0.photoedit.PhotoEditValues)

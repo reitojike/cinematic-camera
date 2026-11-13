@@ -45,6 +45,7 @@ import kotlinx.coroutines.flow.StateFlow
     var exportPaused by remember { mutableStateOf(false) }
     var save by remember { mutableStateOf<PhotoRollJpegSaveOwner?>(null) }
     var saveState by remember { mutableStateOf<PhotoRollSaveSnapshot?>(null) }
+    var metadataRestored by remember { mutableStateOf(false) }
     val active = foreground && !trimBlocked
     val session = remember(source, retry, active) {
         if (active && !exportPaused) createSession(context.assets) else null
@@ -64,7 +65,7 @@ import kotlinx.coroutines.flow.StateFlow
     LaunchedEffect(session) {
         // Background/trim must not discard the retained save or implicitly reopen its preview.
         if (exportPaused) { input = null; return@LaunchedEffect }
-        input = null; save = null; saveState = null; error = null; notice = null
+        input = null; save = null; saveState = null; error = null; notice = null; metadataRestored = false
         editor = editor.suspendForLifecycle()
         if (session == null) return@LaunchedEffect
         val savedValues = PhotoEditValues(savedStrength, savedWarmth, savedExposure)
@@ -154,10 +155,44 @@ import kotlinx.coroutines.flow.StateFlow
     LaunchedEffect(presented, ticket) {
         editor = gpuPresentedEditor(editor, presented, error != null || failure != null)
     }
+    // The image is already submitted above. A queued metadata read must not delay photo B's
+    // display/cancellation while photo A exports; only editing/saving waits for its authority.
+    LaunchedEffect(input, session) {
+        val loaded = input ?: return@LaunchedEffect
+        if (session == null || exportPaused) return@LaunchedEffect
+        try {
+            val restored = withContext(Dispatchers.IO) { renderer.restoreGpuSave(loaded, cancellation) }
+            ensureActive()
+            if (restored != null) {
+                if (gpuSaveMustPauseLoadedPreview(restored.snapshot.phase) &&
+                    (restored.appliedStrength != loaded.values.strength ||
+                        restored.appliedAdjustments != PhotoAdjustmentPolicy.adjustments(loaded.values)))
+                    throw PhotoRollSourceFailure("前の保存が未確定です。保存状態を確認してください")
+                save = restored; saveState = restored.snapshot
+                if (restored.snapshot.phase == PhotoRollSavePhase.CANCELLED) {
+                    val adjustments = requireNotNull(restored.appliedAdjustments)
+                    val values = PhotoEditValues(requireNotNull(restored.appliedStrength), adjustments.warmth,
+                        adjustments.exposureEv)
+                    savedStrength = values.strength; savedWarmth = values.temperature ?: 0.0
+                    savedExposure = values.brightness ?: 0.0
+                    editor = checkNotNull(TrialStrengthEditor.empty(values).bind(loaded.original.reference))
+                    session.submit(values)
+                }
+                if (gpuSaveMustPauseLoadedPreview(restored.snapshot.phase)) {
+                    exportPaused = true
+                    session.close()
+                    withContext(Dispatchers.IO) { GpuPhotoRollRetiredOwners.releaseBeforeOpen() }
+                }
+            }
+            metadataRestored = true
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (failure: Exception) { currentCoroutineContext().ensureActive(); error = failure }
+    }
     // No original read, bitmap, coarse pass or save generation is performed for pointer ticks.
     // Only an accepted release/reset/cancel changes the immutable save-generation request.
-    LaunchedEffect(ticket, input, session) {
+    LaunchedEffect(ticket, input, session, metadataRestored) {
         val loaded = input ?: return@LaunchedEffect
+        if (!metadataRestored) return@LaunchedEffect
         if (session == null || (save?.appliedStrength == ticket.values.strength &&
             save?.appliedAdjustments == PhotoAdjustmentPolicy.adjustments(ticket.values))) return@LaunchedEffect
         save = null; saveState = null
@@ -215,7 +250,7 @@ import kotlinx.coroutines.flow.StateFlow
         is SecurityException -> "原本の読み取り権限がありません。Filesから選び直してください"
         else -> gpuFailure?.reason ?: "現像を完了できません。原本は変更していません。再試行してください"
     }
-    val canSave = foreground && !saving && !savingRecipe && editor.session == null && save != null &&
+    val canSave = foreground && (metadataRestored || exportPaused) && !saving && !savingRecipe && editor.session == null && save != null &&
         ((ready && presented == editor.requestedValues && editor.displayedValues == editor.requestedValues) ||
             (exportPaused && gpuSaveCanContinueWithoutPreview(saveState?.phase))) &&
         saveState?.phase in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED,
@@ -227,7 +262,7 @@ import kotlinx.coroutines.flow.StateFlow
     PhotoRollDevelopView(name, PhotoRollPreviewMode.MANUAL_TRIAL, editor, { editor }, phase,
         stage = null, message = visibleMessage, preview = null, comparison = null, comparisonLabel = null,
         foreground = foreground && !savingRecipe, savePhase = saveState?.phase, savePending = saving || savingRecipe,
-        saveEnabled = canSave, beginEnabled = ready && !exportPaused && !saving && !savingRecipe &&
+        saveEnabled = canSave, beginEnabled = ready && metadataRestored && !exportPaused && !saving && !savingRecipe &&
             canBeginStrengthEdit(PhotoRollPreviewMode.MANUAL_TRIAL, foreground, saving, saveState?.phase),
         save = saveAction@{
             if (!canSave || saving || savingRecipe) return@saveAction
