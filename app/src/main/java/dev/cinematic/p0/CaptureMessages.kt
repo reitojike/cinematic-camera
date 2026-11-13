@@ -94,10 +94,17 @@ internal fun screenMessages(
     messages: List<UiMessage>,
     strict: Boolean = BuildConfig.DEBUG,
     report: (String) -> Unit = ::reportMessageContract,
+    failureFallback: UiMessage? = null,
 ): ScreenMessages {
-    val candidates = messages.filter {
-        messageContract(it.isValid(), "invalid_message", strict, report)
+    var needsFailureFallback = false
+    val valid = messages.filter {
+        val accepted = messageContract(it.isValid(), "invalid_message", strict, report)
+        if (!accepted && it.isFailurePresentation()) needsFailureFallback = true
+        accepted
     }
+    // Keep a valid problem before the generic one. Never copy the broken text or controls.
+    val candidates = valid + if (needsFailureFallback)
+        listOfNotNull(checkedFailureFallback(failureFallback, strict, report)) else emptyList()
     val problem = candidates.firstOrNull { it.slot == MessageSlot.PROBLEM }
     val banner = if (problem == null) candidates.filter { it.slot == MessageSlot.BANNER }
         .minByOrNull { when {
@@ -121,6 +128,19 @@ internal fun screenMessages(
             "duplicate_chip", strict, report)
     }
     return ScreenMessages(chips, caption, center, banner, toast, inline)
+}
+
+internal fun UiMessage.isFailurePresentation(): Boolean = slot == MessageSlot.PROBLEM ||
+    (slot == MessageSlot.BANNER && tone == CaptureChromeTone.FAILURE)
+
+/** The screen owns allowed actions and their enabled conditions; shared drawing never invents them. */
+internal fun checkedFailureFallback(fallback: UiMessage?, strict: Boolean = BuildConfig.DEBUG,
+    report: (String) -> Unit = ::reportMessageContract): UiMessage? {
+    if (fallback == null) return null
+    return fallback.takeIf {
+        messageContract(it.isValid() && it.slot == MessageSlot.PROBLEM,
+            "invalid_failure_fallback", strict, report)
+    }
 }
 
 /** Never record message text, facts, URIs, or user data when a display contract is broken. */
@@ -181,9 +201,13 @@ private fun MessageActions(message: UiMessage, onAction: (MessageAction) -> Unit
 
 @Composable
 internal fun CaptureBanner(message: UiMessage, onAction: (MessageAction) -> Unit,
-    modifier: Modifier = Modifier, inSheet: Boolean = false) {
+    modifier: Modifier = Modifier, inSheet: Boolean = false, failureFallback: UiMessage? = null) {
     if (!messageContract(message.isValid() && message.slot == MessageSlot.BANNER,
-        "invalid_banner_renderer", BuildConfig.DEBUG, ::reportMessageContract)) return
+        "invalid_banner_renderer", BuildConfig.DEBUG, ::reportMessageContract)) {
+        if (message.tone == CaptureChromeTone.FAILURE || message.slot == MessageSlot.PROBLEM)
+            checkedFailureFallback(failureFallback)?.let { CaptureProblem(it, onAction, modifier) }
+        return
+    }
     Row(modifier.semantics { liveRegion = LiveRegionMode.Polite }
         .background(if (inSheet) CaptureDesign.Panel else CaptureDesign.Scrim, RectangleShape)
         .height(IntrinsicSize.Min)) {
@@ -197,9 +221,12 @@ internal fun CaptureBanner(message: UiMessage, onAction: (MessageAction) -> Unit
 
 @Composable
 internal fun CaptureProblem(message: UiMessage, onAction: (MessageAction) -> Unit,
-    modifier: Modifier = Modifier) {
+    modifier: Modifier = Modifier, failureFallback: UiMessage? = null) {
     if (!messageContract(message.isValid() && message.slot == MessageSlot.PROBLEM,
-        "invalid_problem_renderer", BuildConfig.DEBUG, ::reportMessageContract)) return
+        "invalid_problem_renderer", BuildConfig.DEBUG, ::reportMessageContract)) {
+        checkedFailureFallback(failureFallback)?.let { CaptureProblem(it, onAction, modifier) }
+        return
+    }
     Column(modifier.semantics { liveRegion = LiveRegionMode.Polite }
         .background(CaptureDesign.Scrim, RectangleShape).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
