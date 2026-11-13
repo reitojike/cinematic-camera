@@ -17,7 +17,9 @@ internal fun manualSaveSnapshot(state: ManualOriginalTrialSaveState): PhotoRollS
     ManualOriginalTrialSavePhase.SAVING -> PhotoRollSaveSnapshot(PhotoRollSavePhase.SAVING)
     ManualOriginalTrialSavePhase.PUBLISHED -> if (state.uri != null)
         PhotoRollSaveSnapshot(PhotoRollSavePhase.PUBLISHED, state.uri) else PhotoRollSaveSnapshot(PhotoRollSavePhase.HOLD)
-    ManualOriginalTrialSavePhase.UNCONFIRMED -> PhotoRollSaveSnapshot(PhotoRollSavePhase.UNCONFIRMED, gpuFailure = state.gpuFailure)
+    ManualOriginalTrialSavePhase.UNCONFIRMED -> PhotoRollSaveSnapshot(PhotoRollSavePhase.UNCONFIRMED, gpuFailure = state.gpuFailure,
+        recoveryMessage = if (state.reason == dev.cinematic.p0.rawcapture.ManualOriginalTrialSaveReason.PENDING_BYTES_DIFFER)
+            "未公開の JPEG が完成時の内容と一致しません。書きかけや変更の可能性があるため、上書きせず保留しています。" else null)
     ManualOriginalTrialSavePhase.GPU_FAILED -> PhotoRollSaveSnapshot(PhotoRollSavePhase.GPU_FAILED, gpuFailure = state.gpuFailure)
     ManualOriginalTrialSavePhase.CANCELLED -> PhotoRollSaveSnapshot(PhotoRollSavePhase.CANCELLED, gpuFailure = state.gpuFailure)
     ManualOriginalTrialSavePhase.HOLD -> PhotoRollSaveSnapshot(PhotoRollSavePhase.HOLD, gpuFailure = state.gpuFailure)
@@ -36,6 +38,7 @@ internal class ManualTrialJpegSaveOwner(
     private val resources: () -> PhotoRollResources,
 ) : PhotoRollJpegSaveOwner {
     override val supportsForegroundSave = true
+    override val isExplicitRecoveryRequest get() = handle.isExplicitRecoveryRequest
     private val running = AtomicBoolean(false)
     private val localFailure = MutableStateFlow<PhotoRollSaveSnapshot?>(null)
     private var retryGpuFailure = false
@@ -90,14 +93,27 @@ internal class ManualTrialJpegSaveOwner(
     override val canCancelForegroundSave get() = ForegroundExports.owns(exportWork)
     override fun cancelForegroundSave() { ForegroundExports.cancel(exportWork) }
 
-    override fun advance(shouldStop: () -> Boolean): PhotoRollSaveSnapshot {
+    override fun requestExplicitRecovery(shouldStop: () -> Boolean): PhotoRollJpegSaveOwner {
+        val future = handle.requestExplicitRecovery(shouldStop)
+        while (true) {
+            try { return ManualTrialJpegSaveOwner(future.get(250, TimeUnit.MILLISECONDS), resources) }
+            catch (_: TimeoutException) { /* Durable request remains on the existing serial owner. */ }
+        }
+    }
+
+    override fun advance(shouldStop: () -> Boolean) = advanceOwned(shouldStop, publicationOnly = false)
+    override fun recheckPublication(shouldStop: () -> Boolean) = advanceOwned(shouldStop, publicationOnly = true)
+
+    private fun advanceOwned(shouldStop: () -> Boolean, publicationOnly: Boolean): PhotoRollSaveSnapshot {
         if (!running.compareAndSet(false, true)) return PhotoRollSaveSnapshot(PhotoRollSavePhase.SAVING)
         try {
             val explicitGpuRetry = snapshot.phase == PhotoRollSavePhase.GPU_FAILED
             val explicitCancellationRetry = snapshot.phase == PhotoRollSavePhase.CANCELLED
             localFailure.value = null
             if (shouldStop()) return uncertain()
-            val future = handle.advance(resources().developConditions(rendererAvailable = true), retryGpuFailure = explicitGpuRetry, retryCancellation = explicitCancellationRetry, stop = shouldStop)
+            val conditions = resources().developConditions(rendererAvailable = true)
+            val future = if (publicationOnly) handle.recheckPublication(conditions, shouldStop)
+                else handle.advance(conditions, retryGpuFailure = explicitGpuRetry, retryCancellation = explicitCancellationRetry, stop = shouldStop)
             var stopRequested = false
             while (true) {
                 if (shouldStop() && !stopRequested) { stopRequested = true; handle.requestStop() }

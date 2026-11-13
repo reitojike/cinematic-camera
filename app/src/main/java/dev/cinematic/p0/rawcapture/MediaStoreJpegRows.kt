@@ -16,7 +16,7 @@ import java.io.OutputStream
 
 /** Unconnected API-29+ adapter. Writes only its verified pending operation; never deletes a shared row. */
 @RequiresApi(29)
-internal class MediaStoreJpegRows(context: Context) : RenderedJpegRows {
+internal class MediaStoreJpegRows(context: Context) : RenderedJpegRows, JpegReconciliationRows {
     private val resolver = context.applicationContext.contentResolver
     private val packageName = context.applicationContext.packageName
     private val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)

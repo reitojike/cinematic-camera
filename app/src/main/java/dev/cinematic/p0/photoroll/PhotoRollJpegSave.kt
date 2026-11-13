@@ -13,7 +13,7 @@ import kotlinx.coroutines.flow.Flow
 
 internal enum class PhotoRollSavePhase { READY, SAVING, PUBLISHED, UNCONFIRMED, GPU_FAILED, CANCELLED, HOLD }
 internal data class PhotoRollSaveSnapshot(val phase: PhotoRollSavePhase, val uri: String? = null,
-    val gpuFailure: dev.cinematic.p0.rawcapture.GpuSaveFailure? = null)
+    val gpuFailure: dev.cinematic.p0.rawcapture.GpuSaveFailure? = null, val recoveryMessage: String? = null)
 internal fun interface PhotoRollJpegPublisher {
     fun advance(shouldStop: () -> Boolean): JpegPublicationRecord
 }
@@ -29,6 +29,11 @@ internal interface PhotoRollJpegSaveOwner {
     fun startForegroundSave(context: android.content.Context): Boolean = false
     val canCancelForegroundSave: Boolean get() = false
     fun cancelForegroundSave() = Unit
+    /** Explicit duplicate-risk consent only; returns a separately persisted request, never auto-called. */
+    fun requestExplicitRecovery(shouldStop: () -> Boolean): PhotoRollJpegSaveOwner? = null
+    val isExplicitRecoveryRequest: Boolean get() = false
+    /** Observe/resume existing publication only; never start an unstarted producer. */
+    fun recheckPublication(shouldStop: () -> Boolean): PhotoRollSaveSnapshot = snapshot
     val snapshots: Flow<PhotoRollSaveSnapshot>
     val snapshot: PhotoRollSaveSnapshot
     /** 0/0 until a deferred manual render has produced and inspected its full-size JPEG. */

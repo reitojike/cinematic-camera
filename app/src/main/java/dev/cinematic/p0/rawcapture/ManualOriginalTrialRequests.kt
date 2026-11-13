@@ -52,6 +52,26 @@ internal class ManualOriginalTrialRequests(
             ?.also(::requireSource) == request
     }
 
+    /** Only a separately committed explicit recovery consent may cross an UNKNOWN/intent HOLD.
+     * The caller fences old/new owners on the same serial authority. Never allocate another generation
+     * after lost cursor acknowledgement; the consent already fixed the one successor. */
+    @Synchronized fun installRecovery(value: ExplicitRecoveryExport, accepted: () -> Boolean): Original24Request {
+        requireSource(value.previous); requireSource(value.request)
+        if (!accepted()) throw CaptureJournalConflict()
+        val encoded = ManualOriginalTrialRequestCodec.encode(value.request)
+        val bytes = storage.read(ManualOriginalTrialRequestCodec.MAX_BYTES)
+        unconfirmed?.let { if (!it.contentEquals(encoded)) throw CaptureJournalConflict() }
+        if (bytes?.contentEquals(encoded) != true) {
+            if (bytes?.contentEquals(ManualOriginalTrialRequestCodec.encode(value.previous)) != true) throw CaptureJournalConflict()
+            unconfirmed = encoded
+            storage.replace(encoded)
+        }
+        if (storage.read(ManualOriginalTrialRequestCodec.MAX_BYTES)?.contentEquals(encoded) != true || !accepted())
+            throw IOException("Recovery cursor commit unconfirmed")
+        unconfirmed = null
+        return value.request
+    }
+
     /** Metadata-only cold open. Never allocates a generation or repairs an uncertain commit. */
     @Synchronized fun current(): Original24Request? {
         if (unconfirmed != null) throw IOException("Manual trial request commit remains unconfirmed")

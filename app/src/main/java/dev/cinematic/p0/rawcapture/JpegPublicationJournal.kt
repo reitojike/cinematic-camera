@@ -67,6 +67,22 @@ internal class JpegPublicationJournal(
         return persist(prepared)
     }
 
+    /** Dedicated recovery journal only. The caller retains the original UNKNOWN and its receipt.
+     * Complete bytes resume at the existing PUBLISHING step; no insert or copy is authorized. */
+    @Synchronized fun prepareReconciled(observation: JpegReconciliationObservation): JpegPublicationRecord {
+        val old = observation.previous
+        if (old.phase != JpegPublicationPhase.UNKNOWN || old.target.captureId != captureId ||
+            old.target.generation != generation || observation.uri == null || observation.finding !in setOf(
+                JpegReconciliationFinding.PUBLIC_BYTES_MATCH, JpegReconciliationFinding.PENDING_BYTES_MATCH)) throw CaptureJournalConflict()
+        val prepared = old.copy(revision = 0, phase = JpegPublicationPhase.PUBLISHING, uri = observation.uri)
+        read()?.let {
+            if (it.target != prepared.target || it.render != prepared.render || it.fingerprint != prepared.fingerprint ||
+                it.uri != prepared.uri) throw CaptureJournalConflict()
+            return it
+        }
+        return persist(prepared)
+    }
+
     @Synchronized fun recordRow(revision: Long, uri: String): JpegPublicationRecord {
         val current = current(revision)
         if (current.phase != JpegPublicationPhase.INSERTING || !isDngRowUri(uri)) throw CaptureJournalConflict()
