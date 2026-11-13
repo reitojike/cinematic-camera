@@ -49,7 +49,8 @@ internal object SaveRecoveryColdUiProbe {
                 val handle = requireNotNull(AndroidManualOriginalTrialSaves.knownPrepared(old.source))
                 assertEquals(old.strength, handle.appliedStrength, 0.0) // draft is deliberately .35
                 assertEquals(expected, handle.request)
-                await("fixed strength visibly applied") { strengthDisplayed(old.strength) }
+                val requireDisplayed = boundary == "b-cursor"
+                await("fixed strength visible") { strengthVisible(old.strength, requireDisplayed) }
                 val before = intent(app, expected)
                 val idleUntil = SystemClock.elapsedRealtime() + 1500
                 while (SystemClock.elapsedRealtime() < idleUntil) {
@@ -58,7 +59,8 @@ internal object SaveRecoveryColdUiProbe {
                     assertArrayEquals(before, intent(app, expected))
                     assertNull(publication(app, expected))
                     assertNull(ForegroundExports.gate.active())
-                    assertTrue("UI must keep the fixed requested and displayed strength", strengthDisplayed(old.strength))
+                    assertTrue("UI must keep the fixed strength without claiming a held preview was rendered",
+                        strengthVisible(old.strength, requireDisplayed))
                     Thread.sleep(25)
                 }
                 assertFalse(sawForegroundOwner.get())
@@ -104,20 +106,20 @@ internal object SaveRecoveryColdUiProbe {
     private fun intent(app: Context, request: Original24Request) = storage(app, request, CaptureJournalFile.MANUAL_REQUEST).read(ManualOriginalTrialRequestCodec.MAX_BYTES)
     private fun publication(app: Context, request: Original24Request) = storage(app, request, CaptureJournalFile.JPEG_PUBLICATION)
         .read(JpegPublicationCodec.MAX_BYTES)?.let(JpegPublicationCodec::decode)
-    private fun strengthDisplayed(value: Double): Boolean {
+    private fun strengthVisible(value: Double, requireDisplayed: Boolean): Boolean {
         // Inspect the actual disabled/enabled strength control, not the immutable backend handle.
         fun texts(node: AccessibilityNodeInfo): List<String> = buildList {
             node.text?.toString()?.let { addAll(it.split('\n')) }
             for (i in 0 until node.childCount) node.getChild(i)?.let { addAll(texts(it)) }
         }
         fun find(node: AccessibilityNodeInfo?): Boolean {
-            if (node == null || !node.refresh()) return false
+            if (node == null || !node.refresh() || !node.isVisibleToUser) return false
             val own = node.text?.toString()?.split('\n').orEmpty()
             if ("STRENGTH" in own) {
                 // Compose may merge the button's text; otherwise use the immediate text column.
                 val labels = if (own.size > 1) own else node.parent?.let(::texts).orEmpty()
-                return trialStrengthLabel(value) in labels && "表示中" in labels &&
-                    labels.none { it.contains("未反映") || it.startsWith("表示中 ") }
+                return trialStrengthLabel(value) in labels && (!requireDisplayed || ("表示中" in labels &&
+                    labels.none { it.contains("未反映") || it.startsWith("表示中 ") }))
             }
             for (i in 0 until node.childCount) if (find(node.getChild(i))) return true
             return false

@@ -16,6 +16,8 @@ force-stop は合成 process death であり、LMK や OS メモリ圧の再現�
 `SaveRecoveryColdUiProbe` は通常 Compose 画面、通常 factory と FGS を使用する。
 保存した要求の強度 .65 と edit-only recipe .35 をわざと異ならせる。
 画面表示後の metadata 復元、1.5秒の操作なし監視、未開始 intent 不生成を確認する。
+実際の強度 control の要求値65を確認し、READYだけは描画済みの「表示中」も要求する。
+HOLDはpreviewを閉じるため表示済み値null/未反映が正当であり、描画完了を要求しない。
 FGS ケースでは明示 UI 操作後の ForegroundExports owner を観測し、公開 byte hash を検証する。
 通知表示／通知取消そのものの自動操作はこの probe の対象外。既存 FGS 試験を別途選ぶ。
 
