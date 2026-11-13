@@ -1,6 +1,6 @@
 import json
 import unittest
-from collector import parse_log, parse_memory, stop_reason, preflight_evidence
+from collector import parse_log, parse_memory, parse_package_uid, stop_reason, preflight_evidence
 
 
 def log(message, pid='11', tag='CinematicMemory'):
@@ -8,6 +8,14 @@ def log(message, pid='11', tag='CinematicMemory'):
 
 
 class CollectorTest(unittest.TestCase):
+    def test_package_uid_matches_exact_current_user_package_not_test_package(self):
+        target = 'package:dev.cinematic.p0.memorydiagnostic uid:110240\n'
+        test = 'package:dev.cinematic.p0.memorydiagnostic.test uid:110241\n'
+        self.assertEqual('110240', parse_package_uid(test + target))
+        for text in ['', test, target + target, 'appId=10240', 'userId=10240']:
+            with self.assertRaises(ValueError):
+                parse_package_uid(text)
+
     def test_fixed_fields_and_own_pid_only(self):
         line = log('MEMORY_ADMISSION stage=ORIGINAL_DECODE outputPixels=123 mode=RECORD_ONLY uri=private photo=secret')
         event = parse_log(line, {'11'})

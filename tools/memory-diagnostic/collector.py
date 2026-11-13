@@ -17,6 +17,13 @@ KEYS = {'mode', 'stage', 'elapsedMs', 'epochMs', 'pid', 'availMemBytes', 'lowMem
 STAGES = {'ROLL_PREVIEW', 'ROLL_SAVE', 'ORIGINAL_DECODE', 'BOUNDED_PREVIEW', 'ORIGINAL_SAVE'}
 
 
+def parse_package_uid(text):
+    matches = re.findall(r'^package:' + re.escape(PACKAGE) + r' uid:(\d+)\s*$', text, re.M)
+    if len(matches) != 1:
+        raise ValueError('Diagnostic package identity unavailable')
+    return matches[0]
+
+
 def parse_log(line, own_pids):
     prefix = re.match(r'\s*(\d+\.\d+)\s+(\d+)\s+\d+\s+[VDIWEF]\s+(\S+?)\s*:\s*(.*)', line)
     if not prefix:
@@ -134,10 +141,10 @@ def main():
             stop.set()
 
     # Learn this installation's UID before logcat so Application startup is observed before pidof catches up.
-    package = adb('shell', 'dumpsys', 'package', PACKAGE)
-    uid = re.search(r'\buserId=(\d+)', package.stdout)
-    if package.returncode or not uid:
+    package = adb('shell', 'pm', 'list', 'packages', '-U', '--user', 'current', PACKAGE)
+    if package.returncode:
         raise RuntimeError('Diagnostic package identity unavailable')
+    uid = parse_package_uid(package.stdout)
     device_clock = adb('shell', 'date', '+%s.%N')
     device_started = float(device_clock.stdout.strip())
     if device_clock.returncode:
@@ -156,7 +163,7 @@ def main():
                     found = re.search(r'\bpid=(\d+)', line)
                     if found:
                         result = adb('shell', 'cat', '/proc/' + found[1] + '/status')
-                        if re.search(r'^Uid:\s+' + uid[1] + r'\s', result.stdout, re.M):
+                        if re.search(r'^Uid:\s+' + uid + r'\s', result.stdout, re.M):
                             own_pids.add(found[1])
                 event = parse_log(line, own_pids)
                 if event and float(event['device_epoch']) >= device_started:
