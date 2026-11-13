@@ -69,19 +69,23 @@ class CaptureMessagesTest {
     }
 
     @Test fun invalidToneAndActionContractsAreRejected() {
-        for (slot in MessageSlot.entries) {
-            assertThrows(IllegalArgumentException::class.java) { message(slot, CaptureChromeTone.RECORDING) }
+        fun assertInvalid(factory: () -> UiMessage) {
+            if (BuildConfig.DEBUG) assertThrows(IllegalArgumentException::class.java) { factory() }
+            else assertFalse(factory().isValid())
         }
-        assertThrows(IllegalArgumentException::class.java) { message(MessageSlot.TOAST, CaptureChromeTone.FAILURE) }
-        assertThrows(IllegalArgumentException::class.java) { message(MessageSlot.PROBLEM) }
-        assertThrows(IllegalArgumentException::class.java) { message(MessageSlot.BANNER) }
-        assertThrows(IllegalArgumentException::class.java) { warning.copy(inProgress = true, tone = CaptureChromeTone.FAILURE) }
+        for (slot in MessageSlot.entries) {
+            assertInvalid { message(slot, CaptureChromeTone.RECORDING) }
+        }
+        assertInvalid { message(MessageSlot.TOAST, CaptureChromeTone.FAILURE) }
+        assertInvalid { message(MessageSlot.PROBLEM) }
+        assertInvalid { message(MessageSlot.BANNER) }
+        assertInvalid { warning.copy(inProgress = true, tone = CaptureChromeTone.FAILURE) }
         val action = MessageControl(MessageAction.RETRY, "再試行")
         for (slot in listOf(MessageSlot.CHIP, MessageSlot.CAPTION, MessageSlot.TOAST)) {
-            assertThrows(IllegalArgumentException::class.java) { message(slot).copy(primary = action) }
+            assertInvalid { message(slot).copy(primary = action) }
         }
-        assertThrows(IllegalArgumentException::class.java) { warning.copy(secondary = action) }
-        assertThrows(IllegalArgumentException::class.java) { message(MessageSlot.INLINE).copy(primary = action, secondary = action) }
+        assertInvalid { warning.copy(secondary = action) }
+        assertInvalid { message(MessageSlot.INLINE).copy(primary = action, secondary = action) }
     }
 
     @Test fun assemblerRetainsActionStateAndUserCancellationWarning() {
@@ -95,8 +99,31 @@ class CaptureMessagesTest {
 
     @Test fun captionCannotDisguiseDuplicateStatusAsImageDescription() {
         assertThrows(IllegalArgumentException::class.java) {
-            screenMessages(listOf(warning, message(MessageSlot.CAPTION, fact = warning.fact)))
+            screenMessages(listOf(warning, message(MessageSlot.CAPTION, fact = warning.fact)), strict = true)
         }
+    }
+
+    @Test fun releaseSuppressesDuplicateCaptionAndChipAndRecordsOnlyReason() {
+        val records = mutableListOf<String>()
+        val center = message(MessageSlot.CENTER, fact = "image")
+        val result = screenMessages(listOf(center,
+            message(MessageSlot.CAPTION, fact = "image"),
+            message(MessageSlot.CHIP, fact = "image")), strict = false, report = records::add)
+        assertEquals(center, result.center)
+        assertNull(result.caption)
+        assertTrue(result.chips.isEmpty())
+        assertEquals(listOf("duplicate_caption", "duplicate_chip"), records)
+    }
+
+    @Test fun releaseContractRecordsButDebugContractThrows() {
+        val records = mutableListOf<String>()
+        assertFalse(messageContract(false, "invalid_message", false, records::add))
+        assertEquals(listOf("invalid_message"), records)
+        assertThrows(IllegalArgumentException::class.java) {
+            messageContract(false, "invalid_message", true, records::add)
+        }
+        assertTrue(messageContract(true, "unused", false, records::add))
+        assertEquals(1, records.size)
     }
 
     @Test fun designTokensRetainExistingTypeAndCentralizeOverlayOpacity() {
