@@ -1,4 +1,0 @@
-software reference, not compositor evidence
-host=1080x2424 screen=[0, 0] window=[0, 0]
-dialog=840x896 screen=[120, 764] window=[0, 0]
-layout width=-2 height=-2 x=0 y=0 gravity=17 flags=25165826 dimAmount=0.6 appliedDim=0.6
