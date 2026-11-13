@@ -45,6 +45,8 @@ class LibraryMessagesTest {
         val result = libraryMessages(access, "開けませんでした", "一覧補足", false, false, true, false,
             foregroundSaveMessages(save))
         assertEquals("library.failure", result.banner?.fact)
+        assertEquals(MessageAction.CANCEL_SAVE, result.banner?.primary?.action)
+        assertEquals(MessageAction.ALLOW_NOTIFICATIONS, result.banner?.secondary?.action)
         assertEquals("一覧補足", result.inline.single().body)
         assertNull(result.center)
     }

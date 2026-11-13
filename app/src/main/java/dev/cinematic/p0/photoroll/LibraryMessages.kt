@@ -24,6 +24,8 @@ internal fun foregroundSaveMessages(state: ForegroundSaveMessageState, activeOnl
     if ((!state.supported && !state.active) || (activeOnly && !state.active)) return emptyList()
     val cancel = if (state.active) MessageControl(MessageAction.CANCEL_SAVE, "保存を取り消す",
         enabled = state.foreground && !state.stopping) else null
+    val notify = if (!state.notificationsAllowed && state.canRequestNotifications)
+        MessageControl(MessageAction.ALLOW_NOTIFICATIONS, "通知を許可", enabled = state.foreground) else null
     val candidates = mutableListOf<UiMessage>()
     if (state.active) candidates += UiMessage(
         MessageSlot.BANNER,
@@ -33,15 +35,14 @@ internal fun foregroundSaveMessages(state: ForegroundSaveMessageState, activeOnl
             state.stopping -> "保存を止めています。"
             else -> "JPEGを保存中です。アプリを離れても続きます。"
         },
-        "save.foreground_progress", primary = cancel, inProgress = !state.held,
+        "save.foreground_progress", primary = cancel, secondary = notify, inProgress = !state.held,
     )
     else candidates += UiMessage(MessageSlot.INLINE, CaptureChromeTone.NORMAL,
         "保存はアプリ切替後も継続します。撮影開始時は中断し、自動再開しません。", "save.background_policy")
     if (!state.notificationsAllowed) candidates += UiMessage(
         MessageSlot.BANNER, CaptureChromeTone.WARNING,
         "保存の通知はオフです。取消はこの画面から行えます。", "save.notifications_disabled",
-        primary = if (state.canRequestNotifications) MessageControl(MessageAction.ALLOW_NOTIFICATIONS,
-            "通知を許可", enabled = state.foreground) else null,
+        primary = notify,
     )
     return candidates
 }
@@ -58,7 +59,11 @@ internal fun libraryMessages(
     save: List<UiMessage> = emptyList(),
 ): ScreenMessages = screenMessages(buildList {
     notice?.takeIf { it.isNotBlank() }?.let {
-        add(UiMessage(MessageSlot.BANNER, CaptureChromeTone.FAILURE, it, "library.failure"))
+        // A library failure must not hide the only way to cancel the ongoing process save.
+        val controls = save.flatMap { listOfNotNull(it.primary, it.secondary) }.distinctBy { it.action }
+            .filter { it.action == MessageAction.CANCEL_SAVE || it.action == MessageAction.ALLOW_NOTIFICATIONS }
+        add(UiMessage(MessageSlot.BANNER, CaptureChromeTone.FAILURE, it, "library.failure",
+            primary = controls.getOrNull(0), secondary = controls.getOrNull(1)))
     }
     addAll(save)
     if (!(access.images && access.videos)) add(UiMessage(
@@ -74,7 +79,7 @@ internal fun libraryMessages(
         add(UiMessage(MessageSlot.INLINE, CaptureChromeTone.NORMAL, it, "library.listing_note"))
     }
     if (empty) add(UiMessage(MessageSlot.CENTER, CaptureChromeTone.NORMAL,
-        "該当する項目がありません。アクセス許可や絞り込みを確認してください。DNGはFilesからも選べます。",
+        "該当する項目がありません。アクセス許可・絞り込みを確認するか、FilesでDNGを開いてください。",
         "library.empty", primary = MessageControl(MessageAction.GRANT_ACCESS, "アクセスを許可", permissionEnabled),
         secondary = MessageControl(MessageAction.OPEN_FILES, "Filesで開く", filesEnabled)))
 })
