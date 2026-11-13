@@ -17,7 +17,19 @@ for variant in ("debug", "release", "memoryDiagnostic"):
     manifest = build / f"intermediates/merged_manifest/{variant}/process{cap}MainManifest/AndroidManifest.xml"
     root = ET.parse(manifest).getroot()
     assert root.get("package") == identity, variant
-    permissions.append(sorted(tuple(sorted(item.attrib.items())) for item in root.findall("uses-permission")))
+    # AndroidX scopes its non-exported receiver signature permission to applicationId.
+    receiver = identity + ".DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+    declarations = root.findall("permission")
+    assert len(declarations) == 1
+    assert declarations[0].get(android + "name") == receiver
+    assert declarations[0].get(android + "protectionLevel") == "signature"
+    normalized = []
+    for item in root.findall("uses-permission"):
+        attrs = dict(item.attrib)
+        if attrs.get(android + "name") == receiver:
+            attrs[android + "name"] = "APPLICATION_ID.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+        normalized.append(tuple(sorted(attrs.items())))
+    permissions.append(sorted(normalized))
     app = root.find("application")
     if expected:
         assert app.get(android + "name") == "dev.cinematic.p0.memory.MemoryDiagnosticApplication"

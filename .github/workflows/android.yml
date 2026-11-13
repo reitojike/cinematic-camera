@@ -124,6 +124,11 @@ jobs:
         run: |
           ./gradlew :app:testMemoryDiagnosticUnitTest --tests '*MemoryAdmissionDiagnosticTest' :app:assembleMemoryDiagnostic :app:generateDebugBuildConfig :app:generateReleaseBuildConfig :app:processDebugMainManifest :app:processReleaseMainManifest -PcinematicMemoryDiagnostic=true --no-daemon
           python3 -B tools/memory-diagnostic/verify_isolation.py app/build
+          if CINEMATIC_SIGNING_MODE=stable_internal ./gradlew help -PcinematicMemoryDiagnostic=true --no-daemon > "$RUNNER_TEMP/memory-signing-rejection.txt" 2>&1; then
+            echo 'Memory diagnostic accepted internal signing' >&2
+            exit 1
+          fi
+          grep -F 'RAW diagnostics use ephemeral_debug signing only' "$RUNNER_TEMP/memory-signing-rejection.txt"
       - name: GPU診断のunitレポートを保存
         if: always()
         uses: actions/upload-artifact@v7
