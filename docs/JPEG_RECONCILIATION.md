@@ -104,3 +104,9 @@ storage file kind、cold-open UI。統合前に #365 の確定 head と codec/�
 合成 JVM の観測試験と、intent/private/journal/insert/copy/close/publish/ack の process death 試験、
 Android provider の実試験、実機 LMK は別々に記録する。読取専用基盤の試験だけで
 要求 idempotency・永続救済・UI・#365 回帰の完了を宣言しない。
+
+Android の準備済み試験は `SaveRecoveryFactoryAndroidTest`。`isolated=true saveRecovery=true`
+を明示した emulator 専用で、小型合成 DNG の原本 hash、intent-only からの明示要求、prepared index、
+旧 owner の admission 拒否、公開済み receipt と seed 間の保留を検査する。実行は未実施。
+これは process 内 factory の試験であり、cold process・FGS・Compose UI・host kill の試験とは別。
+新しい fixture の原本/要求/台帳は削除せず保持する。CI での instrumentation APK compile は実行合格としない。
