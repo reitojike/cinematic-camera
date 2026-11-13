@@ -105,23 +105,46 @@ class DevelopMessagesScreenshotAndroidTest {
                 listOf("設定保存中", "現像を続けられません", "画面の表示を確認できません。一覧に戻ってください。"),
                 messagesOverride = ScreenMessages(center = developFailureFallback(canLeave = false))),
         )
+        // Displayed fixtures have restored metadata and an accepted recipe/frame. No owner is run.
+        val expectedControls = mapOf(
+            "01" to listOf(false, false, false), "02" to listOf(true, true, false),
+            "03" to listOf(false, true, false), "04" to listOf(false, false, false),
+            "05" to listOf(true, false, true), "06" to listOf(true, false, true),
+            "07" to listOf(true, false, false), "08" to listOf(false, false, false),
+            "09" to listOf(true, false, false), "10" to listOf(false, false, false),
+            "11" to listOf(false, false, false), "12" to listOf(true, true, false),
+            "15" to listOf(false, false, false), "16" to listOf(true, false, true),
+            "17" to listOf(false, false, false), "18" to listOf(false, false, false),
+        )
+        cases.forEach { case ->
+            val snapshot = fixtureState(case.state)
+            assertEquals("Preflight save/edit/visible-resume eligibility: ${case.name}",
+                expectedControls.getValue(case.name.take(2)),
+                listOf(fixtureCanSave(snapshot), fixtureCanBegin(snapshot), snapshot.exportPaused && snapshot.canResumePreview))
+        }
         val shown = mutableStateOf(cases.first())
         val bound = requireNotNull(TrialStrengthEditor.empty(PhotoAdjustmentPolicy.defaults).bind(
             SharedOriginalReference("content://fixture/pr-c", OriginalFingerprint(100, "a".repeat(64)), OriginalGrant.USER_SELECTED)))
         val editor = bound.shown(bound.ticket, bound.requestedValues)
         fixture.content = {
             val current = shown.value
-            val displayedEditor = if (current.state.editing) editor.begin(.01, true) else editor
+            val snapshot = fixtureState(current.state)
+            val displayedEditor = when {
+                snapshot.phase == PhotoRollPhase.CHECKING -> bound.showingDraft()
+                snapshot.editing -> editor.begin(.01, true)
+                else -> editor
+            }
             CaptureTheme {
                 PhotoRollDevelopView("SYNTHETIC.dng", PhotoRollPreviewMode.MANUAL_TRIAL,
                     displayedEditor, { displayedEditor }, current.state.phase, null, null,
                     image.takeIf { !current.state.exportPaused && current.state.phase == PhotoRollPhase.DISPLAYED },
-                    null, null, true, current.state.savePhase, current.state.saving,
-                    current.state.savePhase == PhotoRollSavePhase.READY && !current.state.editing, false,
+                    null, null, snapshot.foreground && !snapshot.savingRecipe, snapshot.savePhase, snapshot.saving || snapshot.savingRecipe,
+                    fixtureCanSave(snapshot), fixtureCanBegin(snapshot),
                     {}, {}, {}, {}, { _, _, _ -> }, {}, {}, {}, {},
                     modifier = Modifier.fillMaxSize().safeDrawingPadding(),
-                    productMessages = current.messagesOverride ?: developMessages(current.state, current.foreground),
-                    productSave = developSavePresentation(current.state),
+                    gpuReady = snapshot.phase == PhotoRollPhase.DISPLAYED && !snapshot.exportPaused,
+                    productMessages = current.messagesOverride ?: developMessages(snapshot, current.foreground),
+                    productSave = developSavePresentation(snapshot),
                     info = { Text("合成画像による表示試験です。", style = CaptureDesign.Body) })
             }
         }
@@ -195,6 +218,22 @@ class DevelopMessagesScreenshotAndroidTest {
             }
         }
     }
+
+    private fun fixtureState(state: DevelopMessageState) = state.copy(
+        canLeave = !state.savingRecipe,
+        canResumePreview = state.foreground && !state.saving && !state.savingRecipe && gpuSaveCanResumePreview(state.savePhase),
+        retryEnabled = state.foreground && !state.saving && !state.savingRecipe,
+    )
+
+    private fun fixtureCanSave(state: DevelopMessageState) = state.foreground && !state.saving && !state.savingRecipe &&
+        !state.editing && state.phase == PhotoRollPhase.DISPLAYED &&
+        (!state.exportPaused || gpuSaveCanContinueWithoutPreview(state.savePhase)) &&
+        state.savePhase in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED,
+            PhotoRollSavePhase.UNCONFIRMED, PhotoRollSavePhase.GPU_FAILED, PhotoRollSavePhase.CANCELLED)
+
+    private fun fixtureCanBegin(state: DevelopMessageState) = state.phase == PhotoRollPhase.DISPLAYED &&
+        !state.exportPaused && !state.saving && !state.savingRecipe &&
+        canBeginStrengthEdit(PhotoRollPreviewMode.MANUAL_TRIAL, state.foreground, state.saving, state.savePhase)
 
     private fun awaitText(label: String) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
