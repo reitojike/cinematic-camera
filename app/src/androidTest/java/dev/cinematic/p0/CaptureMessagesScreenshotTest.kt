@@ -40,22 +40,31 @@ class CaptureMessagesScreenshotTest {
         val shown = mutableStateOf(cases.values.first())
         val horizontal = mutableStateOf(false)
         val reset = mutableStateOf(false)
+        val currentName = mutableStateOf("01-connecting")
+        val before = InstrumentationRegistry.getArguments().getString("comparisonBefore") == "true"
         ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
                 activity.setContent { CaptureTheme {
                     Box(Modifier.fillMaxSize().background(CaptureDesign.Ink)) {
-                        CaptureMessageOverlay(shown.value, horizontal.value,
+                        if (before) LegacyCaptureMessagesFixture(currentName.value, horizontal.value,
+                            Modifier.graphicsLayer { rotationZ = if (horizontal.value) -90f else 0f })
+                        else CaptureMessageOverlay(shown.value, horizontal.value,
                             shown.value.center?.fact == "capture.recovery", {},
                             Modifier.graphicsLayer { rotationZ = if (horizontal.value) -90f else 0f })
                     }
                     Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                        shown.value.inline.forEach { CaptureInlineNote(it, {}) }
+                        if (before) LegacySettingsNote(currentName.value)
+                        else shown.value.inline.forEach { CaptureInlineNote(it, {}) }
                     }
-                    if (reset.value) CaptureResetDialog(dismiss = {}, reset = {})
+                    if (reset.value) {
+                        if (before) LegacyCaptureResetDialog(dismiss = {}, reset = {})
+                        else CaptureResetDialog(dismiss = {}, reset = {})
+                    }
                 } }
             }
             for (landscape in listOf(false, true)) for ((name, messages) in cases) {
                 scenario.onActivity {
+                    currentName.value = name
                     horizontal.value = landscape
                     shown.value = messages
                     reset.value = name == "10-reset"
@@ -70,7 +79,7 @@ class CaptureMessagesScreenshotTest {
                     try {
                         view.draw(Canvas(bitmap))
                         val directory = File(requireNotNull(InstrumentationRegistry.getArguments()
-                            .getString("additionalTestOutputDir")), "ui-pr-b").apply { mkdirs() }
+                            .getString("additionalTestOutputDir")), if (before) "ui-pr-b-before" else "ui-pr-b").apply { mkdirs() }
                         File(directory, "$name-${if (landscape) "horizontal" else "vertical"}.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
                     } finally { bitmap.recycle() }
                 }
