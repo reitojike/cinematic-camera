@@ -1,7 +1,0 @@
-displayPixels=1080x2424,windowVisibleFrame=Rect(0, 0 - 1080, 2424)
-root=[120, 697],size=840x1029,density=2.625,densityDpi=420,fontScale=1.0
-text=前回の保存結果を確認できません,bounds=Rect(183, 760 - 897, 936),visible=true,enabled=true
-text=保存先に JPEG がある可能性があります。保存し直す場合は、前回と同じ設定で別の JPEG を作ります。原本と前回の記録は保持します。,bounds=Rect(183, 978 - 897, 1190),visible=true,enabled=true
-text=重複の可能性はあるが保存し直す,bounds=Rect(320, 1290 - 865, 1343),visible=true,enabled=true
-text=もう一度確認,bounds=Rect(610, 1574 - 828, 1627),visible=true,enabled=true
-text=今は保存しない,bounds=Rect(610, 1700 - 865, 1726),visible=true,enabled=true

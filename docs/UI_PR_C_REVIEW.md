@@ -1,12 +1,12 @@
 # PR-C 表示レビュー資料
 
 [表示指示書](DEVELOP_UI_REFACTOR_INSTRUCTIONS.md) の 3.4 (1)〜(4),(6) と、#382・#383 の本人レビュー指摘を対象とします。
-比較の製品基準は main `53e68ffc`（#390 の共通 fail-soft 統合後）です。C の製品差分は `32fec1f3`、比較 fixture の最終補正は `c229f3e4` です。本人の目視承認はまだ得ていません。
+比較の製品基準は main `53e68ffc`（#390 の共通 fail-soft 統合後）です。C の製品差分は `32fec1f3`、比較 fixture の最終補正は `c229f3e4` です。本人が固定 commit `fbaf293a` の比較一覧を確認し「OKです」と表示を承認しました。
 
 ## 変更範囲
 
 GPU の製品現像画面の表示のみです。CPU・診断経路、保存可否、取消、再開、照合、明示再保存の条件と状態遷移は変更しません。
-PR-D 対象の画面全体の組み直し・CPU 引数削除は含みません。本人の表示承認前にはマージしません。
+PR-D 対象の画面全体の組み直し・CPU 引数削除は含みません。承認対象から見た目を変更する場合は再提示します。
 
 ## 主な文言変更
 
@@ -134,7 +134,7 @@ before/after は同じ合成画像、既存 Pixel 9a ATD、foreground=true、表
 - 製品差分 32fec1f3: GitHub CI 7/7 成功、ローカル lint・全 debug unit 1368 件（失敗 0、skip 12）・指定 release unit 6 件（失敗 0、skip 0）・debug/AndroidTest APK 成功。独立静的レビューで P1/P2 指摘なし。
 - fixture 補正 7c9ed6de: AndroidTest APK 成功。before/after の入力・enabled 条件・旧文言は独立事前レビュー済み。修正後 ATD は 1 分 8 秒で成功し after 18 枚を取得。初回の条件不整合画像は不採用。
 - ATD は software View-tree の合成表示で、実機 GPU・保存処理・OS 通知・画質の実証ではありません。
-- Codex レビューは使用上限で未完了です。本人の表示承認前にはマージしません。
+- Codex レビューは使用上限で未完了です。承認対象から見た目を変更する場合は再提示します。
 
 - before fixture e68b94a7（製品 baseline 53e68ffc）: AndroidTest APK 成功、固定 ATD 1 分 38 秒で 2 tests / 0 failures、16 枚取得。before 17/18 は旧版に該当表示なし。実行後は共有枠の count 0・adb 空を確認。
 - after 修正版 18 枚は独立目視レビュー済み（文字欠け・重なり・期待と異なる有効表示なし）。before との画像比較結果はレビュー一覧に記録します。
@@ -147,4 +147,8 @@ before/after は同じ合成画像、既存 Pixel 9a ATD、foreground=true、表
 
 最終の親構造一致版: before 8d5c04f9 は全量16枚（2試験成功、1分6秒）、after c229f3e4 は全量18枚（2試験成功、1分15秒）を取得。代表状態の色・背景・密度条件を先に独立確認し、全量へ進みました。従前の不採用画像は比較一覧へ混ぜません。
 
-最終の前後34枚は独立目視比較で新しい文字切れ・欠落・操作可否の不整合なし（旧13の既知制限を除く）。c229f3e4 の GitHub CI 7/7 成功。スマホ向け一覧は [レビュー資料](ui-review/pr-c/README.md) から開けます。本人の承認待ちです。
+最終の前後34枚は独立目視比較で新しい文字切れ・欠落・操作可否の不整合なし（旧13の既知制限を除く）。c229f3e4 の GitHub CI 7/7 成功。スマホ向け一覧は [固定 commit のレビュー資料](https://github.com/reitojike/cinematic-camera/blob/fbaf293a4627a951b884ea33ade4e7cdaf823255/docs/ui-review/pr-c/README.md) から開けます。本人表示承認済みです。
+
+## 表示承認後の整理
+
+本人は fbaf293a の比較一覧を確認して表示を承認しました。一時画像・一覧生成物・旧版再現 fixture は、この固定 commit の証跡を維持した上で branch 最新版から除去しました。AndroidTest の現行回帰 fixture は残します。製品の表示コード・文言・操作条件は承認対象と同一で、B 固有画面は含めません。E helper と共有 policy の統合順を調整し、最終 CI・canonical/独立レビュー・未解決会話の条件を満たしてから通常マージします。

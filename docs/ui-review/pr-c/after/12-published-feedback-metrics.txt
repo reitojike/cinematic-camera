@@ -1,1 +1,0 @@
-density=2.625; dpi=420; fontScale=1.0; display=1080x2424; bitmap=1080x2424
