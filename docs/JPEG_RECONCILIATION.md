@@ -26,7 +26,14 @@
 - 候補なし・複数候補・改変・権限喪失・I/O 障害は保留。private 出力不在も未公開証明にはならない。
   ApplicationExitInfo は診断に限定する。
 
-## 永続化・既存 publisher への接続（未実装）
+## 永続化基盤・既存 publisher への接続
+
+`SaveRecoveryCodec` は別 magic/version/kind、上限16KiB、checksum、内包 blob の長さ制限と
+canonical readback を持つ。照合記録は旧 journal 全体、観測分類、URI を固定する。
+`JpegReconciliationReceipt` は呼出側が割り当てた一観測専用 slot に一度だけ保存し、異なる証拠で
+上書きしない。再照合には別 slot が必要。slot の割当・保存先・読取結果の UI 採用は未接続。
+commit 前後に既存 authority が旧 journal/revision・世代と資源解放を確認する必要がある。
+永続記録は過去の観測であり、現在の MediaStore 状態や公開許可を永久に保証しない。
 
 旧 intent / journal は保持する。照合記録には旧 journal 全体またはその厳密な識別と revision、
 観測 URI と byte 証拠を固定し、旧 UNKNOWN を通常状態へ書き換えない。
@@ -34,13 +41,36 @@
 公開前の原本再照合を省略しない。公開済みの後日削除・改変から自動再作成しない。
 書きかけ削除や既存 JPEG 上書きは暗黙に追加しない。
 
-## 明示的な別書き出し（未実装）
+## 明示的な別書き出し（受領モデルのみ、実行・UI 未接続）
 
 初期状態は保留。「もう一度確認」「今は保存しない」「重複の可能性はあるが保存し直す」を区別する。
 最後の選択だけで、旧要求との関連を持つ独立した永続要求を作る。旧保存を成功／取消に偽装しない。
 原本 URI 複製や source cursor の黙った上書きで identity を迂回しない。
 固定 idempotency key の commit/readback、二重タップ・kill・ack 喪失後の再取得、原本 hash 再照合、
 旧新 owner の排他、再び不明になった要求の保留が接続前の条件。
+
+`ExplicitRecoveryExport` は固定 key、旧要求、旧 intent 生 bytes の SHA-256、任意の旧 UNKNOWN journal、
+同じ原本の次世代要求、指定 renderer を保持する。旧 intent の codec を移行せず、旧 bytes は外部に保全する。
+旧/破損 request を現在の設定から復元してこのモデルへ投入してはならない。
+`ExplicitRecoveryExports` は一 predecessor に一つの consent slot を持つ受領モデル。
+同じ key/要求は再取得し、別 key/設定への置換は拒否する。replace/ack/readback 不明時は旧新とも保留する。
+
+接続する authority は以下を全経路で守る必要がある。
+
+- 唯一の既存直列 owner 上で、同じ predecessor の slot を全 cold-open/通知/再確認/保存経路が参照する。
+  別インスタンスによる並行 writer や、slot の削除・使い回しは許さない。
+- `accept` の callback で明示選択、依然不明であること（公開確定 receipt がないこと）、
+  旧 intent/journal の完全一致、原本 hash、世代、指定 renderer、旧新処理の停止と全資源解放を確認する。
+- 旧 writer は `oldMayRun`、新 writer は固定要求について `newMayRun` を確認する。
+  両者は receipt の存在に基づく必要条件だけで、原本再照合や generation/停止/資源 fence を代替しない。
+  例外は保留へ伝える。失敗を許可に変換しない。
+- `accept` の戻り値は開始許可ではない。同一要求を何度取得しても、producer の一度限りの開始は
+  **既存保存 owner の durable intent/readback** に接続する。kill が intent 前なら未開始、intent 後なら
+  既存 owner の HOLD/同一 publication 再開規則を使い、ここで再実行可能と推定しない。
+- source cursor の変更が必要なら、consent を先に commit/readback して旧 writer を fence した後、
+  固定した次世代だけを既存受付へ渡す。cursor ack 喪失から別世代を採番しない。この接続は未実装。
+
+このモデルは保存の進捗・取消・成功状態を持たず、#365 の attempt 台帳や publisher を複製しない。
 
 ## #365 との分離
 
