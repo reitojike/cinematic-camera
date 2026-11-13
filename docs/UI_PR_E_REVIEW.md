@@ -4,19 +4,21 @@ Issue #385。指示書は [DEVELOP_UI_REFACTOR_INSTRUCTIONS](DEVELOP_UI_REFACTOR
 
 ## 現在の区切り
 
-純粋な `libraryMessages` / `foregroundSaveMessages` と保存状態の購読・操作bindingを準備。
-**画面切替はまだ行っていない。完成・目視承認済みではない。**
+純粋な `libraryMessages` / `foregroundSaveMessages` / `importMessages` と保存状態の購読・操作bindingを追加。
+カメラロール・取り込み入口・ダイアログを接続。**最終検証・目視承認前であり、完成扱いしない。**
 B所有の共通バリデーション変更とは別ファイル。Cでは `save.foreground_progress` と
 `preview.export_paused` を別の事実として組み立て、中央のプレビュー停止表示を残す。
 
 ## 次の接続と確認
 
 - CameraRollBrowserに候補を一括で渡す。失敗 > 保存進行 > 権限warning、バナーは1つ。
-- 現在のForegroundSaveNoticeを購読bindingへ置換。GPU/CPU画面を含む全呼出箇所を確認してから旧Composableを除去。
+- カメラロールのForegroundSaveNoticeを購読bindingへ置換。GPU画面はPR-Cで移行する。
+  CPU/診断画面は削除まで現状維持の指示を優先し、そこで使う旧ComposableはCPU削除時まで温存する。
 - DngImportPanelのeffect/owner lifetimeを維持し、入口だけを下段と空状態へ移す。
-  dialogの開閉状態を上位へ移す場合もrememberSaveable、pause/dispose、picker、consumeReady条件を維持する。
+  dialogの開閉rememberSaveableは元の場所に保持し、描画slotを下段へ渡す。pause/dispose、picker、consumeReady条件を維持する。
 - 取り込みdialogはCaptureDialog、説明/結果はINLINE、進行はAmber/Line。
-  state.messageは自由文しか持たないため、文言一致から成功を推測しない。結果の表示種別をどう渡すか確認してから接続する。
+  state.messageの自由文から成功を推測せず、既存の結果分岐で表示専用messageKindを付ける。
+  messageKindは処理の受付・コピー・公開・復旧の条件では参照しない。
 - 項目名は「取り込み n · 完了 / 中断 / 権限の解放待ち」など状態を添える。
   DngImportItemにはURI/ファイル名がない。表示のためにjournalへファイル名を保存しない。
 - 非選択ボタンはCaptureTextAction。フィルタの選択surfaceは維持。
@@ -26,6 +28,8 @@ B所有の共通バリデーション変更とは別ファイル。Cでは `save
 | 旧 | 新 |
 |---|---|
 | Filesから DNG… / Filesから選ぶ | Filesで開く |
+| 空一覧の3文案内 | 該当する項目がありません。アクセス許可・絞り込みを確認するか、FilesでDNGを開いてください。 |
+| 取り込み n | 取り込み n · 完了 / 中断 / 未完了 / 権限の解放待ち |
 | 外部DNGを取り込む | 取り込む |
 | JPEGを保存中です。アプリを離れても継続します。 | JPEGを保存中です。アプリを離れても続きます。 |
 | 保存の停止処理中です。資源の解放を確認しています。 | 保存を止めています。 |
@@ -39,3 +43,10 @@ B所有の共通バリデーション変更とは別ファイル。Cでは `save
 通常幅・狭幅・大きな文字で操作が隠れないことを確認。
 ボタンのenabledとhandler条件の差分照合、単体試験、lint/unit/assemble、Android表示回帰、最終head CIと独立レビュー。
 スクリーンショットと最終文言一覧に対する本人承認前はマージしない。
+
+## 操作到達性のレビュー補正
+
+単一バナーに統合すると一覧失敗が保存進行を隠し、取消まで消える問題を独立レビューで検出。
+優先する一覧失敗へ保存取消・通知許可controlを同じenabledのまま引き継ぐ。
+保存進行/停止/終了未確認バナーにも通知許可を副操作として残す。
+合成回帰で一覧失敗中の取消が既存handlerへ1回だけ届くことを確認する。

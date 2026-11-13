@@ -13,6 +13,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
+import dev.cinematic.p0.*
 import dev.cinematic.p0.CaptureTheme
 import org.junit.Assert.*
 import org.junit.Test
@@ -21,12 +22,18 @@ import org.junit.Test
 class CameraRollBrowserAndroidTest {
     @get:org.junit.Rule val diagnostic = SyntheticFixtureRule()
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
+    private fun outputFile(name: String): File {
+        val supplied = InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")
+        val root = supplied?.let(::File)
+            ?: File(requireNotNull(instrumentation.targetContext.externalMediaDirs.firstOrNull()), "additional_test_output")
+        return File(root, "ui-pr-e").apply { mkdirs() }.resolve(name)
+    }
     private val full = CameraRollAccess(true, true, true, false)
     private val selected = CameraRollAccess(true, false, false, true)
-    private val emptyText = "該当する項目がありません。アクセス許可や絞り込みを確認してください。DNGはFilesの「内部ストレージ」からも選べます"
+    private val emptyText = "該当する項目がありません。アクセス許可・絞り込みを確認するか、FilesでDNGを開いてください。"
     private data class Fixture(val access: CameraRollAccess, val loading: Boolean = false,
         val items: List<PhotoRollItem> = emptyList(), val permission: Boolean = true,
-        val files: Boolean = true, val width: Int = 412, val height: Int = 924, val fontScale: Float = 1f)
+        val files: Boolean = true, val width: Int = 412, val height: Int = 924, val fontScale: Float = 1f, val notice: String? = null, val save: List<UiMessage> = emptyList(), val saveAction: (MessageAction) -> Unit = {})
 
     private fun find(text: String): AccessibilityNodeInfo? {
         fun visit(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
@@ -71,7 +78,7 @@ class CameraRollBrowserAndroidTest {
         instrumentation.waitForIdleSync()
         diagnostic.captureSoftware().let { bitmap ->
             try {
-                File(instrumentation.targetContext.getExternalFilesDir(null), "roll-design-$name.png")
+                outputFile("roll-design-$name.png")
                     .outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
             } finally { bitmap.recycle() }
         }
@@ -92,10 +99,10 @@ class CameraRollBrowserAndroidTest {
                     CompositionLocalProvider(LocalDensity provides Density(density, fixture.fontScale)) {
                         CaptureTheme {
                             CameraRollBrowser(PhotoRollListing(fixture.items), fixture.access, PhotoRollKindFilter.ALL,
-                                null, fixture.loading, false, "合成の通知", PhotoRollPreviewMode.MANUAL_TRIAL,
+                                null, fixture.loading, false, fixture.notice, PhotoRollPreviewMode.MANUAL_TRIAL,
                                 false, false, fixture.permission, fixture.files, false, {}, {}, {}, {}, {},
                                 { permissions++ }, {}, { files++ }, {},
-                                Modifier.size(fixture.width.dp, fixture.height.dp), {})
+                                Modifier.size(fixture.width.dp, fixture.height.dp), saveMessages = fixture.save, saveAction = fixture.saveAction, select = {})
                         }
                     }
                 }
@@ -127,12 +134,12 @@ class CameraRollBrowserAndroidTest {
 
     @Test fun emptyActionsDispatchExactlyOnceAndDisabledActionsNeverDispatch() = runFixture(Fixture(selected)) { _, update, counts ->
         assertTrue(await("アクセスを許可", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
-        assertTrue(await("Filesから選ぶ", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+        assertTrue(await("Filesで開く", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
         instrumentation.waitForIdleSync()
         assertEquals(1 to 1, counts())
         update(Fixture(selected, permission = false, files = false))
         await("アクセスを許可", false).performAction(AccessibilityNodeInfo.ACTION_CLICK)
-        await("Filesから選ぶ", false).performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        await("Filesで開く", false).performAction(AccessibilityNodeInfo.ACTION_CLICK)
         instrumentation.waitForIdleSync()
         assertEquals(1 to 1, counts())
         capture("disabled-empty-actions")
@@ -141,7 +148,6 @@ class CameraRollBrowserAndroidTest {
     @Test fun loadingNeverAnnouncesEmptyAndRetainsOldSyntheticTiles() = runFixture(Fixture(full, loading = true)) { _, update, _ ->
         await("カメラロール")
         assertNull(find(emptyText))
-        assertNull(find("Filesから選ぶ"))
         val item = PhotoRollItem("content://synthetic/item", "SYNTHETIC.dng")
         update(Fixture(full, loading = true, items = listOf(item)))
         await(item.name)
@@ -160,13 +166,35 @@ class CameraRollBrowserAndroidTest {
                 await("選択した写真・動画だけにアクセスできます")
                 capture("viewport-${fixture.width}-${fixture.height}-${fixture.fontScale}")
                 await("アクセスを許可", true)
-                await("Filesから選ぶ", true)
+                await("Filesで開く", true)
                 capture("actions-${fixture.width}-${fixture.height}-${fixture.fontScale}")
-                await("Filesから DNG…", true)
+                await("Filesで開く", true)
                 capture("footer-${fixture.width}-${fixture.height}-${fixture.fontScale}")
-                await("合成の通知")
                 await("試験品質 · 手動保存 · 原本は変更しません ▾")
             }
         }
     }
+    @Test fun saveStatesAndFailureUseOnePriorityBanner() = runFixture(Fixture(full)) { _, update, _ ->
+        val base = ForegroundSaveMessageState(true, true, false, false, true, false, true)
+        val cases = listOf("saving" to base, "stopping" to base.copy(stopping = true),
+            "held" to base.copy(held = true), "notifications" to base.copy(active = false))
+        for ((name, save) in cases) {
+            val candidates = foregroundSaveMessages(save)
+            update(Fixture(full, save = candidates))
+            await(screenMessages(candidates).banner!!.body)
+            capture("message-$name")
+        }
+        var cancels = 0
+        update(Fixture(selected, notice = "合成の項目を開けませんでした", save = foregroundSaveMessages(base),
+            saveAction = { if (it == MessageAction.CANCEL_SAVE) cancels++ }))
+        await("合成の項目を開けませんでした")
+        assertTrue(await("保存を取り消す", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+        instrumentation.waitForIdleSync()
+        assertEquals(1, cancels)
+        await("通知を許可", true)
+        assertNull(find("JPEGを保存中です。アプリを離れても続きます。"))
+        assertNull(find("選択した写真・動画だけにアクセスできます"))
+        capture("message-failure-priority")
+    }
+
 }

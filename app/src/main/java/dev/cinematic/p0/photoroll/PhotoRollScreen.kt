@@ -582,14 +582,8 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
         Column(Modifier.fillMaxSize().safeDrawingPadding()) {
             // Process save status survives selection/lifecycle reloads; cancel must not wait for preview IO.
             if (selectedUri == null) {
-                ForegroundSaveNotice(jpegSave, foreground)
-                importConditions?.let { conditions ->
-                    DngImportPanel(foreground && !pickerPending && !viewerPending && !permissionPending,
-                        conditions, { importBusy = it }, gpuPublications) { uri ->
-                        importBusy = false
-                        chooseDng(uri, false)
-                    }
-                }
+                val saveMessages = rememberForegroundSaveMessages(jpegSave, foreground)
+                val library: @Composable ((@Composable () -> Unit)?) -> Unit = { importEntry ->
                 CameraRollBrowser(listing, access, kindFilter, folderKey, loading, viewerPending, notice, renderer.mode,
                     foreground && !importBusy && !viewerPending && !permissionPending,
                     foreground && !importBusy && !loading && !viewerPending && !permissionPending,
@@ -614,7 +608,9 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                         if (!pickerPending && navigation.canOpenViewer(currentForeground, false)) try { pickerPending = true; picker.launch(arrayOf("*/*")) }
                         catch (_: Exception) { pickerPending = false; notice = "Filesを開けませんでした" }
                     },
-                    more = { pageCursor = listing.nextCursor }, modifier = Modifier.weight(1f)) { item ->
+                    more = { pageCursor = listing.nextCursor }, modifier = Modifier.weight(1f),
+                    saveMessages = foregroundSaveMessages(saveMessages.state), saveAction = saveMessages.onAction,
+                    importEntry = importEntry) { item ->
                     if (item.kind == CameraRollKind.DNG) {
                         chooseDng(item.uri, false)
                     } else if (!viewerPending) {
@@ -634,6 +630,14 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                         }
                     }
                 }
+
+                }
+                if (importConditions != null) {
+                    DngImportPanel(foreground && !pickerPending && !viewerPending && !permissionPending,
+                        importConditions, { importBusy = it }, gpuPublications,
+                        open = { uri -> importBusy = false; chooseDng(uri, false) },
+                        content = { entry -> library(entry) })
+                } else library(null)
 
             } else if (gpuRenderer != null && gpuPublications != null) {
                 key(selectedUri) {
