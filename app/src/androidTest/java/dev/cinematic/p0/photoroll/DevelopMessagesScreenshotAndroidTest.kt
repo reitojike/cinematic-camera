@@ -60,6 +60,9 @@ class DevelopMessagesScreenshotAndroidTest {
         val writing = UiMessage(MessageSlot.BANNER, CaptureChromeTone.WARNING,
             "JPEGを保存中です。アプリを離れても続きます。", "save.foreground_progress",
             primary = MessageControl(MessageAction.CANCEL_SAVE, "保存を取り消す"), inProgress = true)
+        val activeSaveWithoutNotifications = ForegroundSaveMessageState(
+            supported = true, active = true, held = false, stopping = false,
+            foreground = true, notificationsAllowed = false, canRequestNotifications = true)
         val cases = listOf(
             Case("01-preparing", DevelopMessageState(PhotoRollPhase.CHECKING), listOf("画像を準備しています。")),
             Case("02-ready", ready, listOf("未保存")),
@@ -82,6 +85,15 @@ class DevelopMessagesScreenshotAndroidTest {
                 saving = true, rechecking = true), listOf("保存結果を確認しています。")),
             Case("12-published-feedback", ready.copy(savePhase = PhotoRollSavePhase.PUBLISHED, justPublished = true),
                 listOf("JPEGを保存しました。")),
+            Case("15-saving-notifications-disabled", ready.copy(savePhase = PhotoRollSavePhase.SAVING,
+                exportPaused = true), listOf("保存中 · プレビューを止めています", writing.body,
+                    "保存を取り消す", "通知を許可"),
+                foregroundSaveMessages(activeSaveWithoutNotifications, activeOnly = true)),
+            Case("16-cancelled-other-photo-saving", ready.copy(savePhase = PhotoRollSavePhase.CANCELLED,
+                exportPaused = true, canResumePreview = true),
+                listOf("保存取消", "保存のためプレビューを止めました", writing.body,
+                    "保存を取り消す", "プレビューを再開"),
+                foregroundSaveMessages(activeSaveWithoutNotifications.copy(notificationsAllowed = true), activeOnly = true)),
         )
         val shown = mutableStateOf(cases.first())
         val bound = requireNotNull(TrialStrengthEditor.empty(PhotoAdjustmentPolicy.defaults).bind(

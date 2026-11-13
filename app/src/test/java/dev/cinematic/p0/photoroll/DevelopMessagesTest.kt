@@ -145,4 +145,21 @@ class DevelopMessagesTest {
         assertEquals(MessageAction.RESUME_PREVIEW, result.center?.primary?.action)
         assertEquals(false, result.center?.primary?.enabled)
     }
+
+    @Test fun selectedActiveSaveBannerKeepsNotificationActionInEveryForegroundState() {
+        for ((held, stopping) in listOf(false to false, false to true, true to false)) {
+            for (foreground in listOf(true, false)) {
+                val candidates = foregroundSaveMessages(ForegroundSaveMessageState(
+                    supported = true, active = true, held = held, stopping = stopping,
+                    foreground = foreground, notificationsAllowed = false, canRequestNotifications = true,
+                ), activeOnly = true)
+                val selected = developMessages(state(PhotoRollSavePhase.SAVING).copy(exportPaused = true), candidates)
+                assertEquals("save.foreground_progress", selected.banner?.fact)
+                assertEquals(MessageAction.ALLOW_NOTIFICATIONS, selected.banner?.secondary?.action)
+                assertEquals(foreground, selected.banner?.secondary?.enabled)
+                assertEquals(MessageAction.CANCEL_SAVE, selected.banner?.primary?.action)
+                assertEquals(foreground && !stopping, selected.banner?.primary?.enabled)
+            }
+        }
+    }
 }
