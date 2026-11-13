@@ -81,6 +81,17 @@ PC採取器が約12分で終了記録なしに消失した事例は、設定し�
 PCのみのfake sourceで20分以上・複数の対話区切りと段階を跨ぐ持続、正常終了、強制終了、監視/採取の陳腐化を確認する。
 この予行はADB接続やPixel/Maliメモリの検証ではなく、実機再開を自動許可しない。
 
+実ADB持続の合成予行は通常GPU対応AVDの専用枠で、
+`ForegroundExportOwnerTest#optInMemoryDiagnosticTwentyMinuteAdbRehearsal` だけを指定する。
+`isolated=true`、`importUiFgsDocuments=true`、`memoryRehearsal20=true` と、毎回新規の32桁hex `memoryRehearsalToken` が必要。
+同じinstrumentation PIDで0/8/16分に小型の実DocumentsUI→GPU編集→FGS保存→原本/owner/fixture回収を行い、21分まで保持する。
+保持時間は採取基盤の寿命確認用であり、既存操作timeoutの延長や失敗隠蔽ではない。
+採取器はinstrumentationの前に独立監視から開始し、`--seconds 1230` として20分以上の採取と正常停止を確認する。
+採取/監視が欠落した場合、所有する試験controlディレクトリ `cache/memory-rehearsal-<token>/stop` だけに停止要求を置く。
+試験は現在の合成処理の回収後、待機中/次サイクル前に失敗終了し、自動再試行しない。アプリkillで保存を中断しない。
+各cycleのBEGIN/RELEASEDはinstrumentationの固定形式statusに記録する。3件の解放・20分以上の採取・監視正常終了・試験正常終了の全てを照合する。
+テスト側は自分で作成したcontrolだけを回収し、既存journal/他fixture/設定を変更しない。異常の所有状態が不明なら保持して報告する。
+
 ## OS回収・終了の観測（詳細）
 
 開始確認後、対象アプリのpid/時間とOSのexit-info（利用可能なら ApplicationExitInfo のreason/timestamp/PSS/RSS）を

@@ -44,6 +44,58 @@ class ForegroundExportOwnerTest {
     /** Real system picker, restricted to one uniquely named self-created Downloads source. */
     @Test fun documentsUiSyntheticDngEditsAndPublishesThroughRealForegroundService() = importedSyntheticDng(true)
 
+    /** Deliberate idle intervals test host/ADB lifetime, not rendering performance or longer operation timeouts. */
+    @Test fun optInMemoryDiagnosticTwentyMinuteAdbRehearsal() {
+        org.junit.Assume.assumeTrue(dev.cinematic.p0.BuildConfig.BUILD_TYPE == "memoryDiagnostic")
+        org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("memoryRehearsal20") == "true")
+        check(dev.cinematic.p0.memory.MemoryAdmissionDiagnostic.enabled)
+        val token = requireNotNull(InstrumentationRegistry.getArguments().getString("memoryRehearsalToken"))
+        require(token.matches(Regex("[0-9a-f]{32}")))
+        val control = File(context.cacheDir.canonicalFile, "memory-rehearsal-$token")
+        check(control.mkdir()) { "Rehearsal control already exists" }
+        val stop = File(control, "stop")
+        val started = android.os.SystemClock.elapsedRealtime()
+        fun holdUntil(minutes: Long) {
+            val target = started + TimeUnit.MINUTES.toMillis(minutes)
+            check(!stop.exists()) { "Host collector stopped; do not continue synthetic cycles" }
+            while (android.os.SystemClock.elapsedRealtime() < target) {
+                check(!stop.exists()) { "Host collector stopped; do not continue synthetic cycles" }
+                Thread.sleep(minOf(1000L, target - android.os.SystemClock.elapsedRealtime()).coerceAtLeast(1L))
+            }
+        }
+        var primary: Throwable? = null
+        try {
+            for ((cycle, offset) in listOf(0L, 8L, 16L).withIndex()) {
+                holdUntil(offset)
+                check(!unsettledFixture)
+                instrumentation.sendStatus(2, android.os.Bundle().apply {
+                    putString("stream", "MEMORY_REHEARSAL cycle=${cycle + 1} phase=BEGIN\n")
+                })
+                // Each successful cycle proves publication/readback and releases only its own synthetic resources.
+                // Any failure escapes immediately: no automatic retry or next cycle after an unknown owner/publication.
+                memoryDiagnosticDocumentsUiEditsPublishesAndReleasesWithRealGpuLogs()
+                instrumentation.sendStatus(2, android.os.Bundle().apply {
+                    putString("stream", "MEMORY_REHEARSAL cycle=${cycle + 1} phase=RELEASED\n")
+                })
+            }
+            // Collector starts before instrumentation and ends after 20 minutes. Keep this owned process alive
+            // for one extra minute so normal host shutdown is observable before the runner ends the process.
+            holdUntil(21)
+            check(!unsettledFixture && ForegroundExports.gate.active() == null)
+        } catch (failure: Throwable) {
+            primary = failure
+            throw failure
+        } finally {
+            try {
+                if (stop.exists()) check(stop.delete())
+                check(control.delete()) { "Rehearsal control cleanup failed" }
+            } catch (closing: Throwable) {
+                val first = primary
+                if (first != null) first.addSuppressed(closing) else throw closing
+            }
+        }
+    }
+
     @Test fun memoryDiagnosticDocumentsUiEditsPublishesAndReleasesWithRealGpuLogs() {
         org.junit.Assume.assumeTrue(dev.cinematic.p0.BuildConfig.BUILD_TYPE == "memoryDiagnostic")
         check(dev.cinematic.p0.memory.MemoryAdmissionDiagnostic.enabled)
