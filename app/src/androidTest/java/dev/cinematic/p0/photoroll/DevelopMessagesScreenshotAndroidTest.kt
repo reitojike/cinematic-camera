@@ -7,8 +7,10 @@ import android.graphics.Paint
 import android.os.SystemClock
 import android.view.View
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableStateOf
@@ -135,22 +137,28 @@ class DevelopMessagesScreenshotAndroidTest {
                 else -> editor
             }
             CaptureTheme {
+              Surface(Modifier.fillMaxSize()) {
+               Column(Modifier.fillMaxSize().safeDrawingPadding()) {
                 PhotoRollDevelopView("SYNTHETIC.dng", PhotoRollPreviewMode.MANUAL_TRIAL,
                     displayedEditor, { displayedEditor }, current.state.phase, null, null,
                     image.takeIf { !current.state.exportPaused && current.state.phase == PhotoRollPhase.DISPLAYED },
                     null, null, snapshot.foreground && !snapshot.savingRecipe, snapshot.savePhase, snapshot.saving || snapshot.savingRecipe,
                     fixtureCanSave(snapshot), fixtureCanBegin(snapshot),
                     {}, {}, {}, {}, { _, _, _ -> }, {}, {}, {}, {},
-                    modifier = Modifier.fillMaxSize().safeDrawingPadding(),
+                    modifier = Modifier.weight(1f),
                     gpuReady = snapshot.phase == PhotoRollPhase.DISPLAYED && !snapshot.exportPaused,
                     productMessages = current.messagesOverride ?: developMessages(snapshot, current.foreground),
                     productSave = developSavePresentation(snapshot),
                     info = { Text("合成画像による表示試験です。", style = CaptureDesign.Body) })
+               }
+              }
             }
         }
         try {
             ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
-                for (case in cases) {
+                val selected = cases.filter { InstrumentationRegistry.getArguments().getString("afterCase")?.let { prefix -> it.name.startsWith(prefix) } ?: true }
+                check(selected.isNotEmpty())
+                for (case in selected) {
                     scenario.onActivity { shown.value = case }
                     case.expected.forEach(::awaitText)
                     case.messagesOverride?.let {
@@ -175,6 +183,8 @@ class DevelopMessagesScreenshotAndroidTest {
         val dialogRoot = AtomicReference<View?>()
         fixture.content = {
             CaptureTheme {
+              Surface(Modifier.fillMaxSize()) {
+               Column(Modifier.fillMaxSize().safeDrawingPadding()) {
                 CaptureDialog(
                     if (recovery.value) MessageDialog("前回の保存結果を確認できません",
                         "保存先に JPEG がある可能性があります。保存し直す場合は、前回と同じ設定で別の JPEG を作ります。原本と前回の記録は保持します。",
@@ -194,6 +204,8 @@ class DevelopMessagesScreenshotAndroidTest {
                             style = CaptureDesign.Body, color = CaptureDesign.Muted)
                     }
                 }
+               }
+              }
             }
         }
         ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
@@ -261,6 +273,9 @@ class DevelopMessagesScreenshotAndroidTest {
         val configured = InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")
         val root = configured?.let(::File) ?: File(requireNotNull(instrumentation.targetContext.externalMediaDirs.firstOrNull()), "additional_test_output")
         val directory = File(root, "ui-pr-c").apply { check(isDirectory || mkdirs()) }
+        val dm = instrumentation.targetContext.resources.displayMetrics
+        val fontScale = instrumentation.targetContext.resources.configuration.fontScale
+        File(directory, "$name-metrics.txt").writeText("density=${dm.density}; dpi=${dm.densityDpi}; fontScale=$fontScale; display=${dm.widthPixels}x${dm.heightPixels}; bitmap=${bitmap.width}x${bitmap.height}")
         File(directory, "$name.png").outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
     }
 }
