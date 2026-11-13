@@ -35,6 +35,12 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
         val repository: PhotoRollRepository)
     @Volatile private var checkedOriginal: CheckedOriginal? = null
 
+    /** Explicit retry only. Cached pixels are independent copies, never displayed/save-owned data. */
+    fun releaseUnusedMemoryForRetry() {
+        previewCache?.clear()
+        discardTransientInputs()
+    }
+
     override fun discardTransientInputs() {
         originalEpoch.incrementAndGet()
         checkedOriginal = null

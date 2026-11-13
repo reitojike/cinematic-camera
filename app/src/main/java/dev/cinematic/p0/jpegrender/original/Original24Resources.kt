@@ -7,16 +7,16 @@ import android.os.PowerManager
 import java.io.IOException
 
 /** Read current OS pressure at allocation boundaries. No reservation or guarantee of completion.
- * Full decode/save retain their conservative allowance; reduced preview work has a separate gate. */
+ * Check memory only at admission; thermal/cancellation and allocation failures remain live. */
 internal object Original24Resources {
     fun requireAvailable(context: Context, stage: Original24MemoryStage = Original24MemoryStage.ORIGINAL_SAVE,
-        outputPixels: Long? = null) {
+        outputPixels: Long? = null, checkMemory: Boolean = stage != Original24MemoryStage.BOUNDED_PREVIEW) {
         val memory = ActivityManager.MemoryInfo().also {
             (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(it)
         }
         val thermal = if (Build.VERSION.SDK_INT >= 29)
             (context.getSystemService(Context.POWER_SERVICE) as PowerManager).currentThermalStatus else 0
-        if (!Original24MemoryPolicy.permits(stage, memory.lowMemory, memory.availMem)) {
+        if (checkMemory && !Original24MemoryPolicy.permits(stage, memory.lowMemory, memory.availMem)) {
             val observation = Original24MemoryObservation(stage, memory.availMem, memory.lowMemory, memory.threshold, outputPixels)
             // Fixed classification + OS values only; no URI, filename, source identity or exception text.
             val failure = Original24MemoryUnavailable(observation = observation)

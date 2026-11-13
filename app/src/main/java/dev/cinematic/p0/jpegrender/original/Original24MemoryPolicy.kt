@@ -4,14 +4,14 @@ import java.io.IOException
 
 internal enum class Original24MemoryStage { ORIGINAL_DECODE, BOUNDED_PREVIEW, ORIGINAL_SAVE }
 
-/** Admission is not an allocation guarantee. The existing original allowance is not a measured
- * minimum; only the bounded post-decode path stops requiring that full-original allowance. */
+/** Admission uses OS pressure, not an unmeasured fixed free-memory allowance.
+ * This is not an allocation guarantee; typed allocation failures remain authoritative. */
 internal object Original24MemoryPolicy {
     const val ORIGINAL_REQUIRED_BYTES = 768L * 1024 * 1024
 
+    @Suppress("UNUSED_PARAMETER")
     fun permits(stage: Original24MemoryStage, lowMemory: Boolean?, availableBytes: Long?): Boolean =
-        lowMemory == false && availableBytes != null && availableBytes > 0L &&
-            (stage == Original24MemoryStage.BOUNDED_PREVIEW || availableBytes >= ORIGINAL_REQUIRED_BYTES)
+        lowMemory == false
 }
 
 /** Actual ActivityManager observation at the rejected boundary; never /proc estimates or photo data. */
@@ -24,7 +24,7 @@ internal data class Original24MemoryObservation(
 ) {
     fun diagnosticMessage(): String = "ORIGINAL_MEMORY_REJECTED stage=${stage.name} " +
         "exception=Original24MemoryUnavailable availMemBytes=$availableBytes lowMemory=$lowMemory thresholdBytes=$thresholdBytes " +
-        "requiredAvailableBytes=${if (stage == Original24MemoryStage.BOUNDED_PREVIEW) 1L else Original24MemoryPolicy.ORIGINAL_REQUIRED_BYTES} " +
+        "requiredAvailableBytes=0 admissionPolicy=OS_LOW_MEMORY " +
         "outputPixels=${outputPixels ?: "unknown"} estimatedAdditionalBytes=unknown " +
         "rgb16PayloadBytes=${outputPixels?.takeIf { it in 1..24_000_000 }?.times(6) ?: "unknown"}"
 }

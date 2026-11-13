@@ -37,11 +37,12 @@ class TrialDisplayPixelsTest {
     @Test fun resourcesRequireKnownCameraTemperatureAndMemory() {
         val ready = PhotoRollResources(true, 0, false, PhotoRollResources.REQUIRED_AVAILABLE_BYTES)
         assertNull(ready.blockedReason())
+        assertNull(ready.copy(availableBytes = null).blockedReason())
+        assertNull(ready.copy(availableBytes = 1).blockedReason())
         assertNull(ready.copy(thermalStatus = 2).blockedReason())
         listOf(ready.copy(camerasIdle = false), ready.copy(camerasIdle = null),
             ready.copy(thermalStatus = null), ready.copy(thermalStatus = -1), ready.copy(thermalStatus = 3),
-            ready.copy(thermalStatus = 7), ready.copy(lowMemory = true), ready.copy(lowMemory = null),
-            ready.copy(availableBytes = null), ready.copy(availableBytes = PhotoRollResources.REQUIRED_AVAILABLE_BYTES - 1))
+            ready.copy(thermalStatus = 7), ready.copy(lowMemory = true), ready.copy(lowMemory = null))
             .forEach { assertNotNull(it.blockedReason()) }
     }
 

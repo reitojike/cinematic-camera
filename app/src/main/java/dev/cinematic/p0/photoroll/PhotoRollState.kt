@@ -41,13 +41,13 @@ internal data class PhotoRollResources(
         storageAllowed = privateStorageAllowed,
         rendererAvailable = rendererAvailable,
         previewMemoryAvailable = when {
-            lowMemory == true || availableBytes?.let { it <= 0L } == true -> false
-            lowMemory == false && availableBytes != null -> true
+            lowMemory == true -> false
+            lowMemory == false -> true
             else -> null
         },
         memoryBudgetConfirmed = when {
-            lowMemory == true || availableBytes?.let { it < JPEG_REQUIRED_AVAILABLE_BYTES } == true -> false
-            lowMemory == false && availableBytes != null -> true
+            lowMemory == true -> false
+            lowMemory == false -> true
             else -> null
         },
     )
@@ -55,7 +55,7 @@ internal data class PhotoRollResources(
         camerasIdle != true -> "カメラの解放を確認できません。撮影を終了してから再試行してください"
         thermalStatus == null || thermalStatus !in 0..6 -> "端末の温度状態を確認できません"
         thermalStatus >= 3 -> "端末が高温です。冷めてから再試行してください"
-        lowMemory != false || availableBytes == null || availableBytes < REQUIRED_AVAILABLE_BYTES ->
+        lowMemory != false ->
             "試験表示に必要な空きメモリを確認できません。他のアプリを閉じて再試行してください"
         else -> null
     }

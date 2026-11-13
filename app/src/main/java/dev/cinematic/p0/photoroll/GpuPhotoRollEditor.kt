@@ -93,7 +93,9 @@ import kotlinx.coroutines.flow.StateFlow
             var loading: Deferred<Result<ManualTrialPhotoRollRenderer.GpuInput>>? = null
             coroutineScope {
                 try {
-                awaitGpuInputReadiness(publications, session.renderer.surfaceAttached, deadline) {
+                awaitGpuInputReadiness(publications, session.renderer.surfaceAttached, deadline,
+                    checkMemoryAdmission = { dev.cinematic.p0.jpegrender.original.Original24Resources.requireAvailable(
+                        context, dev.cinematic.p0.jpegrender.original.Original24MemoryStage.ORIGINAL_DECODE) }) {
                     val admitted = CompletableDeferred<GpuInputAdmissionResult>()
                     loading = async(Dispatchers.IO) {
                         gpuPhotoRollInputResult {
@@ -321,6 +323,7 @@ import kotlinx.coroutines.flow.StateFlow
             scope.launch {
                 try {
                     if (!openAfterCheck) {
+                        dev.cinematic.p0.jpegrender.original.Original24Resources.requireAvailable(context)
                         exportPaused = true
                         // Do not overlap the preview texture budget with original-size export.
                         session?.close()
@@ -345,7 +348,11 @@ import kotlinx.coroutines.flow.StateFlow
         },
         begin = { if (!exportPaused && !saving && !savingRecipe) editor = editor.begin(.01, adjustments = true) },
         back = { if (!savingRecipe) back() },
-        retry = { if (!savingRecipe) { trimBlocked = false; retry++ } },
+        retry = { if (!savingRecipe && !saving) {
+            if (problem is dev.cinematic.p0.jpegrender.original.Original24MemoryUnavailable)
+                renderer.releaseUnusedMemoryForRetry()
+            trimBlocked = false; retry++
+        } },
         change = { token, parameter, value -> if (!savingRecipe) editor = editor.change(token, parameter, value) },
         reset = { token -> if (!savingRecipe) {
             val next = editor.reset(token)

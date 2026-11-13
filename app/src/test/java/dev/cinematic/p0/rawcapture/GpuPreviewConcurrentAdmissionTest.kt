@@ -94,8 +94,7 @@ class GpuPreviewConcurrentAdmissionTest {
             safe.copy(cameraSessionInUse = true), safe.copy(cameraSessionInUse = null),
             safe.copy(recordingOrFinalizing = true), safe.copy(rebindInProgress = true),
             safe.copy(thermalAllowed = false), safe.copy(thermalAllowed = null),
-            safe.copy(storageAllowed = false), safe.copy(previewMemoryAvailable = false),
-            safe.copy(previewMemoryAvailable = null), AutoDevelopConditions())
+            safe.copy(storageAllowed = false), AutoDevelopConditions())
         for (observations in unsafe) {
             val c = ready()
             val save = export(c)
@@ -119,7 +118,7 @@ class GpuPreviewConcurrentAdmissionTest {
         c.updateExportConditions(preview, AutoDevelopConditions())
         assertFalse(c.shouldStop(preview))
         assertFalse(c.shouldStop(save))
-        c.updateExportConditions(save, safe.copy(memoryBudgetConfirmed = false))
+        c.updateExportConditions(save, safe.copy(thermalAllowed = false))
         assertTrue(c.shouldStop(save))
         assertFalse(c.shouldStop(preview))
         // Full-export memory and job-local renderer state do not replace preview memory/capability.

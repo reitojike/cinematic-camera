@@ -82,6 +82,7 @@ internal suspend fun awaitGpuInputReadiness(
     publications: StateFlow<GpuInputPublication>,
     surfaceAttached: StateFlow<Boolean>,
     request: GpuInputRequestDeadline,
+    checkMemoryAdmission: () -> Unit = {},
     start: (GpuInputPublication) -> Deferred<GpuInputAdmissionResult>,
 ) {
     var rejectedAfter: Long? = null
@@ -99,6 +100,8 @@ internal suspend fun awaitGpuInputReadiness(
         withTimeout(request.remainingMillis()) {
             while (true) {
                 val ready = combine(publications, surfaceAttached) { publication, attached ->
+                    if (attached && publication.observation.conditions.previewMemoryAvailable == false)
+                        checkMemoryAdmission()
                     publication.takeIf { attached && it.sequence != rejectedAfter &&
                         it.observation.cameraState == PhotoRollObservedCamera.AVAILABLE &&
                         AutoDevelopPolicy.previewBlockers(it.observation.conditions).isEmpty() }

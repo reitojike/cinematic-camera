@@ -37,6 +37,19 @@ class GpuInputReadinessTest {
         return CompletableDeferred(GpuInputAdmissionResult(null))
     }
 
+    @Test fun pressureCanReportTypedFailureWithoutStartingOrWaitingForTimeout() = runBlocking {
+        val failure = dev.cinematic.p0.jpegrender.original.Original24MemoryUnavailable()
+        var starts = 0
+        val observed = runCatching {
+            awaitGpuInputReadiness(MutableStateFlow(publication(conditions = ready.copy(previewMemoryAvailable = false))),
+                MutableStateFlow(true), request(), checkMemoryAdmission = { throw failure }) {
+                starts++; CompletableDeferred(GpuInputAdmissionResult(null))
+            }
+        }.exceptionOrNull()
+        assertSame(failure, observed)
+        assertEquals(0, starts)
+    }
+
     @Test fun alreadyReadyValuesCanAdmitWithoutAnotherPublication() = runBlocking {
         val request = request()
         var starts = 0

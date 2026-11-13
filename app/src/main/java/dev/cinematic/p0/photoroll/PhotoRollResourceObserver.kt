@@ -129,7 +129,7 @@ internal class PhotoRollResourceObserver(context: Context,
     fun snapshot(): PhotoRollResources {
         val idle = ids?.let { known -> registered && known.all { available[it] == true } }
         val thermal = try { if (Build.VERSION.SDK_INT >= 29) powerManager?.currentThermalStatus else null } catch (_: Exception) { null }
-        val memory = try { ActivityManager.MemoryInfo().also { info -> activityManager?.getMemoryInfo(info) } }
+        val memory = try { activityManager?.let { manager -> ActivityManager.MemoryInfo().also(manager::getMemoryInfo) } }
             catch (_: Exception) { null }
         val storage = try { StatFs(privateRoot.absolutePath).availableBytes >= PRIVATE_REQUIRED_BYTES }
             catch (_: Exception) { null }

@@ -70,7 +70,7 @@ internal class AutoDevelopRunner(
     val hasUnreleasedResources get() = slot != null
     fun supports(request: AutoDevelopRequest) = request.admissible && backend.supports(request)
     fun conditionsBlocked(conditions: AutoDevelopConditions) =
-        AutoDevelopPolicy.blockers(if (interactive) conditions.copy(rendererAvailable = true) else conditions).isNotEmpty()
+        AutoDevelopPolicy.continuationBlockers(if (interactive) conditions.copy(rendererAvailable = true) else conditions).isNotEmpty()
 
     /** Process-local cancellation intent. A delayed caller must retain the original owner+slot pair. */
     class StopTarget internal constructor(internal val owner: AutoDevelopRunner, internal val slot: AutoDevelopCoordinator.Attempt)
@@ -215,7 +215,7 @@ internal class AutoDevelopRunner(
 
     private fun admit() = if (interactive) observations()?.let(admission::tryStartObserved) else admission.tryStart()
     private fun stopped() = slot?.let { admission.shouldStop(it) } != false || !isCurrent() ||
-        (interactive && observations()?.let { AutoDevelopPolicy.blockers(it).isNotEmpty() } != false)
+        (interactive && observations()?.let { AutoDevelopPolicy.continuationBlockers(it).isNotEmpty() } != false)
     private fun closeRender(): Boolean {
         val owner = synchronized(ownership) {
             if (cancelCalls != 0) return false
