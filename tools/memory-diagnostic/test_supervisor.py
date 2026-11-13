@@ -41,6 +41,11 @@ class SupervisorTest(unittest.TestCase):
             self.assertFalse(check(root)['ready_for_operator_next_step'])
             (root / 'status.json').write_text(json.dumps({'state': 'RUNNING', 'heartbeat_epoch': now}))
             self.assertTrue(check(root)['ready_for_operator_next_step'])
+            with_gap = [dict(event) for event in events]
+            with_gap[1]['host_epoch'] = now - 17
+            (root / 'collector' / 'observations.jsonl').write_text('\n'.join(json.dumps(e) for e in with_gap))
+            self.assertFalse(check(root)['ready_for_operator_next_step'])
+            (root / 'collector' / 'observations.jsonl').write_text('\n'.join(json.dumps(e) for e in events))
             for stop in [root / 'stop.request', root / 'collector' / 'stop.request']:
                 stop.touch()
                 self.assertFalse(check(root)['ready_for_operator_next_step'])

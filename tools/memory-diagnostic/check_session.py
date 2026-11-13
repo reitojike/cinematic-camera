@@ -2,8 +2,9 @@
 import json
 from pathlib import Path
 import sys
+import time
 from collector import preflight_evidence
-from supervisor import health
+from supervisor import health, pss_gap
 
 
 def check(root):
@@ -12,6 +13,8 @@ def check(root):
         events = [json.loads(line) for line in (root / 'collector' / 'observations.jsonl')
                   .read_text(encoding='utf-8').splitlines()]
         result = preflight_evidence(events)
+        result['pss_gap_seen'] = pss_gap(events, time.time())
+        result['ready_for_operator_next_step'] = result['ready_for_operator_next_step'] and not result['pss_gap_seen']
     except (OSError, ValueError, KeyError, TypeError):
         result = {'ready_for_operator_next_step': False, 'evidence_readable': False}
     stop_requested = (root / 'stop.request').exists() or (root / 'collector' / 'stop.request').exists()
