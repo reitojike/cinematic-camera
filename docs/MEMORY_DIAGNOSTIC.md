@@ -33,7 +33,8 @@ APK組立・静的/JVM検証まで。インストール、配布、端末操作�
 採取は本人アプリ限定の PSS/RSS、Java/native heap、利用可能なら graphics/memtrack、
 ActivityManager判定値を時刻付きで照合する。0.5–1秒採取の最大は採取最大であり真のpeakではない。
 MaliはCPUと共有RAM。PSS/graphics/texture台帳は重複し得るため加算せず、別時刻最大も加算しない。
-この単位はGPU ledgerの通常UI出力を新設しない。driverのgraphics情報が得られない場合、GPU実使用量は未測定であり、固定判定撤廃の根拠にしない。
+既存GPU ledgerのreserve/release後に診断版だけが時刻/予算/現在予約bytes/台帳内最大/texture数を記録する。予算も所有も変更しない。台帳はdriver-resident RAMでなく論理予約で、複数台帳の全体同時所有量は未測定。driverのgraphics情報が得られない場合、GPU実使用量は未測定であり、固定判定撤廃の根拠にしない。
+診断ログの割当・I/O・採取はタイミングとメモリへ影響する。数値は計測版の観測であり配布版の無観測性能とは同一視しない。ログ呼出し全体の失敗を保護し、元処理のエラーや所有状態を置換しない。
 OS/driverが公開しないGPU量とnative段階内短時間peakは未測定と記す。境界ログだけで全段階peakを保証しない。
 
 ## OS回収・終了の観測
