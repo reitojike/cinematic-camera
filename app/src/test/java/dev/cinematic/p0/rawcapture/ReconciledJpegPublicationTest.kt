@@ -73,6 +73,62 @@ class ReconciledJpegPublicationTest {
         assertEquals(0, f.writes)
     }
 
+    @Test fun everyIncompletePrefixRemainsHeldAcrossRepeatedColdReaders() {
+        for (length in 0 until 4) {
+            val f = Fixture(true)
+            val old = f.originalStorage.bytes!!.clone()
+            f.bytes = f.bytes.copyOf(length)
+            repeat(3) {
+                assertEquals(JpegPublicationPhase.UNKNOWN, f.reconcile()!!.phase)
+                assertEquals(JpegPublicationPhase.UNKNOWN, f.reader().read()!!.phase)
+            }
+            assertArrayEquals(old, f.originalStorage.bytes)
+            assertNull(f.receiptStorage.bytes)
+            assertNull(f.recoveryStorage.bytes)
+            assertEquals(length, f.bytes.size)
+            assertEquals(0, f.writes)
+            assertEquals(0, f.publishes)
+        }
+    }
+
+    @Test fun changedBytesOrOwnershipAfterReceiptNeverAuthorizeCopyOrPublication() {
+        for (change in listOf("bytes", "owner", "path", "trashed")) {
+            val f = Fixture(true)
+            val old = f.originalStorage.bytes!!.clone()
+            f.reconcile()
+            when (change) {
+                "bytes" -> f.bytes = byteArrayOf(1, 2)
+                "owner" -> f.row = f.row.copy(ownedByApp = false)
+                "path" -> f.row = f.row.copy(relativePath = "Pictures/other/")
+                "trashed" -> f.row = f.row.copy(trashed = true)
+            }
+            assertEquals(JpegPublicationPhase.UNKNOWN, f.publisher().advance().phase)
+            assertEquals(JpegPublicationPhase.UNKNOWN, f.reconcile()!!.phase)
+            assertArrayEquals(old, f.originalStorage.bytes)
+            assertEquals(0, f.writes)
+            assertEquals(0, f.publishes)
+        }
+    }
+
+    @Test fun finalJournalCommitFaultsAfterPublicReleaseNeverPublishTwice() {
+        for (fault in listOf("before", "after", "readback", "death")) {
+            val f = Fixture(true)
+            val old = f.originalStorage.bytes!!.clone()
+            f.reconcile()
+            f.afterPublish = { f.recoveryStorage.fault = fault }
+            assertThrows(if (fault == "death") Death::class.java else IOException::class.java) {
+                f.publisher().advance()
+            }
+            assertFalse(f.row.pending!!)
+            f.recoveryStorage.fault = "none"
+            f.afterPublish = {}
+            assertEquals(JpegPublicationPhase.PUBLISHED, f.publisher().advance().phase)
+            assertEquals(1, f.publishes)
+            assertEquals(0, f.writes)
+            assertArrayEquals(old, f.originalStorage.bytes)
+        }
+    }
+
     @Test fun orphanReceiptChangedOriginalAndForeignRecoveryAreHeld() {
         val f = Fixture(false)
         f.reconcile()
@@ -128,6 +184,7 @@ class ReconciledJpegPublicationTest {
         var publishes = 0
         var writes = 0
         var losePublishAck = false
+        var afterPublish: () -> Unit = {}
         fun original() = JpegPublicationJournal(target.captureId, 1, originalStorage)
         fun recovery() = JpegPublicationJournal(target.captureId, 1, recoveryStorage)
         fun reader() = ReconciledJpegPublication(original(), recovery(), JpegReconciliationReceipt(receiptStorage),
@@ -145,6 +202,7 @@ class ReconciledJpegPublicationTest {
         override fun openOutput(target: JpegPublicationTarget, uri: String): OutputStream { writes++; throw AssertionError("No overwrite") }
         override fun publish(target: JpegPublicationTarget, uri: String) {
             check(target.accepts(row)); publishes++; row = row.copy(pending = false)
+            afterPublish()
             if (losePublishAck) throw IOException("Synthetic publish ack loss")
         }
     }
