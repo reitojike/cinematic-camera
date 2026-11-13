@@ -17,7 +17,7 @@
 - 代表preflightでテーマ・文字色・背景・画面/シート位置・操作enabled・寸法を照合後、16状態32枚を取得。
 - 期待文言のaccessibility assertと状態fingerprint不変assertを含む固定ATD 1試験成功（2m12s）。
 - 初回全量はOS熱callbackによるfixture入力の上書きをassertで検出して停止。不完全な画像は不採用。試験側で熱listener解除と初期callback排出を行い、04/09代表確認後に全量成功。
-- 独立コードレビュー、代表と全量の独立目視確認を実施。
+- 独立コードレビュー、全16行一覧と代表原寸の独立目視確認を実施。
 - software View描画です。resetは実Dialog座標・dimAmountを使った参考合成で、OSコンポジタそのものの画像ではありません。
 - 実機CameraX/GPU描画、撮影・録画・保存・再接続の操作結果、System UI、IMEは未確認。表示承認をこれらの実機受入れとは扱いません。
 - Codexレビューは利用上限により未取得。本人のCI＋独立レビューによる承認ルールを適用し、実際のGitHub保護を迂回しません。
