@@ -38,6 +38,7 @@ internal class ManualTrialJpegSaveOwner(
     private val resources: () -> PhotoRollResources,
 ) : PhotoRollJpegSaveOwner {
     override val supportsForegroundSave = true
+    override val isExplicitRecoveryRequest get() = handle.isExplicitRecoveryRequest
     private val running = AtomicBoolean(false)
     private val localFailure = MutableStateFlow<PhotoRollSaveSnapshot?>(null)
     private var retryGpuFailure = false

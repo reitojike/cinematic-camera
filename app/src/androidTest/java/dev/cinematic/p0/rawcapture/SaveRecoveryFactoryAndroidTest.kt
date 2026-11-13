@@ -31,6 +31,7 @@ class SaveRecoveryFactoryAndroidTest {
         assertEquals(old.request.generation + 1, next.request.generation)
         assertEquals(old.request.source, next.request.source)
         assertEquals(old.request.recipe, next.request.recipe)
+        assertTrue(next.isExplicitRecoveryRequest)
         assertSame(next, AndroidManualOriginalTrialSaves.knownPrepared(old.request.source))
         assertSame(next, old.requestExplicitRecovery { false }.get(30, TimeUnit.SECONDS))
         assertSame(next, AndroidManualOriginalTrialSaves.restorePreparedGpu(app, old.request.source, geometry) { false }
@@ -41,6 +42,16 @@ class SaveRecoveryFactoryAndroidTest {
         assertNull(storage(next.request, CaptureJournalFile.MANUAL_REQUEST).read(ManualOriginalTrialRequestCodec.MAX_BYTES))
         assertNull(storage(next.request, CaptureJournalFile.MANUAL_ATTEMPT).read(ManualTrialAttemptCodec.MAX_BYTES))
         assertFalse(next.hasUnreleasedResources)
+        // Edit-only metadata must not supersede an accepted READY recovery before its first intent.
+        assertThrows(ExecutionException::class.java) {
+            AndroidManualOriginalTrialSaves.prepareGpu(app, old.request.source, geometry, .75, allowed, PhotoAdjustments.NONE) { false }
+                .get(30, TimeUnit.SECONDS)
+        }
+        val restored = AndroidManualOriginalTrialSaves.restorePreparedGpu(app, old.request.source, geometry) { false }
+            .get(30, TimeUnit.SECONDS)
+        assertSame(next, restored)
+        assertTrue(requireNotNull(restored).isExplicitRecoveryRequest)
+        assertEquals(.5, restored.appliedStrength, 0.0)
         verifyOriginal(old.request)
     }
 

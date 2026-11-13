@@ -164,6 +164,12 @@ internal object AndroidManualOriginalTrialSaves {
             }
             return true
         }
+        private fun isExplicitRecovery(request: Original24Request): Boolean {
+            if (request.generation <= 1) return false
+            val saved = consent(request.copy(generation = request.generation - 1)).read() ?: return false
+            if (saved.request != request || saved.rendererContract != recoveryRendererContract) throw CaptureJournalConflict()
+            return true
+        }
         private fun attemptJournal(request: Original24Request) = if (app.packageName == "dev.cinematic.p0")
             ManualOriginalTrialAttemptJournal(request, storage(request, CaptureJournalFile.MANUAL_ATTEMPT),
                 storage(request, CaptureJournalFile.MANUAL_REQUEST)) else null
@@ -177,6 +183,7 @@ internal object AndroidManualOriginalTrialSaves {
             val publication = handle?.backendPublication() ?: journal(previous).read()
             if (publication != null) return publication.phase == JpegPublicationPhase.PUBLISHED
             attemptJournal(previous)?.read()?.let { return it.phase == ManualTrialAttemptPhase.CANCELLED_CLEAN }
+            if (isExplicitRecovery(previous)) return false // A READY consent must not be superseded by edit-only restoration.
             return storage(previous, CaptureJournalFile.MANUAL_REQUEST).read(ManualOriginalTrialRequestCodec.MAX_BYTES) == null
         }
 
@@ -194,7 +201,7 @@ internal object AndroidManualOriginalTrialSaves {
                 val owner = ManualOriginalTrialSaveOwner(request, backend,
                     storage(request, CaptureJournalFile.MANUAL_REQUEST), attemptJournal(request)) { authoritative(request) }
                 owner.restoreDurableState()
-                ManualOriginalTrialHandle(queue, owner, requireNotNull(geometry), backend) {
+                ManualOriginalTrialHandle(queue, owner, requireNotNull(geometry), backend, isExplicitRecovery(request)) {
                     authoritative(request)
                 }.also { it.explicitRecovery = { stop -> recoverExplicitly(queue, request, stop) } }
             }
@@ -499,6 +506,7 @@ internal object AndroidManualOriginalTrialSaves {
         private val owner: ManualOriginalTrialSaveOwner,
         val geometry: Original24PreflightGeometry,
         private val backend: Backend,
+        val isExplicitRecoveryRequest: Boolean,
         private val revalidate: () -> Boolean,
     ) {
         val request get() = owner.request

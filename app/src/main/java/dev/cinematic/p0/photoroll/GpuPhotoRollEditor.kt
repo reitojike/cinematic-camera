@@ -176,7 +176,8 @@ import kotlinx.coroutines.flow.StateFlow
                         restored.appliedAdjustments != PhotoAdjustmentPolicy.adjustments(loaded.values)))
                     throw PhotoRollSourceFailure("前の保存が未確定です。保存状態を確認してください")
                 save = restored; saveState = restored.snapshot
-                if (restored.snapshot.phase in setOf(PhotoRollSavePhase.CANCELLED, PhotoRollSavePhase.HOLD, PhotoRollSavePhase.UNCONFIRMED)) {
+                if (restored.snapshot.phase in setOf(PhotoRollSavePhase.CANCELLED, PhotoRollSavePhase.HOLD, PhotoRollSavePhase.UNCONFIRMED) ||
+                    restored.isExplicitRecoveryRequest && restored.snapshot.phase == PhotoRollSavePhase.READY) {
                     val adjustments = requireNotNull(restored.appliedAdjustments)
                     val values = PhotoEditValues(requireNotNull(restored.appliedStrength), adjustments.warmth,
                         adjustments.exposureEv)
@@ -200,6 +201,7 @@ import kotlinx.coroutines.flow.StateFlow
     LaunchedEffect(ticket, input, session, metadataRestored) {
         val loaded = input ?: return@LaunchedEffect
         if (!metadataRestored) return@LaunchedEffect
+        if (save?.isExplicitRecoveryRequest == true && save?.snapshot?.phase == PhotoRollSavePhase.READY) return@LaunchedEffect
         if (session == null || (save?.appliedStrength == ticket.values.strength &&
             save?.appliedAdjustments == PhotoAdjustmentPolicy.adjustments(ticket.values))) return@LaunchedEffect
         save = null; saveState = null
@@ -316,6 +318,7 @@ import kotlinx.coroutines.flow.StateFlow
         stage = null, message = visibleMessage, preview = null, comparison = null, comparisonLabel = null,
         foreground = foreground && !savingRecipe, savePhase = saveState?.phase, savePending = saving || savingRecipe,
         saveEnabled = canSave, beginEnabled = ready && metadataRestored && !exportPaused && !saving && !savingRecipe &&
+            !(save?.isExplicitRecoveryRequest == true && saveState?.phase == PhotoRollSavePhase.READY) &&
             canBeginStrengthEdit(PhotoRollPreviewMode.MANUAL_TRIAL, foreground, saving, saveState?.phase),
         save = saveAction@{
             if (!canSave || saving || savingRecipe) return@saveAction

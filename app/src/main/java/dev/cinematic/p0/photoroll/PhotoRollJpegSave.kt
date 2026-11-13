@@ -31,6 +31,7 @@ internal interface PhotoRollJpegSaveOwner {
     fun cancelForegroundSave() = Unit
     /** Explicit duplicate-risk consent only; returns a separately persisted request, never auto-called. */
     fun requestExplicitRecovery(shouldStop: () -> Boolean): PhotoRollJpegSaveOwner? = null
+    val isExplicitRecoveryRequest: Boolean get() = false
     val snapshots: Flow<PhotoRollSaveSnapshot>
     val snapshot: PhotoRollSaveSnapshot
     /** 0/0 until a deferred manual render has produced and inspected its full-size JPEG. */
