@@ -41,25 +41,20 @@ class CaptureMessagesScreenshotTest {
         val horizontal = mutableStateOf(false)
         val reset = mutableStateOf(false)
         val currentName = mutableStateOf("01-connecting")
-        val before = InstrumentationRegistry.getArguments().getString("comparisonBefore") == "true"
         ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
                 activity.setContent { CaptureTheme {
                     Box(Modifier.fillMaxSize().background(CaptureDesign.Ink)) {
-                        if (before) LegacyCaptureMessagesFixture(currentName.value, horizontal.value,
-                            Modifier.graphicsLayer { rotationZ = if (horizontal.value) -90f else 0f })
-                        else CaptureMessageOverlay(shown.value, horizontal.value,
+                        CaptureMessageOverlay(shown.value, horizontal.value,
                             shown.value.center?.fact == "capture.recovery", {},
                             Modifier.graphicsLayer { rotationZ = if (horizontal.value) -90f else 0f })
                     }
                     Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                        if (before) LegacySettingsNote(currentName.value)
-                        else shown.value.inline.forEach { CaptureInlineNote(it, {}, Modifier.fillMaxWidth().then(
+                        shown.value.inline.forEach { CaptureInlineNote(it, {}, Modifier.fillMaxWidth().then(
                             if (currentName.value == "12-settings-applying") Modifier.captureOutline(true) else Modifier)) }
                     }
                     if (reset.value) {
-                        if (before) LegacyCaptureResetDialog(dismiss = {}, reset = {})
-                        else CaptureResetDialog(dismiss = {}, reset = {})
+                        CaptureResetDialog(dismiss = {}, reset = {})
                     }
                 } }
             }
@@ -80,7 +75,7 @@ class CaptureMessagesScreenshotTest {
                     try {
                         view.draw(Canvas(bitmap))
                         val directory = File(requireNotNull(InstrumentationRegistry.getArguments()
-                            .getString("additionalTestOutputDir")), if (before) "ui-pr-b-before" else "ui-pr-b").apply { mkdirs() }
+                            .getString("additionalTestOutputDir")), "ui-pr-b").apply { mkdirs() }
                         File(directory, "$name-${if (landscape) "horizontal" else "vertical"}.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
                     } finally { bitmap.recycle() }
                 }
