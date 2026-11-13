@@ -311,7 +311,7 @@ blur-owned縮小画像は第1拡大軸後に解放済み。[全85テクスチャ
 - **二段構えはなくす**: ドラッグ中も指を離した後も同じ正確な描画。CPUの256px粗表示actorはGPU経路では使わない。GPU自身の最新要求への合流、古い写真/世代の失効、取消・lifecycle検査は維持する。
 - **比較表示**: `showBefore = true` のときは AS_SHOT 入力をそのまま sRGB 表示する（現行の比較画像の定義と同じ）。
 - **原本の照合**: 写真を開くときと保存の前後で行う（#268 の境界のまま）。フレームごとには行わない（入力は GPU に常駐し、ファイルを読まないため）。
-- #339/#341で既存編集画面へ接続したが、専用gpuDiagnostic Hubからの明示選択に限る。通常debug/releaseはCPU。Files復帰時はforeground・camera受付・Surfaceをeventで待ち、10秒で明示失敗とする。受付後native展開はこの10秒に含めない。
+- #339/#341当時は専用gpuDiagnostic Hubからの明示選択に限って既存編集画面へ接続した。その後 #354 で通常debug/releaseもGPU既定へ移行した。Files復帰時はforeground・camera受付・Surfaceをeventで待ち、10秒で明示失敗とする。受付後native展開はこの10秒に含めない。
 
 ### 4.10 計測
 

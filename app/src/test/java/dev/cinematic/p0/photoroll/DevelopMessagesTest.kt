@@ -114,4 +114,35 @@ class DevelopMessagesTest {
         assertEquals(developMessages(state(), candidates), developMessages(state(), candidates))
         assertEquals(snapshot, candidates)
     }
+
+    private fun otherPhotoSaving() = UiMessage(MessageSlot.BANNER, CaptureChromeTone.WARNING,
+        "JPEGを保存中です。アプリを離れても続きます。", "save.foreground_progress",
+        primary = MessageControl(MessageAction.CANCEL_SAVE, "保存を取り消す"), inProgress = true)
+
+    @Test fun cancellationBannerKeepsSingleVisibleResumeActionAfterSelection() {
+        val result = developMessages(state(PhotoRollSavePhase.CANCELLED)
+            .copy(exportPaused = true, canResumePreview = true))
+        assertEquals("save.cancelled", result.banner?.fact)
+        assertEquals(MessageAction.RESUME_PREVIEW, result.banner?.primary?.action)
+        assertEquals(true, result.banner?.primary?.enabled)
+        assertEquals("preview.export_paused", result.center?.fact)
+        assertNull(result.center?.primary)
+    }
+
+    @Test fun otherPhotoProgressCannotHideCancelledPhotoResume() {
+        val result = developMessages(state(PhotoRollSavePhase.CANCELLED)
+            .copy(exportPaused = true, canResumePreview = true), listOf(otherPhotoSaving()))
+        assertEquals("save.foreground_progress", result.banner?.fact)
+        assertEquals(MessageAction.CANCEL_SAVE, result.banner?.primary?.action)
+        assertEquals(MessageAction.RESUME_PREVIEW, result.center?.primary?.action)
+        assertEquals(true, result.center?.primary?.enabled)
+    }
+
+    @Test fun otherPhotoProgressDoesNotEnableIneligibleResume() {
+        val result = developMessages(state(PhotoRollSavePhase.CANCELLED)
+            .copy(exportPaused = true, canResumePreview = false), listOf(otherPhotoSaving()))
+        assertEquals("save.foreground_progress", result.banner?.fact)
+        assertEquals(MessageAction.RESUME_PREVIEW, result.center?.primary?.action)
+        assertEquals(false, result.center?.primary?.enabled)
+    }
 }

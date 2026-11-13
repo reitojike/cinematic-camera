@@ -107,8 +107,7 @@ internal fun developMessages(
             if (writing) CaptureChromeTone.WARNING else CaptureChromeTone.NORMAL,
             if (writing) "保存中 · プレビューを止めています" else "保存のためプレビューを止めました",
             "preview.export_paused",
-            primary = if (state.savePhase !in setOf(PhotoRollSavePhase.CANCELLED, PhotoRollSavePhase.GPU_FAILED))
-                resume else null)
+            primary = resume)
     } else when (state.phase) {
         PhotoRollPhase.EMPTY, PhotoRollPhase.CHECKING, PhotoRollPhase.RENDERING ->
             candidates += UiMessage(MessageSlot.CENTER, CaptureChromeTone.NORMAL,
@@ -122,5 +121,14 @@ internal fun developMessages(
     if (state.justPublished && state.savePhase == PhotoRollSavePhase.PUBLISHED)
         candidates += UiMessage(MessageSlot.TOAST, CaptureChromeTone.ACCEPTED,
             "JPEGを保存しました。", "save.published")
-    return screenMessages(candidates)
+    val selected = screenMessages(candidates)
+    // Deduplicate only against the chosen banner. A higher-priority save from another photo
+    // can replace the cancellation banner; its unrelated action must not hide preview recovery.
+    val center = selected.center
+    val bannerHasResume = listOfNotNull(selected.banner?.primary, selected.banner?.secondary)
+        .any { it.action == MessageAction.RESUME_PREVIEW }
+    return if (center?.slot == MessageSlot.CENTER &&
+        center.primary?.action == MessageAction.RESUME_PREVIEW && bannerHasResume)
+        selected.copy(center = center.copy(primary = null))
+    else selected
 }
