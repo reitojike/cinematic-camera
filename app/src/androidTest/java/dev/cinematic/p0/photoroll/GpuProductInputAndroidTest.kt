@@ -30,13 +30,14 @@ import org.junit.Assume.assumeTrue
 /** Synthetic emulator input → real product GPU owner. No physical device, camera or shared save. */
 class GpuProductInputAndroidTest {
     @Test fun originalIsReadOnlyAtOpenAndAllPreviewOwnersReleaseAcrossPhotosAndResume() = exercise(256, 192)
+    @Test fun inputDoesNotWaitForAnotherPhotosExportMetadataQueue() = exercise(256, 192, blockSaveQueue = true)
 
     @Test fun optIn24MpOpenEditCompareAndResumeKeepGeometryAndOwners() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("gpuProduct24") == "true")
         exercise(6000, 4000)
     }
 
-    private fun exercise(width: Int, height: Int) {
+    private fun exercise(width: Int, height: Int, blockSaveQueue: Boolean = false) {
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
         check(Build.HARDWARE in setOf("ranchu", "goldfish")) { "Synthetic emulator only" }
         val target = InstrumentationRegistry.getInstrumentation().targetContext
@@ -78,9 +79,19 @@ class GpuProductInputAndroidTest {
                 GpuPhotoRollRetiredOwners.releaseBeforeOpen()
                 val opensBefore = provider.opens.get()
                 val admitted = AtomicInteger()
-                val loaded = renderer.openGpu(repository, provider.uri(id), false,
-                    CancellationSignal(), GpuInputRequestDeadline(nowMillis = SystemClock::elapsedRealtime),
-                    { failure -> assertNull(failure); admitted.incrementAndGet() }) { PhotoAdjustmentPolicy.defaults }
+                val entered = java.util.concurrent.CountDownLatch(1)
+                val release = java.util.concurrent.CountDownLatch(1)
+                val blocked = if (blockSaveQueue) queue.manualOriginalIo {
+                    entered.countDown()
+                    check(release.await(30, TimeUnit.SECONDS)) { "Input waited for export metadata IO" }
+                } else null
+                if (blocked != null) assertTrue(entered.await(30, TimeUnit.SECONDS))
+                val loaded = try {
+                    renderer.openGpu(repository, provider.uri(id), false,
+                        CancellationSignal(), GpuInputRequestDeadline(nowMillis = SystemClock::elapsedRealtime),
+                        { failure -> assertNull(failure); admitted.incrementAndGet() }) { PhotoAdjustmentPolicy.defaults }
+                        .also { if (blocked != null) assertFalse("Photo input must finish before save IO", blocked.isDone) }
+                } finally { release.countDown(); blocked?.get(30, TimeUnit.SECONDS) }
                 assertEquals(1, admitted.get())
                 assertEquals(width, loaded.geometry.rawWidth); assertEquals(height, loaded.geometry.rawHeight)
                 assertEquals(width, loaded.geometry.sourceWidth); assertEquals(height, loaded.geometry.sourceHeight)

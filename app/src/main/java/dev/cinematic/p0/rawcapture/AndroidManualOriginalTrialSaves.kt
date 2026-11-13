@@ -35,6 +35,19 @@ internal object AndroidManualOriginalTrialSaves {
     // Queue-published immutable index; readers never access Authority's mutable maps.
     @Volatile private var prepared = emptyMap<SharedOriginalReference, ManualOriginalTrialHandle>()
     fun knownPrepared(source: SharedOriginalReference): ManualOriginalTrialHandle? = prepared[source]
+
+    /** Only ordinary GPU cold-open hydration, after the input's existing source/geometry checks. */
+    fun restorePreparedGpu(context: Context, source: SharedOriginalReference, geometry: Original24PreflightGeometry,
+        shouldStop: () -> Boolean): CompletableFuture<ManualOriginalTrialHandle?> {
+        val app = context.applicationContext
+        val queue = AndroidAutoDevelopQueue.get(app)
+        return queue.manualOriginalIo {
+            if (shouldStop()) throw java.util.concurrent.CancellationException("GPU restoration stopped")
+            if (app.packageName != "dev.cinematic.p0") return@manualOriginalIo prepared[source]
+            val authority = authorities.getOrPut(app.noBackupFilesDir.canonicalPath to source) { Authority(app, source) }
+            authority.restore(queue, geometry)?.also { prepared = prepared + (source to it) }
+        }
+    }
     private val previewEpoch = AtomicLong(0)
     @Volatile private var activePreview: Original24PreviewSession? = null
     private var previewAuthority: Authority? = null // Queue IO only; bounded to one cached source.
@@ -136,6 +149,9 @@ internal object AndroidManualOriginalTrialSaves {
         }
         private fun journal(request: Original24Request) = JpegPublicationJournal(id, request.generation,
             storage(request, CaptureJournalFile.JPEG_PUBLICATION))
+        private fun attemptJournal(request: Original24Request) = if (app.packageName == "dev.cinematic.p0")
+            ManualOriginalTrialAttemptJournal(request, storage(request, CaptureJournalFile.MANUAL_ATTEMPT),
+                storage(request, CaptureJournalFile.MANUAL_REQUEST)) else null
         private fun canSupersede(previous: Original24Request): Boolean {
             val handle = handles[previous.generation]
             if (handle?.state?.value?.phase == ManualOriginalTrialSavePhase.CANCELLED)
@@ -145,8 +161,28 @@ internal object AndroidManualOriginalTrialSaves {
                     ManualOriginalTrialSavePhase.SAVING, ManualOriginalTrialSavePhase.GPU_FAILED, ManualOriginalTrialSavePhase.CANCELLED)) return false
             val publication = journal(previous).read()
             if (publication != null) return publication.phase == JpegPublicationPhase.PUBLISHED
+            attemptJournal(previous)?.read()?.let { return it.phase == ManualTrialAttemptPhase.CANCELLED_CLEAN }
             return storage(previous, CaptureJournalFile.MANUAL_REQUEST).read(ManualOriginalTrialRequestCodec.MAX_BYTES) == null
         }
+
+        fun restore(queue: AutoDevelopQueue, verifiedGeometry: Original24PreflightGeometry): ManualOriginalTrialHandle? {
+            val request = requests.current() ?: return null
+            if (geometry != null && geometry != verifiedGeometry) throw IOException("GPU input geometry changed")
+            geometry = verifiedGeometry
+            currentRequest = request
+            return handle(queue, request)
+        }
+
+        private fun handle(queue: AutoDevelopQueue, request: Original24Request): ManualOriginalTrialHandle =
+            handles.getOrPut(request.generation) {
+                val backend = Backend(app, request, requireNotNull(geometry), ::journal) { currentRequest == request }
+                val owner = ManualOriginalTrialSaveOwner(request, backend,
+                    storage(request, CaptureJournalFile.MANUAL_REQUEST), attemptJournal(request)) { currentRequest == request }
+                owner.restoreDurableState()
+                ManualOriginalTrialHandle(queue, owner, requireNotNull(geometry), backend) {
+                    currentRequest == request && requests.isCurrent(request)
+                }
+            }
 
         fun prepare(queue: AutoDevelopQueue, strength: Double, adjustments: PhotoAdjustments,
             conditions: AutoDevelopConditions, stop: () -> Boolean,
@@ -161,14 +197,7 @@ internal object AndroidManualOriginalTrialSaves {
             if (stop()) throw java.util.concurrent.CancellationException("Trial preparation stopped")
             currentRequest = null // A failed/uncertain metadata change cannot leave an older owner authoritative.
             val request = requests.prepare(strength, adjustments).also { currentRequest = it }
-            return handles.getOrPut(request.generation) {
-                val backend = Backend(app, request, requireNotNull(geometry), ::journal) { currentRequest == request }
-                val owner = ManualOriginalTrialSaveOwner(request, backend,
-                    storage(request, CaptureJournalFile.MANUAL_REQUEST)) { currentRequest == request }
-                ManualOriginalTrialHandle(queue, owner, requireNotNull(geometry), backend) {
-                    currentRequest == request && requests.isCurrent(request)
-                }
-            }
+            return handle(queue, request)
         }
 
         fun renderPreview(handle: ManualOriginalTrialHandle, conditions: AutoDevelopConditions,
@@ -310,6 +339,11 @@ internal object AndroidManualOriginalTrialSaves {
         // The admitted coordinator owns the cancellation latch. Do not retain it across retries.
         fun requestStop() { attempt?.requestStop() }
         override fun readPublication() = journal(request).read()
+        override fun pinDurableGpuEngine() {
+            check(app.packageName == "dev.cinematic.p0")
+            val selected = selectedEngine ?: DevelopEngineSetting(app).beginExport().also { selectedEngine = it }
+            if (selected != DevelopEngine.GPU) throw IOException("Durable recovery requires the fixed GPU engine")
+        }
         override fun render(stop: () -> Boolean): ManualOriginalTrialRender {
             check(attempt == null)
             // Freeze once at the first actual save, including any explicit retry.
@@ -415,7 +449,11 @@ internal object AndroidManualOriginalTrialSaves {
             if (slot != null) {
                 owner.releaseResources()
                 if (hasUnreleasedResources) throw IOException("Trial resources remain held")
-                DevelopExecution.completeAfterResourcesClosed(requireNotNull(slot)); slot = null
+                if (!DevelopExecution.completeAfterResourcesClosed(requireNotNull(slot))) {
+                    owner.confirmCancellationAfterRelease(slotReleased = false)
+                    throw IOException("Trial slot release unconfirmed")
+                }
+                slot = null
             }
             if (stop()) throw java.util.concurrent.CancellationException("Trial save stopped before admission")
             if (!revalidate()) throw CaptureJournalConflict()
@@ -431,9 +469,11 @@ internal object AndroidManualOriginalTrialSaves {
             finally {
                 try { owner.releaseResources() }
                 finally { if (!hasUnreleasedResources) {
-                    DevelopExecution.completeAfterResourcesClosed(admitted); slot = null
+                    if (DevelopExecution.completeAfterResourcesClosed(admitted)) slot = null
                 } }
             }
+            owner.confirmCancellationAfterRelease(slotReleased = slot == null)
+            owner.state.value
         }
         fun requestStop() { slot?.let(DevelopExecution::requestStop) }
     }
