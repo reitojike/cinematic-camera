@@ -1,0 +1,7 @@
+displayPixels=1080x2424,windowVisibleFrame=Rect(0, 0 - 1080, 2424)
+root=[120, 786],size=840x851,density=2.625,densityDpi=420,fontScale=1.0
+text=原本情報と試験品質の注意,bounds=Rect(183, 849 - 897, 1025),visible=true,enabled=true
+text=SYNTHETIC.dng,bounds=Rect(183, 1067 - 407, 1104),visible=true,enabled=true
+text=原本は読み取り専用です。コピー・上書き・公開は行いません。,bounds=Rect(183, 1120 - 897, 1210),visible=true,enabled=true
+text=GPU の診断用プレビューです。通常版の既定は CPU です。原本と保存前後の照合は変更しません。,bounds=Rect(183, 1226 - 897, 1385),visible=true,enabled=true
+text=閉じる,bounds=Rect(755, 1485 - 865, 1538),visible=true,enabled=true

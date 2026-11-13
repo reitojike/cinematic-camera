@@ -1,7 +1,7 @@
 # PR-C 表示レビュー資料
 
 [表示指示書](DEVELOP_UI_REFACTOR_INSTRUCTIONS.md) の 3.4 (1)〜(4),(6) と、#382・#383 の本人レビュー指摘を対象とします。
-基準は main `e9b4c75d`。本資料はレビュー準備中です。スクリーンショット取得・実行結果は未記入であり、合格の記録ではありません。
+比較の製品基準は main `53e68ffc`（#390 の共通 fail-soft 統合後）です。C の製品差分は `32fec1f3`、比較 fixture の最終補正は `c229f3e4` です。本人の目視承認はまだ得ていません。
 
 ## 変更範囲
 
@@ -71,7 +71,7 @@ DEBUG 版で不正な `UiMessage` を作成しません。この2枚は本番版
 18 は既存の `savingRecipe` 相当の可否入力により「一覧に戻る」が無効な場合を示し、fallback によって操作を有効化しません。
 どちらも Android View ツリーのソフトウェア描画であり、実機 GPU 描画や画質の証明にはしません。
 
-### 実行手順（未実行）
+### 実行手順
 
 共有端末の枠は [MANAGED_DEVICES](MANAGED_DEVICES.md) に従い、他レーンと調整してから実行します。
 本人の Pixel は使いません。既存の固定 ATD 枠で `ANDROID_AVD_HOME` を設定済みであることを確認します。
@@ -128,3 +128,23 @@ before/after は同じ合成画像、既存 Pixel 9a ATD、foreground=true、表
 | 16 取消済み・別写真保存中 | 有効 | 無効 | なし | 有効 |
 
 13/14は旧/新の確認ダイアログ表示用fixture。17/18の汎用問題カードは旧版に該当表示がないためbefore画像を作りません。beforeの旧overlay/dialogは、旧mainの描画コードを基にした試験用再現であり、保存ownerからの通し再現ではありません。
+
+## 検証記録
+
+- 製品差分 32fec1f3: GitHub CI 7/7 成功、ローカル lint・全 debug unit 1368 件（失敗 0、skip 12）・指定 release unit 6 件（失敗 0、skip 0）・debug/AndroidTest APK 成功。独立静的レビューで P1/P2 指摘なし。
+- fixture 補正 7c9ed6de: AndroidTest APK 成功。before/after の入力・enabled 条件・旧文言は独立事前レビュー済み。修正後 ATD は 1 分 8 秒で成功し after 18 枚を取得。初回の条件不整合画像は不採用。
+- ATD は software View-tree の合成表示で、実機 GPU・保存処理・OS 通知・画質の実証ではありません。
+- Codex レビューは使用上限で未完了です。本人の表示承認前にはマージしません。
+
+- before fixture e68b94a7（製品 baseline 53e68ffc）: AndroidTest APK 成功、固定 ATD 1 分 38 秒で 2 tests / 0 failures、16 枚取得。before 17/18 は旧版に該当表示なし。実行後は共有枠の count 0・adb 空を確認。
+- after 修正版 18 枚は独立目視レビュー済み（文字欠け・重なり・期待と異なる有効表示なし）。before との画像比較結果はレビュー一覧に記録します。
+
+## 親テーマ条件の再照合
+
+比較用 before の初回画像は Surface 親を欠き、旧 Text が黒文字となっていたため不採用です。前後とも実製品と同じ CaptureTheme → Surface(fillMaxSize) → Column(fillMaxSize.safeDrawingPadding) → View(weight(1f)) へ統一しました。状態・操作条件は変更せず、代表 04 を先に取得して独立確認後、全量を取得します。before fixture 8d5c04f9、after fixture c229f3e4。代表の density=2.625 / dpi=420 / fontScale=1 / 1080x2424 は一致しています。
+
+旧 Dialog 13 の ATD 合成再現では最下操作が dialog root 内で切れています。root と文字 bounds を保存し、実機での再現は未確認と明記します。旧構成を変更した架空の before 画像は作りません。
+
+最終の親構造一致版: before 8d5c04f9 は全量16枚（2試験成功、1分6秒）、after c229f3e4 は全量18枚（2試験成功、1分15秒）を取得。代表状態の色・背景・密度条件を先に独立確認し、全量へ進みました。従前の不採用画像は比較一覧へ混ぜません。
+
+最終の前後34枚は独立目視比較で新しい文字切れ・欠落・操作可否の不整合なし（旧13の既知制限を除く）。c229f3e4 の GitHub CI 7/7 成功。スマホ向け一覧は [レビュー資料](ui-review/pr-c/README.md) から開けます。本人の承認待ちです。
