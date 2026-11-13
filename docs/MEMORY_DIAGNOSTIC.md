@@ -37,7 +37,40 @@ MaliはCPUと共有RAM。PSS/graphics/texture台帳は重複し得るため加�
 診断ログの割当・I/O・採取はタイミングとメモリへ影響する。数値は計測版の観測であり配布版の無観測性能とは同一視しない。ログ呼出し全体の失敗を保護し、元処理のエラーや所有状態を置換しない。
 OS/driverが公開しないGPU量とnative段階内短時間peakは未測定と記す。境界ログだけで全段階peakを保証しない。
 
-## OS回収・終了の観測
+## 実行前の固定GPU確認と合成予行
+
+計測版は `DevelopEngineSetting` の実際の既定値を GPU に固定する。通常 debug / release の選択は変更しない。
+専用 build type が既定CPUへ落ちる不備があったため、明示GPU指定のテストだけでは合格としない。
+通常・計測版それぞれの生成 BuildConfig を使う JVM 回帰と、計測 APK の実設定から開く合成回帰を行う。
+修正前のCPU経路の観測はGPUの測定結果として採用しない。
+
+```sh
+python3 -B -m unittest discover -s tools/memory-diagnostic -v
+./gradlew :app:testMemoryDiagnosticUnitTest --tests '*MemoryAdmissionDiagnosticTest' --tests '*DevelopEngineTest' :app:assembleMemoryDiagnostic :app:assembleMemoryDiagnosticAndroidTest :app:generateDebugBuildConfig :app:generateReleaseBuildConfig :app:processDebugMainManifest :app:processReleaseMainManifest -PcinematicMemoryDiagnostic=true --no-daemon
+python3 -B tools/memory-diagnostic/verify_isolation.py app/build
+```
+
+通常GPU対応AVDを予約し、active instrumentation / 関連PIDなしを確認してから、自作合成だけで次の2件を実行する。
+専用runnerは `dev.cinematic.p0.memorydiagnostic.test/androidx.test.runner.AndroidJUnitRunner`。
+`isolated=true` を指定し、後者には `importUiFgsDocuments=true` も指定する。ATDはGPU確認先にしない。
+
+- `GpuProductInputAndroidTest#memoryDiagnosticDefaultGpuEmitsTextureLedgerAndReleasesOwners`: 実設定GPU、編集・比較・再開、原本・owner、正のtexture予約と終了後0。
+- `ForegroundExportOwnerTest#memoryDiagnosticDocumentsUiEditsPublishesAndReleasesWithRealGpuLogs`: 実DocumentsUI→編集→実FGS保存、公開JPEG読戻し、原本不変、FGS/owner/自作fixture回収、decode/preview/saveと両ledgerの解放。
+
+起動前に `python3 tools/memory-diagnostic/collector.py --adb <adb> --serial <予約AVD> --out <新規ローカル出力先>` を開始する。
+採取先は新規ディレクトリのみ。停止はその中の `stop.request` を作り、採取器だけを終了する。端末のログ消去・アプリ終了・データ操作はしない。
+次操作を案内する前に `collector.preflight_evidence(events)` と直近採取時刻を確認する。
+同じ新規起動PIDの GPU / recordOnly=true、decode、正のGPU予約、PSS採取が揃わない場合は待機する。
+CPU設定、予期しない受付拒否、PID消失/変更、own crash/kill、thermal 2以上、採取失敗では停止する。
+record-only の `wouldPermit=false` 自体は計測目的の観測であり停止理由としない。
+捕捉済みOOME等の非クラッシュUIエラー、原本変化、公開/owner不明は採取器だけでは全検出できない。画面・保存結果を各段で確認し、該当時は操作者が停止する。
+試験runner終了とOS killは区別し、PID消失だけからOS回収と断定しない。
+
+AVD予行は小型の接続・採取・保存・回収確認であり、Pixel/Maliの共有RAM、12/24MP各3回と並行各1回の実測を代替しない。
+同じ最終headから作ったAPKのID・署名・SHA256、通常版flag=false、専用test target、内部署名拒否を開始確認票に固定する。
+実機更新・計測再開は別途開始確認後とする。
+
+## OS回収・終了の観測（詳細）
 
 開始確認後、対象アプリのpid/時間とOSのexit-info（利用可能なら ApplicationExitInfo のreason/timestamp/PSS/RSS）を
 照合する。専用Applicationは起動時刻/本人pidと自packageの直近最大8終了記録のreason/status/時刻/PSS/RSSだけを記録する。description/traceは取得しない。履歴が今回より前なら分離し、再起動して記録を得られない場合は未確認とする。pid消失だけでOOMと断定しない。LOW_MEMORY、CRASH、USER_REQUESTED、未取得を区別する。

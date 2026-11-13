@@ -1,6 +1,7 @@
 package dev.cinematic.p0.memory
 
 import dev.cinematic.p0.BuildConfig
+import dev.cinematic.p0.gpu.*
 import dev.cinematic.p0.photoroll.PhotoRollResources
 import org.junit.Assert.*
 import org.junit.Test
@@ -16,6 +17,19 @@ class MemoryAdmissionDiagnosticTest {
         assertFalse(isolatedMemoryDiagnostic(true, "memoryDiagnostic", "dev.cinematic.p0"))
         assertEquals(BuildConfig.BUILD_TYPE == "memoryDiagnostic", MemoryAdmissionDiagnostic.enabled)
         assertEquals(BuildConfig.BUILD_TYPE == "memoryDiagnostic", BuildConfig.MEMORY_ADMISSION_RECORD_ONLY)
+    }
+
+    @Test fun generatedMeasurementVariantUsesFixedGpuForPreviewAndExport() {
+        if (BuildConfig.BUILD_TYPE != "memoryDiagnostic") return
+        assertTrue(MemoryAdmissionDiagnostic.enabled)
+        val setting = DevelopEngineSetting({ error("Must not read saved engine") },
+            { error("Must not write saved engine") },
+            developEngineSettingVisible(BuildConfig.DEBUG, BuildConfig.BUILD_TYPE),
+            defaultDevelopEngine(BuildConfig.BUILD_TYPE))
+        assertFalse(setting.visible)
+        assertEquals(DevelopEngine.GPU, setting.current())
+        assertEquals(DevelopEngine.GPU, setting.beginExport())
+        assertFalse(setting.select(DevelopEngine.CPU, GpuAvailability.Available))
     }
 
     @Test fun recordsObservedValuesAndWouldRejectWithoutClaimingMeasuredNeed() {

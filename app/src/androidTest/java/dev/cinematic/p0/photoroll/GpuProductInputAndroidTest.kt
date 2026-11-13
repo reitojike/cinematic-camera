@@ -36,7 +36,31 @@ class GpuProductInputAndroidTest {
         exercise(6000, 4000)
     }
 
-    private fun exercise(width: Int, height: Int) {
+    @Test fun memoryDiagnosticDefaultGpuEmitsTextureLedgerAndReleasesOwners() {
+        assumeTrue(dev.cinematic.p0.BuildConfig.BUILD_TYPE == "memoryDiagnostic")
+        check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
+        check(Build.HARDWARE in setOf("ranchu", "goldfish")) { "Synthetic emulator only" }
+        check(dev.cinematic.p0.memory.MemoryAdmissionDiagnostic.enabled)
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val setting = DevelopEngineSetting(instrumentation.targetContext)
+        assertFalse(setting.visible)
+        assertEquals(DevelopEngine.GPU, setting.current())
+        assertEquals(DevelopEngine.GPU, setting.beginExport())
+        val started = SystemClock.elapsedRealtime()
+        exercise(256, 192, useConfiguredEngine = true)
+        // Read only this synthetic test process and fixed diagnostic tag; never clear the shared log buffer.
+        val command = "logcat -d --pid=${android.os.Process.myPid()} -s CinematicMemory:I *:S"
+        val lines = ParcelFileDescriptor.AutoCloseInputStream(
+            instrumentation.uiAutomation.executeShellCommand(command)).bufferedReader().use { it.readLines() }
+        val pattern = Regex("GPU_TEXTURE_LEDGER elapsedMs=(\\d+).*? reservedBytes=(\\d+)")
+        val reservations = lines.mapNotNull { line -> pattern.find(line)?.let { match ->
+            if (match.groupValues[1].toLong() >= started) match.groupValues[2].toLong() else null
+        } }
+        assertTrue("Real GPU texture reservations must be recorded in this run", reservations.any { it > 0 })
+        assertEquals("Last recorded ledger must be released", 0L, reservations.last().toLong())
+    }
+
+    private fun exercise(width: Int, height: Int, useConfiguredEngine: Boolean = false) {
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
         check(Build.HARDWARE in setOf("ranchu", "goldfish")) { "Synthetic emulator only" }
         val target = InstrumentationRegistry.getInstrumentation().targetContext
@@ -66,7 +90,9 @@ class GpuProductInputAndroidTest {
             queue.manualOriginalIo { Unit }.get(60, TimeUnit.SECONDS)
             heldApp = app // Cleanup must not initialize/restart a queue whose startup failed.
             DevelopExecution.updateConditions(ready.developConditions(true))
-            val renderer = ManualTrialPhotoRollRenderer(app, { ready }, developEngine = DevelopEngine.GPU).also { heldRenderer = it }
+            val configuredEngine = if (useConfiguredEngine) DevelopEngineSetting(app).current() else DevelopEngine.GPU
+            assertEquals(DevelopEngine.GPU, configuredEngine)
+            val renderer = ManualTrialPhotoRollRenderer(app, { ready }, developEngine = configuredEngine).also { heldRenderer = it }
             val repository = PhotoRollRepository(resolver, target.packageName)
             val drain = HandlerThread("synthetic-gpu-surface").also { heldDrain = it; it.start() }
             val imageReader = ImageReader.newInstance(320, 240, PixelFormat.RGBA_8888, 3).also { heldReader = it }

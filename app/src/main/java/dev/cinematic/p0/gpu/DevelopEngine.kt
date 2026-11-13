@@ -38,9 +38,9 @@ internal sealed interface GpuAvailability {
     data class Unavailable(val reason: String) : GpuAvailability
 }
 
-/** 通常版だけを GPU にし、他の診断 variant の既存契約は維持する。 */
+/** 通常版とメモリ計測版は固定GPU。他の診断 variant の既存契約は維持する。 */
 internal fun defaultDevelopEngine(buildType: String): DevelopEngine = when (buildType) {
-    "debug", "release" -> DevelopEngine.GPU
+    "debug", "release", "memoryDiagnostic" -> DevelopEngine.GPU
     else -> DevelopEngine.CPU
 }
 

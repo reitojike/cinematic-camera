@@ -122,7 +122,8 @@ jobs:
         run: python3 -B tools/gpu-diagnostic/verify_manifest.py app/build/intermediates/merged_manifest/gpuDiagnostic/processGpuDiagnosticMainManifest/AndroidManifest.xml app/build/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml app/build/intermediates/merged_manifest/release/processReleaseMainManifest/AndroidManifest.xml
       - name: メモリ計測版の限定unit・APK組立と通常版隔離
         run: |
-          ./gradlew :app:testMemoryDiagnosticUnitTest --tests '*MemoryAdmissionDiagnosticTest' :app:assembleMemoryDiagnostic :app:generateDebugBuildConfig :app:generateReleaseBuildConfig :app:processDebugMainManifest :app:processReleaseMainManifest -PcinematicMemoryDiagnostic=true --no-daemon
+          python3 -B -m unittest discover -s tools/memory-diagnostic -v
+          ./gradlew :app:testMemoryDiagnosticUnitTest --tests '*MemoryAdmissionDiagnosticTest' --tests '*DevelopEngineTest' :app:assembleMemoryDiagnostic :app:assembleMemoryDiagnosticAndroidTest :app:generateDebugBuildConfig :app:generateReleaseBuildConfig :app:processDebugMainManifest :app:processReleaseMainManifest -PcinematicMemoryDiagnostic=true --no-daemon
           python3 -B tools/memory-diagnostic/verify_isolation.py app/build
           if CINEMATIC_SIGNING_MODE=stable_internal ./gradlew help -PcinematicMemoryDiagnostic=true --no-daemon > "$RUNNER_TEMP/memory-signing-rejection.txt" 2>&1; then
             echo 'Memory diagnostic accepted internal signing' >&2

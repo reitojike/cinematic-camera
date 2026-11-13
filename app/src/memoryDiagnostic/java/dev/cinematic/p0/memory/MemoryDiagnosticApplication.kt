@@ -13,6 +13,7 @@ class MemoryDiagnosticApplication : Application() {
         if (!MemoryAdmissionDiagnostic.enabled) return
         try {
             Log.i("CinematicMemory", "PROCESS_START pid=${Process.myPid()} elapsedMs=${SystemClock.elapsedRealtime()} epochMs=${System.currentTimeMillis()}")
+            Log.i("CinematicMemory", "MEASUREMENT_CONFIGURATION pid=${Process.myPid()} elapsedMs=${SystemClock.elapsedRealtime()} engine=${dev.cinematic.p0.gpu.defaultDevelopEngine(dev.cinematic.p0.BuildConfig.BUILD_TYPE).name} recordOnly=${MemoryAdmissionDiagnostic.enabled}")
             val manager = getSystemService(ActivityManager::class.java)
             // Own package only. Historical entries may predate this session: correlate timestamp, do not infer causality.
             for (exit in manager.getHistoricalProcessExitReasons(packageName, 0, 8)) {

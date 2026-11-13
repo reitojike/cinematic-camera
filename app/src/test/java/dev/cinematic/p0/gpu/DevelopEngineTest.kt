@@ -79,10 +79,22 @@ class DevelopEngineTest {
         assertEquals("GPU", store.value)
     }
 
-    @Test fun onlyOrdinaryBuildsDefaultToGpu() {
-        for (type in listOf("debug", "release")) assertEquals(DevelopEngine.GPU, defaultDevelopEngine(type))
+    @Test fun ordinaryAndMemoryMeasurementBuildsDefaultToGpu() {
+        for (type in listOf("debug", "release", "memoryDiagnostic")) assertEquals(DevelopEngine.GPU, defaultDevelopEngine(type))
         for (type in listOf("gpuDiagnostic", "rawDiagnostic", "previewDiagnostic", "original24Probe", "future"))
             assertEquals(DevelopEngine.CPU, defaultDevelopEngine(type))
+    }
+
+    @Test fun generatedBuildSelectsItsDeclaredEngineWithoutHiddenPreferenceOverrides() {
+        val expected = if (BuildConfig.BUILD_TYPE in setOf("debug", "release", "memoryDiagnostic"))
+            DevelopEngine.GPU else DevelopEngine.CPU
+        assertEquals(expected, defaultDevelopEngine(BuildConfig.BUILD_TYPE))
+        if (!developEngineSettingVisible(BuildConfig.DEBUG, BuildConfig.BUILD_TYPE)) {
+            val setting = DevelopEngineSetting({ error("Hidden setting read a preference") },
+                { error("Hidden setting wrote a preference") }, false, defaultDevelopEngine(BuildConfig.BUILD_TYPE))
+            assertEquals(expected, setting.current())
+            assertEquals(expected, setting.beginExport())
+        }
     }
 
     @Test fun ordinaryGpuPolicyNeverReadsOrWritesDiagnosticPreferences() {
@@ -97,7 +109,7 @@ class DevelopEngineTest {
     @Test fun settingIsRestrictedByBuildType() {
         assertFalse(developEngineSettingVisible(true, "debug"))
         assertTrue(developEngineSettingVisible(false, "gpuDiagnostic"))
-        for (type in listOf("release", "rawDiagnostic", "previewDiagnostic")) {
+        for (type in listOf("release", "rawDiagnostic", "previewDiagnostic", "memoryDiagnostic")) {
             assertFalse(developEngineSettingVisible(false, type))
         }
         assertEquals(BuildConfig.BUILD_TYPE == "gpuDiagnostic",

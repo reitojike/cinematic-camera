@@ -10,6 +10,7 @@ for variant in ("debug", "release", "memoryDiagnostic"):
     expected = variant == "memoryDiagnostic"
     config = build / "generated/source/buildConfig" / variant / "dev/cinematic/p0/BuildConfig.java"
     text = config.read_text(encoding="utf-8")
+    assert f'BUILD_TYPE = "{variant}";' in text, variant
     assert f'MEMORY_ADMISSION_RECORD_ONLY = {str(expected).lower()};' in text, variant
     identity = "dev.cinematic.p0.memorydiagnostic" if expected else "dev.cinematic.p0"
     assert f'APPLICATION_ID = "{identity}";' in text, variant
@@ -38,4 +39,10 @@ for variant in ("debug", "release", "memoryDiagnostic"):
     else:
         assert app.get(android + "name") != "dev.cinematic.p0.memory.MemoryDiagnosticApplication"
 assert permissions[0] == permissions[1] == permissions[2], "diagnostic changed permissions"
+test_manifest = build / "intermediates/merged_manifest/memoryDiagnosticAndroidTest/mergeMemoryDiagnosticAndroidTestManifest/AndroidManifest.xml"
+test_root = ET.parse(test_manifest).getroot()
+runners = test_root.findall("instrumentation")
+assert len(runners) == 1
+assert runners[0].get(android + "name") == "androidx.test.runner.AndroidJUnitRunner"
+assert runners[0].get(android + "targetPackage") == "dev.cinematic.p0.memorydiagnostic"
 print("MEMORY_DIAGNOSTIC_ISOLATION PASS: generated flag/identity/label, unchanged permissions")

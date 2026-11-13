@@ -44,10 +44,35 @@ class ForegroundExportOwnerTest {
     /** Real system picker, restricted to one uniquely named self-created Downloads source. */
     @Test fun documentsUiSyntheticDngEditsAndPublishesThroughRealForegroundService() = importedSyntheticDng(true)
 
-    private fun importedSyntheticDng(documentsUi: Boolean) {
-        org.junit.Assume.assumeTrue(context.packageName == "dev.cinematic.p0" && dev.cinematic.p0.BuildConfig.DEBUG)
+    @Test fun memoryDiagnosticDocumentsUiEditsPublishesAndReleasesWithRealGpuLogs() {
+        org.junit.Assume.assumeTrue(dev.cinematic.p0.BuildConfig.BUILD_TYPE == "memoryDiagnostic")
+        check(dev.cinematic.p0.memory.MemoryAdmissionDiagnostic.enabled)
+        val started = android.os.SystemClock.elapsedRealtime()
+        importedSyntheticDng(true, memoryMeasurement = true)
+        val command = "logcat -d --pid=${android.os.Process.myPid()} -s CinematicMemory:I *:S"
+        val lines = android.os.ParcelFileDescriptor.AutoCloseInputStream(
+            instrumentation.uiAutomation.executeShellCommand(command)).bufferedReader().use { it.readLines() }
+        val events = lines.filter { line -> Regex("elapsedMs=(\\d+)").find(line)
+            ?.groupValues?.get(1)?.toLong()?.let { it >= started } == true }
+        for (stage in listOf("ORIGINAL_DECODE", "BOUNDED_PREVIEW", "ORIGINAL_SAVE"))
+            assertTrue("Missing real memory stage $stage", events.any { it.contains("stage=$stage ") })
+        for (budget in listOf(dev.cinematic.p0.gpu.GpuMemoryLedger.PREVIEW_BUDGET,
+            dev.cinematic.p0.gpu.GpuMemoryLedger.EXPORT_BUDGET)) {
+            val ledger = events.filter { it.contains("GPU_TEXTURE_LEDGER ") && it.contains("budgetBytes=$budget ") }
+            assertTrue("Missing real GPU allocation for budget $budget", ledger.any {
+                Regex(" reservedBytes=(\\d+)").find(it)?.groupValues?.get(1)?.toLong()?.let { bytes -> bytes > 0 } == true })
+            assertTrue("Final GPU ledger remains allocated", ledger.last().contains("reservedBytes=0 "))
+        }
+    }
+
+    private fun importedSyntheticDng(documentsUi: Boolean, memoryMeasurement: Boolean = false) {
+        org.junit.Assume.assumeTrue(dev.cinematic.p0.BuildConfig.DEBUG &&
+            (context.packageName == "dev.cinematic.p0" ||
+                (memoryMeasurement && context.packageName == "dev.cinematic.p0.memorydiagnostic")))
         org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments().getString(if (documentsUi) "importUiFgsDocuments" else "importUiFgs") == "true")
-        cameraRollReadPermissions(Build.VERSION.SDK_INT).forEach {
+        // The measurement rehearsal reads only rows it creates and the exact SAF grant from DocumentsUI.
+        // Do not grant media-library permissions to the new diagnostic identity.
+        if (!memoryMeasurement) cameraRollReadPermissions(Build.VERSION.SDK_INT).forEach {
             check(context.checkSelfPermission(it) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
                 "Reuse an already-authorized synthetic fixture app; do not change permissions"
             }
