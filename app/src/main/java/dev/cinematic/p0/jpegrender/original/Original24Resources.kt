@@ -16,7 +16,14 @@ internal object Original24Resources {
         }
         val thermal = if (Build.VERSION.SDK_INT >= 29)
             (context.getSystemService(Context.POWER_SERVICE) as PowerManager).currentThermalStatus else 0
-        if (!Original24MemoryPolicy.permits(stage, memory.lowMemory, memory.availMem)) {
+        val permitted = Original24MemoryPolicy.permits(stage, memory.lowMemory, memory.availMem)
+        val recordOnly = dev.cinematic.p0.memory.MemoryAdmissionDiagnostic.enabled
+        if (recordOnly) try { dev.cinematic.p0.memory.MemoryAdmissionDiagnostic.record(
+            stage.name, memory.availMem, memory.lowMemory, memory.threshold,
+            if (stage == Original24MemoryStage.BOUNDED_PREVIEW) 1L else Original24MemoryPolicy.ORIGINAL_REQUIRED_BYTES,
+            permitted, outputPixels)
+        } catch (_: Throwable) { /* Includes argument allocation; observations are best effort. */ }
+        if (!permitted && !recordOnly) {
             val observation = Original24MemoryObservation(stage, memory.availMem, memory.lowMemory, memory.threshold, outputPixels)
             // Fixed classification + OS values only; no URI, filename, source identity or exception text.
             val failure = Original24MemoryUnavailable(observation = observation)

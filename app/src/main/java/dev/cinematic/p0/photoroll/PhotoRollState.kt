@@ -28,7 +28,8 @@ internal data class PhotoRollResources(
     val foreground: Boolean? = null,
     val privateStorageAllowed: Boolean? = null,
 ) {
-    fun developConditions(rendererAvailable: Boolean?) = dev.cinematic.p0.rawcapture.AutoDevelopConditions(
+    fun developConditions(rendererAvailable: Boolean?,
+        memoryRecordOnly: Boolean = dev.cinematic.p0.memory.MemoryAdmissionDiagnostic.enabled) = dev.cinematic.p0.rawcapture.AutoDevelopConditions(
         foreground = foreground,
         cameraSessionInUse = when {
             camerasIdle == false || camera.cameraMayStart == true || camera.captureInProgress == true -> true
@@ -41,11 +42,13 @@ internal data class PhotoRollResources(
         storageAllowed = privateStorageAllowed,
         rendererAvailable = rendererAvailable,
         previewMemoryAvailable = when {
+            memoryRecordOnly -> true
             lowMemory == true || availableBytes?.let { it <= 0L } == true -> false
             lowMemory == false && availableBytes != null -> true
             else -> null
         },
         memoryBudgetConfirmed = when {
+            memoryRecordOnly -> true
             lowMemory == true || availableBytes?.let { it < JPEG_REQUIRED_AVAILABLE_BYTES } == true -> false
             lowMemory == false && availableBytes != null -> true
             else -> null

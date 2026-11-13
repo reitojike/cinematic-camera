@@ -6,10 +6,11 @@ plugins {
 val original24Probe = providers.gradleProperty("cinematicOriginal24Probe").orNull == "true"
 val rawDiagnostic = providers.gradleProperty("cinematicRawDiagnostic").orNull == "true"
 val previewDiagnostic = providers.gradleProperty("cinematicPreviewDiagnostic").orNull == "true"
+val memoryDiagnostic = providers.gradleProperty("cinematicMemoryDiagnostic").orNull == "true"
 val gpuDiagnostic = providers.gradleProperty("cinematicGpuDiagnostic").orNull == "true"
 // Host-only shader regression tests. Nothing is added to an APK or a normal test run.
 val gpuMesa = providers.gradleProperty("cinematicGpuMesa").orNull == "true"
-require(listOf(original24Probe, rawDiagnostic, gpuDiagnostic, previewDiagnostic).count { it } <= 1) { "Choose one diagnostic build type" }
+require(listOf(original24Probe, rawDiagnostic, gpuDiagnostic, previewDiagnostic, memoryDiagnostic).count { it } <= 1) { "Choose one diagnostic build type" }
 // A variant-specific false positive must never suppress a normal or aggregate lint invocation.
 val diagnosticLintTasks = setOf("lintRawDiagnostic", "testRawDiagnosticUnitTest", "assembleRawDiagnostic", "processReleaseMainManifest")
 val requestedTaskNames = gradle.startParameter.taskNames.map { it.substringAfterLast(':') }
@@ -22,7 +23,7 @@ require(cinematicSigningMode in setOf("ephemeral_debug", "stable_internal")) {
     "CINEMATIC_SIGNING_MODE must be ephemeral_debug or stable_internal"
 }
 val stableInternalSigning = cinematicSigningMode == "stable_internal"
-require(!(rawDiagnostic || gpuDiagnostic || previewDiagnostic) || !stableInternalSigning) { "RAW diagnostics use ephemeral_debug signing only" }
+require(!(rawDiagnostic || gpuDiagnostic || previewDiagnostic || memoryDiagnostic) || !stableInternalSigning) { "RAW diagnostics use ephemeral_debug signing only" }
 fun requiredSigningInput(name: String): String = providers.environmentVariable(name).orNull
     ?.takeIf { it.isNotBlank() } ?: throw GradleException("Stable internal signing requires environment input: $name")
 if (stableInternalSigning) {
@@ -38,6 +39,7 @@ android {
     defaultConfig {
         applicationId = "dev.cinematic.p0"
         buildConfigField("boolean", "EDITOR_PREVIEW_DIAGNOSTIC", "false")
+        buildConfigField("boolean", "MEMORY_ADMISSION_RECORD_ONLY", "false")
         minSdk = 33
         targetSdk = 37
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
@@ -70,6 +72,21 @@ android {
         getByName("release") {
             isDebuggable = false
             if (stableInternalSigning) signingConfig = signingConfigs.getByName("cinematicInternal")
+        }
+    }
+    // Explicit opt-in, separate identity, debug certificate only. Never a distribution variant.
+    if (memoryDiagnostic) {
+        buildTypes.create("memoryDiagnostic") {
+            initWith(buildTypes.getByName("release"))
+            applicationIdSuffix = ".memorydiagnostic"
+            versionNameSuffix = "-memory-diagnostic"
+            buildConfigField("boolean", "MEMORY_ADMISSION_RECORD_ONLY", "true")
+            isDebuggable = true
+            isJniDebuggable = false
+            isMinifyEnabled = false
+            isShrinkResources = false
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += "release"
         }
     }
     // Same optimization recipe as the earlier Pixel photo probe, not the same measurement harness.

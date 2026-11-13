@@ -133,6 +133,14 @@ internal class PhotoRollResourceObserver(context: Context,
             catch (_: Exception) { null }
         val storage = try { StatFs(privateRoot.absolutePath).availableBytes >= PRIVATE_REQUIRED_BYTES }
             catch (_: Exception) { null }
+        if (dev.cinematic.p0.memory.MemoryAdmissionDiagnostic.enabled) try {
+            dev.cinematic.p0.memory.MemoryAdmissionDiagnostic.record("ROLL_PREVIEW", memory?.availMem,
+                memory?.lowMemory, memory?.threshold, 1L,
+                memory?.lowMemory == false && memory.availMem > 0L, null)
+            dev.cinematic.p0.memory.MemoryAdmissionDiagnostic.record("ROLL_SAVE", memory?.availMem,
+                memory?.lowMemory, memory?.threshold, PhotoRollResources.JPEG_REQUIRED_AVAILABLE_BYTES,
+                memory?.lowMemory == false && memory.availMem >= PhotoRollResources.JPEG_REQUIRED_AVAILABLE_BYTES, null)
+        } catch (_: Throwable) { /* Includes argument allocation; observations are best effort. */ }
         return PhotoRollResources(idle, thermal, memory?.lowMemory, memory?.availMem,
             AndroidPhotoRollCameraObservations.snapshot(), foreground, storage)
     }

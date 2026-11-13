@@ -120,6 +120,10 @@ jobs:
         run: ./gradlew :app:testGpuDiagnosticUnitTest :app:assembleGpuDiagnostic :app:assembleGpuDiagnosticAndroidTest :app:processDebugMainManifest :app:processReleaseMainManifest -PcinematicGpuDiagnostic=true -PcinematicGpuDiagnosticTests=true --no-daemon
       - name: GPU診断のmanifest隔離を検証
         run: python3 -B tools/gpu-diagnostic/verify_manifest.py app/build/intermediates/merged_manifest/gpuDiagnostic/processGpuDiagnosticMainManifest/AndroidManifest.xml app/build/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml app/build/intermediates/merged_manifest/release/processReleaseMainManifest/AndroidManifest.xml
+      - name: メモリ計測版の限定unit・APK組立と通常版隔離
+        run: |
+          ./gradlew :app:testMemoryDiagnosticUnitTest --tests '*MemoryAdmissionDiagnosticTest' :app:assembleMemoryDiagnostic :app:generateDebugBuildConfig :app:generateReleaseBuildConfig :app:processDebugMainManifest :app:processReleaseMainManifest -PcinematicMemoryDiagnostic=true --no-daemon
+          python3 -B tools/memory-diagnostic/verify_isolation.py app/build
       - name: GPU診断のunitレポートを保存
         if: always()
         uses: actions/upload-artifact@v7

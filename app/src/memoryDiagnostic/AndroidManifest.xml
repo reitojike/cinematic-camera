@@ -1,0 +1,3 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+    <application android:name="dev.cinematic.p0.memory.MemoryDiagnosticApplication" android:label="Cinematic MEMORY DIAGNOSTIC" tools:replace="android:label" />
+</manifest>
