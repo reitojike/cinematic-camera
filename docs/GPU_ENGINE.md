@@ -411,13 +411,13 @@ EGL/GLES bindingは [LWJGL公式](https://www.lwjgl.org/guide) と
 
 #### D0 と D1〜Dn、CPU 整理の順序（ロードマップ v2）
 
-管理先は既存 #290 / #276。#349 の Android 手動基準登録は main に反映済み。#355 の既知共通黒化は PR #361 で修正中であり、基準更新は本人の目視確認待ち。Draftの修正をmainへ先取りしない。CPUへ戻す運用は想定しないが、削除は次の条件と手順を満たしてから行う。
+管理先は既存 #290 / #276。#349 の Android 手動基準登録は main に反映済み。#355 の既知共通黒化は PR #361 で修正し、本人確認済みの修正後90条件基準をmainへ反映済み。基準の再採用・閾値変更は今回行わない。CPUへ戻す運用は想定しないが、削除は次の条件と手順を満たしてから行う。
 
-#357 の保存取消後の設定変更は、dev.1の普段使いに影響するためD0/24MP完了待ちにせず今すぐ並行する。GPUの24MP保存と保存状態コードが競合する場合のみ24MPを優先し、#357のその部分を後へ回す。確認済み取消だけ新世代を許し、公開状態不明・cleanup未確認はHOLDを維持する。保存挙動の変更はマージ前に本人へ提示・確認する。
+#357 / PR #364 の同プロセスの確認済み取消後の新世代受付は反映済み。次の #365（確認済取消の永続証明）は保存まわりのリファクタリングより先に実装するが、実装範囲を本人へ提示してから着手する。本D0はその依存と互換試験を整理するだけで、証明schema・保存状態・復旧契約を実装しない。公開状態不明・cleanup未確認のHOLDを維持する。24MPと同じ保存ファイルに触れる場合は担当間で調整する。
 
 1. **D0 は今から並行して進める設計文書**: GPU前提で切替機構の撤去、preview/export shader構成の共通化、責任分担、失敗型、命名、試験の配置、Mesaから実全工程を呼べるbinding境界、shader定数の正本を決める。D0完了をMesa実装完了と呼ばない。
 2. #290後段BでGLSLを正本とし、GPU基準画像との回帰をCPU削除・リファクタリングの前提にする。CPU削除前にshader定数の出どころも確定する。Mesa全工程CIの完成はCPU削除の前提に加えない。旧CPU数値閾値を合否へ戻さない。
-3. 数日の様子見後、本人から明暗各12MP保存、保存中の次写真表示、取消→やり直し、#352の再発有無という最低限操作の結果を確認する。経過日数だけで完了とせず、データ損失・保存不能継続など致命的不具合がないことを確認してCPU描画経路削除へ進む。小さい問題はIssueで並行追跡する。
+3. CPU・診断経路の削除は2026-11-15ごろに本人が判断する。それまではD0と削除準備までとし、日付の到来を許可や合格とみなさない。本人の普段使い結果（保存、保存中の次写真表示、取消→やり直し、#352の再発有無）と、データ損失・保存不能継続など致命的不具合の有無を提示して判断を受ける。小さい問題はIssueで並行追跡する。
 4. 安全に削除できる旧spec/計測/RAW診断/rawprobeは依存棚卸し後に小PRで整理する。共有部分を先に分離する。gpuDiagnosticはGPU試験を通常の試験側へ移した後に削除する。
 5. CPU/診断経路の削除と試験移動後に、D0範囲の挙動不変なリファクタリングをD1〜Dnの小PRで進める。24MPと同じファイルは24MPを先にする。
 6. **Mesa全工程の基準画像比較CI移行はD1〜Dnの後**。それまではGPU/ルックPRのマージ前、CPU削除・リファクタリングの各PR前にAndroid手動回帰を必須とする。AVDは1枠で24MP→v0.1.0クリティカルパス→その他の順。
@@ -438,7 +438,7 @@ CPU整理の境界:
 
 #### D0: 現行コードに対する責務・依存の棚卸し
 
-初回照合基点は main `579500f`（#356 / #359 反映後）。main `3a92047` への取込み時に、#357（PR #364）・#360・#367・#369の反映を再照合した。以下は削除・分離の設計案であり、コード変更、CPU廃止、Mesa全工程CI移行の完了を表さない。現行契約は [develop](../specs/develop/spec.md)・[storage](../specs/storage/spec.md)・[diagnostics](../specs/diagnostics/spec.md) を優先する。後続PRはその時点のmainへ再照合し、未マージの #355 の成果を実装済みに数えない。#357の確認済み取消後の新世代受付と#360の診断追加は反映済みだが、旧CPU更新互換・24MP性能の動的合格を意味しない。
+初回照合基点は main `579500f`（#356 / #359 反映後）。main `3a92047` への取込み時に、#357（PR #364）・#360・#367・#369の反映を再照合した。以下は削除・分離の設計案であり、コード変更、CPU廃止、Mesa全工程CI移行の完了を表さない。現行契約は [develop](../specs/develop/spec.md)・[storage](../specs/storage/spec.md)・[diagnostics](../specs/diagnostics/spec.md) を優先する。削除準備は main `ad911a6` で再照合し、#361（#355と修正後基準）および #370〜#374（取込み・24MP合成試験）の反映を確認した。後続PRはその時点のmainへ再照合する。#357の確認済み取消後の新世代受付と#360の診断追加は反映済みだが、旧CPU更新互換・24MP性能の動的合格を意味しない。
 
 表のコードパスは `app/src/main/java/dev/cinematic/p0/` からの相対。保持は永久固定という意味ではなく、挙動・互換性を置換する根拠が揃うまで削除不可という意味である。
 
@@ -500,6 +500,51 @@ preview/export共通化は、同じ式・定数・pass入出力の定義を共�
 | PREVIEW_MEMORY_PROBE、PREVIEW_ORIGINAL_CHECKS、GPU_EXPORT_PHASE2 | 原本照合・メモリ観測・ロードマップの既存正本を維持 | #260/#101および並行計画担当。本D0では編集しない。最新結果を後続削除/分離PRへ再照合 |
 
 028-face-mask-core等の顔機能、撮影/露出/UIを含む非D0資料は #231 の管理に残す。#358/#359の移行をD0でやり直さない。Living Specに残る「通常CPU」「#353マージ前提」等の旧記述は、#354後の契約と不整合になっている箇所があるため後続の担当PRで訂正する。旧資料の当時の失敗や未確認を成功へ書き換える理由にはしない。
+
+#### D0: 削除判断前に揃える対象一覧と移行順
+
+以下は #362 の棚卸しを具体化した**準備案**。実装・移動・削除は未実施で、2026-11-15ごろの本人判断前にCPU/診断経路を削除しない。対象外ファイルを名前の類似だけで追加しない。D0 → 本人判断と安全条件を満たすCPU/診断整理 → D1〜DnのGPUリファクタ → full-pipeline Mesa CIの順序を維持する。診断共有部と試験の先行移動は削除に必要な限定作業であり、D1の実graph再設計を前倒しする理由にはしない。
+
+SIGMA fp 24MPの実写確認は、本人がdev.2で普段どおり数枚を取り込み・編集・保存して試す。PC接続のRAM計測は失敗・違和感があった場合に段取りし、普段使い確認やD0準備の常時必須ゲートにはしない。これは `Original24MemoryPolicy.kt` / [メモリ検証手順](PREVIEW_MEMORY_PROBE.md) の768MiB条件・予算の変更でも、未測定メモリの合格宣言でもない。実写結果と #371/#372 の合成24MP試験は別の証拠として記録する。
+
+**削除候補の順序と止める条件**（コードは特記しない限り `app/src/main/java/dev/cinematic/p0/` 相対。各段の実行は後続PRで承認範囲と最新mainを確認する）:
+
+| 順 | 編集・削除候補の具体的な入口 | 残すもの・着手前の条件 |
+| --- | --- | --- |
+| 準備 | `gpu/ShaderConstants.kt`、`raw/R7BaseV1.kt`、`raw/StageClearV1.kt`、`raw/StageClearGlowV1.kt`、`raw/StageClearMistV1.kt`、`raw/StageClearOrtonV1.kt`、`raw/StageClearCharacterV1.kt` | 定数の単一正本と参照先を確定する。V1定義とCPU実行が同居するファイルは丸ごと削除不可。値・型・配列順・生成define、修正後GPU基準を保持。実際の抽出は後段Bの限定PR |
+| 1 | `photoroll/ManualTrialPhotoRollRenderer.kt` のCPU draft/exact分岐、`StageClearTrialPipeline.kt` / `StageClearTrialRenderer.kt` のCPU描画 | GPU入口、AS_SHOT、同写真/調整値、取消、比較表示、owner終了を保持。`StageClearTrialPipelineTest` とpreview試験の保証を対応付けてから分岐単位で削除。Trialという名前だけで編集UIを消さない |
+| 2 | `raw/original/OriginalStageClear24.kt` のCPU実行、`jpegrender/original/Original24Attempt.kt` のCPU renderer/pack分岐、`jpegrender/JpegGenerationAttempt.kt` の旧producer | native decode、geometry、原本照合、Bitmap/JPEG入口、cleanupを保持。保存authority/engine/codecに接する変更は #365 の提示・実装・検証後に再照合。旧CPU互換の証拠が不足すればこの段を止める |
+| 3 | `gpu/DevelopEngine.kt` の診断選択UI・設定読書きとCPU新規選択入口 | `DevelopGpuAvailabilityCache` / 能力検査、GPU失敗理由、owner固定engineは保持。enumや既定引数の除去は呼出し元・旧互換を照合して別判断。`develop/engine` の設定キー撤去を保存データ消去へ広げない |
+| 4 | `app/src/rawDiagnostic/`、`app/src/previewDiagnostic/`、`app/src/original24Probe/`、`rawprobe/` の各host・manifest・配線 | variantごとに対象を確定する。rawDiagnosticはgpuDiagnosticから参照されるため共有排他/入力/観測を先に分離。LibRaw/JNI製品基盤、原本/24MP/取消試験は残す。rawprobeは `settings.gradle.kts`、`app/src/main/cpp/CMakeLists.txt` の `CINEMATIC_ENABLE_RAW_PROBE`、`rawprobe/src/main/cpp/baseline_small.cpp`、`app/src/main/cpp/probe.exports` と結合する。appへのJNI非混入検査の代替が先 |
+| 5 | `app/src/gpuDiagnostic/` と関連 `app/build.gradle.kts` source set / variant、CI・診断runbook | 下表の試験を通常試験側へ移し、host・manifest・opt-in・実行件数を確認した後。`RawDiagnosticActivity.activeOrHeld()` への呼出しを単に消して排他を弱めない。`gpu/diag/GpuStageTap.kt` とFULL_RECOMPUTEは保持 |
+| 6 | 上の #231 対応表にある旧spec/plan/tasks・CPU並列候補・診断手順 | コード/試験の移行を反映してから、段落単位の移管先・未採用理由・被リンク・過去の失敗参照を残す。旧ディレクトリ単位の一括削除や、現行手順のない履歴化をしない |
+
+**GPU共有として残す具体ファイル**: `raw/LinearSrgbImage.kt`（`LinearSrgbImage` / `FloatPlane` 型）、`PhotoAdjustments.kt`、`R7PreviewInputs.kt`（入力解析）、`StageClearColor.kt`（GPU入力準備でも利用）、`StageClearBlur.kt`（filter/係数）、上記V1定数、`raw/original/OriginalRaster.kt` / `OriginalFields.kt` / `NativeOriginalRaster.kt`、`jpegrender/original/Original24PreviewSession.kt` のAS_SHOT経路。`StageClearGpu.kt`、`GpuExportRenderer.kt`、`GpuExportField.kt`、`R7Gpu.kt`、`GpuResample.kt` が参照する。共有型・解析・係数とCPU画素実行を同一視しない。ワイルドカードimportもあるためimport一覧だけで「参照0」を判定しない。
+
+**試験移行の対応表**（現時点では移行先候補、移行成功の記録ではない。以下の短い名前は `.kt`。`gpuDiagnosticTest` のルートは `app/src/gpuDiagnosticTest/java/dev/cinematic/p0/`）:
+
+| 現在のファイル群・保証 | 移行先候補 / 保持と確認 |
+| --- | --- |
+| `gpuDiagnosticTest/gpu/` の `GpuDiagnosticDngInputTest`、`GpuDiagnosticDngPipelineTest`、`GpuDiagnosticFilesSelectionTest`、`GpuDiagnosticPickerLifecycleTest`、`GpuDiagnosticSurfaceInputTest`、`GpuPreviewLifecycleTest` | `app/src/androidTest/java/dev/cinematic/p0/gpu/` と必要最小限のtest host。入力・選択世代・lifecycle・Surface/GL所有のassertを残す。`src/gpuDiagnosticTest/AndroidManifest.xml` の必要component、非公開属性、intent/permissionを明示移管し、通常releaseに入れない。`GpuPreviewDiagnosticActivity` 等への起動/入力依存があるので単なるクラス移動では成立しない |
+| `gpuDiagnosticTest/jpegrender/original/` の `GpuExportBoundaryFixture`、`Original24GpuBoundaryCancellationAndroidTest`、`Original24GpuObserverFailureAndroidTest`、`GpuConcurrentMemoryProbeTest`、`EditorPreviewParallelTest` | 通常 `androidTest` の同packageへ候補分離。合成DNG・故障注入・解放/held状態・観測失敗・保存中の次写真を保持。メモリ観測のopt-inとwall/texture/PSSの区別を保持。移動を実機RAM計測の常時義務にしない |
+| `gpuDiagnosticTest/photoroll/` の `GpuExportActiveOwnershipAndroidTest`、`GpuExportSafetyLifecycleAndroidTest`、`GpuProductLifecycleAndroidTest`、`GpuSaveLifecycleAndroidTest`、`CpuExportPhotoSwitchAndroidTest` | 通常 `androidTest/photoroll/` へ候補分離。FGS、保存中編集/選択、旧owner終了、取消/retry/HOLDを対応付ける。CPU専用試験を単純削除せず、安全assertのGPU相当試験と旧CPU互換fixtureのどちらへ残すか決める |
+| `gpuDiagnosticTest/raw/` の `GpuDiagnosticLoadTest`、`GpuDiagnosticProbeTest`、`PreviewParallelDiagnosticTest`、各診断host専用試験 | UI/host専用の廃止候補と、排他・原本・資源の保持assertを分割する。hostの存在だけを試すassertはhost削除と同じPRで理由を記録。一般安全assertの削除を同伴させない |
+| `app/src/androidTest/java/dev/cinematic/p0/gpu/reference/` の `KotlinReference`、`GpuReferenceImages`、`ImageDiff`、`GpuTolerances` と `GlowMistParityAndroidTest` / `GpuFinishAndroidTest` / `GpuR7AndroidTest` 等 | CPU差は参考値のまま、合成fixture、finite/shape・copy・cache/fresh・GPU同士のassertを残す。CPU実行の削除前に必要な参照実装をtest専用へ隔離するか、同じ保証を持つ代替へ対応付ける。CPU/goldenカバレッジを移行前に失わない |
+| `app/src/test/java/dev/cinematic/p0/raw/` と `raw/original/` のCPU/共有試験、特に `R7PreviewInputsTest`、`StageClearBlurTest`、`OriginalParallelRowsTest` | 共有解析/係数、owner終了・解放を継続。#369のexecutor終了とJava thread生存の区別、残留interruptの決定的注入を保持。CPU画素の期待値だけを保証する試験は参照用の保存先と代替を別記 |
+| 通常 `androidTest` の `Original24GpuInputAndroidTest` / `Original24GpuSaveInstrumentationTest`、`Original24CancellationRetryInstrumentationTest`、原本/取込み/保存試験、`gpu/golden/GpuGoldenAndroidTest` | 現在の配置を維持。ただし通常androidTestにもpackage/BuildConfig/assume条件があり、`DevelopEngineAndroidTest`、`GpuGate1Part2TimingAndroidTest`、`Original24GpuOutputAndroidTest` / `SafetyInstrumentationTest`、`Original24PreflightInstrumentationTest`、`GpuProductInputAndroidTest`、`PreviewRawGestureFixtureAndroidTest` 等を横断監査し、variant廃止で黙ってskip化させない。#371/#372の24MP合成・実factory/JPEG/publicationと、#370/#373/#374のSAF/通常UI/FGSを診断UIと一緒に除去しない。採用90条件と実行環境・hashも保持 |
+
+移行PRには「元のクラス/試験名 → 保持するassert → 新しいhost/クラス/実行引数 → 実行件数・成功/失敗/skip → 旧配線を外してよい根拠」を載せる。CIのコンパイルだけでAndroid実行済みにせず、欠落・0件・skipを合格にしない。`.github/workflows/android.yml` の製品、gpu/raw診断、rawprobe、JNI隔離、Mesaと必須集約を、代替の保証を確認せず減らさない。CPU/診断整理後もAndroidの全工程回帰と所有/保存安全試験を維持し、full-pipeline Mesa CI完成で置き換える層とAndroidに残す層を分ける。
+
+**#231の残資料の追跡**: `specs/015-stage-clear-android/` の `preview-inputs.md` に加え `buffer-memory.md`、`dng-input.md`、`r7-base.md`、`w1-trial.md`、`white-xy-compat.md` を個別に照合する。入力/メモリ/色の未集約契約はdevelop/storageの仕様と既存DNG/GPU設計へ、実行手順は対応診断docsへ、当時の採否/失敗はIssue/PR参照へ分ける。Living Specから016/036/037/038/043/047/051/056/058等への直接リンクも残っているため、移管先の段落と参照更新を確認するまで旧資料を保持する。#365対象の保存文書はその確定契約を待ち、並行して別の復旧仕様を作らない。
+
+**#365と旧保存の互換準備**: `rawcapture/ManualOriginalTrialRequests.kt` のcodec v2にengineはない。`AndroidManualOriginalTrialSaves.kt` のプロセス内 `selectedEngine` から再起動後engineを復元したことにしない。#365の新しい証明形式・engine/version/attempt・失効順は同Issueの設計/実装で確定する。本準備はv2をGPUへ読み替えず、次のfixture群を後続PRへ要求する。
+
+- v2既存bytes、未知/破損形式、旧CPU由来でengine不明: 自動GPU再生成なし。intent-onlyはHOLD、publication UNKNOWNはUNCONFIRMED/同一publication再照合。
+- 同プロセスの確認済み取消/producer failure、同設定retry、新recipe受付、JPEG入口前後、各cleanup失敗: 現行 #357 の条件を保持。再起動許可を現行実装済みに数えない。
+- 完成JPEG/proof/publication、原本改変/権限失効、世代commit不明、二重prepare: 同じ成果物の再照合と原本/旧journal保持、二重producer/公開の拒否。
+- #365が追加する取消証明のwrite/readback前後、retry前の失効/STARTED前後、process death: 同Issueで実装範囲を提示し検証してから、CPU削除・保存refactorへの影響を再照合。古いintentの自動解除や別書出しUXをD0に混ぜない。
+
+準備の完了は一覧・参照根拠・移行案がレビュー可能になったことまで。残る判断は本人の削除可否、普段使いで発生した問題の扱い、#365の提示範囲と実装結果、定数の正本抽出、旧CPU互換・各試験の移行完了である。#231の未監査資料は保持し、#290/#231をD0文書だけで閉じない。
 
 ### 4.12 失敗時の扱い
 
