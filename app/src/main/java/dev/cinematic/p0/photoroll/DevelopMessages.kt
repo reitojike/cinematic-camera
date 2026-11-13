@@ -17,6 +17,7 @@ internal data class DevelopMessageState(
     val message: String? = null,
     val saveFailureMessage: String? = null,
     val canResumePreview: Boolean = false,
+    val canLeave: Boolean = true,
     val canRecover: Boolean = false,
     val retryEnabled: Boolean = false,
     val rechecking: Boolean = false,
@@ -61,6 +62,7 @@ internal fun developSavePresentation(state: DevelopMessageState): DevelopSavePre
 internal fun developMessages(
     state: DevelopMessageState,
     foregroundMessages: List<UiMessage> = emptyList(),
+    reportInvalid: ((String) -> Unit)? = null,
 ): ScreenMessages {
     val candidates = mutableListOf<UiMessage>()
     val presentation = developSavePresentation(state)
@@ -121,7 +123,9 @@ internal fun developMessages(
     if (state.justPublished && state.savePhase == PhotoRollSavePhase.PUBLISHED)
         candidates += UiMessage(MessageSlot.TOAST, CaptureChromeTone.ACCEPTED,
             "JPEGを保存しました。", "save.published")
-    val selected = screenMessages(candidates)
+    val fallback = developFailureFallback(state.canLeave)
+    val selected = if (reportInvalid == null) screenMessages(candidates, failureFallback = fallback)
+        else screenMessages(candidates, report = reportInvalid, failureFallback = fallback)
     // Deduplicate only against the chosen banner. A higher-priority save from another photo
     // can replace the cancellation banner; its unrelated action must not hide preview recovery.
     val center = selected.center
@@ -132,3 +136,11 @@ internal fun developMessages(
         selected.copy(center = center.copy(primary = null))
     else selected
 }
+
+/** Only returns through the existing navigation handler; never retries or releases a held save. */
+internal fun developFailureFallback(canLeave: Boolean) = UiMessage(
+    MessageSlot.PROBLEM, CaptureChromeTone.FAILURE,
+    "画面の表示を確認できません。一覧に戻ってください。", "develop.invalid_failure",
+    title = "現像を続けられません",
+    primary = MessageControl(MessageAction.BACK_TO_LIST, "一覧に戻る", canLeave),
+)

@@ -36,7 +36,8 @@ class DevelopMessagesScreenshotAndroidTest {
     @get:org.junit.Rule val fixture = SyntheticFixtureRule()
 
     private data class Case(val name: String, val state: DevelopMessageState,
-        val expected: List<String>, val foreground: List<UiMessage> = emptyList())
+        val expected: List<String>, val foreground: List<UiMessage> = emptyList(),
+        val messagesOverride: ScreenMessages? = null)
 
     @Test fun captureProductMessageStatesWithSyntheticImage() {
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
@@ -94,6 +95,15 @@ class DevelopMessagesScreenshotAndroidTest {
                 listOf("保存取消", "保存のためプレビューを止めました", writing.body,
                     "保存を取り消す", "プレビューを再開"),
                 foregroundSaveMessages(activeSaveWithoutNotifications.copy(notificationsAllowed = true), activeOnly = true)),
+            // DEBUG never constructs an invalid UiMessage. These are valid policy-result fixtures,
+            // not proof that a release build replaces invalid messages or preserves a real owner.
+            Case("17-generic-failure-hold", ready.copy(savePhase = PhotoRollSavePhase.HOLD, exportPaused = true),
+                listOf("保存保留", "現像を続けられません", "画面の表示を確認できません。一覧に戻ってください。"),
+                messagesOverride = ScreenMessages(center = developFailureFallback(canLeave = true))),
+            Case("18-generic-failure-navigation-disabled", ready.copy(savePhase = PhotoRollSavePhase.HOLD,
+                exportPaused = true, savingRecipe = true, canLeave = false),
+                listOf("設定保存中", "現像を続けられません", "画面の表示を確認できません。一覧に戻ってください。"),
+                messagesOverride = ScreenMessages(center = developFailureFallback(canLeave = false))),
         )
         val shown = mutableStateOf(cases.first())
         val bound = requireNotNull(TrialStrengthEditor.empty(PhotoAdjustmentPolicy.defaults).bind(
@@ -110,7 +120,7 @@ class DevelopMessagesScreenshotAndroidTest {
                     current.state.savePhase == PhotoRollSavePhase.READY && !current.state.editing, false,
                     {}, {}, {}, {}, { _, _, _ -> }, {}, {}, {}, {},
                     modifier = Modifier.fillMaxSize().safeDrawingPadding(),
-                    productMessages = developMessages(current.state, current.foreground),
+                    productMessages = current.messagesOverride ?: developMessages(current.state, current.foreground),
                     productSave = developSavePresentation(current.state),
                     info = { Text("合成画像による表示試験です。", style = CaptureDesign.Body) })
             }
@@ -120,6 +130,13 @@ class DevelopMessagesScreenshotAndroidTest {
                 for (case in cases) {
                     scenario.onActivity { shown.value = case }
                     case.expected.forEach(::awaitText)
+                    case.messagesOverride?.let {
+                        assertEquals("Fallback does not replace the fixture's held save phase", PhotoRollSavePhase.HOLD, case.state.savePhase)
+                        assertEquals(MessageAction.BACK_TO_LIST, it.center?.primary?.action)
+                        assertEquals("Navigation eligibility remains an input, not a fallback decision",
+                            case.state.canLeave, it.center?.primary?.enabled)
+                        assertNull("Fallback never offers a retry or save action", it.center?.secondary)
+                    }
                     instrumentation.waitForIdleSync()
                     val capture = fixture.captureSoftware()
                     try { writeImage(case.name, capture) } finally { capture.recycle() }

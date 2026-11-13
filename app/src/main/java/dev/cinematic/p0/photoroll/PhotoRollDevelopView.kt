@@ -63,7 +63,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
     modifier: Modifier = Modifier, statusOverlay: @Composable () -> Unit = {}, fillImageWidth: Boolean = false, viewportModifier: Modifier = Modifier,
     gpuSession: GpuPhotoRollSession? = null, gpuReady: Boolean = false,
     gpuFailure: dev.cinematic.p0.gpu.GpuFailureHandling? = null,
-    productMessages: ScreenMessages? = null, productSave: DevelopSavePresentation? = null,
+    productMessages: ScreenMessages? = null, productFailureFallback: UiMessage? = null, productSave: DevelopSavePresentation? = null,
     onProductAction: (MessageAction) -> Unit = {}, memoryProblem: dev.cinematic.p0.UiMessage? = null, info: @Composable () -> Unit) {
     var information by remember { mutableStateOf(false) }
     var parameter by remember { mutableStateOf(PhotoEditParameter.STRENGTH) }
@@ -118,11 +118,11 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                 else if (productMessages == null && phase != PhotoRollPhase.BLOCKED) Text(if (updating) "画像を準備中…" else "原本の確認待ち", color = CaptureDesign.Muted)
                 if (productMessages != null) {
                     Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
-                        productMessages.banner?.let { CaptureBanner(it, onProductAction) }
+                        productMessages.banner?.let { CaptureBanner(it, onProductAction, failureFallback = productFailureFallback) }
                         productMessages.inline.forEach { CaptureInlineNote(it, onProductAction) }
                     }
                     productMessages.center?.let {
-                        if (it.slot == MessageSlot.PROBLEM) CaptureProblem(it, onProductAction, Modifier.align(Alignment.Center))
+                        if (it.slot == MessageSlot.PROBLEM) CaptureProblem(it, onProductAction, Modifier.align(Alignment.Center), failureFallback = productFailureFallback)
                         else CaptureCenter(it, onProductAction, Modifier.align(Alignment.Center))
                     }
                     productMessages.toast?.let { CaptureToast(it, Modifier.align(Alignment.BottomCenter)) }

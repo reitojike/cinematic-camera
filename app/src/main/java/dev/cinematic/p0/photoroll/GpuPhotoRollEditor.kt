@@ -393,6 +393,7 @@ import kotlinx.coroutines.flow.StateFlow
         saving = saving, savingRecipe = savingRecipe, editing = editor.session != null, foreground = foreground,
         memoryProblem = memoryProblem, gpuFailure = gpuFailure, message = problemMessage,
         saveFailureMessage = saveState?.gpuFailure?.description,
+        canLeave = !savingRecipe,
         canResumePreview = foreground && !saving && !savingRecipe && gpuSaveCanResumePreview(saveState?.phase),
         canRecover = metadataRestored && foreground && !saving && !savingRecipe && save?.canCancelForegroundSave != true,
         retryEnabled = foreground && !saving && !savingRecipe, rechecking = rechecking, justPublished = justPublished,
@@ -407,7 +408,9 @@ import kotlinx.coroutines.flow.StateFlow
     PhotoRollDevelopView(name, PhotoRollPreviewMode.MANUAL_TRIAL, editor, { editor }, phase,
         stage = null, message = visibleMessage,
         productMessages = productMessages, productSave = developSavePresentation(presentationState),
+        productFailureFallback = developFailureFallback(presentationState.canLeave),
         onProductAction = { action -> when (action) {
+            MessageAction.BACK_TO_LIST -> if (!savingRecipe) back()
             MessageAction.RETRY -> retryAction()
             MessageAction.CONFIRM -> saveAction()
             MessageAction.RESUME_PREVIEW -> resumePreview()
