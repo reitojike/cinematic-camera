@@ -4,6 +4,10 @@ gradlew text eol=lf
 *.yml text eol=lf
 *.jar binary
 
+# Preserve the exact UTF-8 input documents across Windows checkouts.
+docs/DEVELOP_UI_REFACTOR_INSTRUCTIONS.md text eol=lf
+docs/cinematic-camera-roadmap-v3.md text eol=lf
+
 # Preserve the upstream license bytes and deterministic source notice in APK assets.
 app/src/main/assets/third_party/dng_temperature/LICENSE -text
 app/src/main/assets/third_party/dng_temperature/SOURCE.txt text eol=lf
