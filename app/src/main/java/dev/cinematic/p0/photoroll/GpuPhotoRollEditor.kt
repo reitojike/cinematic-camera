@@ -1,6 +1,7 @@
 package dev.cinematic.p0.photoroll
 
 import android.content.Intent
+import dev.cinematic.p0.*
 import android.net.Uri
 import android.os.CancellationSignal
 import android.os.SystemClock
@@ -17,7 +18,7 @@ import dev.cinematic.p0.photoedit.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.StateFlow
 
-/** Product editor ownership for the opt-in GPU path. The CPU editor and its draft actor are unchanged.
+/** Product editor ownership for the default GPU path. The CPU editor and its draft actor are unchanged.
  * Input open and committed save-generation preparation are separate from the latest-value GL mailbox. */
 @Composable internal fun GpuPhotoRollEditor(repository: PhotoRollRepository, renderer: ManualTrialPhotoRollRenderer,
     source: String, fromFiles: Boolean, name: String, foreground: Boolean,
@@ -40,8 +41,11 @@ import kotlinx.coroutines.flow.StateFlow
     var input by remember { mutableStateOf<ManualTrialPhotoRollRenderer.GpuInput?>(null) }
     var error by remember { mutableStateOf<Throwable?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
+    var noticeIsFailure by remember { mutableStateOf(true) }
     var savingRecipe by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
+    var rechecking by remember { mutableStateOf(false) }
+    var justPublished by remember { mutableStateOf(false) }
     var exportPaused by remember { mutableStateOf(false) }
     var save by remember { mutableStateOf<PhotoRollJpegSaveOwner?>(null) }
     var saveState by remember { mutableStateOf<PhotoRollSaveSnapshot?>(null) }
@@ -232,7 +236,20 @@ import kotlinx.coroutines.flow.StateFlow
     }
     LaunchedEffect(save, foreground) {
         val owner = save ?: return@LaunchedEffect
-        if (foreground) owner.snapshots.collect { saveState = it }
+        if (foreground) {
+            var previous = owner.snapshot.phase
+            owner.snapshots.collect {
+                if (previous == PhotoRollSavePhase.SAVING && it.phase == PhotoRollSavePhase.PUBLISHED) justPublished = true
+                previous = it.phase
+                saveState = it
+            }
+        }
+    }
+    LaunchedEffect(justPublished) {
+        if (justPublished) { delay(4000); justPublished = false }
+    }
+    LaunchedEffect(notice, noticeIsFailure) {
+        if (notice != null && !noticeIsFailure) { delay(4000); notice = null }
     }
     fun commit(next: TrialStrengthEditor) {
         editor = next
@@ -265,13 +282,8 @@ import kotlinx.coroutines.flow.StateFlow
         gpuPhotoRollMemoryProblem(problem, foreground && !saving && !savingRecipe) else null
     val visibleMessage = memoryProblem?.body ?: saveMessage ?: problemMessage ?: if (exportPaused)
         "保存のため GPU プレビューを終了しました。保存後にプレビューを再開できます" else null
-    if (recoveryChoices) androidx.compose.material3.AlertDialog(
-        onDismissRequest = { if (!saving) recoveryChoices = false },
-        title = { Text("前回の保存結果を確認できません") },
-        text = { Text("保存先に JPEG がある可能性があります。保存し直す場合は、前回と同じ設定で別の JPEG を作ります。原本と前回の記録は保持します。") },
-        confirmButton = {
-            TextButton(enabled = foreground && !saving && !savingRecipe, onClick = {
-                val old = save ?: return@TextButton
+    val confirmRecovery = confirmRecovery@{
+                val old = save ?: return@confirmRecovery
                 recoveryChoices = false; saving = true
                 scope.launch {
                     try {
@@ -285,16 +297,13 @@ import kotlinx.coroutines.flow.StateFlow
                         save = next; saveState = next.snapshot
                         next.startForegroundSave(context)
                     } catch (cancelled: CancellationException) { throw cancelled }
-                    catch (failure: Exception) { notice = "再書き出しの受付を確認できません。前回の記録を保留しています" }
+                    catch (failure: Exception) { noticeIsFailure = true; notice = "再書き出しの受付を確認できません。前回の記録を保留しています" }
                     finally { saving = false }
                 }
-            }) { Text("重複の可能性はあるが保存し直す") }
-        },
-        dismissButton = {
-            Column {
-                TextButton(enabled = foreground && !saving && !savingRecipe, onClick = {
-                    val old = save ?: return@TextButton
-                    recoveryChoices = false; saving = true
+    }
+    val recheckRecovery = recheckRecovery@{
+                    val old = save ?: return@recheckRecovery
+                    recoveryChoices = false; saving = true; rechecking = true
                     scope.launch {
                         try {
                             exportPaused = true; session?.close()
@@ -303,26 +312,30 @@ import kotlinx.coroutines.flow.StateFlow
                             ensureActive()
                             if (save === old) saveState = result
                         } catch (cancelled: CancellationException) { throw cancelled }
-                        catch (_: Exception) { notice = "保存結果を確認できません。保留を維持します" }
-                        finally { saving = false }
+                        catch (_: Exception) { noticeIsFailure = true; notice = "保存結果を確認できません。保留を維持します" }
+                        finally { saving = false; rechecking = false }
                     }
-                }) { Text("もう一度確認") }
-                TextButton(enabled = !saving, onClick = { recoveryChoices = false }) { Text("今は保存しない") }
-            }
-        },
-    )
-    PhotoRollDevelopView(name, PhotoRollPreviewMode.MANUAL_TRIAL, editor, { editor }, phase,
-        stage = null, message = visibleMessage,
-        memoryProblem = memoryProblem,
-        preview = null, comparison = null, comparisonLabel = null,
-        foreground = foreground && !savingRecipe, savePhase = saveState?.phase, savePending = saving || savingRecipe,
-        saveEnabled = canSave, beginEnabled = ready && metadataRestored && !exportPaused && !saving && !savingRecipe &&
-            !(save?.isExplicitRecoveryRequest == true && saveState?.phase == PhotoRollSavePhase.READY) &&
-            canBeginStrengthEdit(PhotoRollPreviewMode.MANUAL_TRIAL, foreground, saving, saveState?.phase),
-        save = saveAction@{
+    }
+    if (recoveryChoices) CaptureDialog(
+        MessageDialog("前回の保存結果を確認できません",
+            "保存先に JPEG がある可能性があります。保存し直す場合は、前回と同じ設定で別の JPEG を作ります。原本と前回の記録は保持します。",
+            MessageControl(MessageAction.CLOSE, "今は保存しない", enabled = !saving),
+            MessageControl(MessageAction.CONFIRM, "重複の可能性はあるが保存し直す", enabled = foreground && !saving && !savingRecipe)),
+        onDismissRequest = { if (!saving) recoveryChoices = false },
+        onAction = { action -> when (action) {
+            MessageAction.CONFIRM -> confirmRecovery()
+            MessageAction.CLOSE -> if (!saving) recoveryChoices = false
+            else -> Unit
+        } },
+    ) {
+        CaptureTextAction(MessageControl(MessageAction.RECHECK_SAVE, "もう一度確認",
+            enabled = foreground && !saving && !savingRecipe), onAction = { recheckRecovery() })
+    }
+    val saveAction = saveAction@{
             if (!canSave || saving || savingRecipe) return@saveAction
             val owner = save ?: return@saveAction
             val openAfterCheck = saveState?.phase == PhotoRollSavePhase.PUBLISHED
+            rechecking = saveState?.phase in setOf(PhotoRollSavePhase.PUBLISHED, PhotoRollSavePhase.UNCONFIRMED)
             saving = true
             scope.launch {
                 try {
@@ -343,16 +356,14 @@ import kotlinx.coroutines.flow.StateFlow
                         if (result.phase == PhotoRollSavePhase.PUBLISHED && result.uri != null) try {
                             context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(result.uri), "image/jpeg")
                                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
-                        } catch (_: Exception) { notice = "保存したJPEGを開けませんでした。対応する写真アプリを確認してください" }
+                        } catch (_: Exception) { noticeIsFailure = true; notice = "保存したJPEGを開けませんでした。対応する写真アプリを確認してください" }
                     }
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (failure: Exception) { error = failure }
-                finally { saving = false }
+                finally { saving = false; rechecking = false }
             }
-        },
-        begin = { if (!exportPaused && !saving && !savingRecipe) editor = editor.begin(.01, adjustments = true) },
-        back = { if (!savingRecipe) back() },
-        retry = { if (foreground && !savingRecipe && !saving) {
+        }
+    val retryAction = { if (foreground && !savingRecipe && !saving) {
             if (problem is dev.cinematic.p0.jpegrender.original.Original24MemoryUnavailable) {
                 try {
                     renderer.releaseUnusedMemoryForRetry()
@@ -366,7 +377,56 @@ import kotlinx.coroutines.flow.StateFlow
                     error = dev.cinematic.p0.jpegrender.original.Original24MemoryUnavailable(failure)
                 }
             } else { trimBlocked = false; retry++ }
+        } }
+    val resumePreview = {
+        if (foreground && !saving && !savingRecipe && gpuSaveCanResumePreview(saveState?.phase)) {
+            val owner = save
+            if (owner != null && !owner.canCancelForegroundSave && gpuSaveCanResumePreview(owner.snapshot.phase)) {
+                exportPaused = false
+                retry++
+            }
+        }
+    }
+    val foregroundMessageBinding = rememberForegroundSaveMessages(save, foreground)
+    val presentationState = DevelopMessageState(
+        phase = phase, savePhase = saveState?.phase, exportPaused = exportPaused,
+        saving = saving, savingRecipe = savingRecipe, editing = editor.session != null, foreground = foreground,
+        memoryProblem = memoryProblem, gpuFailure = gpuFailure, message = problemMessage,
+        saveFailureMessage = saveState?.gpuFailure?.description,
+        canLeave = !savingRecipe,
+        canResumePreview = foreground && !saving && !savingRecipe && gpuSaveCanResumePreview(saveState?.phase),
+        canRecover = metadataRestored && foreground && !saving && !savingRecipe && save?.canCancelForegroundSave != true,
+        retryEnabled = foreground && !saving && !savingRecipe, rechecking = rechecking, justPublished = justPublished,
+    )
+    val noticeMessage = notice?.let {
+        UiMessage(if (noticeIsFailure) MessageSlot.BANNER else MessageSlot.TOAST,
+            if (noticeIsFailure) CaptureChromeTone.FAILURE else CaptureChromeTone.NORMAL,
+            it, "develop.operation_notice")
+    }
+    val productMessages = developMessages(presentationState,
+        foregroundSaveMessages(foregroundMessageBinding.state, activeOnly = true) + listOfNotNull(noticeMessage))
+    PhotoRollDevelopView(name, PhotoRollPreviewMode.MANUAL_TRIAL, editor, { editor }, phase,
+        stage = null, message = visibleMessage,
+        productMessages = productMessages, productSave = developSavePresentation(presentationState),
+        productFailureFallback = developFailureFallback(presentationState.canLeave),
+        onProductAction = { action -> when (action) {
+            MessageAction.BACK_TO_LIST -> if (!savingRecipe) back()
+            MessageAction.RETRY -> retryAction()
+            MessageAction.CONFIRM -> saveAction()
+            MessageAction.RESUME_PREVIEW -> resumePreview()
+            MessageAction.RECHECK_SAVE -> if (presentationState.canRecover) recoveryChoices = true
+            else -> foregroundMessageBinding.onAction(action)
         } },
+        memoryProblem = memoryProblem,
+        preview = null, comparison = null, comparisonLabel = null,
+        foreground = foreground && !savingRecipe, savePhase = saveState?.phase, savePending = saving || savingRecipe,
+        saveEnabled = canSave, beginEnabled = ready && metadataRestored && !exportPaused && !saving && !savingRecipe &&
+            !(save?.isExplicitRecoveryRequest == true && saveState?.phase == PhotoRollSavePhase.READY) &&
+            canBeginStrengthEdit(PhotoRollPreviewMode.MANUAL_TRIAL, foreground, saving, saveState?.phase),
+        save = saveAction,
+        begin = { if (!exportPaused && !saving && !savingRecipe) editor = editor.begin(.01, adjustments = true) },
+        back = { if (!savingRecipe) back() },
+        retry = retryAction,
         change = { token, parameter, value -> if (!savingRecipe) editor = editor.change(token, parameter, value) },
         reset = { token -> if (!savingRecipe) {
             val next = editor.reset(token)
@@ -386,39 +446,15 @@ import kotlinx.coroutines.flow.StateFlow
                 try {
                     withContext(NonCancellable + Dispatchers.IO) { write.get() }
                     if (editor.accepts(current)) {
-                        editor = next; notice = "調整設定をこの端末に保持しました。JPEGの保存とは別です"
+                        editor = next; noticeIsFailure = false; notice = "調整設定をこの端末に保持しました。JPEGの保存とは別です"
                     }
                 } catch (cancelled: CancellationException) { throw cancelled }
-                catch (_: Exception) { notice = "調整設定の保持を確認できません。閉じる操作を再試行してください" }
+                catch (_: Exception) { noticeIsFailure = true; notice = "調整設定の保持を確認できません。閉じる操作を再試行してください" }
                 finally { savingRecipe = false }
             }
         },
         gpuSession = session.takeUnless { exportPaused }, gpuReady = ready && !exportPaused, gpuFailure = gpuFailure,
         modifier = modifier,
-        statusOverlay = {
-            ForegroundSaveNotice(save, foreground, activeOnly = true)
-            if (metadataRestored && saveState?.phase in setOf(PhotoRollSavePhase.HOLD, PhotoRollSavePhase.UNCONFIRMED)) {
-                Text(saveState?.recoveryMessage ?: "前回の保存結果を確認できません。保存先に JPEG がある可能性があります。")
-                TextButton(enabled = foreground && !saving && !savingRecipe && save?.canCancelForegroundSave != true,
-                    onClick = { recoveryChoices = true }) { Text("保存結果を確認・保存し直す") }
-            }
-            if (exportPaused) {
-                Text(saveMessage ?: "保存用に GPU プレビューを終了しました")
-                if (saveState?.phase in setOf(PhotoRollSavePhase.GPU_FAILED, PhotoRollSavePhase.CANCELLED))
-                    Text("下の再試行ボタンで、同じ保存を再試行します")
-                TextButton(enabled = foreground && !saving && !savingRecipe &&
-                    gpuSaveCanResumePreview(saveState?.phase), onClick = {
-                        // Recheck the retained owner, not a possibly one-frame-old Flow snapshot.
-                        val owner = save
-                        if (owner != null && !owner.canCancelForegroundSave &&
-                            gpuSaveCanResumePreview(owner.snapshot.phase)) {
-                            exportPaused = false
-                            retry++
-                        }
-                    }) {
-                    Text("プレビューを再開")
-                }
-            }
-        },
-        info = { Text("GPU の診断用プレビューです。通常版の既定は CPU です。原本と保存前後の照合は変更しません。") })
+        info = { Text("顔保護には対応していません。色は暫定で、24MP 以下の対応 DNG のみ読み込めます。",
+            style = CaptureDesign.Body, color = CaptureDesign.Muted) })
 }

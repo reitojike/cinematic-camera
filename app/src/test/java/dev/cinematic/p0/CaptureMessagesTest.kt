@@ -126,6 +126,15 @@ class CaptureMessagesTest {
         assertEquals(1, records.size)
     }
 
+    @Test fun rendererFallbackClassifiesTheActualMessageNotTheWrongRenderer() {
+        val fallback = problem.copy(fact = "fallback")
+        assertNull(failureFallbackFor(warning, fallback)) // WARNING BANNER sent to Problem
+        assertNull(failureFallbackFor(message(MessageSlot.CHIP, CaptureChromeTone.FAILURE), fallback))
+        assertNull(failureFallbackFor(message(MessageSlot.CENTER, CaptureChromeTone.FAILURE), fallback))
+        assertEquals(fallback, failureFallbackFor(problem, fallback))
+        assertEquals(fallback, failureFallbackFor(failure, fallback))
+    }
+
     @Test fun designTokensRetainExistingTypeAndCentralizeOverlayOpacity() {
         assertEquals(CaptureDesign.Explanation, CaptureDesign.Body)
         assertEquals(.9f, CaptureDesign.Scrim.alpha, .005f)
