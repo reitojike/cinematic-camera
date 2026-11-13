@@ -98,3 +98,8 @@ GPU経路では、別写真の原本確認・preflight・入力生成を専用�
 [ドラッグ表示と判定共有](../056-drag-preview-decisions/spec.md)、[診断直列受付と保持検証](../../docs/PREVIEW_DIAGNOSTICS.md)、
 [原本照合の境界](../../docs/PREVIEW_ORIGINAL_CHECKS.md)、[境界時間の計測](../../docs/PREVIEW_DIAGNOSTICS.md)、[並列試験](../058-preview-row-workers/spec.md)。
 048は042/044の古い「全範囲5ラベル・見た目だけ」の部分を置き換える。旧資料のDraft表示を現在のマージ状態とみなさない。
+
+
+### GPU入力のメモリ失敗表示（#260 partial）
+
+型付きメモリ受付失敗は汎用現像エラーと区別し、「メモリ不足」と原本不変・明示再試行を案内する。既存受付要求値と実測必要量は区別し、拒否時のOS値/段階/既知画素数だけを匿名記録する。未知例外を推測分類せず、guard・保存HOLD・画像所有・自動再試行は変更しない。段階別見積りと実機計測計画は [メモリ受付の調査](../../docs/MEMORY_ADMISSION_REVIEW.md) を参照する。
