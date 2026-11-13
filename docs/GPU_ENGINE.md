@@ -409,7 +409,29 @@ CIは通常の `debugRuntimeClasspath` / `debugUnitTestRuntimeClasspath` の依�
 EGL/GLES bindingは [LWJGL公式](https://www.lwjgl.org/guide) と
 [EGL API](https://javadoc.lwjgl.org/org/lwjgl/egl/EGL15.html) を利用する。
 
-#### D0 と D1〜Dn、CPU 整理の順序（ロードマップ v2）
+#### D0 と D1〜Dn、CPU 整理の順序（ロードマップ v3）
+
+最新の順序は [計画 v3](cinematic-camera-roadmap-v3.md)。レーン5を v0.1.0 の範囲に含め、
+[改修指示書](DEVELOP_UI_REFACTOR_INSTRUCTIONS.md) と [共通メッセージ仕様](../specs/ui-messages/spec.md) に従う。
+PR-A は規則・型・描画部品だけで画面を変更しない。A完了後にB（撮影/設定）とE（ロール/取り込み）を並行する。
+C（現像表示）は #380/#381/#260 の表示マージ後、D（現像配置）はCPU削除後かつD1〜Dn前。
+B〜E は主要状態 screenshot と文言差一覧を提示し、本人承認前にはマージしない。24MP・保存系を優先する。
+
+#### D0: メッセージ組み立てと描画の責任分担
+
+`captureMessages` / `libraryMessages` / `importMessages` / `developMessages` は、画面から渡された状態を
+文言・トーン・操作記述へ変換する純粋関数とする。共通の `screenMessages` が優先順位と重複を整理する。
+これらの関数で購読・時計・I/O・状態遷移を行わず、GPU/保存の例外文を直接表示しない。
+Composable は組み立て結果の描画だけを担当し、`MessageAction` から既存処理への action mapping は画面側で行う。
+状態・資源・保存 owner、操作受付、取消・再試行・照合の条件は従来の所有側に残す。
+プレビュー停止によるメモリ解放を表示都合で変えず、最後のフレームを保存中に保持しない。
+PR-A では共通基盤だけを実装し、上記4関数の画面固有組み立てと置換はB/C/Eで行う。
+
+後続ユーザー補足として、PR-Cの保存状態表には #377 の「照合中」と「重複の可能性がある再保存確認」を追加予定。
+確認は `CaptureDialog` を使用し、元の指示書を改変して補足を混ぜない。再保存を許す条件は #377 側で確定する。
+既存保存・復旧の契約と照合してから表示だけを適用する。
+
+#### D0: CPU 整理と回帰の依存
 
 管理先は既存 #290 / #276。#349 の Android 手動基準登録は main に反映済み。#355 の既知共通黒化は PR #361 で修正し、本人確認済みの修正後90条件基準をmainへ反映済み。基準の再採用・閾値変更は今回行わない。CPUへ戻す運用は想定しないが、削除は次の条件と手順を満たしてから行う。
 

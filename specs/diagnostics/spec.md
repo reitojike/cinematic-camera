@@ -1,5 +1,8 @@
 # 設定・診断・対応範囲の現行仕様
 
+メッセージの枠・優先順位・トーン・文言・アクセシビリティは [共通メッセージ仕様](../ui-messages/spec.md) を参照する。
+共通部品の追加だけで既存画面を切り替えず、画面適用は別PRで行う。
+
 ## 対応範囲
 
 - 最低対応は Android 13（API 33）。Android 12以前への新規インストールは対象外。SDK下限の宣言で既存インストールを削除・変更しない。SDK下限は GPU の製品採用を意味しない。対応宣言の根拠は [Android uses-sdk](https://developer.android.com/guide/topics/manifest/uses-sdk-element)、実値は app/build.gradle.kts を参照する。
