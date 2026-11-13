@@ -1,0 +1,233 @@
+package dev.cinematic.p0.photoroll
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextAlign
+import dev.cinematic.p0.CaptureDesign
+import dev.cinematic.p0.captureOutline
+import dev.cinematic.p0.captureChoiceSurface
+import dev.cinematic.p0.captureNeedsFullScroll
+import android.os.Build
+import dev.cinematic.p0.rawcapture.DngImportScreenState
+
+/**
+ * PR-E before 比較用。表示元は旧 main 53e68ffc722579138c0f673dbdc9ac08d398044f。
+ * CameraRollBrowser は名前以外の描画を保持。取り込み dialog と保存 notice は旧実装から
+ * 描画部分だけを抽出し、同条件の合成状態を注入する。実アプリ全体のスクリーンショットではない。
+ * owner、lifecycle effect、購読、SAF、保存、権限要求は移植せず、外部操作 callback は no-op。
+ * 元の表示条件、enabled、文言、レイアウトは維持する。実機の挙動や画質の証拠にはしない。
+ */
+@Composable
+internal fun LegacyCameraRollBrowser(listing: PhotoRollListing, access: CameraRollAccess, filter: PhotoRollKindFilter,
+    folder: String?, loading: Boolean, opening: Boolean, notice: String?, mode: PhotoRollPreviewMode,
+    enabled: Boolean, refreshEnabled: Boolean, permissionEnabled: Boolean, filesEnabled: Boolean,
+    folderMenu: Boolean, setFolderMenu: (Boolean) -> Unit, close: () -> Unit, refresh: () -> Unit, chooseFolder: (String?) -> Unit, chooseFilter: (PhotoRollKindFilter) -> Unit,
+    permission: () -> Unit, settings: () -> Unit, files: () -> Unit, more: () -> Unit,
+    modifier: Modifier = Modifier, select: (PhotoRollItem) -> Unit) {
+    var detail by remember { mutableStateOf(false) }
+    val trial = when (mode) {
+        PhotoRollPreviewMode.MANUAL_TRIAL -> "試験品質 · 手動保存 · 原本は変更しません"
+        PhotoRollPreviewMode.PRIVATE_TRIAL -> "縮小試験 · 共有写真へは保存しません"
+        else -> null
+    }
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+    val gridHeight = maxHeight.coerceAtLeast(240.dp)
+    val compact = captureNeedsFullScroll(maxWidth.value, maxHeight.value, LocalDensity.current.fontScale, 520f)
+    Column(Modifier.fillMaxSize().background(CaptureDesign.Ink).then(if (compact) Modifier.verticalScroll(rememberScrollState()) else Modifier)) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = close, shape = RectangleShape) { Text("‹ 撮影") }
+            Text("カメラロール", Modifier.weight(1f), color = CaptureDesign.Text)
+            TextButton(onClick = refresh, enabled = refreshEnabled, modifier = Modifier.sizeIn(minWidth = 44.dp, minHeight = 44.dp).semantics { contentDescription = "更新" }, shape = RectangleShape) { Text("↻") }
+        }
+        trial?.let { TextButton(onClick = { detail = !detail }, shape = RectangleShape) {
+            Text(it + if (detail) " ▴" else " ▾", style = CaptureDesign.Explanation, color = CaptureDesign.Amber)
+        } }
+        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+            PhotoRollKindFilter.entries.forEach { candidate ->
+                TextButton(onClick = { chooseFilter(candidate) }, enabled = enabled, shape = RectangleShape,
+                    modifier = Modifier.semantics { selected = filter == candidate }
+                        .captureChoiceSurface(filter == candidate, unselectedBackground = CaptureDesign.Ink),
+                    contentPadding = PaddingValues(horizontal = 10.dp), colors = ButtonDefaults.textButtonColors(
+                        contentColor = if (filter == candidate) CaptureDesign.Ink else CaptureDesign.Muted)) {
+                    Text(when (candidate) { PhotoRollKindFilter.ALL -> "すべて"; PhotoRollKindFilter.IMAGES -> "画像"
+                        PhotoRollKindFilter.RAW -> "RAW"; PhotoRollKindFilter.VIDEOS -> "動画" }, style = CaptureDesign.Label)
+                }
+            }
+            Box {
+                TextButton(onClick = { setFolderMenu(true) }, enabled = enabled, shape = RectangleShape) {
+                    Text((listing.folders.firstOrNull { it.key == folder }?.label ?: if (folder == null) "全フォルダ" else "選択フォルダ（確認中）") + " ▾",
+                        style = CaptureDesign.Label)
+                }
+                DropdownMenu(expanded = folderMenu, onDismissRequest = { setFolderMenu(false) }, modifier = Modifier.heightIn(max = 360.dp)) {
+                    DropdownMenuItem(text = { Text("全フォルダ") }, onClick = { setFolderMenu(false); chooseFolder(null) })
+                    listing.folders.forEach { candidate -> DropdownMenuItem(text = { Text(candidate.label) }, onClick = { setFolderMenu(false); chooseFolder(candidate.key) }) }
+                }
+            }
+        }
+        if (loading || opening) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = CaptureDesign.Amber, trackColor = CaptureDesign.Line)
+        val header: @Composable () -> Unit = {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (detail) Text(if (mode == PhotoRollPreviewMode.MANUAL_TRIAL)
+                    "DNGは最大24MPの試験品質で現像します。顔保護なし・診断露出・暫定色です。JPEG保存は手動のみで、原本は変更しません。"
+                    else "DNGは最大1024pxの試験現像です。顔保護なし・暫定色で、共有写真へは保存しません", color = CaptureDesign.Amber, style = CaptureDesign.Explanation)
+                if (!(access.images && access.videos)) {
+                    val partial = access.selected
+                    Column(Modifier.fillMaxWidth().captureOutline(partial).padding(8.dp)) {
+                        Text(if (partial && !access.images && !access.videos) "選択した写真・動画だけにアクセスできます" else access.description,
+                            style = CaptureDesign.Explanation, color = if (partial) CaptureDesign.Amber else CaptureDesign.Muted)
+                        FlowRow {
+                            TextButton(onClick = permission, enabled = permissionEnabled, shape = RectangleShape,
+                                colors = ButtonDefaults.textButtonColors(
+                                    contentColor = if (partial) CaptureDesign.Amber else CaptureDesign.Text,
+                                    disabledContentColor = CaptureDesign.Disabled)) {
+                                Text(if (partial) "選び直す" else "アクセス許可・選び直す", style = CaptureDesign.Explanation)
+                            }
+                            TextButton(onClick = settings, enabled = enabled, shape = RectangleShape) { Text("設定", style = CaptureDesign.Explanation) }
+                        }
+                    }
+                }
+                notice?.let { Text(it, color = CaptureDesign.Failed, style = CaptureDesign.Explanation) }
+                listing.message?.let { Text(it, color = CaptureDesign.Muted, style = CaptureDesign.Explanation) }
+            }
+        }
+        val moreItems: @Composable () -> Unit = {
+            if (listing.hasMore) TextButton(onClick = more, enabled = refreshEnabled, shape = RectangleShape) { Text("さらに読み込む") }
+        }
+        val contentModifier = if (compact) Modifier.height(gridHeight) else Modifier.weight(1f)
+        if (!loading && listing.items.isEmpty()) {
+            BoxWithConstraints(contentModifier.fillMaxWidth()) {
+                Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = maxHeight)) {
+                    header()
+                    LegacyCameraRollEmptyState(permissionEnabled, filesEnabled, permission, files,
+                        Modifier.weight(1f).fillMaxWidth().heightIn(min = 240.dp))
+                    moreItems()
+                }
+            }
+        } else {
+            CameraRollGrid(listing.items, enabled, contentModifier, header = header, footer = moreItems, select = select)
+        }
+        Column(Modifier.fillMaxWidth().heightIn(min = 64.dp).border(1.dp, CaptureDesign.Line).padding(horizontal = 12.dp, vertical = 4.dp)) {
+            Text(CameraRollKind.entries.joinToString(" · ") { kind -> "${kind.label} ${listing.items.count { it.kind == kind }}" } + if (listing.hasMore) "（読込済み）" else "",
+                style = CaptureDesign.Label, color = CaptureDesign.Muted)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("DNGはタップで現像\n他は標準ビューア", Modifier.weight(1f), style = CaptureDesign.Explanation, color = CaptureDesign.Muted)
+                TextButton(onClick = files, enabled = filesEnabled, shape = RectangleShape) { Text("Filesから DNG…", style = CaptureDesign.Explanation) }
+            }
+        }
+    }
+}
+}
+
+@Composable
+private fun LegacyCameraRollEmptyState(permissionEnabled: Boolean, filesEnabled: Boolean,
+    permission: () -> Unit, files: () -> Unit, modifier: Modifier = Modifier) {
+    Column(modifier.padding(24.dp), verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("該当する項目がありません。アクセス許可や絞り込みを確認してください。DNGはFilesの「内部ストレージ」からも選べます",
+            color = CaptureDesign.Muted, style = CaptureDesign.Explanation, textAlign = TextAlign.Center)
+        FlowRow(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
+            Button(onClick = permission, enabled = permissionEnabled, shape = RectangleShape,
+                colors = ButtonDefaults.buttonColors(containerColor = CaptureDesign.Text, contentColor = CaptureDesign.Ink,
+                    disabledContainerColor = CaptureDesign.Panel, disabledContentColor = CaptureDesign.Disabled)) {
+                Text("アクセスを許可", style = CaptureDesign.Explanation)
+            }
+            OutlinedButton(onClick = files, enabled = filesEnabled, shape = RectangleShape,
+                border = BorderStroke(1.dp, if (filesEnabled) CaptureDesign.Border else CaptureDesign.Line),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = CaptureDesign.Text,
+                    disabledContentColor = CaptureDesign.Disabled)) {
+                Text("Filesから選ぶ", style = CaptureDesign.Explanation)
+            }
+        }
+    }
+}
+
+/** 旧 DngImportPanel の AlertDialog 描画。現在の messageKind は参照しない。 */
+@Composable
+internal fun LegacyImportDialog(
+    state: DngImportScreenState,
+    foreground: Boolean = true,
+    pickerPending: Boolean = false,
+    awaitingSelection: Boolean = false,
+    preparationNotice: String? = null,
+) {
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text("DNGを端末に取り込む") },
+        text = {
+            Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("64MiB以下のDNGを共有フォルダへ変更せずコピーします。完了するまでSDを抜かないでください。選択元は変更しません。")
+                Text("Google Photos等の設定によりバックアップされる場合があります。現像できないDNGも取り込み済み原本は保持します。")
+                state.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                preparationNotice?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                if (awaitingSelection && !state.busy) {
+                    Text("取り込みの受付状態を確認中…")
+                    TextButton(onClick = {}) { Text("取り込みを取り消す") }
+                }
+                if (state.busy) {
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                    TextButton(onClick = {}) { Text("取り込みを取り消す") }
+                }
+                state.items.forEachIndexed { index, item ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("取り込み ${index + 1}", modifier = Modifier.weight(1f))
+                        if (!item.cancelled) TextButton(enabled = foreground && !state.busy, onClick = {}) {
+                            Text(if (item.ready) "編集へ" else "再開")
+                        }
+                        if (item.grantPending || !item.ready) TextButton(enabled = foreground && !state.busy,
+                            onClick = {}) {
+                            Text(if (item.grantPending) "権限を解放" else "取消")
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = foreground && !state.busy && !pickerPending && !awaitingSelection, onClick = {}) { Text("DNGを選ぶ・選び直す") }
+        },
+        dismissButton = { TextButton(enabled = !state.busy && !pickerPending, onClick = {}) { Text("閉じる") } },
+    )
+}
+
+/** 旧 Column 描画のみ。owner/activeOnly の表示可否は fixture 呼出側が固定する。 */
+@Composable
+internal fun LegacyForegroundSaveNotice(
+    active: Boolean,
+    held: Boolean,
+    stopping: Boolean,
+    foreground: Boolean,
+    notificationsAllowed: Boolean,
+) {
+    if (Build.VERSION.SDK_INT < 29) return
+    Column(Modifier.fillMaxWidth().heightIn(max = 144.dp).verticalScroll(rememberScrollState()).padding(8.dp)) {
+        Text(when {
+            active && held -> "保存処理の終了を確認できないため停止中です。次の保存は開始しません。"
+            active && stopping -> "保存の停止処理中です。資源の解放を確認しています。"
+            active -> "JPEGを保存中です。アプリを離れても継続します。"
+            else -> "保存はアプリ切替後も継続します。撮影開始時は中断し、自動再開しません。"
+        })
+        Row(Modifier.horizontalScroll(rememberScrollState())) {
+            if (active) TextButton(onClick = {}, enabled = foreground && !stopping) { Text("保存を取り消す") }
+            if (!notificationsAllowed && Build.VERSION.SDK_INT >= 33) {
+                TextButton(onClick = {}, enabled = foreground) {
+                    Text("保存通知を許可")
+                }
+            }
+        }
+        if (!notificationsAllowed) Text("保存通知は無効です。取消はこの画面から行えます。")
+    }
+}
