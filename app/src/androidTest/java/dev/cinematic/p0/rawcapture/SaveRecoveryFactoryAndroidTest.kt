@@ -37,6 +37,8 @@ class SaveRecoveryFactoryAndroidTest {
         assertSame(next, AndroidManualOriginalTrialSaves.restorePreparedGpu(app, old.request.source, geometry) { false }
             .get(30, TimeUnit.SECONDS))
         assertEquals(ManualOriginalTrialSavePhase.READY, next.state.value.phase)
+        assertEquals(ManualOriginalTrialSavePhase.READY,
+            next.recheckPublication(allowed) { false }.get(30, TimeUnit.SECONDS).phase)
         assertThrows(ExecutionException::class.java) { old.advance(allowed) { false }.get(30, TimeUnit.SECONDS) }
         assertArrayEquals(intent, storage(old.request, CaptureJournalFile.MANUAL_REQUEST).read(ManualOriginalTrialRequestCodec.MAX_BYTES))
         assertNull(storage(next.request, CaptureJournalFile.MANUAL_REQUEST).read(ManualOriginalTrialRequestCodec.MAX_BYTES))

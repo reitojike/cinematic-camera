@@ -115,11 +115,13 @@ class ReconciledJpegPublicationTest {
             val f = Fixture(true)
             val old = f.originalStorage.bytes!!.clone()
             f.reconcile()
-            f.afterPublish = { f.recoveryStorage.fault = fault }
+            f.afterPublish = { f.recoveryStorage.arm(fault) }
             assertThrows(if (fault == "death") Death::class.java else IOException::class.java) {
                 f.publisher().advance()
             }
             assertFalse(f.row.pending!!)
+            if (fault in setOf("after", "readback", "death"))
+                assertEquals(JpegPublicationPhase.PUBLISHED, JpegPublicationCodec.decode(f.recoveryStorage.bytes!!).phase)
             f.recoveryStorage.fault = "none"
             f.afterPublish = {}
             assertEquals(JpegPublicationPhase.PUBLISHED, f.publisher().advance().phase)
@@ -211,6 +213,7 @@ class ReconciledJpegPublicationTest {
         var bytes: ByteArray? = null
         var fault = "none"
         private var committed = false
+        fun arm(next: String) { committed = false; fault = next }
         override fun read(maxBytes: Int): ByteArray? {
             if (fault == "readback" && committed) throw IOException("Synthetic readback failure")
             return bytes?.clone()

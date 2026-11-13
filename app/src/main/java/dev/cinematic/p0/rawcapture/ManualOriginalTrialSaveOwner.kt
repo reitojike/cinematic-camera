@@ -139,11 +139,15 @@ internal class ManualOriginalTrialSaveOwner(
         }
     }
 
-    fun advance(retryGpuFailure: Boolean = false, retryCancellation: Boolean = false, stop: () -> Boolean = { false }): ManualOriginalTrialSaveState = exclusive {
+    fun advance(retryGpuFailure: Boolean = false, retryCancellation: Boolean = false,
+        publicationOnly: Boolean = false, stop: () -> Boolean = { false }): ManualOriginalTrialSaveState = exclusive {
         if (terminalHold || (gpuRetryAvailable && !retryGpuFailure) || (cancellationRetryAvailable && !retryCancellation)) return@exclusive state.value
         try {
             if (!isCurrent()) return@exclusive hold(ManualOriginalTrialSaveReason.SUPERSEDED)
             var previous = backend.readPublication()
+            // Recheck must never create intent or enter a producer, even when the UI reports a
+            // foreground-service start failure as UNCONFIRMED while this owner is still READY.
+            if (publicationOnly && previous == null) return@exclusive state.value
             if (previous?.phase == JpegPublicationPhase.UNKNOWN && !hasUnreleasedResources && !stop()) {
                 // Install only validated old output proof before fallible query/receipt IO. A transient
                 // observation failure must remain recheckable, never become an intent-only terminal HOLD.

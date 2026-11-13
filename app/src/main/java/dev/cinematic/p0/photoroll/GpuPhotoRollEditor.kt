@@ -295,7 +295,7 @@ import kotlinx.coroutines.flow.StateFlow
                         try {
                             exportPaused = true; session?.close()
                             withContext(Dispatchers.IO) { GpuPhotoRollRetiredOwners.releaseBeforeOpen() }
-                            val result = withContext(Dispatchers.IO) { old.advance { cancellation.isCanceled } }
+                            val result = withContext(Dispatchers.IO) { old.recheckPublication { cancellation.isCanceled } }
                             ensureActive()
                             if (save === old) saveState = result
                         } catch (cancelled: CancellationException) { throw cancelled }

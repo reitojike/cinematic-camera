@@ -32,6 +32,8 @@ internal interface PhotoRollJpegSaveOwner {
     /** Explicit duplicate-risk consent only; returns a separately persisted request, never auto-called. */
     fun requestExplicitRecovery(shouldStop: () -> Boolean): PhotoRollJpegSaveOwner? = null
     val isExplicitRecoveryRequest: Boolean get() = false
+    /** Observe/resume existing publication only; never start an unstarted producer. */
+    fun recheckPublication(shouldStop: () -> Boolean): PhotoRollSaveSnapshot = snapshot
     val snapshots: Flow<PhotoRollSaveSnapshot>
     val snapshot: PhotoRollSaveSnapshot
     /** 0/0 until a deferred manual render has produced and inspected its full-size JPEG. */

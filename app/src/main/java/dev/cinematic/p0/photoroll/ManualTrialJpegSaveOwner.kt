@@ -101,14 +101,19 @@ internal class ManualTrialJpegSaveOwner(
         }
     }
 
-    override fun advance(shouldStop: () -> Boolean): PhotoRollSaveSnapshot {
+    override fun advance(shouldStop: () -> Boolean) = advanceOwned(shouldStop, publicationOnly = false)
+    override fun recheckPublication(shouldStop: () -> Boolean) = advanceOwned(shouldStop, publicationOnly = true)
+
+    private fun advanceOwned(shouldStop: () -> Boolean, publicationOnly: Boolean): PhotoRollSaveSnapshot {
         if (!running.compareAndSet(false, true)) return PhotoRollSaveSnapshot(PhotoRollSavePhase.SAVING)
         try {
             val explicitGpuRetry = snapshot.phase == PhotoRollSavePhase.GPU_FAILED
             val explicitCancellationRetry = snapshot.phase == PhotoRollSavePhase.CANCELLED
             localFailure.value = null
             if (shouldStop()) return uncertain()
-            val future = handle.advance(resources().developConditions(rendererAvailable = true), retryGpuFailure = explicitGpuRetry, retryCancellation = explicitCancellationRetry, stop = shouldStop)
+            val conditions = resources().developConditions(rendererAvailable = true)
+            val future = if (publicationOnly) handle.recheckPublication(conditions, shouldStop)
+                else handle.advance(conditions, retryGpuFailure = explicitGpuRetry, retryCancellation = explicitCancellationRetry, stop = shouldStop)
             var stopRequested = false
             while (true) {
                 if (shouldStop() && !stopRequested) { stopRequested = true; handle.requestStop() }

@@ -528,6 +528,9 @@ internal object AndroidManualOriginalTrialSaves {
         fun advance(conditions: AutoDevelopConditions, retryGpuFailure: Boolean = false, retryCancellation: Boolean = false, stop: () -> Boolean): CompletableFuture<ManualOriginalTrialSaveState> =
             advanceOwned({ conditions }, null, stop, retryGpuFailure, retryCancellation)
 
+        fun recheckPublication(conditions: AutoDevelopConditions, stop: () -> Boolean) =
+            advanceOwned({ conditions }, null, stop, false, false, publicationOnly = true)
+
         /** Same owner, journal, queue and slot; only a foreground-started service uses this entry. */
         fun reserveForegroundExport(conditions: AutoDevelopConditions) = DevelopExecution.reserveForegroundExport(this, conditions)
         fun advanceForegroundExport(request: AutoDevelopCoordinator.ForegroundExportRequest,
@@ -543,7 +546,8 @@ internal object AndroidManualOriginalTrialSaves {
         }
 
         private fun advanceOwned(conditions: () -> AutoDevelopConditions, foregroundExport: AutoDevelopCoordinator.ForegroundExportRequest?,
-            stop: () -> Boolean, retryGpuFailure: Boolean, retryCancellation: Boolean): CompletableFuture<ManualOriginalTrialSaveState> = queue.manualOriginalIo {
+            stop: () -> Boolean, retryGpuFailure: Boolean, retryCancellation: Boolean,
+            publicationOnly: Boolean = false): CompletableFuture<ManualOriginalTrialSaveState> = queue.manualOriginalIo {
             if (slot != null) {
                 owner.releaseResources()
                 if (hasUnreleasedResources) throw IOException("Trial resources remain held")
@@ -562,7 +566,8 @@ internal object AndroidManualOriginalTrialSaves {
                 ?: throw IOException("Trial save admission blocked")
             slot = admitted
             DevelopExecution.registerStop(admitted, backend::requestStop)
-            try { owner.advance(retryGpuFailure = retryGpuFailure, retryCancellation = retryCancellation) { stop() || DevelopExecution.shouldStop(admitted) } }
+            try { owner.advance(retryGpuFailure = retryGpuFailure, retryCancellation = retryCancellation,
+                publicationOnly = publicationOnly) { stop() || DevelopExecution.shouldStop(admitted) } }
             catch (failure: OutOfMemoryError) { throw IOException("Original rendering memory unavailable", failure) }
             finally {
                 try { owner.releaseResources() }

@@ -7,6 +7,35 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ManualOriginalTrialSaveOwnerTest {
+    @Test fun publicationOnlyRecheckCannotStartReadyProducerOrWriteIntent() {
+        val backend = Backend()
+        val intent = Storage()
+        val owner = ManualOriginalTrialSaveOwner(request, backend, intent) { true }
+        repeat(2) {
+            assertEquals(ManualOriginalTrialSavePhase.READY, owner.advance(publicationOnly = true).phase)
+        }
+        assertNull(intent.bytes)
+        assertEquals(0, intent.writes)
+        assertEquals(0, backend.renders)
+        assertEquals(0, backend.publisherCreations)
+        // Only a subsequent normal explicit save can enter the producer.
+        assertEquals(ManualOriginalTrialSavePhase.PUBLISHED, owner.advance().phase)
+        assertEquals(1, backend.renders)
+    }
+
+    @Test fun publicationOnlyRecheckResumesUnknownEvidenceWithoutProducer() {
+        val backend = Backend().also {
+            it.existing = record(JpegPublicationPhase.UNKNOWN)
+            it.reconciled = record(JpegPublicationPhase.PUBLISHING)
+        }
+        val intent = Storage()
+        val owner = ManualOriginalTrialSaveOwner(request, backend, intent) { true }
+        assertEquals(ManualOriginalTrialSavePhase.PUBLISHED, owner.advance(publicationOnly = true).phase)
+        assertEquals(1, backend.reconciliationCalls)
+        assertEquals(0, backend.renders)
+        assertNull(intent.bytes)
+    }
+
     @Test fun durableCancellationIsGrantedOnlyAfterFinalReleaseAndExplicitFinalization() {
         val intent = Storage(); val ledger = Storage()
         val backend = Backend().also { it.renderFailure = confirmedCancellation() }
