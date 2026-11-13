@@ -16,8 +16,12 @@ import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
+/** Display metadata only: never consulted by admission, copy, publication or recovery. */
+internal enum class DngImportMessageKind { NORMAL, PROGRESS, WARNING, FAILURE, ACCEPTED }
+
 internal data class DngImportScreenState(val busy: Boolean = false, val message: String? = null,
-    val items: List<DngImportItem> = emptyList(), val readyUri: String? = null)
+    val items: List<DngImportItem> = emptyList(), val readyUri: String? = null,
+    val messageKind: DngImportMessageKind = DngImportMessageKind.NORMAL)
 
 /** One process queue; no background service, automatic copy, or private DNG mirror. */
 internal class AndroidDngImports private constructor(context: Context) {
@@ -102,7 +106,8 @@ internal class AndroidDngImports private constructor(context: Context) {
             if (record.phase in setOf(DngImportPhase.READY, DngImportPhase.CANCELLED)) {
                 val released = grants(record).release(record, otherGrantUses(record))
                 publish(if (released.grant == DngImportGrant.ACQUIRED) "別の取り込みで使用中のため権限の解放を保留しました"
-                    else "取り込みの読み取り権限を確認しました。共有原本は保持します")
+                    else "取り込みの読み取り権限を確認しました。共有原本は保持します",
+                    kind = if (released.grant == DngImportGrant.ACQUIRED) DngImportMessageKind.WARNING else DngImportMessageKind.ACCEPTED)
                 return@submit
             }
             journal(id).stop(record)
@@ -128,14 +133,19 @@ internal class AndroidDngImports private constructor(context: Context) {
             DngImportResult.HOLD -> "取り込み先の状態を確認できません。追加コピーせず保留しています"
         }
         publish(message, if (result == DngImportResult.READY && openCompleted &&
-            (record.phase == DngImportPhase.READY || !current.stopRequested) && !stopped()) current.uri else null)
+            (record.phase == DngImportPhase.READY || !current.stopRequested) && !stopped()) current.uri else null,
+            when (result) {
+                DngImportResult.READY -> DngImportMessageKind.ACCEPTED
+                DngImportResult.CANCELLED -> DngImportMessageKind.WARNING
+                DngImportResult.WAIT_SOURCE, DngImportResult.HOLD -> DngImportMessageKind.FAILURE
+            })
     }
 
     @Synchronized private fun submit(conditions: (() -> AutoDevelopConditions)?, action: () -> Unit) {
         if (!admitted.compareAndSet(false, true)) return
         requestGeneration = screenGeneration
         paused.set(false); cancelled.set(false)
-        mutable.update { it.copy(busy = true, readyUri = null, message = "取り込みを確認中…") }
+        mutable.update { it.copy(busy = true, readyUri = null, message = "取り込みを確認中…", messageKind = DngImportMessageKind.PROGRESS) }
         executor.execute {
             var failure: Throwable? = null
             try {
@@ -148,7 +158,9 @@ internal class AndroidDngImports private constructor(context: Context) {
                 action()
             } catch (error: Throwable) {
                 failure = error
-                mutable.update { it.copy(readyUri = null, message = when (error) {
+                mutable.update { it.copy(readyUri = null,
+                    messageKind = if (error is DngVerificationStopped) DngImportMessageKind.WARNING else DngImportMessageKind.FAILURE,
+                    message = when (error) {
                     is SecurityException -> "読み取り権限がありません。同じDNGを選び直してください"
                     is DngContentChanged -> "原本のサイズまたは内容を確認できません。64MiB以下の同じDNGを選び直してください"
                     is DngVerificationStopped -> "取り込みを中断しました。再開または取消で状態を確認してください"
@@ -157,10 +169,10 @@ internal class AndroidDngImports private constructor(context: Context) {
             } finally {
                 try { releaseRetained() } catch (cleanup: Throwable) {
                     failure?.let { if (it !== cleanup) it.addSuppressed(cleanup) }
-                    mutable.update { it.copy(readyUri = null, message = "資源の解放を確認できません。再開で回収を再試行してください") }
+                    mutable.update { it.copy(readyUri = null, message = "資源の解放を確認できません。再開で回収を再試行してください", messageKind = DngImportMessageKind.FAILURE) }
                 }
                 try { val refreshed = items(); mutable.update { it.copy(items = refreshed) } } catch (_: Exception) {
-                    mutable.update { it.copy(readyUri = null, message = "取り込み記録を確認できません。新しいコピーは保留してください") }
+                    mutable.update { it.copy(readyUri = null, message = "取り込み記録を確認できません。新しいコピーは保留してください", messageKind = DngImportMessageKind.FAILURE) }
                 }
                 synchronized(this@AndroidDngImports) {
                     admitted.set(false)
@@ -197,8 +209,9 @@ internal class AndroidDngImports private constructor(context: Context) {
     private fun journal(id: String) = files.journal(id)
     private fun records() = files.records()
     private fun items() = records().mapNotNull { it.importItem() }
-    @Synchronized private fun publish(message: String, uri: String? = null) {
-        mutable.update { it.copy(message = message, items = items(), readyUri = uri.takeIf { requestGeneration == screenGeneration && !stopped() }) }
+    @Synchronized private fun publish(message: String, uri: String? = null,
+        kind: DngImportMessageKind = DngImportMessageKind.NORMAL) {
+        mutable.update { it.copy(message = message, messageKind = kind, items = items(), readyUri = uri.takeIf { requestGeneration == screenGeneration && !stopped() }) }
     }
 
     private fun persistableRead(flags: Int) = flags and Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION != 0 &&

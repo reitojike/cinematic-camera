@@ -134,7 +134,7 @@ class DesignCommonizationVisualAndroidTest {
         CameraRollBrowser(PhotoRollListing(items), if (name == "roll-partial") CameraRollAccess(true, false, false, true)
             else CameraRollAccess(true, true, true, false), PhotoRollKindFilter.ALL,
             null, false, false, null, PhotoRollPreviewMode.MANUAL_TRIAL,
-            true, true, true, true, false, {}, {}, {}, {}, {}, {}, {}, {}, {}, Modifier.fillMaxSize(), {})
+            true, true, true, true, false, {}, {}, {}, {}, {}, {}, {}, {}, {}, Modifier.fillMaxSize(), select = {})
     }
 
     @Composable private fun Develop(name: String) {

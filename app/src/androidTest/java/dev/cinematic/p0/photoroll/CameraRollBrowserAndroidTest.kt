@@ -5,6 +5,7 @@ import java.io.File
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.compose.foundation.layout.*
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
@@ -13,6 +14,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
+import dev.cinematic.p0.*
 import dev.cinematic.p0.CaptureTheme
 import org.junit.Assert.*
 import org.junit.Test
@@ -21,12 +23,18 @@ import org.junit.Test
 class CameraRollBrowserAndroidTest {
     @get:org.junit.Rule val diagnostic = SyntheticFixtureRule()
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
+    private fun outputFile(name: String): File {
+        val supplied = InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")
+        val root = supplied?.let(::File)
+            ?: File(requireNotNull(instrumentation.targetContext.externalMediaDirs.firstOrNull()), "additional_test_output")
+        return File(root, "ui-pr-e").apply { mkdirs() }.resolve(name)
+    }
     private val full = CameraRollAccess(true, true, true, false)
     private val selected = CameraRollAccess(true, false, false, true)
-    private val emptyText = "該当する項目がありません。アクセス許可や絞り込みを確認してください。DNGはFilesの「内部ストレージ」からも選べます"
+    private val emptyText = "該当する項目がありません。アクセス許可・絞り込みを確認するか、FilesでDNGを開いてください。"
     private data class Fixture(val access: CameraRollAccess, val loading: Boolean = false,
         val items: List<PhotoRollItem> = emptyList(), val permission: Boolean = true,
-        val files: Boolean = true, val width: Int = 412, val height: Int = 924, val fontScale: Float = 1f)
+        val files: Boolean = true, val width: Int = 412, val height: Int = 924, val fontScale: Float = 1f, val notice: String? = null, val save: List<UiMessage> = emptyList(), val saveAction: (MessageAction) -> Unit = {}, val enabled: Boolean = false, val settingsAction: () -> Unit = {})
 
     private fun find(text: String): AccessibilityNodeInfo? {
         fun visit(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
@@ -37,10 +45,18 @@ class CameraRollBrowserAndroidTest {
         }
         return visit(diagnostic.fixtureRoot())
     }
-    private fun actionable(node: AccessibilityNodeInfo): AccessibilityNodeInfo {
+    private fun actionable(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         var current = node
-        while (!current.isClickable) current = current.parent ?: return node
-        return current
+        while (true) {
+            val cachedEnabled = current.isEnabled
+            // Framework nodes are snapshots. Refresh each ancestor before reading its state.
+            // https://developer.android.com/reference/android/view/accessibility/AccessibilityNodeInfo#refresh()
+            if (!current.refresh()) return null
+            if (cachedEnabled != current.isEnabled) android.util.Log.i("LibraryAccessRegression",
+                "node refresh changed enabled=$cachedEnabled -> ${current.isEnabled}; text=${current.text}; class=${current.className}")
+            if (current.isClickable) return current
+            current = current.parent ?: return node
+        }
     }
     private fun scroll(forward: Boolean) {
         fun visit(node: AccessibilityNodeInfo?): Boolean {
@@ -60,18 +76,33 @@ class CameraRollBrowserAndroidTest {
             instrumentation.waitForIdleSync()
             find(text)?.let { label ->
                 val node = if (enabled == null) label else actionable(label)
-                if (label.isVisibleToUser && (enabled == null || node.isEnabled == enabled)) return node
+                if (node != null && label.refresh() && label.isVisibleToUser && (enabled == null || node.isEnabled == enabled)) return node
             }
             if (++attempts % 4 == 0) scroll((attempts / 20) % 2 == 0)
             SystemClock.sleep(50)
         } while (SystemClock.uptimeMillis() < deadline)
+        fun dump(node: AccessibilityNodeInfo?, depth: Int = 0) {
+            if (node == null) return
+            if (node.text?.toString() == text || node.contentDescription?.toString() == text) {
+                var current: AccessibilityNodeInfo? = node
+                repeat(5) { current?.let { n ->
+                    val bounds = android.graphics.Rect(); n.getBoundsInScreen(bounds)
+                    android.util.Log.e("LibraryAccessRegression", "match depth=$depth text=${n.text} class=${n.className} visible=${n.isVisibleToUser} enabled=${n.isEnabled} clickable=${n.isClickable} bounds=$bounds")
+                    current = n.parent
+                } }
+            }
+            for (i in 0 until node.childCount) dump(node.getChild(i), depth + 1)
+        }
+        dump(diagnostic.fixtureRoot())
+        diagnostic.failure(text)
+        capture("failure-reachable")
         error("Missing reachable $text (enabled=$enabled)")
     }
     private fun capture(name: String) {
         instrumentation.waitForIdleSync()
         diagnostic.captureSoftware().let { bitmap ->
             try {
-                File(instrumentation.targetContext.getExternalFilesDir(null), "roll-design-$name.png")
+                outputFile("roll-design-$name.png")
                     .outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
             } finally { bitmap.recycle() }
         }
@@ -80,29 +111,47 @@ class CameraRollBrowserAndroidTest {
         (Fixture) -> Unit, () -> Pair<Int, Int>) -> Unit) {
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
         val state = mutableStateOf(initial)
+        val rendered = java.util.concurrent.atomic.AtomicReference<Fixture?>()
         var permissions = 0
         var files = 0
         // Existing activity starts on an empty ATD; lifecycle callbacks install synthetic content.
         // Initial repository reads may occur; fixtures do not request permissions or launch viewers.
         diagnostic.content = {
                 val fixture = state.value
+                SideEffect { rendered.set(fixture) }
                 BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
                     val nativeDensity = LocalDensity.current.density
                     val density = minOf(maxWidth.value / fixture.width, maxHeight.value / fixture.height) * nativeDensity
                     CompositionLocalProvider(LocalDensity provides Density(density, fixture.fontScale)) {
                         CaptureTheme {
                             CameraRollBrowser(PhotoRollListing(fixture.items), fixture.access, PhotoRollKindFilter.ALL,
-                                null, fixture.loading, false, "合成の通知", PhotoRollPreviewMode.MANUAL_TRIAL,
-                                false, false, fixture.permission, fixture.files, false, {}, {}, {}, {}, {},
-                                { permissions++ }, {}, { files++ }, {},
-                                Modifier.size(fixture.width.dp, fixture.height.dp), {})
+                                null, fixture.loading, false, fixture.notice, PhotoRollPreviewMode.MANUAL_TRIAL,
+                                fixture.enabled, false, fixture.permission, fixture.files, false, {}, {}, {}, {}, {},
+                                { permissions++ }, fixture.settingsAction, { files++ }, {},
+                                Modifier.size(fixture.width.dp, fixture.height.dp), saveMessages = fixture.save, saveAction = fixture.saveAction, select = {})
                         }
                     }
                 }
         }
         ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
             scenario.recreate()
-            block(scenario, { fixture -> scenario.onActivity { state.value = fixture }; instrumentation.waitForIdleSync() },
+            block(scenario, { fixture ->
+                scenario.onActivity { state.value = fixture }
+                val deadline = SystemClock.uptimeMillis() + 5_000
+                while (rendered.get() != fixture && SystemClock.uptimeMillis() < deadline) {
+                    instrumentation.waitForIdleSync(); SystemClock.sleep(10)
+                }
+                check(rendered.get() == fixture) { "Synthetic fixture was not composed" }
+                // waitForIdleSync alone can return before the next Compose/layout frame.
+                // A button can move from the old banner to the footer; do not click its stale node.
+                val laidOut = java.util.concurrent.CountDownLatch(1)
+                instrumentation.runOnMainSync {
+                    val frames = android.view.Choreographer.getInstance()
+                    frames.postFrameCallback { frames.postFrameCallback { laidOut.countDown() } }
+                }
+                check(laidOut.await(5, java.util.concurrent.TimeUnit.SECONDS)) { "Synthetic layout frames timed out" }
+                instrumentation.waitForIdleSync()
+            },
                 { permissions to files })
         }
     }
@@ -127,12 +176,12 @@ class CameraRollBrowserAndroidTest {
 
     @Test fun emptyActionsDispatchExactlyOnceAndDisabledActionsNeverDispatch() = runFixture(Fixture(selected)) { _, update, counts ->
         assertTrue(await("アクセスを許可", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
-        assertTrue(await("Filesから選ぶ", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+        assertTrue(await("Filesで開く", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
         instrumentation.waitForIdleSync()
         assertEquals(1 to 1, counts())
         update(Fixture(selected, permission = false, files = false))
         await("アクセスを許可", false).performAction(AccessibilityNodeInfo.ACTION_CLICK)
-        await("Filesから選ぶ", false).performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        await("Filesで開く", false).performAction(AccessibilityNodeInfo.ACTION_CLICK)
         instrumentation.waitForIdleSync()
         assertEquals(1 to 1, counts())
         capture("disabled-empty-actions")
@@ -141,7 +190,6 @@ class CameraRollBrowserAndroidTest {
     @Test fun loadingNeverAnnouncesEmptyAndRetainsOldSyntheticTiles() = runFixture(Fixture(full, loading = true)) { _, update, _ ->
         await("カメラロール")
         assertNull(find(emptyText))
-        assertNull(find("Filesから選ぶ"))
         val item = PhotoRollItem("content://synthetic/item", "SYNTHETIC.dng")
         update(Fixture(full, loading = true, items = listOf(item)))
         await(item.name)
@@ -160,13 +208,63 @@ class CameraRollBrowserAndroidTest {
                 await("選択した写真・動画だけにアクセスできます")
                 capture("viewport-${fixture.width}-${fixture.height}-${fixture.fontScale}")
                 await("アクセスを許可", true)
-                await("Filesから選ぶ", true)
+                await("Filesで開く", true)
                 capture("actions-${fixture.width}-${fixture.height}-${fixture.fontScale}")
-                await("Filesから DNG…", true)
+                await("Filesで開く", true)
                 capture("footer-${fixture.width}-${fixture.height}-${fixture.fontScale}")
-                await("合成の通知")
                 await("試験品質 · 手動保存 · 原本は変更しません ▾")
             }
         }
     }
+    @Test fun saveStatesAndFailureUseOnePriorityBanner() = runFixture(Fixture(full)) { _, update, _ ->
+        val base = ForegroundSaveMessageState(true, true, false, false, true, false, true)
+        val cases = listOf("saving" to base, "stopping" to base.copy(stopping = true),
+            "held" to base.copy(held = true), "notifications" to base.copy(active = false))
+        for ((name, save) in cases) {
+            val candidates = foregroundSaveMessages(save)
+            update(Fixture(full, save = candidates))
+            await(screenMessages(candidates).banner!!.body)
+            capture("message-$name")
+        }
+        var cancels = 0
+        update(Fixture(selected, notice = "合成の項目を開けませんでした", save = foregroundSaveMessages(base),
+            saveAction = { if (it == MessageAction.CANCEL_SAVE) cancels++ }))
+        await("合成の項目を開けませんでした")
+        assertTrue(await("保存を取り消す", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+        instrumentation.waitForIdleSync()
+        assertEquals(1, cancels)
+        await("通知を許可", true)
+        assertNull(find("JPEGを保存中です。アプリを離れても続きます。"))
+        assertNull(find("選択した写真・動画だけにアクセスできます"))
+        capture("message-failure-priority")
+    }
+
+    @Test fun partialAccessActionsRemainReachableWhenOtherBannersWin() = runFixture(Fixture(selected)) { _, update, counts ->
+        val item = PhotoRollItem("content://synthetic/item", "SYNTHETIC.dng")
+        val base = ForegroundSaveMessageState(true, false, false, false, true, false, true)
+        var settings = 0
+        for (saving in listOf(base, base.copy(active = true), base.copy(active = true, stopping = true), base.copy(active = true, held = true))) {
+            for (notice in listOf(null, "合成の一覧失敗")) {
+                val before = counts().first
+                val beforeSettings = settings
+                val fixture = Fixture(selected, items = listOf(item), enabled = true, notice = notice,
+                    save = foregroundSaveMessages(saving), settingsAction = { settings++ })
+                update(fixture)
+                android.util.Log.i("LibraryAccessRegression", "active=${saving.active}, held=${saving.held}, stopping=${saving.stopping}, failure=${notice != null}")
+                assertTrue(await("選び直す", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+                assertTrue(await("設定", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+                instrumentation.waitForIdleSync()
+                assertEquals(before + 1, counts().first)
+                assertEquals(beforeSettings + 1, settings)
+                if (!saving.active && notice == null) capture("partial-notifications-off-actions")
+                update(fixture.copy(permission = false, enabled = false))
+                await("選び直す", false).performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                await("設定", false).performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                instrumentation.waitForIdleSync()
+                assertEquals(before + 1, counts().first)
+                assertEquals(beforeSettings + 1, settings)
+            }
+        }
+    }
+
 }
