@@ -76,6 +76,7 @@ android {
     }
     // Explicit opt-in, separate identity, debug certificate only. Never a distribution variant.
     if (memoryDiagnostic) {
+        testBuildType = "memoryDiagnostic"
         buildTypes.create("memoryDiagnostic") {
             initWith(buildTypes.getByName("release"))
             applicationIdSuffix = ".memorydiagnostic"
