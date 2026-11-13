@@ -7,6 +7,190 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ManualOriginalTrialSaveOwnerTest {
+    @Test fun durableCancellationIsGrantedOnlyAfterFinalReleaseAndExplicitFinalization() {
+        val intent = Storage(); val ledger = Storage()
+        val backend = Backend().also { it.renderFailure = confirmedCancellation() }
+        val owner = durableOwner(backend, intent, ledger)
+        assertEquals(ManualOriginalTrialSavePhase.SAVING, owner.advance().phase)
+        assertEquals(ManualTrialAttemptPhase.STARTED, ManualTrialAttemptCodec.decode(ledger.bytes!!).phase)
+        assertFalse(owner.canSupersedeConfirmedCancellation())
+        owner.releaseResources()
+        assertEquals(ManualTrialAttemptPhase.STARTED, ManualTrialAttemptCodec.decode(ledger.bytes!!).phase)
+        owner.confirmCancellationAfterRelease()
+        assertEquals(ManualOriginalTrialSavePhase.CANCELLED, owner.state.value.phase)
+        assertTrue(owner.canSupersedeConfirmedCancellation())
+        backend.releaseFailure = IOException("must never close again after clean commit")
+        owner.releaseResources()
+        val restoredBackend = Backend()
+        val restored = durableOwner(restoredBackend, intent, ledger)
+        restored.restoreDurableState()
+        assertEquals(ManualOriginalTrialSavePhase.CANCELLED, restored.state.value.phase)
+        assertEquals(ManualOriginalTrialSavePhase.CANCELLED, restored.advance().phase)
+        assertEquals(0, restoredBackend.renders)
+        restoredBackend.beforeRender = {
+            val record = ManualTrialAttemptCodec.decode(ledger.bytes!!)
+            assertEquals(2L, record.attempt); assertEquals(ManualTrialAttemptPhase.STARTED, record.phase)
+        }
+        assertEquals(ManualOriginalTrialSavePhase.PUBLISHED, restored.advance(retryCancellation = true).phase)
+        assertEquals(1, restoredBackend.renders)
+    }
+
+    @Test fun processLossBeforeFinalCleanAndLegacyIntentNeverRecover() {
+        for (point in listOf("legacy", "started", "cancelCandidate", "released", "releaseFailed")) {
+            val intent = Storage(); val ledger = Storage()
+            val backend = Backend().also { it.renderFailure = confirmedCancellation() }
+            val owner = durableOwner(backend, intent, ledger)
+            if (point == "legacy") intent.bytes = ManualOriginalTrialRequestCodec.encode(request)
+            else {
+                owner.advance()
+                if (point == "released") owner.releaseResources()
+                if (point == "releaseFailed") {
+                    backend.releaseFailure = IOException("last release")
+                    assertThrows(IOException::class.java) { owner.releaseResources() }
+                    owner.confirmCancellationAfterRelease()
+                }
+            }
+            val restartedBackend = Backend()
+            val restarted = durableOwner(restartedBackend, intent, ledger)
+            restarted.restoreDurableState()
+            assertEquals(point, ManualOriginalTrialSavePhase.HOLD, restarted.state.value.phase)
+            assertFalse(restarted.canSupersedeConfirmedCancellation())
+            restarted.advance(retryCancellation = true)
+            assertEquals(0, restartedBackend.renders)
+        }
+    }
+
+    @Test fun cleanWriteFailuresNeverAuthorizeInProcessButRestartReadsOnlyAtomicOutcome() {
+        for (mode in listOf("before", "after", "readback")) {
+            val intent = Storage(); val ledger = Storage()
+            val owner = durableOwner(Backend().also { it.renderFailure = confirmedCancellation() }, intent, ledger)
+            owner.advance(); owner.releaseResources()
+            ledger.mode = mode
+            owner.confirmCancellationAfterRelease()
+            assertEquals(ManualOriginalTrialSavePhase.HOLD, owner.state.value.phase)
+            assertFalse(owner.canSupersedeConfirmedCancellation())
+            ledger.mode = "none"
+            val restored = durableOwner(Backend(), intent, ledger)
+            restored.restoreDurableState()
+            // "readback" here fails the pre-write read: the old STARTED must remain held.
+            assertEquals(if (mode == "after") ManualOriginalTrialSavePhase.CANCELLED else ManualOriginalTrialSavePhase.HOLD,
+                restored.state.value.phase)
+        }
+    }
+
+    @Test fun retryStartFailureCannotReuseCleanProofOrRunProducer() {
+        for (mode in listOf("before", "after", "retryReadback", "retryMismatch")) {
+            val intent = Storage(); val ledger = Storage()
+            val owner = durableOwner(Backend().also { it.renderFailure = confirmedCancellation() }, intent, ledger)
+            owner.advance(); owner.releaseResources(); owner.confirmCancellationAfterRelease()
+            val backend = Backend()
+            val restarted = durableOwner(backend, intent, ledger)
+            restarted.restoreDurableState()
+            ledger.mode = mode
+            assertEquals(ManualOriginalTrialSavePhase.HOLD, restarted.advance(retryCancellation = true).phase)
+            assertEquals(0, backend.renders)
+            ledger.mode = "none"
+            restarted.advance(retryCancellation = true)
+            assertEquals(0, backend.renders)
+            val afterKill = durableOwner(Backend(), intent, ledger)
+            afterKill.restoreDurableState()
+            assertEquals(if (mode == "after") ManualOriginalTrialSavePhase.HOLD else ManualOriginalTrialSavePhase.CANCELLED,
+                afterKill.state.value.phase)
+        }
+    }
+
+    @Test fun restartedCleanCanSupersedeButOldOwnerCannotRenderAndUnknownPublicationWins() {
+        val intent = Storage(); val ledger = Storage(); var current = true
+        val owner = durableOwner(Backend().also { it.renderFailure = confirmedCancellation() }, intent, ledger)
+        owner.advance(); owner.releaseResources(); owner.confirmCancellationAfterRelease()
+        val backend = Backend()
+        val recovered = ManualOriginalTrialSaveOwner(request, backend, intent,
+            ManualOriginalTrialAttemptJournal(request, ledger, intent)) { current }
+        recovered.restoreDurableState()
+        assertTrue(recovered.canSupersedeConfirmedCancellation())
+        current = false
+        assertEquals(ManualOriginalTrialSavePhase.HOLD, recovered.advance(retryCancellation = true).phase)
+        assertEquals(0, backend.renders)
+        for (phase in JpegPublicationPhase.entries) {
+            val journalBackend = Backend().also { it.existing = record(phase) }
+            val restored = durableOwner(journalBackend, intent, ledger)
+            restored.restoreDurableState()
+            assertFalse(restored.canSupersedeConfirmedCancellation())
+            assertEquals(0, journalBackend.renders)
+            if (phase == JpegPublicationPhase.UNKNOWN) {
+                assertEquals(ManualOriginalTrialSaveReason.PUBLICATION_UNKNOWN, restored.state.value.reason)
+                restored.advance(retryCancellation = true)
+                assertEquals(0, journalBackend.renders)
+            }
+        }
+    }
+
+    @Test fun durableProofRejectsOrphansCorruptionAndIntentMismatch() {
+        val intent = Storage(); val ledger = Storage()
+        val owner = durableOwner(Backend().also { it.renderFailure = confirmedCancellation() }, intent, ledger)
+        owner.advance(); owner.releaseResources(); owner.confirmCancellationAfterRelease()
+        val goodIntent = intent.bytes!!.clone(); val goodLedger = ledger.bytes!!.clone()
+        for (mode in listOf("noIntent", "intentMismatch", "badProof", "readFailure")) {
+            intent.bytes = goodIntent.clone(); ledger.bytes = goodLedger.clone(); ledger.mode = "none"
+            when (mode) {
+                "noIntent" -> intent.bytes = null
+                "intentMismatch" -> intent.bytes = byteArrayOf(1)
+                "badProof" -> ledger.bytes = byteArrayOf(1)
+                "readFailure" -> ledger.mode = "readback"
+            }
+            val backend = Backend(); val restored = durableOwner(backend, intent, ledger)
+            restored.restoreDurableState()
+            assertEquals(mode, ManualOriginalTrialSavePhase.HOLD, restored.state.value.phase)
+            restored.advance(retryCancellation = true)
+            assertEquals(0, backend.renders)
+        }
+    }
+
+    private fun durableOwner(backend: Backend, intent: Storage, ledger: Storage) =
+        ManualOriginalTrialSaveOwner(request, backend, intent, ManualOriginalTrialAttemptJournal(request, ledger, intent)) { true }
+
+    @Test fun unconfirmedSlotReleaseCannotPersistCleanProof() {
+        val intent = Storage(); val ledger = Storage()
+        val owner = durableOwner(Backend().also { it.renderFailure = confirmedCancellation() }, intent, ledger)
+        owner.advance(); owner.releaseResources()
+        owner.confirmCancellationAfterRelease(slotReleased = false)
+        assertEquals(ManualOriginalTrialSavePhase.HOLD, owner.state.value.phase)
+        assertEquals(ManualTrialAttemptPhase.STARTED, ManualTrialAttemptCodec.decode(ledger.bytes!!).phase)
+        val restarted = durableOwner(Backend(), intent, ledger)
+        restarted.restoreDurableState()
+        assertEquals(ManualOriginalTrialSavePhase.HOLD, restarted.state.value.phase)
+    }
+
+    @Test fun durableCancellationSuccessorCommitKeepsOldIntentAndFailsClosedOnUncertainCursor() {
+        for (fault in listOf("none", "before", "after", "retryReadback")) {
+            val metadata = Storage(); val intent = Storage(); val ledger = Storage()
+            lateinit var recovered: ManualOriginalTrialSaveOwner
+            val requests = ManualOriginalTrialRequests(source, metadata) { recovered.canSupersedeConfirmedCancellation() }
+            val first = requests.prepare(request.strength)
+            val initial = durableOwner(Backend().also { it.renderFailure = confirmedCancellation() }, intent, ledger)
+            initial.advance(); initial.releaseResources(); initial.confirmCancellationAfterRelease()
+            val backend = Backend()
+            recovered = ManualOriginalTrialSaveOwner(first, backend, intent,
+                ManualOriginalTrialAttemptJournal(first, ledger, intent)) { requests.isCurrent(first) }
+            recovered.restoreDurableState()
+            val preservedIntent = intent.bytes!!.clone(); val preservedProof = ledger.bytes!!.clone()
+            metadata.mode = fault
+            if (fault == "none") {
+                val next = requests.prepare(.4)
+                assertEquals(first.generation + 1, next.generation)
+                assertEquals(next, requests.prepare(.4))
+            } else assertThrows(IOException::class.java) { requests.prepare(.4) }
+            assertFalse(requests.isCurrent(first))
+            assertEquals(ManualOriginalTrialSavePhase.HOLD, recovered.advance(retryCancellation = true).phase)
+            assertEquals(0, backend.renders)
+            metadata.mode = "none"
+            val coldCursor = ManualOriginalTrialRequests(source, metadata) { false }.current()!!
+            assertEquals(if (fault == "before") first.generation else first.generation + 1, coldCursor.generation)
+            assertArrayEquals(preservedIntent, intent.bytes)
+            assertArrayEquals(preservedProof, ledger.bytes)
+        }
+    }
+
     @Test fun confirmedCancellationAllowsOneSuccessorWithoutErasingIntentOrRetryingOldRender() {
         val metadata = Storage()
         val intent = Storage()
@@ -941,6 +1125,7 @@ class ManualOriginalTrialSaveOwnerTest {
         cleanupConfirmed: Boolean = true) = GpuSaveRenderException(reason, cleanupConfirmed, IOException("GPU producer failed"))
 
     private inner class Backend : ManualOriginalTrialSaveBackend {
+        override fun pinDurableGpuEngine() = Unit
         var existing: JpegPublicationRecord? = null
         var generated = render
         var renders = 0

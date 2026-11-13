@@ -52,6 +52,13 @@ internal class ManualOriginalTrialRequests(
             ?.also(::requireSource) == request
     }
 
+    /** Metadata-only cold open. Never allocates a generation or repairs an uncertain commit. */
+    @Synchronized fun current(): Original24Request? {
+        if (unconfirmed != null) throw IOException("Manual trial request commit remains unconfirmed")
+        return storage.read(ManualOriginalTrialRequestCodec.MAX_BYTES)?.let(ManualOriginalTrialRequestCodec::decode)
+            ?.also(::requireSource)
+    }
+
     private fun requireSource(request: Original24Request) {
         if (request.source != source || request.captureId != captureId) throw CaptureJournalConflict()
     }

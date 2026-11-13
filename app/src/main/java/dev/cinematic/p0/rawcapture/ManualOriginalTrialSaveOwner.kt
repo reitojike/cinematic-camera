@@ -31,6 +31,8 @@ internal interface ManualOriginalTrialSaveBackend {
     fun render(stop: () -> Boolean): ManualOriginalTrialRender
     fun publisher(render: ManualOriginalTrialRender): ManualOriginalTrialPublication
     fun releaseResources()
+    /** Metadata only. Ordinary GPU attempts must freeze this before writing STARTED. */
+    fun pinDurableGpuEngine() { throw IOException("Durable GPU recovery unsupported") }
 }
 
 /** One retained owner per immutable generation. Only explicit advance starts full-size rendering.
@@ -41,6 +43,7 @@ internal class ManualOriginalTrialSaveOwner(
     val request: Original24Request,
     private val backend: ManualOriginalTrialSaveBackend,
     private val attemptStorage: AtomicJournalStorage,
+    private val attemptJournal: ManualOriginalTrialAttemptJournal? = null,
     private val isCurrent: () -> Boolean,
 ) {
     val appliedStrength get() = request.strength
@@ -53,6 +56,8 @@ internal class ManualOriginalTrialSaveOwner(
     private var terminalHold = false
     private var gpuRetryAvailable = false
     private var cancellationRetryAvailable = false
+    private var cancellationCandidate = false
+    private var durableAttempt: ManualTrialAttemptRecord? = null
     private var gpuFailure: GpuSaveFailure? = null
     var lastFailure: Throwable? = null
         private set
@@ -61,16 +66,63 @@ internal class ManualOriginalTrialSaveOwner(
     init { ManualOriginalTrialRequestCodec.encode(request) }
     fun matches(source: SharedOriginalReference) = request.source == source
 
+    /** Cold metadata hydration never starts a producer or publisher. Legacy intent-only stays held. */
+    fun restoreDurableState() = exclusive {
+        if (attemptJournal == null) return@exclusive
+        try {
+            val published = backend.readPublication()
+            if (published != null) {
+                val render = published.render as? ManualOriginalTrialRender ?: throw CaptureJournalConflict()
+                requireMatches(render); render.requireFingerprint(published.fingerprint)
+                update(if (published.phase == JpegPublicationPhase.PUBLISHED) ManualOriginalTrialSavePhase.PUBLISHED
+                    else ManualOriginalTrialSavePhase.UNCONFIRMED, published.uri,
+                    if (published.phase == JpegPublicationPhase.UNKNOWN) ManualOriginalTrialSaveReason.PUBLICATION_UNKNOWN else null)
+                return@exclusive
+            }
+            durableAttempt = attemptJournal.read()
+            if (durableAttempt?.phase == ManualTrialAttemptPhase.CANCELLED_CLEAN) {
+                backend.pinDurableGpuEngine()
+                if (hasUnreleasedResources) throw IOException("Recovery resources held")
+                renderStarted = true
+                cancellationRetryAvailable = true
+                update(ManualOriginalTrialSavePhase.CANCELLED, reason = ManualOriginalTrialSaveReason.STOPPED)
+            } else if (durableAttempt != null || attemptStorage.read(ManualOriginalTrialRequestCodec.MAX_BYTES) != null) {
+                hold(ManualOriginalTrialSaveReason.GENERATION_STARTED)
+            }
+        } catch (failure: Exception) {
+            lastFailure = failure
+            hold(ManualOriginalTrialSaveReason.OPERATION_FAILED)
+        }
+    }
+
+    /** Only after the outer resource release AND coordinator slot release, on the same IO queue. */
+    fun confirmCancellationAfterRelease(slotReleased: Boolean = true) = exclusive {
+        if (!cancellationCandidate || terminalHold) return@exclusive
+        try {
+            if (!slotReleased || !isCurrent() || hasUnreleasedResources || proof != null || publication != null || backend.readPublication() != null)
+                throw CaptureJournalConflict()
+            durableAttempt = requireNotNull(attemptJournal).confirmCancellation(requireNotNull(durableAttempt))
+            cancellationCandidate = false
+            cancellationRetryAvailable = true
+            update(ManualOriginalTrialSavePhase.CANCELLED, reason = ManualOriginalTrialSaveReason.STOPPED)
+        } catch (failure: Exception) {
+            lastFailure = failure
+            hold(ManualOriginalTrialSaveReason.OPERATION_FAILED)
+        }
+    }
+
     /** Called only by the serialized generation fence for its exact previous request. Preparing
      * clears current authority first, so isCurrent is deliberately not used here. The durable
      * source request commits the successor; the old intent is never erased. A restarted owner
-     * has no cancellation permit and cannot pass this fence. This does not start or retry work. */
+     * needs the exact durable clean proof to regain this permit. This does not start or retry work. */
     fun canSupersedeConfirmedCancellation(): Boolean = exclusive {
         if (terminalHold || !cancellationRetryAvailable || !renderStarted ||
             state.value.phase != ManualOriginalTrialSavePhase.CANCELLED || proof != null ||
             publication != null || hasUnreleasedResources) return@exclusive false
         try {
             if (backend.readPublication() != null) return@exclusive false
+            if (attemptJournal != null && (durableAttempt?.phase != ManualTrialAttemptPhase.CANCELLED_CLEAN ||
+                    attemptJournal.read() != durableAttempt)) throw CaptureJournalConflict()
             if (attemptStorage.read(ManualOriginalTrialRequestCodec.MAX_BYTES)
                     ?.contentEquals(ManualOriginalTrialRequestCodec.encode(request)) != true) {
                 hold(ManualOriginalTrialSaveReason.GENERATION_STARTED)
@@ -111,11 +163,13 @@ internal class ManualOriginalTrialSaveOwner(
                 ManualOriginalTrialSavePhase.UNCONFIRMED, previous?.uri, ManualOriginalTrialSaveReason.STOPPED)
             update(ManualOriginalTrialSavePhase.SAVING, previous?.uri)
             if (proof == null) {
+                // Orphan/malformed records must not be mistaken for a never-started generation.
+                if (attemptJournal != null && attemptJournal.read() != durableAttempt) throw CaptureJournalConflict()
                 val intent = ManualOriginalTrialRequestCodec.encode(request)
                 val previousIntent = attemptStorage.read(ManualOriginalTrialRequestCodec.MAX_BYTES)
                 if (gpuRetryAvailable || cancellationRetryAvailable) {
-                    // This in-process permit exists only for confirmed pre-JPEG failure/cancellation.
-                    // Keep the durable intent: a restarted owner must still HOLD, never rerender.
+                    // Retry requires confirmed pre-JPEG failure/cancellation. Only cancellation may
+                    // restore a permit from durable CLEAN; failure and intent-only restart stay HOLD.
                     val explicitlyRetried = (gpuRetryAvailable && retryGpuFailure) || (cancellationRetryAvailable && retryCancellation)
                     gpuRetryAvailable = false
                     cancellationRetryAvailable = false
@@ -128,6 +182,10 @@ internal class ManualOriginalTrialSaveOwner(
                 attemptStorage.replace(intent)
                 if (attemptStorage.read(ManualOriginalTrialRequestCodec.MAX_BYTES)?.contentEquals(intent) != true)
                     throw IOException("Manual trial generation intent unconfirmed")
+                if (attemptJournal != null) {
+                    backend.pinDurableGpuEngine()
+                    durableAttempt = attemptJournal.start(durableAttempt)
+                }
                 if (!isCurrent()) return@exclusive hold(ManualOriginalTrialSaveReason.SUPERSEDED)
                 // No producer has been entered. The durable intent is retained for explicit retry.
                 if (stop()) return@exclusive cancelled()
@@ -178,6 +236,13 @@ internal class ManualOriginalTrialSaveOwner(
 
     /** Cleanup retries keep the same producer/publication owners and never authorize a fresh render. */
     fun releaseResources() = exclusive {
+        // A finalized clean owner has no work left to close. Never perform fallible cleanup after
+        // committing a clean proof; a later memory-only failure could resurrect that proof on restart.
+        if (durableAttempt?.phase == ManualTrialAttemptPhase.CANCELLED_CLEAN) {
+            if (!hasUnreleasedResources) return@exclusive
+            durableAttempt = requireNotNull(attemptJournal).start(durableAttempt)
+            hold(ManualOriginalTrialSaveReason.RESOURCES_HELD)
+        }
         var failure: Throwable? = null
         try { publication?.releaseResources() } catch (error: Throwable) { failure = error }
         try { backend.releaseResources() } catch (error: Throwable) {
@@ -186,7 +251,7 @@ internal class ManualOriginalTrialSaveOwner(
         failure?.let {
             lastFailure = it
             // A later cleanup failure invalidates the earlier positive cancellation evidence.
-            if (cancellationRetryAvailable) hold(ManualOriginalTrialSaveReason.OPERATION_FAILED)
+            if (cancellationRetryAvailable || cancellationCandidate) hold(ManualOriginalTrialSaveReason.OPERATION_FAILED)
             throw it
         }
     }
@@ -202,11 +267,17 @@ internal class ManualOriginalTrialSaveOwner(
         return null
     }
     private fun cancelled(): ManualOriginalTrialSaveState {
+        if (attemptJournal != null) {
+            cancellationCandidate = true
+            return update(ManualOriginalTrialSavePhase.SAVING, reason = ManualOriginalTrialSaveReason.STOPPED)
+        }
         cancellationRetryAvailable = true
         return update(ManualOriginalTrialSavePhase.CANCELLED, reason = ManualOriginalTrialSaveReason.STOPPED)
     }
     private fun hold(reason: ManualOriginalTrialSaveReason, uri: String? = state.value.uri): ManualOriginalTrialSaveState {
         terminalHold = true
+        cancellationCandidate = false
+        cancellationRetryAvailable = false
         return update(ManualOriginalTrialSavePhase.HOLD, uri, reason)
     }
     private fun update(phase: ManualOriginalTrialSavePhase, uri: String? = null, reason: ManualOriginalTrialSaveReason? = null) =
