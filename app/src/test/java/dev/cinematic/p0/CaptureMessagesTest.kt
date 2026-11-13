@@ -99,6 +99,29 @@ class CaptureMessagesTest {
         }
     }
 
+    @Test fun releaseSuppressesDuplicateCaptionAndChipAndRecordsOnlyReason() {
+        val records = mutableListOf<String>()
+        val center = message(MessageSlot.CENTER, fact = "image")
+        val result = screenMessages(listOf(center,
+            message(MessageSlot.CAPTION, fact = "image"),
+            message(MessageSlot.CHIP, fact = "image")), strict = false, report = records::add)
+        assertEquals(center, result.center)
+        assertNull(result.caption)
+        assertTrue(result.chips.isEmpty())
+        assertEquals(listOf("duplicate_caption", "duplicate_chip"), records)
+    }
+
+    @Test fun releaseContractRecordsButDebugContractThrows() {
+        val records = mutableListOf<String>()
+        assertFalse(messageContract(false, "invalid_message", false, records::add))
+        assertEquals(listOf("invalid_message"), records)
+        assertThrows(IllegalArgumentException::class.java) {
+            messageContract(false, "invalid_message", true, records::add)
+        }
+        assertTrue(messageContract(true, "unused", false, records::add))
+        assertEquals(1, records.size)
+    }
+
     @Test fun designTokensRetainExistingTypeAndCentralizeOverlayOpacity() {
         assertEquals(CaptureDesign.Explanation, CaptureDesign.Body)
         assertEquals(.9f, CaptureDesign.Scrim.alpha, .005f)
