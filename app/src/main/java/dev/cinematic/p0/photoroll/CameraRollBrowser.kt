@@ -1,6 +1,5 @@
 package dev.cinematic.p0.photoroll
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.verticalScroll
@@ -13,15 +12,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
-import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.text.style.TextAlign
-import dev.cinematic.p0.CaptureDesign
-import dev.cinematic.p0.captureOutline
-import dev.cinematic.p0.captureChoiceSurface
-import dev.cinematic.p0.captureNeedsFullScroll
+import dev.cinematic.p0.*
 
 @Composable
 internal fun CameraRollBrowser(listing: PhotoRollListing, access: CameraRollAccess, filter: PhotoRollKindFilter,
@@ -29,7 +23,19 @@ internal fun CameraRollBrowser(listing: PhotoRollListing, access: CameraRollAcce
     enabled: Boolean, refreshEnabled: Boolean, permissionEnabled: Boolean, filesEnabled: Boolean,
     folderMenu: Boolean, setFolderMenu: (Boolean) -> Unit, close: () -> Unit, refresh: () -> Unit, chooseFolder: (String?) -> Unit, chooseFilter: (PhotoRollKindFilter) -> Unit,
     permission: () -> Unit, settings: () -> Unit, files: () -> Unit, more: () -> Unit,
-    modifier: Modifier = Modifier, select: (PhotoRollItem) -> Unit) {
+    modifier: Modifier = Modifier, saveMessages: List<UiMessage> = emptyList(),
+    saveAction: (MessageAction) -> Unit = {}, importEntry: (@Composable () -> Unit)? = null, select: (PhotoRollItem) -> Unit) {
+    val messages = libraryMessages(access, notice, listing.message, !loading && listing.items.isEmpty(),
+        permissionEnabled, filesEnabled, enabled, saveMessages)
+    val accessActions = libraryAccessActions(access, permissionEnabled, enabled, messages.banner?.fact)
+    val onMessageAction: (MessageAction) -> Unit = { action ->
+        when (action) {
+            MessageAction.GRANT_ACCESS, MessageAction.CHOOSE_AGAIN -> permission()
+            MessageAction.OPEN_SETTINGS -> settings()
+            MessageAction.OPEN_FILES -> files()
+            else -> saveAction(action)
+        }
+    }
     var detail by remember { mutableStateOf(false) }
     val trial = when (mode) {
         PhotoRollPreviewMode.MANUAL_TRIAL -> "試験品質 · 手動保存 · 原本は変更しません"
@@ -41,13 +47,12 @@ internal fun CameraRollBrowser(listing: PhotoRollListing, access: CameraRollAcce
     val compact = captureNeedsFullScroll(maxWidth.value, maxHeight.value, LocalDensity.current.fontScale, 520f)
     Column(Modifier.fillMaxSize().background(CaptureDesign.Ink).then(if (compact) Modifier.verticalScroll(rememberScrollState()) else Modifier)) {
         Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = close, shape = RectangleShape) { Text("‹ 撮影") }
+            CaptureTextAction(MessageControl(MessageAction.CLOSE, "‹ 撮影"), { close() })
             Text("カメラロール", Modifier.weight(1f), color = CaptureDesign.Text)
-            TextButton(onClick = refresh, enabled = refreshEnabled, modifier = Modifier.sizeIn(minWidth = 44.dp, minHeight = 44.dp).semantics { contentDescription = "更新" }, shape = RectangleShape) { Text("↻") }
+            CaptureTextAction(MessageControl(MessageAction.RETRY, "↻", refreshEnabled, description = "更新"), { refresh() })
         }
-        trial?.let { TextButton(onClick = { detail = !detail }, shape = RectangleShape) {
-            Text(it + if (detail) " ▴" else " ▾", style = CaptureDesign.Explanation, color = CaptureDesign.Amber)
-        } }
+        trial?.let { CaptureTextAction(MessageControl(MessageAction.CONFIRM, it + if (detail) " ▴" else " ▾"),
+            { detail = !detail }, tone = CaptureChromeTone.WARNING) }
         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
             PhotoRollKindFilter.entries.forEach { candidate ->
                 TextButton(onClick = { chooseFilter(candidate) }, enabled = enabled, shape = RectangleShape,
@@ -76,36 +81,25 @@ internal fun CameraRollBrowser(listing: PhotoRollListing, access: CameraRollAcce
                 if (detail) Text(if (mode == PhotoRollPreviewMode.MANUAL_TRIAL)
                     "DNGは最大24MPの試験品質で現像します。顔保護なし・診断露出・暫定色です。JPEG保存は手動のみで、原本は変更しません。"
                     else "DNGは最大1024pxの試験現像です。顔保護なし・暫定色で、共有写真へは保存しません", color = CaptureDesign.Amber, style = CaptureDesign.Explanation)
-                if (!(access.images && access.videos)) {
-                    val partial = access.selected
-                    Column(Modifier.fillMaxWidth().captureOutline(partial).padding(8.dp)) {
-                        Text(if (partial && !access.images && !access.videos) "選択した写真・動画だけにアクセスできます" else access.description,
-                            style = CaptureDesign.Explanation, color = if (partial) CaptureDesign.Amber else CaptureDesign.Muted)
-                        FlowRow {
-                            TextButton(onClick = permission, enabled = permissionEnabled, shape = RectangleShape,
-                                colors = ButtonDefaults.textButtonColors(
-                                    contentColor = if (partial) CaptureDesign.Amber else CaptureDesign.Text,
-                                    disabledContentColor = CaptureDesign.Disabled)) {
-                                Text(if (partial) "選び直す" else "アクセス許可・選び直す", style = CaptureDesign.Explanation)
-                            }
-                            TextButton(onClick = settings, enabled = enabled, shape = RectangleShape) { Text("設定", style = CaptureDesign.Explanation) }
-                        }
-                    }
-                }
-                notice?.let { Text(it, color = CaptureDesign.Failed, style = CaptureDesign.Explanation) }
-                listing.message?.let { Text(it, color = CaptureDesign.Muted, style = CaptureDesign.Explanation) }
+                messages.banner?.let { CaptureBanner(it, onMessageAction, Modifier.fillMaxWidth()) }
+                messages.inline.forEach { CaptureInlineNote(it, onMessageAction, Modifier.fillMaxWidth()) }
             }
         }
         val moreItems: @Composable () -> Unit = {
-            if (listing.hasMore) TextButton(onClick = more, enabled = refreshEnabled, shape = RectangleShape) { Text("さらに読み込む") }
+            if (listing.hasMore) CaptureTextAction(MessageControl(MessageAction.RETRY, "さらに読み込む", refreshEnabled), { more() })
         }
         val contentModifier = if (compact) Modifier.height(gridHeight) else Modifier.weight(1f)
         if (!loading && listing.items.isEmpty()) {
             BoxWithConstraints(contentModifier.fillMaxWidth()) {
                 Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = maxHeight)) {
                     header()
-                    CameraRollEmptyState(permissionEnabled, filesEnabled, permission, files,
-                        Modifier.weight(1f).fillMaxWidth().heightIn(min = 240.dp))
+                    Box(Modifier.weight(1f).fillMaxWidth().heightIn(min = 240.dp).padding(24.dp),
+                        contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            messages.center?.let { CaptureCenter(it, onMessageAction) }
+                            importEntry?.invoke()
+                        }
+                    }
                     moreItems()
                 }
             }
@@ -115,34 +109,13 @@ internal fun CameraRollBrowser(listing: PhotoRollListing, access: CameraRollAcce
         Column(Modifier.fillMaxWidth().heightIn(min = 64.dp).border(1.dp, CaptureDesign.Line).padding(horizontal = 12.dp, vertical = 4.dp)) {
             Text(CameraRollKind.entries.joinToString(" · ") { kind -> "${kind.label} ${listing.items.count { it.kind == kind }}" } + if (listing.hasMore) "（読込済み）" else "",
                 style = CaptureDesign.Label, color = CaptureDesign.Muted)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("DNGはタップで現像\n他は標準ビューア", Modifier.weight(1f), style = CaptureDesign.Explanation, color = CaptureDesign.Muted)
-                TextButton(onClick = files, enabled = filesEnabled, shape = RectangleShape) { Text("Filesから DNG…", style = CaptureDesign.Explanation) }
+            Text("DNGはタップで現像 · 他は標準ビューア", style = CaptureDesign.Explanation, color = CaptureDesign.Muted)
+            FlowRow {
+                CaptureTextAction(MessageControl(MessageAction.OPEN_FILES, "Filesで開く", filesEnabled), onMessageAction)
+                importEntry?.invoke()
+                accessActions.forEach { CaptureTextAction(it, onMessageAction) }
             }
         }
     }
 }
-}
-
-@Composable
-private fun CameraRollEmptyState(permissionEnabled: Boolean, filesEnabled: Boolean,
-    permission: () -> Unit, files: () -> Unit, modifier: Modifier = Modifier) {
-    Column(modifier.padding(24.dp), verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("該当する項目がありません。アクセス許可や絞り込みを確認してください。DNGはFilesの「内部ストレージ」からも選べます",
-            color = CaptureDesign.Muted, style = CaptureDesign.Explanation, textAlign = TextAlign.Center)
-        FlowRow(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
-            Button(onClick = permission, enabled = permissionEnabled, shape = RectangleShape,
-                colors = ButtonDefaults.buttonColors(containerColor = CaptureDesign.Text, contentColor = CaptureDesign.Ink,
-                    disabledContainerColor = CaptureDesign.Panel, disabledContentColor = CaptureDesign.Disabled)) {
-                Text("アクセスを許可", style = CaptureDesign.Explanation)
-            }
-            OutlinedButton(onClick = files, enabled = filesEnabled, shape = RectangleShape,
-                border = BorderStroke(1.dp, if (filesEnabled) CaptureDesign.Border else CaptureDesign.Line),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = CaptureDesign.Text,
-                    disabledContentColor = CaptureDesign.Disabled)) {
-                Text("Filesから選ぶ", style = CaptureDesign.Explanation)
-            }
-        }
-    }
 }
