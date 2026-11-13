@@ -84,7 +84,7 @@ def stop_reason(event, prior_pid=None):
     return None
 
 
-def preflight_evidence(events):
+def preflight_evidence(events, now_epoch=None):
     """Require actual selected engine, decoded input, positive GPU reservation and process sampling."""
     boundaries = [i for i, event in enumerate(events) if event['kind'] == 'COLLECTOR_START']
     session = events[boundaries[-1]+1:] if boundaries else []
@@ -104,11 +104,16 @@ def preflight_evidence(events):
     gpu = any(e['kind'] == 'GPU_TEXTURE_LEDGER' and int(e.get('fields', {}).get('reservedBytes', '0')) > 0 for e in same)
     decoded = any(e['kind'] == 'MEMORY_ADMISSION' and e.get('fields', {}).get('stage') == 'ORIGINAL_DECODE' for e in same)
     sampled = any(e['kind'] == 'PROCESS_MEMORY_SAMPLE' for e in same)
+    now = time.time() if now_epoch is None else now_epoch
+    sample_times = [e.get('host_epoch', 0) for e in same if e['kind'] == 'PROCESS_MEMORY_SAMPLE']
+    sample_age = now - max(sample_times) if sample_times else None
+    fresh = sample_age is not None and 0 <= sample_age <= 15
     stopped = any(stop_reason(e) or e['kind'] == 'COLLECTOR_STOP' for e in session) or len(starts) > 1
     complete = configured and gpu and decoded and sampled
     return {'configured_gpu': configured, 'gpu_reserved': gpu, 'decode_seen': decoded,
-            'sampled': sampled, 'stopped': stopped, 'evidence_complete': complete,
-            'ready_for_operator_next_step': complete and not stopped}
+            'sampled': sampled, 'sample_fresh': fresh, 'sample_age_seconds': sample_age,
+            'stopped': stopped, 'evidence_complete': complete,
+            'ready_for_operator_next_step': complete and fresh and not stopped}
 
 
 def main():

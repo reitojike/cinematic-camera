@@ -1,6 +1,10 @@
 import json
 import unittest
-from collector import parse_log, parse_memory, parse_package_uid, stop_reason, preflight_evidence
+from collector import parse_log, parse_memory, parse_package_uid, stop_reason, preflight_evidence as actual_preflight
+
+
+def preflight_evidence(events):
+    return actual_preflight(events, now_epoch=0)
 
 
 def log(message, pid='11', tag='CinematicMemory'):
@@ -77,6 +81,9 @@ class CollectorTest(unittest.TestCase):
                   parse_log(log('GPU_TEXTURE_LEDGER reservedBytes=64'), {'11'}),
                   {'kind': 'PROCESS_MEMORY_SAMPLE', 'process_pid': '11'}]
         self.assertTrue(preflight_evidence(events)['ready_for_operator_next_step'])
+        self.assertFalse(actual_preflight(events, now_epoch=16)['ready_for_operator_next_step'])
+        self.assertFalse(actual_preflight(events, now_epoch=-1)['ready_for_operator_next_step'])
+        self.assertTrue(actual_preflight(events, now_epoch=15)['ready_for_operator_next_step'])
         for index in range(6):
             self.assertFalse(preflight_evidence(events[:index] + events[index+1:])['ready_for_operator_next_step'])
         self.assertFalse(preflight_evidence(events + [{'kind': 'COLLECTOR_STOP'}])['ready_for_operator_next_step'])

@@ -57,9 +57,15 @@ python3 -B tools/memory-diagnostic/verify_isolation.py app/build
 - `GpuProductInputAndroidTest#memoryDiagnosticDefaultGpuEmitsTextureLedgerAndReleasesOwners`: 実設定GPU、編集・比較・再開、原本・owner、正のtexture予約と終了後0。
 - `ForegroundExportOwnerTest#memoryDiagnosticDocumentsUiEditsPublishesAndReleasesWithRealGpuLogs`: 実DocumentsUI→編集→実FGS保存、公開JPEG読戻し、原本不変、FGS/owner/自作fixture回収、decode/preview/saveと両ledgerの解放。
 
-起動前に `python3 tools/memory-diagnostic/collector.py --adb <adb> --serial <予約AVD> --out <新規ローカル出力先>` を開始する。
-採取先は新規ディレクトリのみ。停止はその中の `stop.request` を作り、採取器だけを終了する。端末のログ消去・アプリ終了・データ操作はしない。
-次操作を案内する前に `collector.preflight_evidence(events)` と直近採取時刻を確認する。
+起動前に `supervisor.py --adb <adb> --serial <対象> --out <新規ローカル出力先>` をPCの独立プロセスで開始する。
+Windowsでは既存Pythonを `Start-Process -WindowStyle Hidden` で起動し、対話execの長時間sessionだけに寿命を依存させない。
+採取先は新規ディレクトリのみ。監視状態は直下の `status.json`、採取は `collector/observations.jsonl` に保存する。
+停止は直下の `stop.request` を作り、採取器だけを終了する。端末のログ消去・アプリ終了・データ操作はしない。
+次操作を案内する唯一の判定は `python3 tools/memory-diagnostic/check_session.py <出力先>` の `ready_for_operator_next_step=true` とする。
+監視heartbeat 5秒以内、同じPIDのPSS 15秒以内、GPU等の前提、監視/採取の両方に停止要求なしを全て要求する。
+`preflight_evidence` 単独や、過去に一度trueだった記録だけで次へ進めない。欠落・陳腐化・終了記録不明なら再開せず停止する。
+監視は子の終了コードと最終 `COLLECTOR_STOP` を別に確認し、採取陳腐化後に正常回収できても失敗を維持する。
+自動再起動はしない。監視自身が消失した場合もheartbeat切れで続行不可にする。PC子プロセスの終了操作をAndroidアプリkillと混同しない。
 同じ新規起動PIDの GPU / recordOnly=true、decode、正のGPU予約、PSS採取が揃わない場合は待機する。
 CPU設定、予期しない受付拒否、PID消失/変更、own crash/kill、thermal 2以上、採取失敗では停止する。
 record-only の `wouldPermit=false` 自体は計測目的の観測であり停止理由としない。
@@ -69,6 +75,11 @@ record-only の `wouldPermit=false` 自体は計測目的の観測であり停�
 AVD予行は小型の接続・採取・保存・回収確認であり、Pixel/Maliの共有RAM、12/24MP各3回と並行各1回の実測を代替しない。
 同じ最終headから作ったAPKのID・署名・SHA256、通常版flag=false、専用test target、内部署名拒否を開始確認票に固定する。
 実機更新・計測再開は別途開始確認後とする。
+
+PC採取器が約12分で終了記録なしに消失した事例は、設定した60分の期限到達や正常終了として扱わない。
+外部終了元が確認できなければ未確定と記録する。対話sessionから独立した起動と監視は影響を抑える対策であり、原因確定の代用ではない。
+PCのみのfake sourceで20分以上・複数の対話区切りと段階を跨ぐ持続、正常終了、強制終了、監視/採取の陳腐化を確認する。
+この予行はADB接続やPixel/Maliメモリの検証ではなく、実機再開を自動許可しない。
 
 ## OS回収・終了の観測（詳細）
 
