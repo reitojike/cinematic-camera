@@ -29,6 +29,7 @@ internal object CaptureDesign {
     val Label = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp, letterSpacing = .66.sp)
     val Value = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 16.sp)
     val Explanation = TextStyle(fontFamily = FontFamily.SansSerif, fontSize = 12.sp)
+    val Data = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp)
     val Body = Explanation
     val Scrim = Ink.copy(alpha = .9f)
     val ScrimLight = Ink.copy(alpha = .7f)
