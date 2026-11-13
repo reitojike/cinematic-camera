@@ -85,13 +85,13 @@ private data class SettingsChange(val epoch: Int, val section: String, val targe
         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("撮影設定", Modifier.weight(1f), color = CaptureDesign.Text, fontSize = 15.sp)
             Text("${probe.mode} · ID ${probe.selectedId ?: "—"}", style = CaptureDesign.Label, color = CaptureDesign.Muted)
-            TextButton(onClick = close, modifier = Modifier.size(44.dp).semantics { contentDescription = "閉じる" },
-                contentPadding = PaddingValues(0.dp)) { Text("×", fontSize = 22.sp) }
+            CaptureTextAction(MessageControl(MessageAction.CLOSE, "×", description = "閉じる"),
+                onAction = { close() }, modifier = Modifier.size(44.dp))
         }
         HorizontalDivider(color = CaptureDesign.Line)
-        if (!editable && pending == null) Text("撮影・録画・設定処理中です。設定変更は完了後に行えます。",
-            Modifier.fillMaxWidth().background(CaptureDesign.Amber.copy(alpha = .08f)).padding(8.dp),
-            color = CaptureDesign.Amber, style = CaptureDesign.Explanation)
+        if (!editable && pending == null) captureSettingsMessages(busy = true).inline.firstOrNull()?.let {
+            CaptureInlineNote(it, onAction = {}, modifier = Modifier.fillMaxWidth())
+        }
         Column((if (compact) Modifier else Modifier.weight(1f).verticalScroll(rememberScrollState())).padding(horizontal = 16.dp)
             .alpha(if (!editable && pending == null) .45f else 1f)) {
             if (probe.mode == CaptureMode.STILL) {
@@ -184,15 +184,16 @@ private data class SettingsChange(val epoch: Int, val section: String, val targe
             // Engine selection belongs to the dedicated diagnostic hub, never the product settings.
         }
         pending?.let { current ->
-            Text("適用中：${current.section} ${current.before} → ${current.target} · ${if (probe.bound) "接続後の設定確認中" else "再接続中（プレビュー一時停止・ロック解除）"}",
-                Modifier.fillMaxWidth().captureOutline(true).background(CaptureDesign.Amber.copy(alpha = .08f)).padding(8.dp),
-                color = CaptureDesign.Amber, style = CaptureDesign.Explanation)
+            captureSettingsMessages(applying =
+                "適用中：${current.section} ${current.before} → ${current.target} · ${if (probe.bound) "接続後の設定確認中" else "再接続中（プレビュー一時停止・ロック解除）"}").inline.firstOrNull()?.let {
+                CaptureInlineNote(it, onAction = {}, modifier = Modifier.fillMaxWidth().captureOutline(true))
+            }
         }
         HorizontalDivider(color = CaptureDesign.Line)
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             OutlinedButton(onClick = reset, enabled = editable && probe.bound, modifier = Modifier.weight(1f).heightIn(min = 44.dp),
                 shape = RectangleShape, border = BorderStroke(1.dp, CaptureDesign.Border), contentPadding = PaddingValues(6.dp)) {
-                Text("撮影制御をリセット…", color = CaptureDesign.Amber, fontSize = 12.sp)
+                Text("撮影制御をリセット…", color = CaptureDesign.Amber, style = CaptureDesign.Explanation)
             }
             OutlinedButton(onClick = diagnostics, enabled = enabled || probe.stillExposure?.presentation()?.recoveryRequired == true,
                 modifier = Modifier.weight(1f).heightIn(min = 44.dp).semantics { contentDescription = "診断・能力・検証レポート" },
@@ -203,22 +204,16 @@ private data class SettingsChange(val epoch: Int, val section: String, val targe
 }
 
 @Composable internal fun CaptureResetDialog(dismiss: () -> Unit, reset: () -> Unit) {
-    Dialog(onDismissRequest = dismiss) {
-        Surface(color = CaptureDesign.Panel, shape = RectangleShape, border = BorderStroke(1.dp, CaptureDesign.Border)) {
-            Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("撮影制御をリセット", color = CaptureDesign.Text, fontSize = 16.sp)
-                listOf("露出 AUTO", "EV 0.0", "FOCUS AF", "WB 標準", "照明対策 既定", "ロック 解除").chunked(3).forEach { row ->
-                    Row(Modifier.fillMaxWidth()) { row.forEach { label ->
-                        Text(label, Modifier.weight(1f).border(1.dp, CaptureDesign.Border).padding(6.dp), color = CaptureDesign.Text, style = CaptureDesign.Label)
-                    } }
-                }
-                SettingNote("露出だけのAUTOとは別の操作です。")
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = dismiss, modifier = Modifier.weight(1f), shape = RectangleShape) { Text("取消") }
-                    Button(onClick = reset, modifier = Modifier.weight(1f), shape = RectangleShape,
-                        colors = ButtonDefaults.buttonColors(containerColor = CaptureDesign.Amber, contentColor = CaptureDesign.Ink)) { Text("全リセット") }
-                }
-            }
+    CaptureDialog(MessageDialog("撮影制御をリセット", "露出だけのAUTOとは別の操作です。",
+        close = MessageControl(MessageAction.CLOSE, "取消"),
+        confirm = MessageControl(MessageAction.CONFIRM, "全リセット")),
+        onDismissRequest = dismiss,
+        onAction = { if (it == MessageAction.CONFIRM) reset() else dismiss() }) {
+        listOf("露出 AUTO", "EV 0.0", "FOCUS AF", "WB 標準", "照明対策 既定", "ロック 解除").chunked(3).forEach { row ->
+            Row(Modifier.fillMaxWidth()) { row.forEach { label ->
+                Text(label, Modifier.weight(1f).border(1.dp, CaptureDesign.Border).padding(6.dp),
+                    color = CaptureDesign.Text, style = CaptureDesign.Label)
+            } }
         }
     }
 }

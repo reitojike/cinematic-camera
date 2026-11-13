@@ -143,7 +143,7 @@ internal data class MessageDialog(
     val close: MessageControl,
     val confirm: MessageControl? = null,
 ) {
-    init { require(title.isNotBlank() && body.isNotBlank()) }
+    init { if (BuildConfig.DEBUG) require(title.isNotBlank() && body.isNotBlank()) }
 }
 
 @Composable
@@ -153,6 +153,8 @@ internal fun CaptureTextAction(
     modifier: Modifier = Modifier,
     tone: CaptureChromeTone? = null,
 ) {
+    if (!messageContract(control.label.isNotBlank(), "invalid_action_renderer", BuildConfig.DEBUG,
+        ::reportMessageContract)) return
     TextButton(
         onClick = { onAction(control.action) }, enabled = control.enabled,
         modifier = modifier.sizeIn(minWidth = 44.dp, minHeight = 44.dp).semantics {
@@ -247,6 +249,9 @@ internal fun CaptureToast(message: UiMessage, modifier: Modifier = Modifier) {
 internal fun CaptureDialog(message: MessageDialog, onDismissRequest: () -> Unit,
     onAction: (MessageAction) -> Unit, modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit = {}) {
+    if (!messageContract(message.title.isNotBlank() && message.body.isNotBlank() &&
+        message.close.label.isNotBlank() && (message.confirm == null || message.confirm.label.isNotBlank()),
+        "invalid_dialog_renderer", BuildConfig.DEBUG, ::reportMessageContract)) return
     Dialog(onDismissRequest = onDismissRequest) {
         Surface(modifier, shape = RectangleShape, color = CaptureDesign.Panel,
             border = BorderStroke(1.dp, CaptureDesign.Border)) {

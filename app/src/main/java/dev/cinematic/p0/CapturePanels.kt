@@ -25,11 +25,15 @@ import androidx.compose.ui.unit.sp
     val state = probe.stillExposure ?: return
     val shown = state.presentation()
     PanelSection("STILL / 設定と保存状態") {
-        Text("${shown.stage} · ${shown.phase}", color = if (shown.recoveryRequired) CaptureDesign.Failed else CaptureDesign.Amber, fontSize = 12.sp)
+        CaptureInlineNote(UiMessage(MessageSlot.INLINE,
+            if (shown.recoveryRequired) CaptureChromeTone.FAILURE else CaptureChromeTone.WARNING,
+            "${shown.stage} · ${shown.phase}", "capture.panel.stage"), onAction = {})
         Text("撮影target: ${shown.captureTarget}\npreview target: ${shown.previewTarget}", color = CaptureDesign.Text, fontSize = 12.sp)
         Text("preview API受付: ${shown.previewApi}\n撮影API受付: ${shown.captureApi}", color = CaptureDesign.Muted, fontSize = 11.sp)
         Text("直近preview実測: ${shown.previewActual}\n直近撮影実測: ${shown.stillActual}\n保存結果: ${shown.files}", color = CaptureDesign.Muted, fontSize = 11.sp)
         Text("${state.detail}。受付・実測・保存は別結果で、明るさ一致は未検証です。", color = CaptureDesign.Muted, fontSize = 11.sp)
-        if (shown.recoveryRequired) TextButton(onClick = probe::stop) { Text("停止・復旧", color = CaptureDesign.Failed) }
+        if (shown.recoveryRequired) CaptureTextAction(
+            MessageControl(MessageAction.STOP_AND_RECOVER, "停止して復旧"),
+            onAction = { probe.stop() }, tone = CaptureChromeTone.FAILURE)
     }
 }

@@ -215,27 +215,29 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                         settingsEnabled = unlocked || recoveryRequired, settingsSelected = panel == CapturePanel.SETTINGS,
                         onSettings = { if (unlocked || recoveryRequired) { editor = editor.close(); panel = if (panel == CapturePanel.SETTINGS) CapturePanel.NONE else CapturePanel.SETTINGS } },
                         rotation = animatedAngle, horizontal = orientation.horizontal)
-                    if (!probe.bound && permission) Text("接続待ち・プレビュー停止中", Modifier.align(Alignment.Center).sensorRotation().background(CaptureDesign.Ink.copy(alpha = .7f)).padding(12.dp), color = CaptureDesign.Text, fontSize = 13.sp)
-                    if (probe.bound && !probe.controlReady && !probe.busy && !recoveryRequired) {
-                        val recoveryEpoch = probe.currentEpoch
-                        Column(Modifier.align(Alignment.Center).sensorRotation().background(CaptureDesign.Ink.copy(alpha = .8f)).padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("設定状態を確認・復旧してください", color = CaptureDesign.Failed, fontSize = 13.sp)
-                            if (probe.canRecoverControls) TextButton(onClick = { probe.recoverControls(recoveryEpoch) }) { Text("再接続") }
+                    val recoveryEpoch = probe.currentEpoch
+                    val messages = captureMessages(
+                        waitingForConnection = !probe.bound && permission,
+                        controlRecovery = probe.bound && !probe.controlReady && !probe.busy && !recoveryRequired,
+                        captureRecovery = recoveryRequired,
+                        canReconnect = probe.canRecoverControls,
+                        thermalWarning = ProbeControls.shouldStopRecording(probe.thermalSeverity),
+                        microphoneWarning = probe.mode == CaptureMode.CINE && probe.audioWanted && probe.audioPermissionDenied,
+                        captureFailed = probe.lastFailure != null,
+                        recordingFailed = probe.mode == CaptureMode.CINE && probe.recordingFailure != null,
+                        notice = notice,
+                        phase = pendingNotice,
+                    )
+                    val messageAction: (MessageAction) -> Unit = { action ->
+                        when (action) {
+                            MessageAction.RECONNECT -> probe.recoverControls(recoveryEpoch)
+                            MessageAction.STOP_AND_RECOVER -> probe.stop()
+                            MessageAction.OPEN_DIAGNOSTICS -> { panel = CapturePanel.DIAGNOSTICS }
+                            else -> Unit
                         }
                     }
-                    val message = captureMessage(probe.sharedSaveSupported,
-                        thermalWarning = if (ProbeControls.shouldStopRecording(probe.thermalSeverity)) "熱: OS ${ProbeControls.thermalName(probe.thermalSeverity)}・録画開始不可" else null,
-                        microphoneWarning = if (probe.mode == CaptureMode.CINE && probe.audioWanted && probe.audioPermissionDenied) "マイク許可なし: 録画は未開始。権限を許可するか設定で音声OFFにしてください" else null,
-                        failure = probe.lastFailure, recordingFailure = probe.recordingFailure.takeIf { probe.mode == CaptureMode.CINE },
-                        notice = pendingNotice ?: notice, phase = null)
-                    val banner = message?.text
-                    val bannerColor = when (message?.tone) { FeedbackTone.FAILURE -> CaptureDesign.Failed; FeedbackTone.WARNING -> CaptureDesign.Amber; else -> CaptureDesign.Muted }
-                    if (recoveryRequired) Column(Modifier.align(Alignment.Center).widthIn(max = 300.dp).sensorRotation().background(CaptureDesign.Ink.copy(alpha = .9f)).padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("撮影状態が不明です。停止して接続をやり直してください", color = CaptureDesign.Failed, fontSize = 12.sp)
-                        TextButton(onClick = probe::stop) { Text("停止・復旧") }
-                    } else if (!(probe.bound && !probe.controlReady && !probe.busy)) banner?.let { Text(it, Modifier.align(if (orientation.horizontal) Alignment.Center else Alignment.TopCenter)
-                        .padding(top = if (orientation.horizontal) 0.dp else 48.dp).widthIn(max = if (orientation.horizontal) 220.dp else 380.dp)
-                        .sensorRotation().background(CaptureDesign.Ink.copy(alpha = .8f)).padding(8.dp), color = bannerColor, fontSize = 12.sp) }
+                    CaptureMessageOverlay(messages, orientation.horizontal, recoveryRequired,
+                        messageAction, Modifier.sensorRotation())
                     if (panel == CapturePanel.NONE) Column(Modifier.align(Alignment.BottomCenter)) {
                         if (editor.selected != null) Box(Modifier.weight(1f, fill = false)
                             .then(if (orientation.horizontal) Modifier.height(48.dp + landscapeDialHeight).background(CaptureDesign.Ruler) else Modifier)) {

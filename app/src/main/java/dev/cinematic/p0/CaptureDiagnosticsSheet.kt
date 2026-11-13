@@ -23,7 +23,7 @@ import androidx.compose.ui.unit.sp
 private enum class DiagnosticTab(val label: String) { CONTROL("制御"), OUTPUT("出力"), CAPABILITIES("能力"), LOG("ログ") }
 
 @Composable private fun DiagnosticText(value: String, color: Color = CaptureDesign.Text) =
-    Text(value, color = color, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+    Text(value, color = color, style = CaptureDesign.Data)
 
 @Composable private fun DiagnosticPair(label: String, value: String) {
     Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
@@ -104,7 +104,7 @@ private enum class DiagnosticTab(val label: String) { CONTROL("制御"), OUTPUT(
                                 Regex("\\bACCEPTED\\b|\\bAccepted=").findAll(probe.lines).forEach { match ->
                                     addStyle(androidx.compose.ui.text.SpanStyle(color = CaptureDesign.Accepted), match.range.first, match.range.last + 1)
                                 }
-                            }, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = CaptureDesign.Muted)
+                            }, style = CaptureDesign.Label, color = CaptureDesign.Muted)
                         }
                     }
                 }
@@ -136,7 +136,7 @@ private enum class DiagnosticTab(val label: String) { CONTROL("制御"), OUTPUT(
         Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
             listOf(row.label, row.requested, row.acceptedHistory, row.observed).forEach { value ->
                 Text(value, Modifier.weight(1f).fillMaxHeight().border(1.dp, CaptureDesign.Line).padding(4.dp), fontFamily = FontFamily.Monospace,
-                    fontSize = 12.sp, color = CaptureDesign.Text)
+                    style = CaptureDesign.Body, color = CaptureDesign.Text)
             }
         }
     }

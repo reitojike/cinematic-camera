@@ -48,14 +48,14 @@ class CaptureFeedbackTest {
     }
 
     @Test fun recordingFailureHasFailureToneWithoutAnotherProbeFailure() {
-        assertEquals(FeedbackTone.FAILURE, captureMessage(true, null, null, null, "録音・保存に失敗", null, null)!!.tone)
+        assertEquals(CaptureChromeTone.FAILURE, captureMessages(recordingFailed = true).banner!!.tone)
     }
 
-    @Test fun warningPriorityDoesNotInheritAnUnrelatedFailureColor() {
-        val message = captureMessage(true, "熱制限", null, "古い失敗", null, null, null)!!
-        assertEquals("熱制限", message.text)
-        assertEquals(FeedbackTone.WARNING, message.tone)
-        assertNull(captureMessage(true, null, null, null, null, null, null))
+    @Test fun failureNowPrecedesWarningPerMessageContract() {
+        val result = captureMessages(thermalWarning = true, captureFailed = true)
+        assertEquals("capture.failure", result.banner!!.fact)
+        assertEquals(CaptureChromeTone.FAILURE, result.banner.tone)
+        assertEquals(ScreenMessages(), captureMessages())
     }
 
     @Test fun pendingLiveInputsRemainAvailableButCaptureRecordingAndUnknownDoNot() {
