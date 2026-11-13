@@ -40,7 +40,7 @@ internal data class MessageControl(
     val description: String? = null,
     val stateDescription: String? = null,
 ) {
-    init { require(label.isNotBlank()) }
+    init { if (BuildConfig.DEBUG) require(label.isNotBlank()) }
 }
 
 internal data class UiMessage(
@@ -57,22 +57,27 @@ internal data class UiMessage(
     val inProgress: Boolean = false,
 ) {
     init {
-        require(body.isNotBlank() && fact.isNotBlank())
-        require(tone != CaptureChromeTone.RECORDING)
-        require(slot == MessageSlot.CHIP || tone in setOf(
+        if (BuildConfig.DEBUG) require(isValid()) { "Invalid UI message contract" }
+    }
+
+    internal fun isValid(): Boolean =
+            (body.isNotBlank() && fact.isNotBlank()) &&
+            (primary == null || primary.label.isNotBlank()) &&
+            (secondary == null || secondary.label.isNotBlank()) &&
+            (tone != CaptureChromeTone.RECORDING) &&
+            (slot == MessageSlot.CHIP || tone in setOf(
             CaptureChromeTone.NORMAL, CaptureChromeTone.WARNING,
             CaptureChromeTone.FAILURE, CaptureChromeTone.ACCEPTED,
-        ))
-        require(slot != MessageSlot.PROBLEM || (tone == CaptureChromeTone.FAILURE && !title.isNullOrBlank()))
-        require(title == null || slot == MessageSlot.PROBLEM)
-        require(note == null || slot == MessageSlot.PROBLEM)
-        require(secondary == null || primary != null)
-        require(primary == null || slot in setOf(MessageSlot.CENTER, MessageSlot.PROBLEM, MessageSlot.BANNER, MessageSlot.INLINE))
-        require(secondary == null || slot != MessageSlot.INLINE)
-        require(!inProgress || (slot == MessageSlot.BANNER && tone == CaptureChromeTone.WARNING))
-        require(slot != MessageSlot.BANNER || tone in setOf(CaptureChromeTone.WARNING, CaptureChromeTone.FAILURE))
-        require(slot != MessageSlot.TOAST || tone in setOf(CaptureChromeTone.NORMAL, CaptureChromeTone.ACCEPTED))
-    }
+        )) &&
+            (slot != MessageSlot.PROBLEM || (tone == CaptureChromeTone.FAILURE && !title.isNullOrBlank())) &&
+            (title == null || slot == MessageSlot.PROBLEM) &&
+            (note == null || slot == MessageSlot.PROBLEM) &&
+            (secondary == null || primary != null) &&
+            (primary == null || slot in setOf(MessageSlot.CENTER, MessageSlot.PROBLEM, MessageSlot.BANNER, MessageSlot.INLINE)) &&
+            (secondary == null || slot != MessageSlot.INLINE) &&
+            (!inProgress || (slot == MessageSlot.BANNER && tone == CaptureChromeTone.WARNING)) &&
+            (slot != MessageSlot.BANNER || tone in setOf(CaptureChromeTone.WARNING, CaptureChromeTone.FAILURE)) &&
+            (slot != MessageSlot.TOAST || tone in setOf(CaptureChromeTone.NORMAL, CaptureChromeTone.ACCEPTED))
 }
 
 internal data class ScreenMessages(
@@ -85,7 +90,14 @@ internal data class ScreenMessages(
 )
 
 /** Stable within a priority: the screen supplies its own deterministic order of candidates. */
-internal fun screenMessages(candidates: List<UiMessage>): ScreenMessages {
+internal fun screenMessages(
+    messages: List<UiMessage>,
+    strict: Boolean = BuildConfig.DEBUG,
+    report: (String) -> Unit = ::reportMessageContract,
+): ScreenMessages {
+    val candidates = messages.filter {
+        messageContract(it.isValid(), "invalid_message", strict, report)
+    }
     val problem = candidates.firstOrNull { it.slot == MessageSlot.PROBLEM }
     val banner = if (problem == null) candidates.filter { it.slot == MessageSlot.BANNER }
         .minByOrNull { when {
@@ -98,16 +110,31 @@ internal fun screenMessages(candidates: List<UiMessage>): ScreenMessages {
         it.slot == MessageSlot.CENTER && it.fact != banner?.fact && it.fact != toast?.fact
     }
     val usedFacts = listOfNotNull(center, banner, toast).map { it.fact }.toMutableSet()
-    val caption = candidates.firstOrNull { it.slot == MessageSlot.CAPTION }
-    require(caption == null || caption.fact !in usedFacts) { "Caption describes the image, not a repeated status" }
+    val caption = candidates.firstOrNull { it.slot == MessageSlot.CAPTION }?.takeIf {
+        messageContract(it.fact !in usedFacts, "duplicate_caption", strict, report)
+    }
     caption?.let { usedFacts.add(it.fact) }
     val inline = candidates.filter { it.slot == MessageSlot.INLINE && usedFacts.add(it.fact) }
     // A short chip may summarize a fact explained in a banner/problem; other duplicates are excluded.
-    val chips = candidates.filter { it.slot == MessageSlot.CHIP }.distinctBy { it.fact }
-    require(chips.all { it.fact !in usedFacts || it.fact == banner?.fact || it.fact == problem?.fact }) {
-        "A chip may repeat only a banner or problem fact"
+    val chips = candidates.filter { it.slot == MessageSlot.CHIP }.distinctBy { it.fact }.filter {
+        messageContract(it.fact !in usedFacts || it.fact == banner?.fact || it.fact == problem?.fact,
+            "duplicate_chip", strict, report)
     }
     return ScreenMessages(chips, caption, center, banner, toast, inline)
+}
+
+/** Never record message text, facts, URIs, or user data when a display contract is broken. */
+private fun reportMessageContract(reason: String) {
+    android.util.Log.w("CinematicUi", "Suppressed UI message: $reason")
+}
+
+internal fun messageContract(valid: Boolean, reason: String, strict: Boolean,
+    report: (String) -> Unit): Boolean {
+    if (!valid) {
+        if (strict) throw IllegalArgumentException(reason)
+        report(reason)
+    }
+    return valid
 }
 
 internal data class MessageDialog(
@@ -153,7 +180,8 @@ private fun MessageActions(message: UiMessage, onAction: (MessageAction) -> Unit
 @Composable
 internal fun CaptureBanner(message: UiMessage, onAction: (MessageAction) -> Unit,
     modifier: Modifier = Modifier, inSheet: Boolean = false) {
-    require(message.slot == MessageSlot.BANNER)
+    if (!messageContract(message.isValid() && message.slot == MessageSlot.BANNER,
+        "invalid_banner_renderer", BuildConfig.DEBUG, ::reportMessageContract)) return
     Row(modifier.semantics { liveRegion = LiveRegionMode.Polite }
         .background(if (inSheet) CaptureDesign.Panel else CaptureDesign.Scrim, RectangleShape)
         .height(IntrinsicSize.Min)) {
@@ -168,7 +196,8 @@ internal fun CaptureBanner(message: UiMessage, onAction: (MessageAction) -> Unit
 @Composable
 internal fun CaptureProblem(message: UiMessage, onAction: (MessageAction) -> Unit,
     modifier: Modifier = Modifier) {
-    require(message.slot == MessageSlot.PROBLEM)
+    if (!messageContract(message.isValid() && message.slot == MessageSlot.PROBLEM,
+        "invalid_problem_renderer", BuildConfig.DEBUG, ::reportMessageContract)) return
     Column(modifier.semantics { liveRegion = LiveRegionMode.Polite }
         .background(CaptureDesign.Scrim, RectangleShape).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -183,7 +212,8 @@ internal fun CaptureProblem(message: UiMessage, onAction: (MessageAction) -> Uni
 @Composable
 internal fun CaptureCenter(message: UiMessage, onAction: (MessageAction) -> Unit,
     modifier: Modifier = Modifier) {
-    require(message.slot == MessageSlot.CENTER)
+    if (!messageContract(message.isValid() && message.slot == MessageSlot.CENTER,
+        "invalid_center_renderer", BuildConfig.DEBUG, ::reportMessageContract)) return
     Column(modifier.background(CaptureDesign.Scrim, RectangleShape).padding(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally) {
         Text(message.body, style = CaptureDesign.Body, color = CaptureDesign.Muted)
@@ -194,7 +224,8 @@ internal fun CaptureCenter(message: UiMessage, onAction: (MessageAction) -> Unit
 @Composable
 internal fun CaptureInlineNote(message: UiMessage, onAction: (MessageAction) -> Unit,
     modifier: Modifier = Modifier) {
-    require(message.slot == MessageSlot.INLINE)
+    if (!messageContract(message.isValid() && message.slot == MessageSlot.INLINE,
+        "invalid_inline_renderer", BuildConfig.DEBUG, ::reportMessageContract)) return
     Column(modifier.background(CaptureDesign.messageTint(message.tone), RectangleShape).padding(8.dp)) {
         Text(message.body, style = CaptureDesign.Body, color = captureChromeColor(message.tone))
         MessageActions(message, onAction)
@@ -204,7 +235,8 @@ internal fun CaptureInlineNote(message: UiMessage, onAction: (MessageAction) -> 
 /** Placement at the screen bottom and the four-second lifetime remain the caller's responsibility. */
 @Composable
 internal fun CaptureToast(message: UiMessage, modifier: Modifier = Modifier) {
-    require(message.slot == MessageSlot.TOAST)
+    if (!messageContract(message.isValid() && message.slot == MessageSlot.TOAST,
+        "invalid_toast_renderer", BuildConfig.DEBUG, ::reportMessageContract)) return
     Text(message.body, modifier.semantics { liveRegion = LiveRegionMode.Polite }
         .background(CaptureDesign.Panel, RectangleShape).border(1.dp, CaptureDesign.Line, RectangleShape).padding(12.dp),
         style = CaptureDesign.Body, color = captureChromeColor(message.tone))
@@ -234,7 +266,8 @@ internal fun CaptureDialog(message: MessageDialog, onDismissRequest: () -> Unit,
 
 @Composable
 internal fun DevelopCaption(message: UiMessage, modifier: Modifier = Modifier) {
-    require(message.slot == MessageSlot.CAPTION)
+    if (!messageContract(message.isValid() && message.slot == MessageSlot.CAPTION,
+        "invalid_caption_renderer", BuildConfig.DEBUG, ::reportMessageContract)) return
     Text(message.body, modifier.background(CaptureDesign.Scrim, RectangleShape).padding(8.dp),
         style = CaptureDesign.Body, color = captureChromeColor(message.tone),
         maxLines = 1, overflow = TextOverflow.Ellipsis)
