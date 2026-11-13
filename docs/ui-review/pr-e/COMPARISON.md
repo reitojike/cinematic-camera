@@ -6,8 +6,8 @@ PR [#387](https://github.com/reitojike/cinematic-camera/pull/387) の表示確�
 - 変更後：PR-Eの実際の表示部品。両者に同じ合成状態を入力します。
 - 旧・新とも製品と同じCaptureTheme → Surface → 一覧の表示部品で描画。親Surfaceを省いた初回画像は採用しません。
 - 一覧は412×924dp・fontScale 1。ダイアログは同じATD・標準密度で比較。回転・大きな文字の回帰は別試験です。
-- 私物写真・個人情報は使いません。これは合成状態による表示部品の比較で、実アプリ全体・実機・画質・実保存の確認ではありません。
-- software View描画を取得します。GPU画素やOSの画面合成の証拠ではありません。ダイアログはフォーカス中windowの寸法になるため、前後の高さが異なる場合があります。
+- 私物写真・個人情報は使いません。これは合成状態を使う全画面構成の比較で、実機・実データ・画質・実保存の確認ではありません。
+- 01〜08は一覧全体のsoftware View描画。09〜14は背景一覧とDialogを、実行時に得たウィンドウ座標・寸法・dimAmountで重ねた**位置と背景の参考画像**です。推測の中心配置はしていませんが、OSの実ウィンドウ重なり・影・画面合成やGPU画素を検証した画像ではありません。両者とも同じ1080×2424pxのキャンバスで比較します。
 - 未存在・未再現・取得失敗は画像を作って埋めず、その状態を明記します。
 - 画像は本人確認用の一時資料です。目視後は固定commitの証跡を残し、原則mainのファイル一覧へ残さない形で整理します。
 
@@ -133,6 +133,8 @@ PR [#387](https://github.com/reitojike/cinematic-camera/pull/387) の表示確�
 
 ![変更後 09-import-explanation](images/comparison/09-import-explanation-after.png)
 
+[配置の測定値（前）](images/comparison/09-import-explanation-before-geometry.txt) · [（後）](images/comparison/09-import-explanation-after-geometry.txt)
+
 **確認点**：丸い既定AlertDialogから、共通CaptureDialogとINLINE説明へ。
 
 **文言変更**：冒頭に「DNGを共有フォルダへコピーしてから開きます。」を追加。「選択元は変更しません。」の独立した安心文は整理。処理は変更しない。
@@ -146,6 +148,8 @@ PR [#387](https://github.com/reitojike/cinematic-camera/pull/387) の表示確�
 **変更後**
 
 ![変更後 10-import-awaiting](images/comparison/10-import-awaiting-after.png)
+
+[配置の測定値（前）](images/comparison/10-import-awaiting-before-geometry.txt) · [（後）](images/comparison/10-import-awaiting-after-geometry.txt)
 
 **確認点**：WARNINGのINLINE。取り込み取消の条件は変更しない。
 
@@ -161,6 +165,8 @@ PR [#387](https://github.com/reitojike/cinematic-camera/pull/387) の表示確�
 
 ![変更後 11-import-progress](images/comparison/11-import-progress-after.png)
 
+[配置の測定値（前）](images/comparison/11-import-progress-before-geometry.txt) · [（後）](images/comparison/11-import-progress-after-geometry.txt)
+
 **確認点**：進行表示をAmber/Lineへ、結果表示をWARNINGのINLINEへ。
 
 **文言変更**：「取り込みを確認中…」は維持。
@@ -174,6 +180,8 @@ PR [#387](https://github.com/reitojike/cinematic-camera/pull/387) の表示確�
 **変更後**
 
 ![変更後 12-import-failure](images/comparison/12-import-failure-after.png)
+
+[配置の測定値（前）](images/comparison/12-import-failure-before-geometry.txt) · [（後）](images/comparison/12-import-failure-after-geometry.txt)
 
 **確認点**：FAILUREのINLINEへ。追加コピーしない条件は変更しない。
 
@@ -189,6 +197,8 @@ PR [#387](https://github.com/reitojike/cinematic-camera/pull/387) の表示確�
 
 ![変更後 13-import-complete](images/comparison/13-import-complete-after.png)
 
+[配置の測定値（前）](images/comparison/13-import-complete-before-geometry.txt) · [（後）](images/comparison/13-import-complete-after-geometry.txt)
+
 **確認点**：完了結果をACCEPTEDのINLINEへ。
 
 **文言変更**：合成の完了文は変更なし。
@@ -202,6 +212,8 @@ PR [#387](https://github.com/reitojike/cinematic-camera/pull/387) の表示確�
 **変更後**
 
 ![変更後 14-import-grant](images/comparison/14-import-grant-after.png)
+
+[配置の測定値（前）](images/comparison/14-import-grant-before-geometry.txt) · [（後）](images/comparison/14-import-grant-after-geometry.txt)
 
 **確認点**：項目ラベルへ状態を追加。編集・権限解放の条件は変更しない。
 
