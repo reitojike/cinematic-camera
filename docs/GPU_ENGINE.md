@@ -511,7 +511,7 @@ SIGMA fp 24MPの実写確認は、本人がdev.2で普段どおり数枚を取�
 
 | 順 | 編集・削除候補の具体的な入口 | 残すもの・着手前の条件 |
 | --- | --- | --- |
-| 準備 | `gpu/ShaderConstants.kt`、`raw/R7BaseV1.kt`、`raw/StageClearV1.kt`、`raw/StageClearGlowV1.kt`、`raw/StageClearMistV1.kt`、`raw/StageClearOrtonV1.kt`、`raw/StageClearCharacterV1.kt` | 定数の単一正本と参照先を確定する。V1定義とCPU実行が同居するファイルは丸ごと削除不可。値・型・配列順・生成define、修正後GPU基準を保持。実際の抽出は後段Bの限定PR |
+| 準備 | `gpu/ShaderConstants.kt`、`raw/R7BaseV1.kt`、`raw/StageClearV1.kt`、`raw/StageClearGlowV1.kt`、`raw/StageClearMistV1.kt`、`raw/StageClearOrtonV1.kt`、`raw/StageClearCharacterV1.kt` | 定数の単一正本と参照先を確定する。V1定義とCPU実行が同居するファイルは丸ごと削除不可。値・型・配列順・生成define、修正後GPU基準を保持。実際の抽出は後段Bの限定PR。6つのV1は `tools/raw_baseline/export_android_{r7,protections,glow,mist,orton,character}.py --write` の生成物であり、生成元・`--check` / `--write`・PC基準の扱いも対応付け、旧定義の再生成を防ぐ。今回は生成手順を変更しない |
 | 1 | `photoroll/ManualTrialPhotoRollRenderer.kt` のCPU draft/exact分岐、`StageClearTrialPipeline.kt` / `StageClearTrialRenderer.kt` のCPU描画 | GPU入口、AS_SHOT、同写真/調整値、取消、比較表示、owner終了を保持。`StageClearTrialPipelineTest` とpreview試験の保証を対応付けてから分岐単位で削除。Trialという名前だけで編集UIを消さない |
 | 2 | `raw/original/OriginalStageClear24.kt` のCPU実行、`jpegrender/original/Original24Attempt.kt` のCPU renderer/pack分岐、`jpegrender/JpegGenerationAttempt.kt` の旧producer | native decode、geometry、原本照合、Bitmap/JPEG入口、cleanupを保持。保存authority/engine/codecに接する変更は #365 の提示・実装・検証後に再照合。旧CPU互換の証拠が不足すればこの段を止める |
 | 3 | `gpu/DevelopEngine.kt` の診断選択UI・設定読書きとCPU新規選択入口 | `DevelopGpuAvailabilityCache` / 能力検査、GPU失敗理由、owner固定engineは保持。enumや既定引数の除去は呼出し元・旧互換を照合して別判断。`develop/engine` の設定キー撤去を保存データ消去へ広げない |
