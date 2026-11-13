@@ -7,6 +7,35 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ManualOriginalTrialSaveOwnerTest {
+    @Test fun publicationOnlyRecheckCannotStartReadyProducerOrWriteIntent() {
+        val backend = Backend()
+        val intent = Storage()
+        val owner = ManualOriginalTrialSaveOwner(request, backend, intent) { true }
+        repeat(2) {
+            assertEquals(ManualOriginalTrialSavePhase.READY, owner.advance(publicationOnly = true).phase)
+        }
+        assertNull(intent.bytes)
+        assertEquals(0, intent.writes)
+        assertEquals(0, backend.renders)
+        assertEquals(0, backend.publisherCreations)
+        // Only a subsequent normal explicit save can enter the producer.
+        assertEquals(ManualOriginalTrialSavePhase.PUBLISHED, owner.advance().phase)
+        assertEquals(1, backend.renders)
+    }
+
+    @Test fun publicationOnlyRecheckResumesUnknownEvidenceWithoutProducer() {
+        val backend = Backend().also {
+            it.existing = record(JpegPublicationPhase.UNKNOWN)
+            it.reconciled = record(JpegPublicationPhase.PUBLISHING)
+        }
+        val intent = Storage()
+        val owner = ManualOriginalTrialSaveOwner(request, backend, intent) { true }
+        assertEquals(ManualOriginalTrialSavePhase.PUBLISHED, owner.advance(publicationOnly = true).phase)
+        assertEquals(1, backend.reconciliationCalls)
+        assertEquals(0, backend.renders)
+        assertNull(intent.bytes)
+    }
+
     @Test fun durableCancellationIsGrantedOnlyAfterFinalReleaseAndExplicitFinalization() {
         val intent = Storage(); val ledger = Storage()
         val backend = Backend().also { it.renderFailure = confirmedCancellation() }
@@ -1119,6 +1148,21 @@ class ManualOriginalTrialSaveOwnerTest {
         }
     }
 
+    @Test fun unknownReconciliationIoFailureRemainsRecheckableWithoutRerender() {
+        val backend = Backend().also {
+            it.existing = record(JpegPublicationPhase.UNKNOWN)
+            it.reconciliationFailure = IOException("Synthetic query or receipt failure")
+        }
+        val owner = ManualOriginalTrialSaveOwner(request, backend, Storage()) { true }
+        assertEquals(ManualOriginalTrialSavePhase.UNCONFIRMED, owner.advance().phase)
+        assertEquals(0, backend.renders)
+        backend.reconciliationFailure = null
+        backend.reconciled = record(JpegPublicationPhase.PUBLISHING)
+        assertEquals(ManualOriginalTrialSavePhase.PUBLISHED, owner.advance().phase)
+        assertEquals(2, backend.reconciliationCalls)
+        assertEquals(0, backend.renders)
+    }
+
     private fun confirmedCancellation() = ConfirmedSaveCancellationException(CancellationException("Producer stopped"))
 
     private fun gpuFailure(reason: GpuSaveFailureReason = GpuSaveFailureReason.RENDER_FAILED,
@@ -1134,11 +1178,19 @@ class ManualOriginalTrialSaveOwnerTest {
         var renderFailure: Exception? = null
         var publisherFailure: Exception? = null
         var releaseFailure: Exception? = null
+        var reconciliationFailure: Exception? = null
+        var reconciled: JpegPublicationRecord? = null
+        var reconciliationCalls = 0
         var beforeRender: () -> Unit = {}
         var held = false
         override val hasUnreleasedResources get() = held
         val publication = Publication()
         override fun readPublication(): JpegPublicationRecord? { publicationReads++; return existing }
+        override fun reconcilePublication(stop: () -> Boolean): JpegPublicationRecord? {
+            reconciliationCalls++
+            reconciliationFailure?.let { throw it }
+            return reconciled ?: existing
+        }
         override fun render(stop: () -> Boolean): ManualOriginalTrialRender {
             renders++; beforeRender(); renderFailure?.let { throw it }
             return generated

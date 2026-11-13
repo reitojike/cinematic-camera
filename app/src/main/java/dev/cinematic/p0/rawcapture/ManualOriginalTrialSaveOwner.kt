@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 
 internal enum class ManualOriginalTrialSavePhase { READY, SAVING, PUBLISHED, UNCONFIRMED, GPU_FAILED, CANCELLED, HOLD }
 internal enum class ManualOriginalTrialSaveReason {
-    STOPPED, SUPERSEDED, GENERATION_STARTED, RESOURCES_HELD, PUBLICATION_UNKNOWN, OPERATION_FAILED,
+    STOPPED, SUPERSEDED, GENERATION_STARTED, RESOURCES_HELD, PUBLICATION_UNKNOWN, OPERATION_FAILED, PENDING_BYTES_DIFFER,
 }
 internal data class ManualOriginalTrialSaveState(
     val phase: ManualOriginalTrialSavePhase,
@@ -27,6 +27,9 @@ internal interface ManualOriginalTrialPublication {
 internal interface ManualOriginalTrialSaveBackend {
     val hasUnreleasedResources: Boolean
     fun readPublication(): JpegPublicationRecord?
+    /** Explicit same-save recheck only. Cold metadata hydration never calls this. */
+    fun reconcilePublication(stop: () -> Boolean): JpegPublicationRecord? = readPublication()
+    val reconciliationFinding: JpegReconciliationFinding? get() = null
     /** Return only after all producer resources close and source/JPEG readback succeeds. */
     fun render(stop: () -> Boolean): ManualOriginalTrialRender
     fun publisher(render: ManualOriginalTrialRender): ManualOriginalTrialPublication
@@ -136,11 +139,26 @@ internal class ManualOriginalTrialSaveOwner(
         }
     }
 
-    fun advance(retryGpuFailure: Boolean = false, retryCancellation: Boolean = false, stop: () -> Boolean = { false }): ManualOriginalTrialSaveState = exclusive {
+    fun advance(retryGpuFailure: Boolean = false, retryCancellation: Boolean = false,
+        publicationOnly: Boolean = false, stop: () -> Boolean = { false }): ManualOriginalTrialSaveState = exclusive {
         if (terminalHold || (gpuRetryAvailable && !retryGpuFailure) || (cancellationRetryAvailable && !retryCancellation)) return@exclusive state.value
         try {
             if (!isCurrent()) return@exclusive hold(ManualOriginalTrialSaveReason.SUPERSEDED)
-            val previous = backend.readPublication()
+            var previous = backend.readPublication()
+            // Recheck must never create intent or enter a producer, even when the UI reports a
+            // foreground-service start failure as UNCONFIRMED while this owner is still READY.
+            if (publicationOnly && previous == null) return@exclusive state.value
+            if (previous?.phase == JpegPublicationPhase.UNKNOWN && !hasUnreleasedResources && !stop()) {
+                // Install only validated old output proof before fallible query/receipt IO. A transient
+                // observation failure must remain recheckable, never become an intent-only terminal HOLD.
+                val recovered = previous.render as? ManualOriginalTrialRender ?: throw CaptureJournalConflict()
+                requireMatches(recovered); recovered.requireFingerprint(previous.fingerprint)
+                if (proof != null && proof != recovered) throw CaptureJournalConflict()
+                proof = recovered
+                val reconciled = backend.reconcilePublication { stop() || !isCurrent() }
+                if (reconciled != previous) publication = null
+                previous = reconciled
+            }
             previous?.let { record ->
                 val recovered = record.render as? ManualOriginalTrialRender ?: throw CaptureJournalConflict()
                 requireMatches(recovered)
@@ -152,7 +170,8 @@ internal class ManualOriginalTrialSaveOwner(
                 cancellationRetryAvailable = false
                 if (record.phase == JpegPublicationPhase.UNKNOWN) {
                     return@exclusive update(ManualOriginalTrialSavePhase.UNCONFIRMED, record.uri,
-                        ManualOriginalTrialSaveReason.PUBLICATION_UNKNOWN)
+                        if (backend.reconciliationFinding == JpegReconciliationFinding.PENDING_BYTES_DIFFER)
+                            ManualOriginalTrialSaveReason.PENDING_BYTES_DIFFER else ManualOriginalTrialSaveReason.PUBLICATION_UNKNOWN)
                 }
             }
             if (hasUnreleasedResources) return@exclusive update(ManualOriginalTrialSavePhase.HOLD, previous?.uri,

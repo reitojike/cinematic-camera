@@ -12,6 +12,8 @@ internal enum class CaptureJournalFile(val fileName: String) {
     RECEIPT("receipt.bin"), DNG_PUBLICATION("dng-publication.bin"), JPEG_PUBLICATION("jpeg-publication.bin"),
     AUTO_DEVELOP("auto-develop.bin"),
     MANUAL_REQUEST("manual-request.bin"), MANUAL_ATTEMPT("manual-attempt.bin"), EDIT_RECIPE("edit-recipe.bin"), IMPORT("import.bin"),
+    JPEG_RECONCILIATION("jpeg-reconciliation.bin"), JPEG_RECOVERY("jpeg-recovery.bin"),
+    EXPLICIT_RECOVERY_EXPORT("explicit-recovery-export.bin"),
 }
 
 /** Pure path validation; root must be a trusted app-private directory supplied by the caller. */
@@ -42,9 +44,11 @@ internal class AndroidAtomicJournalStorage(
 ) : AtomicJournalStorage {
     private val file = CaptureJournalPaths.journalFile(root, captureId, kind)
     private val atomic = AtomicFile(file)
+    private val capacity = if (kind in setOf(CaptureJournalFile.JPEG_RECONCILIATION,
+        CaptureJournalFile.EXPLICIT_RECOVERY_EXPORT)) SaveRecoveryCodec.MAX_BYTES else CaptureReceiptCodec.MAX_BYTES
 
     override fun read(maxBytes: Int): ByteArray? {
-        require(maxBytes in 1..CaptureReceiptCodec.MAX_BYTES)
+        require(maxBytes in 1..capacity)
         checkPath()
         try {
             return atomic.openRead().use { input ->
@@ -69,7 +73,7 @@ internal class AndroidAtomicJournalStorage(
     }
 
     override fun replace(contents: ByteArray) {
-        require(contents.size in 1..CaptureReceiptCodec.MAX_BYTES)
+        require(contents.size in 1..capacity)
         checkPath()
         val parent = requireNotNull(file.parentFile)
         if (!parent.isDirectory && !parent.mkdirs()) throw IOException("Cannot create capture journal directory")
