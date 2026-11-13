@@ -5,10 +5,26 @@ import tempfile
 import time
 import unittest
 from check_session import check
-from supervisor import health, supervise
+from supervisor import health, supervise, pss_gap
 
 
 class SupervisorTest(unittest.TestCase):
+    def test_pss_gap_remains_failure_after_samples_resume_and_other_logs_continue(self):
+        start = {'kind': 'PROCESS_START', 'host_epoch': 100, 'process_pid': '11'}
+        sample = lambda t: {'kind': 'PROCESS_MEMORY_SAMPLE', 'host_epoch': t, 'process_pid': '11'}
+        self.assertFalse(pss_gap([start, sample(110)], 120))
+        self.assertTrue(pss_gap([start, sample(110), sample(126)], 126))
+        self.assertTrue(pss_gap([start, sample(110), {'kind': 'MEMORY_ADMISSION', 'host_epoch': 126}], 126))
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'session'
+            script = Path(__file__).with_name('fixtures') / 'fake_collector.py'
+            status = supervise([sys.executable, '-B', str(script), str(root / 'collector'), '5', '--pss-gap'],
+                               root, poll_seconds=.01)
+            self.assertEqual('FAILED', status['state'])
+            self.assertEqual('STALE_PSS', status['reason'])
+            self.assertTrue(status['collector_shutdown_recorded'])
+            self.assertFalse(check(root)['ready_for_operator_next_step'])
+
     def test_combined_gate_rejects_missing_supervisor_and_either_stop_file(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

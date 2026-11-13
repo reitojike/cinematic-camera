@@ -24,6 +24,32 @@ def health(root, now=None):
         return False
 
 
+def pss_gap(events, now):
+    starts = [event for event in events if event.get('kind') == 'PROCESS_START']
+    if not starts:
+        return False  # Waiting for the operator to launch the application.
+    start = starts[-1]
+    prior = start['host_epoch']
+    for event in events:
+        if event.get('kind') != 'PROCESS_MEMORY_SAMPLE' or event.get('process_pid') != start.get('process_pid'):
+            continue
+        stamp = event['host_epoch']
+        if stamp < prior:
+            continue
+        if stamp - prior > 15:
+            return True  # A recovered sample never erases an earlier gap.
+        prior = stamp
+    return now - prior > 15
+
+
+def read_events(path):
+    text = path.read_text(encoding='utf-8')
+    lines = text.splitlines()
+    if text and not text.endswith('\n'):
+        lines = lines[:-1]  # Writer may currently be appending the final record.
+    return [json.loads(line) for line in lines]
+
+
 def supervise(command, root, *, poll_seconds=1, stale_seconds=30):
     """Own only this PC child; no device lifecycle or data actions. command is fixed by main."""
     root.mkdir(parents=True, exist_ok=False)
@@ -40,8 +66,10 @@ def supervise(command, root, *, poll_seconds=1, stale_seconds=30):
             while child.poll() is None:
                 observations = root / 'collector' / 'observations.jsonl'
                 latest = observations.stat().st_mtime if observations.exists() else started
-                if (root / 'stop.request').exists() or time.time() - latest > stale_seconds:
-                    reason = 'OPERATOR_STOP' if (root / 'stop.request').exists() else 'STALE_COLLECTOR'
+                missing_pss = observations.exists() and pss_gap(read_events(observations), time.time())
+                if (root / 'stop.request').exists() or time.time() - latest > stale_seconds or missing_pss:
+                    reason = ('STALE_PSS' if missing_pss else 'OPERATOR_STOP'
+                              if (root / 'stop.request').exists() else 'STALE_COLLECTOR')
                     status.update(state='STOPPING', reason=reason)
                     write_status(root, status)
                     directory = root / 'collector'
@@ -59,15 +87,16 @@ def supervise(command, root, *, poll_seconds=1, stale_seconds=30):
             status['exit_code'] = child.returncode
         # Exit zero alone cannot prove a complete collector shutdown.
         try:
-            lines = (root / 'collector' / 'observations.jsonl').read_text(encoding='utf-8').splitlines()
-            events = [json.loads(line) for line in lines]
+            events = read_events(root / 'collector' / 'observations.jsonl')
             last = events[-1] if events else {}
             complete = last.get('kind') == 'COLLECTOR_STOP'
             failed = any(event.get('kind', '').startswith('STOP_') for event in events)
+            if pss_gap(events, time.time()):
+                reason = 'STALE_PSS'
         except (OSError, ValueError):
             complete = False
             failed = True
-        status.update(state='STOPPED' if child.returncode == 0 and complete and not failed and reason != 'STALE_COLLECTOR' else 'FAILED',
+        status.update(state='STOPPED' if child.returncode == 0 and complete and not failed and reason not in {'STALE_COLLECTOR', 'STALE_PSS'} else 'FAILED',
                       reason=reason, collector_shutdown_recorded=complete)
     except Exception as failure:
         status.update(state='FAILED', reason='SUPERVISOR_EXCEPTION', exception=type(failure).__name__)
