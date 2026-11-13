@@ -316,8 +316,8 @@ internal class Original24PreviewSession(
         rasterFd = ParcelFileDescriptor.open(rasterFile, ParcelFileDescriptor.MODE_READ_WRITE)
         sourceFd = ParcelFileDescriptor.open(snapshotFile, ParcelFileDescriptor.MODE_READ_ONLY)
         resourceAdmission(Original24MemoryStage.ORIGINAL_DECODE)
-        val metadata = JSONObject(NativeOriginalRaster.decode24(requireNotNull(sourceFd).fd,
-            requireNotNull(rasterFd).fd, signal))
+        val metadata = JSONObject(originalNativeMemoryCall { NativeOriginalRaster.decode24(requireNotNull(sourceFd).fd,
+            requireNotNull(rasterFd).fd, signal) })
         closeDescriptors()
         originalCheckpoint(stop)
         val geometry = Original24PreflightGeometry(metadata.getInt("rawWidth"), metadata.getInt("rawHeight"),
