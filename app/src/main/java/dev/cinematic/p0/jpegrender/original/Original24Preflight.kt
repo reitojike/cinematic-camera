@@ -37,7 +37,7 @@ internal data class Original24PreflightGeometry internal constructor(
 internal object Original24Preflight {
     fun inspect(sourceFd: Int, signal: CancellationSignal): Original24PreflightGeometry {
         if (sourceFd < 0) throw IOException("Invalid original source descriptor")
-        return fromNative(NativeOriginalRaster.preflight24(sourceFd, signal))
+        return fromNative(originalNativeMemoryCall { NativeOriginalRaster.preflight24(sourceFd, signal) })
     }
 
     internal fun fromNative(values: IntArray): Original24PreflightGeometry {

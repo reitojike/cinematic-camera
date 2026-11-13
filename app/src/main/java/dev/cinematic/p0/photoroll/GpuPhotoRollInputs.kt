@@ -140,7 +140,7 @@ internal object GpuPhotoRollInputs {
             val source = original.reference
             val parent = checkedDirectory("manual-original24-previews")
             val current = Original24PreviewSession(source, File(parent, UUID.randomUUID().toString()),
-                { stage -> Original24Resources.requireAvailable(app, stage) }, geometry,
+                { stage -> Original24Resources.requireAvailable(app, stage, geometry.outputWidth.toLong() * geometry.outputHeight) }, geometry,
                 checkSource) { this.original(source) }.also { session = it }
             if (stopped()) current.requestStop()
             return current.loadGpuAsShotInput(::stopped)
