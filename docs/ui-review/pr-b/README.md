@@ -2,7 +2,7 @@
 
 [スマホ用：変更前／変更後／文言差の一覧画像](comparison.png)
 
-生成元: `3023c47`、固定 ATD の `CaptureMessagesScreenshotTest`（1試験成功、28枚）。すべて合成状態で、実写真・端末固有情報は含みません。
+変更後の生成元: `7dac42a5`、固定 ATD の `CaptureMessagesScreenshotTest`（1試験成功、28枚）。すべて合成状態で、実写真・端末固有情報は含みません。
 
 - `01` 接続待ち、`02` 設定復旧、`03` 撮影復旧
 - `04` 熱、`05` マイク、`06` 撮影/設定失敗、`07` 設定適用中、`08` 完了通知
@@ -17,3 +17,5 @@
 実画面の変更前取得、実カメラ背景との組合せ、設定シート全体、撮影/録画の手動回帰は未確認です。本人の表示承認と残る検証が揃うまではマージしません。
 
 比較一覧は余白を除いて同じ倍率で並べています（09のみ横表示）。配置位置と細部は元画像を参照してください。確認用PNGは本人承認後にPR差分から外し、承認時の固定commitで証跡を残します。
+
+表示wrapper照合: 撮影表示は本番と同じ CaptureMessageOverlay、リセットは実 CaptureResetDialog。旧側は同じ CaptureTheme と旧reset Surface、明示色を保持。11/12は製品と同じ fillMaxWidth、12の captureOutline(true) も保持しています。ATD端末・density・window条件は前後同一ですが、実画面のsafeDrawingPadding/カメラ領域/設定シート内配置は再現していません。
