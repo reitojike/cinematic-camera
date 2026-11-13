@@ -1,6 +1,7 @@
 package dev.cinematic.p0.photoroll
 
 import android.graphics.Bitmap
+import dev.cinematic.p0.*
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.Canvas
@@ -61,7 +62,9 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
     apply: (PhotoEditInputToken) -> Unit, cancel: (PhotoEditInputToken) -> Unit, close: (PhotoEditInputToken) -> Unit,
     modifier: Modifier = Modifier, statusOverlay: @Composable () -> Unit = {}, fillImageWidth: Boolean = false, viewportModifier: Modifier = Modifier,
     gpuSession: GpuPhotoRollSession? = null, gpuReady: Boolean = false,
-    gpuFailure: dev.cinematic.p0.gpu.GpuFailureHandling? = null, memoryProblem: dev.cinematic.p0.UiMessage? = null, info: @Composable () -> Unit) {
+    gpuFailure: dev.cinematic.p0.gpu.GpuFailureHandling? = null,
+    productMessages: ScreenMessages? = null, productFailureFallback: UiMessage? = null, productSave: DevelopSavePresentation? = null,
+    onProductAction: (MessageAction) -> Unit = {}, memoryProblem: dev.cinematic.p0.UiMessage? = null, info: @Composable () -> Unit) {
     var information by remember { mutableStateOf(false) }
     var parameter by remember { mutableStateOf(PhotoEditParameter.STRENGTH) }
     var comparing by remember(preview, comparison, foreground, gpuSession) { mutableStateOf(false) }
@@ -72,8 +75,8 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
     val requested = session?.draft ?: state.requestedValues
     val unapplied = mode in setOf(PhotoRollPreviewMode.MANUAL_TRIAL, PhotoRollPreviewMode.STAGE_CLEAR,
         PhotoRollPreviewMode.PRIVATE_TRIAL) && state.displayedValues != requested
-    val saveLabel = developSaveLabel(mode, savePhase, savePending, session != null)
-    val saveTone = when {
+    val saveLabel = productSave?.label ?: developSaveLabel(mode, savePhase, savePending, session != null)
+    val saveTone = productSave?.tone ?: when {
         savePending || savePhase == PhotoRollSavePhase.SAVING -> CaptureChromeTone.WARNING
         savePhase == PhotoRollSavePhase.PUBLISHED -> CaptureChromeTone.ACCEPTED
         savePhase in setOf(PhotoRollSavePhase.UNCONFIRMED, PhotoRollSavePhase.GPU_FAILED, PhotoRollSavePhase.CANCELLED, PhotoRollSavePhase.HOLD) -> CaptureChromeTone.FAILURE
@@ -88,7 +91,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
             Row(Modifier.fillMaxWidth().heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = back, shape = RectangleShape, modifier = Modifier.semantics { contentDescription = "一覧へ戻る" }) { Text("‹") }
                 Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
-                    val modeLabel = when (mode) { PhotoRollPreviewMode.STAGE_CLEAR -> "DNG 現像"; PhotoRollPreviewMode.PRIVATE_TRIAL -> "試験 1024px"
+                    val modeLabel = if (productMessages != null) "DNG 現像" else when (mode) { PhotoRollPreviewMode.STAGE_CLEAR -> "DNG 現像"; PhotoRollPreviewMode.PRIVATE_TRIAL -> "試験 1024px"
                         PhotoRollPreviewMode.DNG_TRIAL -> "DNG 試験表示"; PhotoRollPreviewMode.STAGE_CLEAR_TRIAL -> "Stage Clear 試験"
                         else -> "DNG 試験現像" }
                     StatusChip(CaptureStatusChip("mode", modeLabel, mode = true,
@@ -112,12 +115,23 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                     comparison.takeIf { compareEnabled }, foreground, "現像結果（表示用）", comparisonLabel,
                     Modifier.fillMaxSize(), comparing && compareEnabled, { comparing = it }, unapplied || updating,
                     fillImageWidth = fillImageWidth, stableCaption = true)
-                else if (phase != PhotoRollPhase.BLOCKED) Text(if (updating) "画像を準備中…" else "原本の確認待ち", color = CaptureDesign.Muted)
-                Column(Modifier.align(Alignment.TopCenter).fillMaxWidth().background(CaptureDesign.Ink.copy(alpha = .9f))) {
+                else if (productMessages == null && phase != PhotoRollPhase.BLOCKED) Text(if (updating) "画像を準備中…" else "原本の確認待ち", color = CaptureDesign.Muted)
+                if (productMessages != null) {
+                    Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
+                        productMessages.banner?.let { CaptureBanner(it, onProductAction, failureFallback = productFailureFallback) }
+                        productMessages.inline.forEach { CaptureInlineNote(it, onProductAction) }
+                    }
+                    productMessages.center?.let {
+                        if (it.slot == MessageSlot.PROBLEM) CaptureProblem(it, onProductAction, Modifier.align(Alignment.Center), failureFallback = productFailureFallback)
+                        else CaptureCenter(it, onProductAction, Modifier.align(Alignment.Center))
+                    }
+                    productMessages.toast?.let { CaptureToast(it, Modifier.align(Alignment.BottomCenter)) }
+                } else Column(Modifier.align(Alignment.TopCenter).fillMaxWidth().background(CaptureDesign.Ink.copy(alpha = .9f))) {
                     statusOverlay()
                 }
                 Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().verticalScroll(rememberScrollState()).background(CaptureDesign.Ink.copy(alpha = .9f))
                     .pointerInput(Unit) { detectTapGestures(onTap = {}) }) {
+                    if (productMessages == null) {
                     if (phase == PhotoRollPhase.BLOCKED && memoryProblem != null) {
                         dev.cinematic.p0.CaptureProblem(memoryProblem, onAction = { action ->
                             if (action == dev.cinematic.p0.MessageAction.RETRY) retry()
@@ -138,6 +152,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                     }
                     if (phase == PhotoRollPhase.PAUSED) TextButton(onClick = retry, enabled = foreground,
                         shape = RectangleShape) { Text(if (gpuFailure != null) "再試行" else "原本を確認して再試行") }
+                    }
                     if (session != null) key(parameter) {
                         Box(Modifier.fillMaxWidth().semantics { contentDescription = "現像調整パネル" }) {
                             TrialStrengthEditorPane(state, readState, parameter, foreground, phase, change, reset, apply, close)
@@ -172,7 +187,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                 horizontalArrangement = Arrangement.SpaceBetween) {
                 TextButton(onClick = { session?.let { cancel(it.inputToken) } }, enabled = foreground && session != null,
                     modifier = Modifier.width(88.dp), shape = RectangleShape) { Text("取消") }
-                Box(Modifier.size(76.dp).semantics { contentDescription = when (savePhase) {
+                Box(Modifier.size(76.dp).semantics { contentDescription = productSave?.description ?: when (savePhase) {
                     PhotoRollSavePhase.CANCELLED -> "取り消した保存を同じ設定で再試行"; PhotoRollSavePhase.GPU_FAILED -> "同じ GPU 保存を再試行"; PhotoRollSavePhase.PUBLISHED -> "保存したJPEGを照合して開く"; PhotoRollSavePhase.UNCONFIRMED -> "同じ保存を再照合"; else -> "JPEGを保存" }
                     stateDescription = saveLabel
                     if (!saveEnabled) disabled() }.clickable(enabled = saveEnabled, role = Role.Button, onClick = save), contentAlignment = Alignment.Center) {
@@ -182,7 +197,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                             if (dashed) PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 4.dp.toPx())) else null))
                         drawCircle(saveColor.copy(alpha = if (saveEnabled) .85f else .15f), radius = size.minDimension / 2 - 8.dp.toPx())
                     }
-                    Text(when (savePhase) { PhotoRollSavePhase.PUBLISHED -> "↗"; PhotoRollSavePhase.GPU_FAILED, PhotoRollSavePhase.CANCELLED -> "↻"; else -> "↓" }, color = if (saveEnabled) CaptureDesign.Ink else saveColor, fontSize = 26.sp)
+                    Text(productSave?.icon ?: when (savePhase) { PhotoRollSavePhase.PUBLISHED -> "↗"; PhotoRollSavePhase.GPU_FAILED, PhotoRollSavePhase.CANCELLED -> "↻"; else -> "↓" }, color = if (saveEnabled) CaptureDesign.Ink else saveColor, fontSize = 26.sp)
                 }
                 CaptureModeSwitchSurface(comparing, Modifier.alpha(if (compareEnabled) 1f else .4f)) {
                     listOf(false, true).forEach { before -> TextButton(onClick = { comparing = before }, enabled = compareEnabled,
@@ -195,7 +210,15 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
             }
         }
     }
-    if (information) AlertDialog(onDismissRequest = { information = false },
+    if (information && productMessages != null) CaptureDialog(
+        MessageDialog("原本と現像について", "原本は読み取り専用です。コピー・上書き・公開は行いません。",
+            MessageControl(MessageAction.CLOSE, "閉じる")),
+        onDismissRequest = { information = false }, onAction = { information = false },
+    ) {
+        Text(name, style = CaptureDesign.Body, color = CaptureDesign.Text)
+        info()
+    }
+    if (information && productMessages == null) AlertDialog(onDismissRequest = { information = false },
         containerColor = CaptureDesign.Ink, titleContentColor = CaptureDesign.Text, textContentColor = CaptureDesign.Muted,
         title = { Text("原本情報と試験品質の注意") },
         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
