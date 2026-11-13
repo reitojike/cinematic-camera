@@ -12,6 +12,7 @@ import dev.cinematic.p0.raw.PhotoAdjustments
 import dev.cinematic.p0.rawcapture.AndroidManualOriginalTrialSaves
 import dev.cinematic.p0.rawcapture.ManualOriginalTrialSavePhase
 import dev.cinematic.p0.rawcapture.SharedOriginalReference
+import dev.cinematic.p0.jpegrender.original.Original24Request
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.*
 
@@ -21,11 +22,26 @@ internal object ConfirmedCancellationEditProbe {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
 
     fun publish(app: Context, source: SharedOriginalReference, name: String,
-        cancelled: AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle): AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle {
+        cancelled: AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle): AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle =
+        publishRequest(app, source, name, cancelled.request, cancelled)
+
+    fun publishCold(app: Context, source: SharedOriginalReference, name: String,
+        request: Original24Request): AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle {
+        assertNull(AndroidManualOriginalTrialSaves.knownPrepared(source))
+        return publishRequest(app, source, name, request, null)
+    }
+
+    fun retryCold(app: Context, source: SharedOriginalReference, name: String,
+        request: Original24Request): AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle {
+        assertNull(AndroidManualOriginalTrialSaves.knownPrepared(source))
+        return publishRequest(app, source, name, request, null, changeRecipe = false)
+    }
+
+    private fun publishRequest(app: Context, source: SharedOriginalReference, name: String, request: Original24Request,
+        live: AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle?, changeRecipe: Boolean = true): AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle {
         check(Build.HARDWARE in setOf("ranchu", "goldfish") && app.packageName == "dev.cinematic.p0")
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
-        val request = cancelled.request
-        AndroidPhotoEditRecipes(app).save(source, PhotoEditValues(request.strength,
+        if (live != null) AndroidPhotoEditRecipes(app).save(source, PhotoEditValues(request.strength,
             request.adjustments.warmth, request.adjustments.exposureEv)).get(30, TimeUnit.SECONDS)
         cameraRollReadPermissions(Build.VERSION.SDK_INT).forEach {
             instrumentation.uiAutomation.grantRuntimePermission(app.packageName, it)
@@ -41,7 +57,18 @@ internal object ConfirmedCancellationEditProbe {
                 await("confirmed cancellation remains retryable and editable") {
                     action("取り消した保存を同じ設定で再試行") != null && action("STRENGTH") != null
                 }
+                val cancelled = live ?: requireNotNull(AndroidManualOriginalTrialSaves.knownPrepared(source))
+                assertEquals(request, cancelled.request)
                 assertEquals(ManualOriginalTrialSavePhase.CANCELLED, cancelled.state.value.phase)
+                if (!changeRecipe) {
+                    click("取り消した保存を同じ設定で再試行")
+                    await("restored same recipe publication", 180_000) {
+                        cancelled.state.value.phase == ManualOriginalTrialSavePhase.PUBLISHED && ForegroundExports.gate.active() == null
+                    }
+                    assertEquals(request, cancelled.request)
+                    published = cancelled
+                    return@use
+                }
                 click("一覧へ戻る")
                 click(name)
                 click("STRENGTH")
