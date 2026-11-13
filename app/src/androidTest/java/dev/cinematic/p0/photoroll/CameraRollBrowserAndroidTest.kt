@@ -5,6 +5,7 @@ import java.io.File
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.compose.foundation.layout.*
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
@@ -44,10 +45,18 @@ class CameraRollBrowserAndroidTest {
         }
         return visit(diagnostic.fixtureRoot())
     }
-    private fun actionable(node: AccessibilityNodeInfo): AccessibilityNodeInfo {
+    private fun actionable(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         var current = node
-        while (!current.isClickable) current = current.parent ?: return node
-        return current
+        while (true) {
+            val cachedEnabled = current.isEnabled
+            // Framework nodes are snapshots. Refresh each ancestor before reading its state.
+            // https://developer.android.com/reference/android/view/accessibility/AccessibilityNodeInfo#refresh()
+            if (!current.refresh()) return null
+            if (cachedEnabled != current.isEnabled) android.util.Log.i("LibraryAccessRegression",
+                "node refresh changed enabled=$cachedEnabled -> ${current.isEnabled}; text=${current.text}; class=${current.className}")
+            if (current.isClickable) return current
+            current = current.parent ?: return node
+        }
     }
     private fun scroll(forward: Boolean) {
         fun visit(node: AccessibilityNodeInfo?): Boolean {
@@ -67,11 +76,26 @@ class CameraRollBrowserAndroidTest {
             instrumentation.waitForIdleSync()
             find(text)?.let { label ->
                 val node = if (enabled == null) label else actionable(label)
-                if (label.isVisibleToUser && (enabled == null || node.isEnabled == enabled)) return node
+                if (node != null && label.refresh() && label.isVisibleToUser && (enabled == null || node.isEnabled == enabled)) return node
             }
             if (++attempts % 4 == 0) scroll((attempts / 20) % 2 == 0)
             SystemClock.sleep(50)
         } while (SystemClock.uptimeMillis() < deadline)
+        fun dump(node: AccessibilityNodeInfo?, depth: Int = 0) {
+            if (node == null) return
+            if (node.text?.toString() == text || node.contentDescription?.toString() == text) {
+                var current: AccessibilityNodeInfo? = node
+                repeat(5) { current?.let { n ->
+                    val bounds = android.graphics.Rect(); n.getBoundsInScreen(bounds)
+                    android.util.Log.e("LibraryAccessRegression", "match depth=$depth text=${n.text} class=${n.className} visible=${n.isVisibleToUser} enabled=${n.isEnabled} clickable=${n.isClickable} bounds=$bounds")
+                    current = n.parent
+                } }
+            }
+            for (i in 0 until node.childCount) dump(node.getChild(i), depth + 1)
+        }
+        dump(diagnostic.fixtureRoot())
+        diagnostic.failure(text)
+        capture("failure-reachable")
         error("Missing reachable $text (enabled=$enabled)")
     }
     private fun capture(name: String) {
@@ -87,12 +111,14 @@ class CameraRollBrowserAndroidTest {
         (Fixture) -> Unit, () -> Pair<Int, Int>) -> Unit) {
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
         val state = mutableStateOf(initial)
+        val rendered = java.util.concurrent.atomic.AtomicReference<Fixture?>()
         var permissions = 0
         var files = 0
         // Existing activity starts on an empty ATD; lifecycle callbacks install synthetic content.
         // Initial repository reads may occur; fixtures do not request permissions or launch viewers.
         diagnostic.content = {
                 val fixture = state.value
+                SideEffect { rendered.set(fixture) }
                 BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
                     val nativeDensity = LocalDensity.current.density
                     val density = minOf(maxWidth.value / fixture.width, maxHeight.value / fixture.height) * nativeDensity
@@ -109,7 +135,23 @@ class CameraRollBrowserAndroidTest {
         }
         ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
             scenario.recreate()
-            block(scenario, { fixture -> scenario.onActivity { state.value = fixture }; instrumentation.waitForIdleSync() },
+            block(scenario, { fixture ->
+                scenario.onActivity { state.value = fixture }
+                val deadline = SystemClock.uptimeMillis() + 5_000
+                while (rendered.get() != fixture && SystemClock.uptimeMillis() < deadline) {
+                    instrumentation.waitForIdleSync(); SystemClock.sleep(10)
+                }
+                check(rendered.get() == fixture) { "Synthetic fixture was not composed" }
+                // waitForIdleSync alone can return before the next Compose/layout frame.
+                // A button can move from the old banner to the footer; do not click its stale node.
+                val laidOut = java.util.concurrent.CountDownLatch(1)
+                instrumentation.runOnMainSync {
+                    val frames = android.view.Choreographer.getInstance()
+                    frames.postFrameCallback { frames.postFrameCallback { laidOut.countDown() } }
+                }
+                check(laidOut.await(5, java.util.concurrent.TimeUnit.SECONDS)) { "Synthetic layout frames timed out" }
+                instrumentation.waitForIdleSync()
+            },
                 { permissions to files })
         }
     }
@@ -208,6 +250,7 @@ class CameraRollBrowserAndroidTest {
                 val fixture = Fixture(selected, items = listOf(item), enabled = true, notice = notice,
                     save = foregroundSaveMessages(saving), settingsAction = { settings++ })
                 update(fixture)
+                android.util.Log.i("LibraryAccessRegression", "active=${saving.active}, held=${saving.held}, stopping=${saving.stopping}, failure=${notice != null}")
                 assertTrue(await("選び直す", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
                 assertTrue(await("設定", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
                 instrumentation.waitForIdleSync()

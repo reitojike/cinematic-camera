@@ -1,9 +1,10 @@
 # PR-E カメラロール・取り込みの変更前／変更後
 
-PR [#387](https://github.com/reitojike/cinematic-camera/pull/387) の表示確認用です。**画像は未取得です。このページは準備中で、承認依頼ではありません。**
+PR [#387](https://github.com/reitojike/cinematic-camera/pull/387) の表示確認用です。**画像は14状態×変更前後の28枚を取得済みです。表示部品の比較です。最終の統合検証と本人の目視承認を経るまでマージしません。**
 
 - 変更前：旧main `53e68ffc722579138c0f673dbdc9ac08d398044f` の表示部分を試験専用fixtureへ抽出。
 - 変更後：PR-Eの実際の表示部品。両者に同じ合成状態を入力します。
+- 旧・新とも製品と同じCaptureTheme → Surface → 一覧の表示部品で描画。親Surfaceを省いた初回画像は採用しません。
 - 一覧は412×924dp・fontScale 1。ダイアログは同じATD・標準密度で比較。回転・大きな文字の回帰は別試験です。
 - 私物写真・個人情報は使いません。これは合成状態による表示部品の比較で、実アプリ全体・実機・画質・実保存の確認ではありません。
 - software View描画を取得します。GPU画素やOSの画面合成の証拠ではありません。ダイアログはフォーカス中windowの寸法になるため、前後の高さが異なる場合があります。
@@ -12,19 +13,27 @@ PR [#387](https://github.com/reitojike/cinematic-camera/pull/387) の表示確�
 
 ## 01. 空の一覧
 
-**変更前：未取得**
+**変更前**
 
-**変更後：未取得**
+![変更前 01-empty](images/comparison/01-empty-before.png)
+
+**変更後**
+
+![変更後 01-empty](images/comparison/01-empty-after.png)
 
 **確認点**：大きな塗り/枠ボタンから、共通CENTERと文字操作へ。
 
-**文言変更**：「Filesから選ぶ」「Filesから DNG…」→「Filesで開く」。取り込み入口を上段から下段・空状態へ移動。
+**文言変更**：「Filesから選ぶ」「Filesから DNG…」→「Filesで開く」。取り込み入口を上段から下段・空状態へ移動。空状態の本文は「アクセス許可や絞り込みを確認してください。DNGはFilesの『内部ストレージ』からも選べます」から「アクセス許可・絞り込みを確認するか、FilesでDNGを開いてください」へ整理。
 
 ## 02. 写真へのアクセスが限定されている一覧
 
-**変更前：未取得**
+**変更前**
 
-**変更後：未取得**
+![変更前 02-partial](images/comparison/02-partial-before.png)
+
+**変更後**
+
+![変更後 02-partial](images/comparison/02-partial-after.png)
 
 **確認点**：アクセス説明をWARNINGバナーへ。選び直し・設定のenabled/handlerは維持。
 
@@ -32,9 +41,13 @@ PR [#387](https://github.com/reitojike/cinematic-camera/pull/387) の表示確�
 
 ## 03. 項目を開けなかった一覧
 
-**変更前：未取得**
+**変更前**
 
-**変更後：未取得**
+![変更前 03-list-failure](images/comparison/03-list-failure-before.png)
+
+**変更後**
+
+![変更後 03-list-failure](images/comparison/03-list-failure-after.png)
 
 **確認点**：赤い行内文からFAILUREバナーへ。権限操作は下段に残す。
 
@@ -42,9 +55,13 @@ PR [#387](https://github.com/reitojike/cinematic-camera/pull/387) の表示確�
 
 ## 04. JPEG保存中・通知OFF
 
-**変更前：未取得**
+**変更前**
 
-**変更後：未取得**
+![変更前 04-saving](images/comparison/04-saving-before.png)
+
+**変更後**
+
+![変更後 04-saving](images/comparison/04-saving-after.png)
 
 **確認点**：保存進行を1つのバナーへ。取消・通知許可は同じ操作可否で残す。
 
@@ -52,9 +69,13 @@ PR [#387](https://github.com/reitojike/cinematic-camera/pull/387) の表示確�
 
 ## 05. 保存の停止中
 
-**変更前：未取得**
+**変更前**
 
-**変更後：未取得**
+![変更前 05-stopping](images/comparison/05-stopping-before.png)
+
+**変更後**
+
+![変更後 05-stopping](images/comparison/05-stopping-after.png)
 
 **確認点**：進行バナーを維持。取消は旧表示と同じく無効。
 
@@ -62,9 +83,13 @@ PR [#387](https://github.com/reitojike/cinematic-camera/pull/387) の表示確�
 
 ## 06. 保存の終了が未確認
 
-**変更前：未取得**
+**変更前**
 
-**変更後：未取得**
+![変更前 06-held](images/comparison/06-held-before.png)
+
+**変更後**
+
+![変更後 06-held](images/comparison/06-held-after.png)
 
 **確認点**：FAILUREバナー。次の保存を始めない条件は変更しない。
 
@@ -72,9 +97,13 @@ PR [#387](https://github.com/reitojike/cinematic-camera/pull/387) の表示確�
 
 ## 07. 通知OFFと写真アクセス限定の併存
 
-**変更前：未取得**
+**変更前**
 
-**変更後：未取得**
+![変更前 07-partial-notifications](images/comparison/07-partial-notifications-before.png)
+
+**変更後**
+
+![変更後 07-partial-notifications](images/comparison/07-partial-notifications-after.png)
 
 **確認点**：通知警告を表示しても、選び直し・設定は下段に残す。通知の許可は写真アクセスの前提にしない。
 
@@ -82,9 +111,13 @@ PR [#387](https://github.com/reitojike/cinematic-camera/pull/387) の表示確�
 
 ## 08. 一覧失敗と保存中の併存
 
-**変更前：未取得**
+**変更前**
 
-**変更後：未取得**
+![変更前 08-failure-saving](images/comparison/08-failure-saving-before.png)
+
+**変更後**
+
+![変更後 08-failure-saving](images/comparison/08-failure-saving-after.png)
 
 **確認点**：失敗バナーを優先しても保存取消・通知許可を同じバナーに残し、写真権限操作は下段へ。
 
@@ -92,9 +125,13 @@ PR [#387](https://github.com/reitojike/cinematic-camera/pull/387) の表示確�
 
 ## 09. 取り込みの説明
 
-**変更前：未取得**
+**変更前**
 
-**変更後：未取得**
+![変更前 09-import-explanation](images/comparison/09-import-explanation-before.png)
+
+**変更後**
+
+![変更後 09-import-explanation](images/comparison/09-import-explanation-after.png)
 
 **確認点**：丸い既定AlertDialogから、共通CaptureDialogとINLINE説明へ。
 
@@ -102,9 +139,13 @@ PR [#387](https://github.com/reitojike/cinematic-camera/pull/387) の表示確�
 
 ## 10. 取り込みの受付確認中
 
-**変更前：未取得**
+**変更前**
 
-**変更後：未取得**
+![変更前 10-import-awaiting](images/comparison/10-import-awaiting-before.png)
+
+**変更後**
+
+![変更後 10-import-awaiting](images/comparison/10-import-awaiting-after.png)
 
 **確認点**：WARNINGのINLINE。取り込み取消の条件は変更しない。
 
@@ -112,9 +153,13 @@ PR [#387](https://github.com/reitojike/cinematic-camera/pull/387) の表示確�
 
 ## 11. 取り込み処理中
 
-**変更前：未取得**
+**変更前**
 
-**変更後：未取得**
+![変更前 11-import-progress](images/comparison/11-import-progress-before.png)
+
+**変更後**
+
+![変更後 11-import-progress](images/comparison/11-import-progress-after.png)
 
 **確認点**：進行表示をAmber/Lineへ、結果表示をWARNINGのINLINEへ。
 
@@ -122,9 +167,13 @@ PR [#387](https://github.com/reitojike/cinematic-camera/pull/387) の表示確�
 
 ## 12. 取り込み先の状態を確認できない
 
-**変更前：未取得**
+**変更前**
 
-**変更後：未取得**
+![変更前 12-import-failure](images/comparison/12-import-failure-before.png)
+
+**変更後**
+
+![変更後 12-import-failure](images/comparison/12-import-failure-after.png)
 
 **確認点**：FAILUREのINLINEへ。追加コピーしない条件は変更しない。
 
@@ -132,9 +181,13 @@ PR [#387](https://github.com/reitojike/cinematic-camera/pull/387) の表示確�
 
 ## 13. 取り込み完了
 
-**変更前：未取得**
+**変更前**
 
-**変更後：未取得**
+![変更前 13-import-complete](images/comparison/13-import-complete-before.png)
+
+**変更後**
+
+![変更後 13-import-complete](images/comparison/13-import-complete-after.png)
 
 **確認点**：完了結果をACCEPTEDのINLINEへ。
 
@@ -142,9 +195,13 @@ PR [#387](https://github.com/reitojike/cinematic-camera/pull/387) の表示確�
 
 ## 14. 取り込み完了・権限解放待ち
 
-**変更前：未取得**
+**変更前**
 
-**変更後：未取得**
+![変更前 14-import-grant](images/comparison/14-import-grant-before.png)
+
+**変更後**
+
+![変更後 14-import-grant](images/comparison/14-import-grant-after.png)
 
 **確認点**：項目ラベルへ状態を追加。編集・権限解放の条件は変更しない。
 

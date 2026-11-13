@@ -6,6 +6,7 @@ import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inspector.WindowInspector
 import androidx.compose.foundation.layout.*
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
@@ -73,7 +74,7 @@ class LibraryComparisonAndroidTest {
         }
     }
     @Composable private fun Render(scene: Scene, before: Boolean) {
-        CaptureTheme {
+        CaptureTheme { Surface(Modifier.fillMaxSize()) {
             if (scene.import != null) {
                 if (before) LegacyImportDialog(scene.import, awaitingSelection = scene.awaiting)
                 else ImportDialogView(scene.import, null, scene.awaiting, false, true, {}, {}, {}, {}, {}, {})
@@ -99,6 +100,7 @@ class LibraryComparisonAndroidTest {
             }
         }
     }
+    }
     @Test fun pairedMainAndPrDisplayStates() {
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
         val save = ForegroundSaveMessageState(true, true, false, false, true, false, true)
@@ -116,11 +118,14 @@ class LibraryComparisonAndroidTest {
             Scene("13-import-complete", full, import = DngImportScreenState(message = "取り込みが完了しました", messageKind = DngImportMessageKind.ACCEPTED)),
             Scene("14-import-grant", full, import = DngImportScreenState(items = listOf(DngImportItem("synthetic", true, false, true)))),
         )
-        val current = mutableStateOf(scenes.first())
+        val requested = InstrumentationRegistry.getArguments().getString("comparisonScenes")?.split(",")?.toSet()
+        val selected = scenes.filter { requested == null || it.name in requested }
+        check(selected.isNotEmpty())
+        val current = mutableStateOf(selected.first())
         val before = mutableStateOf(true)
         fixture.content = { key(current.value.name, before.value) { Render(current.value, before.value) } }
         ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
-            for (scene in scenes) for (old in listOf(true, false)) {
+            for (scene in selected) for (old in listOf(true, false)) {
                 scenario.onActivity { current.value = scene; before.value = old }
                 await(if (scene.import != null) {
                     if (old) "64MiB以下のDNGを共有フォルダへ変更せずコピーします。完了するまでSDを抜かないでください。選択元は変更しません。"
