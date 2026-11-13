@@ -33,7 +33,7 @@ class CameraRollBrowserAndroidTest {
     private val emptyText = "該当する項目がありません。アクセス許可・絞り込みを確認するか、FilesでDNGを開いてください。"
     private data class Fixture(val access: CameraRollAccess, val loading: Boolean = false,
         val items: List<PhotoRollItem> = emptyList(), val permission: Boolean = true,
-        val files: Boolean = true, val width: Int = 412, val height: Int = 924, val fontScale: Float = 1f, val notice: String? = null, val save: List<UiMessage> = emptyList(), val saveAction: (MessageAction) -> Unit = {})
+        val files: Boolean = true, val width: Int = 412, val height: Int = 924, val fontScale: Float = 1f, val notice: String? = null, val save: List<UiMessage> = emptyList(), val saveAction: (MessageAction) -> Unit = {}, val enabled: Boolean = false, val settingsAction: () -> Unit = {})
 
     private fun find(text: String): AccessibilityNodeInfo? {
         fun visit(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
@@ -100,8 +100,8 @@ class CameraRollBrowserAndroidTest {
                         CaptureTheme {
                             CameraRollBrowser(PhotoRollListing(fixture.items), fixture.access, PhotoRollKindFilter.ALL,
                                 null, fixture.loading, false, fixture.notice, PhotoRollPreviewMode.MANUAL_TRIAL,
-                                false, false, fixture.permission, fixture.files, false, {}, {}, {}, {}, {},
-                                { permissions++ }, {}, { files++ }, {},
+                                fixture.enabled, false, fixture.permission, fixture.files, false, {}, {}, {}, {}, {},
+                                { permissions++ }, fixture.settingsAction, { files++ }, {},
                                 Modifier.size(fixture.width.dp, fixture.height.dp), saveMessages = fixture.save, saveAction = fixture.saveAction, select = {})
                         }
                     }
@@ -195,6 +195,33 @@ class CameraRollBrowserAndroidTest {
         assertNull(find("JPEGを保存中です。アプリを離れても続きます。"))
         assertNull(find("選択した写真・動画だけにアクセスできます"))
         capture("message-failure-priority")
+    }
+
+    @Test fun partialAccessActionsRemainReachableWhenOtherBannersWin() = runFixture(Fixture(selected)) { _, update, counts ->
+        val item = PhotoRollItem("content://synthetic/item", "SYNTHETIC.dng")
+        val base = ForegroundSaveMessageState(true, false, false, false, true, false, true)
+        var settings = 0
+        for (saving in listOf(base, base.copy(active = true), base.copy(active = true, stopping = true), base.copy(active = true, held = true))) {
+            for (notice in listOf(null, "合成の一覧失敗")) {
+                val before = counts().first
+                val beforeSettings = settings
+                val fixture = Fixture(selected, items = listOf(item), enabled = true, notice = notice,
+                    save = foregroundSaveMessages(saving), settingsAction = { settings++ })
+                update(fixture)
+                assertTrue(await("選び直す", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+                assertTrue(await("設定", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+                instrumentation.waitForIdleSync()
+                assertEquals(before + 1, counts().first)
+                assertEquals(beforeSettings + 1, settings)
+                if (!saving.active && notice == null) capture("partial-notifications-off-actions")
+                update(fixture.copy(permission = false, enabled = false))
+                await("選び直す", false).performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                await("設定", false).performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                instrumentation.waitForIdleSync()
+                assertEquals(before + 1, counts().first)
+                assertEquals(beforeSettings + 1, settings)
+            }
+        }
     }
 
 }

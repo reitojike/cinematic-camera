@@ -58,4 +58,24 @@ class LibraryMessagesTest {
         assertNull(libraryMessages(access.copy(images = true, videos = true), null, null,
             false, true, true, true).banner)
     }
+    @Test fun accessActionsSurviveEveryHigherPriorityBannerAndPreserveEnabledFlags() {
+        val saves = listOf(save.copy(active = false), save, save.copy(stopping = true), save.copy(held = true))
+        val accesses = listOf(access, access.copy(images = true), access.copy(videos = true), access.copy(selected = false))
+        for (partial in accesses) for (saving in saves) for (notice in listOf(null, "一覧を開けませんでした")) {
+            for (empty in listOf(false, true)) for (permission in listOf(false, true)) for (settings in listOf(false, true)) {
+                val result = libraryMessages(partial, notice, null, empty, permission, true, settings,
+                    foregroundSaveMessages(saving))
+                val fallback = libraryAccessActions(partial, permission, settings, result.banner?.fact)
+                val visible = listOfNotNull(result.banner?.primary, result.banner?.secondary) + fallback
+                assertEquals(permission, visible.single { it.action == MessageAction.CHOOSE_AGAIN }.enabled)
+                assertEquals(settings, visible.single { it.action == MessageAction.OPEN_SETTINGS }.enabled)
+            }
+        }
+    }
+
+    @Test fun accessFallbackDoesNotDuplicateVisibleAccessBannerOrInventFullAccessActions() {
+        assertTrue(libraryAccessActions(access, true, true, "library.access_limited").isEmpty())
+        assertTrue(libraryAccessActions(access.copy(images = true, videos = true), true, true, "library.failure").isEmpty())
+    }
+
 }

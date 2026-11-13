@@ -27,6 +27,7 @@ internal fun CameraRollBrowser(listing: PhotoRollListing, access: CameraRollAcce
     saveAction: (MessageAction) -> Unit = {}, importEntry: (@Composable () -> Unit)? = null, select: (PhotoRollItem) -> Unit) {
     val messages = libraryMessages(access, notice, listing.message, !loading && listing.items.isEmpty(),
         permissionEnabled, filesEnabled, enabled, saveMessages)
+    val accessActions = libraryAccessActions(access, permissionEnabled, enabled, messages.banner?.fact)
     val onMessageAction: (MessageAction) -> Unit = { action ->
         when (action) {
             MessageAction.GRANT_ACCESS, MessageAction.CHOOSE_AGAIN -> permission()
@@ -112,6 +113,7 @@ internal fun CameraRollBrowser(listing: PhotoRollListing, access: CameraRollAcce
             FlowRow {
                 CaptureTextAction(MessageControl(MessageAction.OPEN_FILES, "Filesで開く", filesEnabled), onMessageAction)
                 importEntry?.invoke()
+                accessActions.forEach { CaptureTextAction(it, onMessageAction) }
             }
         }
     }

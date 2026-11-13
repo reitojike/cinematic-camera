@@ -47,6 +47,16 @@ internal fun foregroundSaveMessages(state: ForegroundSaveMessageState, activeOnl
     return candidates
 }
 
+/** Access actions remain available when another fact wins the single banner slot. */
+internal fun libraryAccessActions(access: CameraRollAccess, permissionEnabled: Boolean,
+    settingsEnabled: Boolean, shownBannerFact: String? = null): List<MessageControl> {
+    if ((access.images && access.videos) || shownBannerFact == "library.access_limited") return emptyList()
+    return listOf(
+        MessageControl(MessageAction.CHOOSE_AGAIN, if (access.selected) "選び直す" else "アクセス許可・選び直す", permissionEnabled),
+        MessageControl(MessageAction.OPEN_SETTINGS, "設定", settingsEnabled),
+    )
+}
+
 /** Display-only library inputs. Loading, selection and permission authority remain with the caller. */
 internal fun libraryMessages(
     access: CameraRollAccess,
@@ -71,9 +81,8 @@ internal fun libraryMessages(
         if (access.selected && !access.images && !access.videos) "選択した写真・動画だけにアクセスできます"
         else access.description,
         "library.access_limited",
-        primary = MessageControl(MessageAction.CHOOSE_AGAIN,
-            if (access.selected) "選び直す" else "アクセス許可・選び直す", permissionEnabled),
-        secondary = MessageControl(MessageAction.OPEN_SETTINGS, "設定", settingsEnabled),
+        primary = libraryAccessActions(access, permissionEnabled, settingsEnabled)[0],
+        secondary = libraryAccessActions(access, permissionEnabled, settingsEnabled)[1],
     ))
     listingMessage?.takeIf { it.isNotBlank() }?.let {
         add(UiMessage(MessageSlot.INLINE, CaptureChromeTone.NORMAL, it, "library.listing_note"))
