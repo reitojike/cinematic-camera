@@ -94,7 +94,7 @@ import kotlinx.coroutines.flow.StateFlow
                 awaitGpuInputReadiness(publications, session.renderer.surfaceAttached, deadline) {
                     val admitted = CompletableDeferred<GpuInputAdmissionResult>()
                     loading = async(Dispatchers.IO) {
-                        runCatching {
+                        gpuPhotoRollInputResult {
                             renderer.openGpu(repository, Uri.parse(source), fromFiles, cancellation, deadline,
                                 { admitted.complete(GpuInputAdmissionResult(it)) }) { original ->
                                 if (restore) recipes.read(original.reference) ?: PhotoAdjustmentPolicy.defaults
@@ -144,6 +144,10 @@ import kotlinx.coroutines.flow.StateFlow
             }
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (failure: Exception) { currentCoroutineContext().ensureActive(); error = failure }
+        catch (failure: OutOfMemoryError) {
+            currentCoroutineContext().ensureActive()
+            error = dev.cinematic.p0.jpegrender.original.Original24MemoryUnavailable(failure)
+        }
     }
     val failure by session?.failure?.collectAsState() ?: remember { mutableStateOf<Throwable?>(null) }
     val presented by session?.presented?.collectAsState() ?: remember { mutableStateOf<PhotoEditValues?>(null) }
@@ -203,18 +207,7 @@ import kotlinx.coroutines.flow.StateFlow
         ready || exportPaused -> PhotoRollPhase.DISPLAYED
         else -> PhotoRollPhase.CHECKING
     }
-    val problemMessage = when (problem) {
-        null -> notice
-        is GpuInputReadinessTimeout -> when (problem.reason) {
-            GpuInputWaitReason.CAMERA_IN_USE -> "カメラが使用中のため読み込めません。再試行してください"
-            GpuInputWaitReason.CAMERA_UNKNOWN -> "カメラの状態を確認できません。再試行してください"
-            GpuInputWaitReason.OTHER_PREPARATION -> "入力の準備を確認できません。再試行してください"
-        }
-        is PhotoRollSourceFailure -> problem.userMessage
-        is dev.cinematic.p0.rawcapture.DngContentChanged -> "原本の内容が変わりました。Filesから選び直してください"
-        is SecurityException -> "原本の読み取り権限がありません。Filesから選び直してください"
-        else -> gpuFailure?.reason ?: "現像を完了できません。原本は変更していません。再試行してください"
-    }
+    val problemMessage = gpuPhotoRollProblemMessage(problem, notice)
     val canSave = foreground && !saving && !savingRecipe && editor.session == null && save != null &&
         ((ready && presented == editor.requestedValues && editor.displayedValues == editor.requestedValues) ||
             (exportPaused && gpuSaveCanContinueWithoutPreview(saveState?.phase))) &&
