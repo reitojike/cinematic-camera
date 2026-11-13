@@ -1,6 +1,6 @@
 # #377 合成 Android process-death 試験の実行待ち手順
 
-**準備のみ。資源枠の許可前は実行しない。** #260 の計測版予行を優先する。
+**追加受入 R1〜R4 は準備のみ。資源枠の許可前は実行しない。** #260 の計測版予行を優先する。
 この手順は実機を使用せず、#377 完了・配布 gate 達成を意味しない。
 
 ## 対象と証拠の区別
@@ -82,7 +82,7 @@ UI suite は intent と b-cursor について各 `ui`（cold/recheckのみ）と
 
 ## 時間・資源・停止条件
 
-- 境界18ケース: 初回見積り10〜20分。UI/FGS4ケース: 5〜10分。実行値未計測。
+- 既存境界18＋UI/FGS4はhead `15d4c89` で初回22/22 PASS（境界104.9秒、UI/FGS125.1秒、setup別）。後続headの実行結果には転用しない。
 - ローカル build が必要なら追加3〜5分。AVD起動/インストール時間は別枠。
 - AVD 1台と instrumentation は専有、他レーンの adb / Gradle / Pixel 計測と並行しない。
 - 既存 `SaveRecoveryFactoryAndroidTest` 2件は約5分の別枠。新process/UIに重複しない単体境界確認用。
@@ -93,4 +93,38 @@ UI suite は intent と b-cursor について各 `ui`（cold/recheckのみ）と
 
 全 fixture は source/output/history を残す。私的ログには合成 URI/PID があり、公開せず
 `summary.json` の boundary/mode/PASS/秒数だけを報告する。端末識別子・実写真を扱わない。
-未検証はこの全手順の実行、通知からの取消、実機LMK。#377全体／配布gate未達を維持する。
+未検証は追加受入R1〜R4、通知からの取消、実機LMK。後二者を今回の一律必須gateにはしない。#377全体／配布gate未達を維持する。
+
+
+## 追加受入 R1〜R4（実装準備、Android未実行）
+
+既存 UNKNOWN seed を作成して host force-stop → 新PID → 通常 PhotoRollActivity/Compose →
+factory/owner の経路を通す。UNKNOWN の作成自体は合成seedであり、実writerがUNKNOWNへ至るkill試験ではない。
+再開側は ReconciledJpegPublication や publisher を直接呼ばない。
+
+| 条件 | fixture/操作 | 主な観測 |
+| --- | --- | --- |
+| R1 | unknown-complete / ui、cold-open後「もう一度確認」 | UI公開確認、同一URI/target/hash、旧UNKNOWN/intent/原本保持、旧attempt/outputなし、capture全行数不変 |
+| R2 | unknown-public / ui、同じ再確認操作 | 公開成功復元とUI操作復帰、同一URI、旧履歴保持、再生成/新行なし |
+| R3 | unknown-partial / fgs、再確認保留→「重複の可能性はあるが保存し直す」 | 通常FGS観測、新世代のみ1行追加、旧pending属性/bytes/journal/intentと原本保持、固定設定/key/consent、旧owner開始拒否、資源解放 |
+| R4 | 既存 SaveRecoveryFactoryAndroidTest#durablePublicReceiptBeforeSeedRejectsSeparateRequest | 公開receiptあり・seedなしで案B拒否、consent/seed未生成、原本保持 |
+
+R1〜R3はcold-openの1.5秒無操作期間にも履歴/原本/行集合を照合する。R3のUI操作は1回であり、
+その完了後に旧handleから受付APIを2回投入して同じhandle/keyを得ること、旧開始拒否と新要求の終端再確認で
+新行が増えないことを検証する。「UI二重タップを実施した」とは扱わない。
+R4は既存の純粋factory境界を再利用し、旧intent/journal/receipt不変・旧index維持・新intent不在・資源解放のassertを補強する。新PID/UIや実writer killの証拠に数えない。
+原本hash・旧UNKNOWN/intentは各操作後、旧行はpending/public属性と全byte、出力数はこの合成capture全世代の
+MediaStore行（pending/trashedを含む）を検査する。private output/attemptの不在はproducer未開始の観測であり、
+公開結果の未存在推定には使用しない。
+
+```powershell
+# 準備時dry-run: adb呼出しなし
+python -B tools/save_recovery/run_restart_cases.py --suite acceptance
+
+# 以下は親の枠許可と同head APK導入後のみ。AVD専有5〜10分、必要build追加3〜5分。
+python -u -B tools/save_recovery/run_restart_cases.py --execute --serial $recoverySerial --suite acceptance --output ../recovery-private-results
+adb -s $recoverySerial shell am instrument -w -r -e isolated true -e saveRecovery true -e class dev.cinematic.p0.rawcapture.SaveRecoveryFactoryAndroidTest#durablePublicReceiptBeforeSeedRejectsSeparateRequest dev.cinematic.p0.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+R4は `OK (1 test)` とskipなしを確認して私的ログへ保全する。R1〜R3は既存runnerの新PID/JUnit/receipt照合を使う。
+失敗は初回証拠を保持して原因を調べ、盲目再実行・skip・期待値緩和はしない。

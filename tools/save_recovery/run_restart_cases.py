@@ -25,10 +25,12 @@ def run_cases(args):
     cases = [(b, "backend") for b in BOUNDARIES] if args.suite == "boundaries" else [
         (b, mode) for b in ("intent", "b-cursor") for mode in ("ui", "fgs")
     ]
+    if args.suite == "acceptance":
+        cases = [("unknown-complete", "ui"), ("unknown-public", "ui"), ("unknown-partial", "fgs")]
     if args.boundary:
         cases = [(args.boundary, args.resume)]
-    if any(mode != "backend" and b not in ("intent", "b-cursor") for b, mode in cases):
-        raise ValueError("UI/FGS probes support intent and b-cursor only")
+    if any(mode != "backend" and b not in ("intent", "b-cursor", "unknown-complete", "unknown-public", "unknown-partial") for b, mode in cases):
+        raise ValueError("Unsupported UI/FGS boundary")
     if not args.execute:
         print(json.dumps({"execute": False, "cases": cases, "resources": "one reserved emulator; no build/install"}, indent=2))
         return
@@ -108,7 +110,7 @@ if __name__ == "__main__":
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--adb", default="adb")
     parser.add_argument("--serial")
-    parser.add_argument("--suite", choices=("boundaries", "ui"), default="boundaries")
+    parser.add_argument("--suite", choices=("boundaries", "ui", "acceptance"), default="boundaries")
     parser.add_argument("--boundary", choices=BOUNDARIES)
     parser.add_argument("--resume", choices=("backend", "ui", "fgs"), default="backend")
     parser.add_argument("--output", default="save-recovery-private-results")

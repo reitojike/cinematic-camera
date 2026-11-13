@@ -69,7 +69,15 @@ class SaveRecoveryFactoryAndroidTest {
         storage(request, CaptureJournalFile.JPEG_PUBLICATION).replace(JpegPublicationCodec.encode(record))
         JpegReconciliationReceipt(storage(request, CaptureJournalFile.JPEG_RECONCILIATION)).commit(
             JpegReconciliationObservation(record, JpegReconciliationFinding.PUBLIC_BYTES_MATCH, record.uri)) {}
+        val oldIntent = storage(request, CaptureJournalFile.MANUAL_REQUEST).read(ManualOriginalTrialRequestCodec.MAX_BYTES)
+        val oldReceipt = storage(request, CaptureJournalFile.JPEG_RECONCILIATION).read(SaveRecoveryCodec.MAX_BYTES)
         assertThrows(ExecutionException::class.java) { old.requestExplicitRecovery { false }.get(30, TimeUnit.SECONDS) }
+        assertSame(old, AndroidManualOriginalTrialSaves.knownPrepared(request.source))
+        assertArrayEquals(oldIntent, storage(request, CaptureJournalFile.MANUAL_REQUEST).read(ManualOriginalTrialRequestCodec.MAX_BYTES))
+        assertArrayEquals(JpegPublicationCodec.encode(record), storage(request, CaptureJournalFile.JPEG_PUBLICATION).read(JpegPublicationCodec.MAX_BYTES))
+        assertArrayEquals(oldReceipt, storage(request, CaptureJournalFile.JPEG_RECONCILIATION).read(SaveRecoveryCodec.MAX_BYTES))
+        assertNull(storage(request.copy(generation = request.generation + 1), CaptureJournalFile.MANUAL_REQUEST).read(ManualOriginalTrialRequestCodec.MAX_BYTES))
+        assertFalse(old.hasUnreleasedResources)
         assertNull(storage(request, CaptureJournalFile.EXPLICIT_RECOVERY_EXPORT).read(SaveRecoveryCodec.MAX_BYTES))
         assertNull(storage(request, CaptureJournalFile.JPEG_RECOVERY).read(JpegPublicationCodec.MAX_BYTES))
         verifyOriginal(request)

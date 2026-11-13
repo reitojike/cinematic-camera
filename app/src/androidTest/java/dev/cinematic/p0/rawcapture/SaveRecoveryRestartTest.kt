@@ -179,7 +179,8 @@ class SaveRecoveryRestartTest {
         verifyOriginal(request)
         DevelopExecution.updateConditions(allowed)
         val mode = args.getString("recoveryResume") ?: "backend"
-        if (kind.startsWith("b-") || kind in setOf("intent", "private")) {
+        if (kind.startsWith("b-") || kind in setOf("intent", "private") ||
+            (kind.startsWith("unknown-") && mode != "backend")) {
             if (mode == "ui" || mode == "fgs") {
                 SaveRecoveryColdUiProbe.check(app, request, File(d, "name.txt").readText(),
                     kind, publishExplicitly = mode == "fgs")
