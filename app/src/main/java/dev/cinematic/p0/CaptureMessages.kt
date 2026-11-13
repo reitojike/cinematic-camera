@@ -133,6 +133,11 @@ internal fun screenMessages(
 internal fun UiMessage.isFailurePresentation(): Boolean = slot == MessageSlot.PROBLEM ||
     (slot == MessageSlot.BANNER && tone == CaptureChromeTone.FAILURE)
 
+/** Classify the supplied fact, not the renderer a buggy caller selected. */
+internal fun failureFallbackFor(message: UiMessage, fallback: UiMessage?,
+    strict: Boolean = BuildConfig.DEBUG, report: (String) -> Unit = ::reportMessageContract): UiMessage? =
+    if (message.isFailurePresentation()) checkedFailureFallback(fallback, strict, report) else null
+
 /** The screen owns allowed actions and their enabled conditions; shared drawing never invents them. */
 internal fun checkedFailureFallback(fallback: UiMessage?, strict: Boolean = BuildConfig.DEBUG,
     report: (String) -> Unit = ::reportMessageContract): UiMessage? {
@@ -204,8 +209,7 @@ internal fun CaptureBanner(message: UiMessage, onAction: (MessageAction) -> Unit
     modifier: Modifier = Modifier, inSheet: Boolean = false, failureFallback: UiMessage? = null) {
     if (!messageContract(message.isValid() && message.slot == MessageSlot.BANNER,
         "invalid_banner_renderer", BuildConfig.DEBUG, ::reportMessageContract)) {
-        if (message.tone == CaptureChromeTone.FAILURE || message.slot == MessageSlot.PROBLEM)
-            checkedFailureFallback(failureFallback)?.let { CaptureProblem(it, onAction, modifier) }
+        failureFallbackFor(message, failureFallback)?.let { CaptureProblem(it, onAction, modifier) }
         return
     }
     Row(modifier.semantics { liveRegion = LiveRegionMode.Polite }
@@ -224,7 +228,7 @@ internal fun CaptureProblem(message: UiMessage, onAction: (MessageAction) -> Uni
     modifier: Modifier = Modifier, failureFallback: UiMessage? = null) {
     if (!messageContract(message.isValid() && message.slot == MessageSlot.PROBLEM,
         "invalid_problem_renderer", BuildConfig.DEBUG, ::reportMessageContract)) {
-        checkedFailureFallback(failureFallback)?.let { CaptureProblem(it, onAction, modifier) }
+        failureFallbackFor(message, failureFallback)?.let { CaptureProblem(it, onAction, modifier) }
         return
     }
     Column(modifier.semantics { liveRegion = LiveRegionMode.Polite }
