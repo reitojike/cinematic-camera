@@ -46,6 +46,7 @@ import kotlinx.coroutines.flow.StateFlow
     var save by remember { mutableStateOf<PhotoRollJpegSaveOwner?>(null) }
     var saveState by remember { mutableStateOf<PhotoRollSaveSnapshot?>(null) }
     var metadataRestored by remember { mutableStateOf(false) }
+    var recoveryChoices by remember { mutableStateOf(false) }
     val active = foreground && !trimBlocked
     val session = remember(source, retry, active) {
         if (active && !exportPaused) createSession(context.assets) else null
@@ -75,7 +76,7 @@ import kotlinx.coroutines.flow.StateFlow
         try {
             // Reopening A while its own FGS owns it must not bypass the explicit resume contract.
             renderer.activeGpuSave(source)?.let { retained ->
-                save = retained.save; saveState = retained.save.snapshot; exportPaused = true
+                save = retained.save; saveState = retained.save.snapshot; exportPaused = true; metadataRestored = true
                 savedStrength = retained.values.strength
                 savedWarmth = retained.values.temperature ?: 0.0
                 savedExposure = retained.values.brightness ?: 0.0
@@ -132,10 +133,15 @@ import kotlinx.coroutines.flow.StateFlow
                 savedExposure = loaded.values.brightness ?: 0.0
                 editor = checkNotNull(TrialStrengthEditor.empty(loaded.values).bind(loaded.original.reference))
                 loaded.retainedSave?.takeIf { gpuSaveMustPauseLoadedPreview(it.snapshot.phase) }?.let { retained ->
-                    if (retained.appliedStrength != loaded.values.strength ||
-                        retained.appliedAdjustments != PhotoAdjustmentPolicy.adjustments(loaded.values))
+                    if (retained.snapshot.phase !in setOf(PhotoRollSavePhase.HOLD, PhotoRollSavePhase.UNCONFIRMED) &&
+                        (retained.appliedStrength != loaded.values.strength ||
+                        retained.appliedAdjustments != PhotoAdjustmentPolicy.adjustments(loaded.values)))
                         throw PhotoRollSourceFailure("前の保存が未確定です。保存状態を確認してください")
-                    save = retained; saveState = retained.snapshot; exportPaused = true
+                    save = retained; saveState = retained.snapshot; exportPaused = true; metadataRestored = true
+                    val adjustments = requireNotNull(retained.appliedAdjustments)
+                    val values = PhotoEditValues(requireNotNull(retained.appliedStrength), adjustments.warmth, adjustments.exposureEv)
+                    savedStrength = values.strength; savedWarmth = values.temperature ?: 0.0; savedExposure = values.brightness ?: 0.0
+                    editor = checkNotNull(TrialStrengthEditor.empty(values).bind(loaded.original.reference))
                     session.close()
                     withContext(Dispatchers.IO) { GpuPhotoRollRetiredOwners.releaseBeforeOpen() }
                     return@coroutineScope
@@ -165,11 +171,12 @@ import kotlinx.coroutines.flow.StateFlow
             ensureActive()
             if (restored != null) {
                 if (gpuSaveMustPauseLoadedPreview(restored.snapshot.phase) &&
+                    restored.snapshot.phase !in setOf(PhotoRollSavePhase.HOLD, PhotoRollSavePhase.UNCONFIRMED) &&
                     (restored.appliedStrength != loaded.values.strength ||
                         restored.appliedAdjustments != PhotoAdjustmentPolicy.adjustments(loaded.values)))
                     throw PhotoRollSourceFailure("前の保存が未確定です。保存状態を確認してください")
                 save = restored; saveState = restored.snapshot
-                if (restored.snapshot.phase == PhotoRollSavePhase.CANCELLED) {
+                if (restored.snapshot.phase in setOf(PhotoRollSavePhase.CANCELLED, PhotoRollSavePhase.HOLD, PhotoRollSavePhase.UNCONFIRMED)) {
                     val adjustments = requireNotNull(restored.appliedAdjustments)
                     val values = PhotoEditValues(requireNotNull(restored.appliedStrength), adjustments.warmth,
                         adjustments.exposureEv)
@@ -259,6 +266,52 @@ import kotlinx.coroutines.flow.StateFlow
         "保存を取り消しました。同じ設定で再試行するか、プレビューを再開して設定を変更できます" else saveState?.gpuFailure?.description
     val visibleMessage = saveMessage ?: problemMessage ?: if (exportPaused)
         "保存のため GPU プレビューを終了しました。保存後にプレビューを再開できます" else null
+    if (recoveryChoices) androidx.compose.material3.AlertDialog(
+        onDismissRequest = { if (!saving) recoveryChoices = false },
+        title = { Text("前回の保存結果を確認できません") },
+        text = { Text("保存先に JPEG がある可能性があります。保存し直す場合は、前回と同じ設定で別の JPEG を作ります。原本と前回の記録は保持します。") },
+        confirmButton = {
+            TextButton(enabled = foreground && !saving && !savingRecipe, onClick = {
+                val old = save ?: return@TextButton
+                recoveryChoices = false; saving = true
+                scope.launch {
+                    try {
+                        exportPaused = true
+                        session?.close()
+                        withContext(Dispatchers.IO) { GpuPhotoRollRetiredOwners.releaseBeforeOpen() }
+                        val next = withContext(Dispatchers.IO) { old.requestExplicitRecovery { cancellation.isCanceled } }
+                            ?: throw PhotoRollSourceFailure("この保存は再書き出しできません")
+                        ensureActive(); cancellation.throwIfCanceled()
+                        if (save !== old) return@launch
+                        save = next; saveState = next.snapshot
+                        next.startForegroundSave(context)
+                    } catch (cancelled: CancellationException) { throw cancelled }
+                    catch (failure: Exception) { notice = "再書き出しの受付を確認できません。前回の記録を保留しています" }
+                    finally { saving = false }
+                }
+            }) { Text("重複の可能性はあるが保存し直す") }
+        },
+        dismissButton = {
+            Column {
+                TextButton(enabled = foreground && !saving && !savingRecipe, onClick = {
+                    val old = save ?: return@TextButton
+                    recoveryChoices = false; saving = true
+                    scope.launch {
+                        try {
+                            exportPaused = true; session?.close()
+                            withContext(Dispatchers.IO) { GpuPhotoRollRetiredOwners.releaseBeforeOpen() }
+                            val result = withContext(Dispatchers.IO) { old.advance { cancellation.isCanceled } }
+                            ensureActive()
+                            if (save === old) saveState = result
+                        } catch (cancelled: CancellationException) { throw cancelled }
+                        catch (_: Exception) { notice = "保存結果を確認できません。保留を維持します" }
+                        finally { saving = false }
+                    }
+                }) { Text("もう一度確認") }
+                TextButton(enabled = !saving, onClick = { recoveryChoices = false }) { Text("今は保存しない") }
+            }
+        },
+    )
     PhotoRollDevelopView(name, PhotoRollPreviewMode.MANUAL_TRIAL, editor, { editor }, phase,
         stage = null, message = visibleMessage, preview = null, comparison = null, comparisonLabel = null,
         foreground = foreground && !savingRecipe, savePhase = saveState?.phase, savePending = saving || savingRecipe,
@@ -327,6 +380,11 @@ import kotlinx.coroutines.flow.StateFlow
         modifier = modifier,
         statusOverlay = {
             ForegroundSaveNotice(save, foreground, activeOnly = true)
+            if (metadataRestored && saveState?.phase in setOf(PhotoRollSavePhase.HOLD, PhotoRollSavePhase.UNCONFIRMED)) {
+                Text(saveState?.recoveryMessage ?: "前回の保存結果を確認できません。保存先に JPEG がある可能性があります。")
+                TextButton(enabled = foreground && !saving && !savingRecipe && save?.canCancelForegroundSave != true,
+                    onClick = { recoveryChoices = true }) { Text("保存結果を確認・保存し直す") }
+            }
             if (exportPaused) {
                 Text(saveMessage ?: "保存用に GPU プレビューを終了しました")
                 if (saveState?.phase in setOf(PhotoRollSavePhase.GPU_FAILED, PhotoRollSavePhase.CANCELLED))

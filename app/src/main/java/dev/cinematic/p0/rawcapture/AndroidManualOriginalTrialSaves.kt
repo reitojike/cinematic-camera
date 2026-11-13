@@ -129,6 +129,8 @@ internal object AndroidManualOriginalTrialSaves {
         private val id = ManualOriginalTrialRequests.identity(source)
         private val root = File(app.noBackupFilesDir, "raw-captures")
         private val handles = mutableMapOf<Long, ManualOriginalTrialHandle>()
+        private val recoveryConsents = mutableMapOf<Long, ExplicitRecoveryExports>()
+        private val recoveryRendererContract = "GPU:${ManualOriginalTrialRender.CONTRACT.renderer}:${ManualTrialAttemptCodec.EXECUTION_VERSION}"
         private val preflightResources = DngIoResources()
         private var preflightFd: ParcelFileDescriptor? = null
         private var preflightSnapshot: File? = null
@@ -149,6 +151,19 @@ internal object AndroidManualOriginalTrialSaves {
         }
         private fun journal(request: Original24Request) = JpegPublicationJournal(id, request.generation,
             storage(request, CaptureJournalFile.JPEG_PUBLICATION))
+        private fun consent(request: Original24Request) = recoveryConsents.getOrPut(request.generation) {
+            ExplicitRecoveryExports(storage(request, CaptureJournalFile.EXPLICIT_RECOVERY_EXPORT))
+        }
+        private fun authoritative(request: Original24Request): Boolean {
+            if (currentRequest != request || preflightResources.hasOpenResources || !requests.isCurrent(request) || !consent(request).oldMayRun()) return false
+            if (request.generation > 1) {
+                val predecessor = consent(request.copy(generation = request.generation - 1))
+                predecessor.read()?.let {
+                    if (it.request != request || it.rendererContract != recoveryRendererContract || !predecessor.newMayRun(it)) return false
+                }
+            }
+            return true
+        }
         private fun attemptJournal(request: Original24Request) = if (app.packageName == "dev.cinematic.p0")
             ManualOriginalTrialAttemptJournal(request, storage(request, CaptureJournalFile.MANUAL_ATTEMPT),
                 storage(request, CaptureJournalFile.MANUAL_REQUEST)) else null
@@ -159,7 +174,7 @@ internal object AndroidManualOriginalTrialSaves {
             if (handle?.hasUnreleasedResources == true || handle?.state?.value?.phase in
                 setOf(ManualOriginalTrialSavePhase.HOLD, ManualOriginalTrialSavePhase.UNCONFIRMED,
                     ManualOriginalTrialSavePhase.SAVING, ManualOriginalTrialSavePhase.GPU_FAILED, ManualOriginalTrialSavePhase.CANCELLED)) return false
-            val publication = journal(previous).read()
+            val publication = handle?.backendPublication() ?: journal(previous).read()
             if (publication != null) return publication.phase == JpegPublicationPhase.PUBLISHED
             attemptJournal(previous)?.read()?.let { return it.phase == ManualTrialAttemptPhase.CANCELLED_CLEAN }
             return storage(previous, CaptureJournalFile.MANUAL_REQUEST).read(ManualOriginalTrialRequestCodec.MAX_BYTES) == null
@@ -175,14 +190,64 @@ internal object AndroidManualOriginalTrialSaves {
 
         private fun handle(queue: AutoDevelopQueue, request: Original24Request): ManualOriginalTrialHandle =
             handles.getOrPut(request.generation) {
-                val backend = Backend(app, request, requireNotNull(geometry), ::journal) { currentRequest == request }
+                val backend = Backend(app, request, requireNotNull(geometry), ::journal) { authoritative(request) }
                 val owner = ManualOriginalTrialSaveOwner(request, backend,
-                    storage(request, CaptureJournalFile.MANUAL_REQUEST), attemptJournal(request)) { currentRequest == request }
+                    storage(request, CaptureJournalFile.MANUAL_REQUEST), attemptJournal(request)) { authoritative(request) }
                 owner.restoreDurableState()
                 ManualOriginalTrialHandle(queue, owner, requireNotNull(geometry), backend) {
-                    currentRequest == request && requests.isCurrent(request)
-                }
+                    authoritative(request)
+                }.also { it.explicitRecovery = { stop -> recoverExplicitly(queue, request, stop) } }
             }
+
+        private fun recoverExplicitly(queue: AutoDevelopQueue, previous: Original24Request,
+            stop: () -> Boolean): ManualOriginalTrialHandle {
+            if (app.packageName != "dev.cinematic.p0") throw IOException("Recovery requires ordinary GPU save")
+            if (preflightResources.hasOpenResources) releasePreflight()
+            val old = handles[previous.generation] ?: throw CaptureJournalConflict()
+            if (!old.quiescentForRecovery()) throw IOException("Old save resources or slot remain held")
+            if (old.hasPublishedEvidence()) throw IOException("Published JPEG evidence must resume the same publication")
+            discardPreview()
+            val slot = consent(previous)
+            val saved = slot.read()
+            if (saved != null) {
+                if (saved.previous != previous) throw CaptureJournalConflict()
+                val intent = storage(previous, CaptureJournalFile.MANUAL_REQUEST).read(ManualOriginalTrialRequestCodec.MAX_BYTES)
+                    ?: throw CaptureJournalConflict()
+                if (SaveRecoveryCodec.digest(intent).joinToString("") { "%02x".format(it) } != saved.previousIntentSha256 ||
+                    !intent.contentEquals(ManualOriginalTrialRequestCodec.encode(previous)) ||
+                    old.backendPublication() != saved.previousPublication || saved.rendererContract != recoveryRendererContract)
+                    throw CaptureJournalConflict()
+                DngContentVerifier.verify(source.fingerprint, { preflightResources.input(readOriginal()) }, stop)
+                // Re-read a committed consent after lost acknowledgement. This does not allocate a new key.
+                slot.accept(saved) { if (stop() || !old.quiescentForRecovery() || preflightResources.hasOpenResources) throw CaptureJournalConflict() }
+                val installed = requests.installRecovery(saved) { slot.newMayRun(saved) && !stop() && old.quiescentForRecovery() }
+                currentRequest = installed
+                return handle(queue, installed).also { prepared = prepared + (source to it) }
+            }
+            if (!authoritative(previous)) throw CaptureJournalConflict()
+            val oldPublication = old.backendPublication()
+            if (oldPublication != null && oldPublication.phase != JpegPublicationPhase.UNKNOWN) throw CaptureJournalConflict()
+            if (old.state.value.phase !in setOf(ManualOriginalTrialSavePhase.HOLD, ManualOriginalTrialSavePhase.UNCONFIRMED))
+                throw CaptureJournalConflict()
+            val intentStorage = storage(previous, CaptureJournalFile.MANUAL_REQUEST)
+            val intent = intentStorage.read(ManualOriginalTrialRequestCodec.MAX_BYTES) ?: throw CaptureJournalConflict()
+            if (!intent.contentEquals(ManualOriginalTrialRequestCodec.encode(previous))) throw CaptureJournalConflict()
+            if (previous.generation == Long.MAX_VALUE) throw IOException("Recovery generation exhausted")
+            val value = ExplicitRecoveryExport(UUID.randomUUID().toString().replace("-", ""), previous,
+                SaveRecoveryCodec.digest(intent).joinToString("") { "%02x".format(it) }, oldPublication,
+                previous.copy(generation = previous.generation + 1), recoveryRendererContract)
+            DngContentVerifier.verify(source.fingerprint, { preflightResources.input(readOriginal()) }, stop)
+            slot.accept(value) {
+                if (stop() || currentRequest != previous || requests.current() != previous || !old.quiescentForRecovery() ||
+                    preflightResources.hasOpenResources || old.backendPublication() != oldPublication ||
+                    intentStorage.read(ManualOriginalTrialRequestCodec.MAX_BYTES)?.contentEquals(intent) != true)
+                    throw CaptureJournalConflict()
+            }
+            currentRequest = null // A cursor failure cannot leave the old owner authorized.
+            val installed = requests.installRecovery(value) { slot.newMayRun(value) && !stop() }
+            currentRequest = installed
+            return handle(queue, installed).also { prepared = prepared + (source to it) }
+        }
 
         fun prepare(queue: AutoDevelopQueue, strength: Double, adjustments: PhotoAdjustments,
             conditions: AutoDevelopConditions, stop: () -> Boolean,
@@ -335,10 +400,25 @@ internal object AndroidManualOriginalTrialSaves {
         @Volatile private var attempt: Original24Attempt? = null
         private var outputCleanupPending = false
         private var selectedEngine: DevelopEngine? = null
-        override val hasUnreleasedResources get() = attempt?.hasUnreleasedResources == true || outputCleanupPending
+        private val recoveryResources = DngIoResources()
+        private fun recoveryStorage(kind: CaptureJournalFile): AtomicJournalStorage {
+            val directory = RenderedJpegFiles(File(app.noBackupFilesDir, "raw-captures"), request.captureId, request.generation).generationRoot()
+            return AndroidAtomicJournalStorage(requireNotNull(directory.parentFile), request.generation.toString(), kind)
+        }
+        private val recoveryJournal = JpegPublicationJournal(request.captureId, request.generation, recoveryStorage(CaptureJournalFile.JPEG_RECOVERY))
+        private val reconciliation = ReconciledJpegPublication(journal(request), recoveryJournal,
+            JpegReconciliationReceipt(recoveryStorage(CaptureJournalFile.JPEG_RECONCILIATION)),
+            MediaStoreJpegRows(app), recoveryResources, isCurrent)
+        override val hasUnreleasedResources get() = attempt?.hasUnreleasedResources == true || outputCleanupPending || recoveryResources.hasOpenResources
         // The admitted coordinator owns the cancellation latch. Do not retain it across retries.
         fun requestStop() { attempt?.requestStop() }
-        override fun readPublication() = journal(request).read()
+        override fun readPublication() = reconciliation.read()
+        override val reconciliationFinding get() = reconciliation.lastFinding
+        fun hasPublishedEvidence() = reconciliation.hasPublishedEvidence()
+        override fun reconcilePublication(stop: () -> Boolean): JpegPublicationRecord? {
+            val old = readPublication() ?: return null
+            return reconciliation.reconcile(old.render, setOf(ManualOriginalTrialRender.CONTRACT), stop)
+        }
         override fun pinDurableGpuEngine() {
             check(app.packageName == "dev.cinematic.p0")
             val selected = selectedEngine ?: DevelopEngineSetting(app).beginExport().also { selectedEngine = it }
@@ -384,7 +464,8 @@ internal object AndroidManualOriginalTrialSaves {
             }
         }
         override fun publisher(render: ManualOriginalTrialRender): ManualOriginalTrialPublication {
-            val publisher = operation.publisher(render, setOf(ManualOriginalTrialRender.CONTRACT), isCurrent)
+            val publisher = operation.publisher(render, setOf(ManualOriginalTrialRender.CONTRACT), isCurrent,
+                recoveryJournal.takeIf { it.read() != null })
             return object : ManualOriginalTrialPublication {
                 override val hasUnreleasedResources get() = publisher.hasUnreleasedResources
                 override fun advance(stop: () -> Boolean) = try { publisher.advance(stop) }
@@ -404,6 +485,7 @@ internal object AndroidManualOriginalTrialSaves {
             return reported
         }
         override fun releaseResources() {
+            recoveryResources.releaseAll()?.let { throw it }
             attempt?.let { it.close(); check(!it.hasUnreleasedResources); attempt = null }
             if (outputCleanupPending) {
                 operation.discardFailedOutput()
@@ -425,6 +507,14 @@ internal object AndroidManualOriginalTrialSaves {
         val appliedAdjustments get() = request.adjustments
         fun matches(source: SharedOriginalReference) = owner.matches(source)
         val hasUnreleasedResources get() = owner.hasUnreleasedResources
+        internal var explicitRecovery: ((() -> Boolean) -> ManualOriginalTrialHandle)? = null
+        internal fun backendPublication() = backend.readPublication()
+        internal fun hasPublishedEvidence() = backend.hasPublishedEvidence()
+        internal fun quiescentForRecovery() = slot == null && !hasUnreleasedResources &&
+            state.value.phase != ManualOriginalTrialSavePhase.SAVING
+        fun requestExplicitRecovery(stop: () -> Boolean): CompletableFuture<ManualOriginalTrialHandle> = queue.manualOriginalIo {
+            requireNotNull(explicitRecovery).invoke(stop)
+        }
         @Volatile private var slot: AutoDevelopCoordinator.Attempt? = null // Written by IO; stop reads identity only.
         fun canSupersedeConfirmedCancellation() = slot == null && owner.canSupersedeConfirmedCancellation()
         fun advance(conditions: AutoDevelopConditions, retryGpuFailure: Boolean = false, retryCancellation: Boolean = false, stop: () -> Boolean): CompletableFuture<ManualOriginalTrialSaveState> =

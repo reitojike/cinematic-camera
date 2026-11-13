@@ -28,6 +28,19 @@
 - 通常GPUの新しい保存だけ、request v2・原本・世代・engine/実行契約version・attemptを結ぶ世代別台帳を持つ。最終cleanupと保存slot解放後のCANCELLED_CLEANを原子保存・readbackできた取消は、再起動後も同設定の明示retryまたは設定変更による新世代を許す。再起動や写真openだけでは保存しない。retryのproducer開始前にSTARTED(N+1)を確定して旧証明を失効する。旧intent-only、未対応engine/version、公開不明は救済せず、旧CPU履歴・request codec v2・publication再照合を保持する。詳細は[取消証明](../../docs/DURABLE_GPU_CANCELLATION.md)。
 - 過去のPUBLISHED記録だけで現在のファイルを成功扱いにせず、開く前に同じownerで再照合する。
 
+## 保存結果不明の救済（#377・統合提案）
+
+- 初期状態は保留。再確認で同一 target・所有者・URI・固定 render/recipe・byte hash が一致する行だけを扱う。
+  旧 UNKNOWN を保持して照合 receipt と recovery journal に接続し、同じ行の公開済み照合／pending 完成の公開を行う。
+- 空・部分・異内容 pending は保留し、削除・上書き・再コピーを行わない。検索ゼロ、private JPEG 不在、
+  ApplicationExitInfo は過去の未公開証明にしない。
+- 不明な保存は「もう一度確認」「今は保存しない」「重複の可能性はあるが保存し直す」を区別する。
+  最後の明示選択だけで、旧原本・履歴を保全した独立の永続要求を同じ設定で受け付ける。
+  key/次世代/renderer を固定し、旧新 owner の同時実行を拒否する。新要求も不明なら保留する。
+- #365 の確認済取消とは別契約。取消証明を緩めず、自動再書き出し、URI 複製、CPU fallback、画質変更を行わない。
+- この統合は未検証 checkpoint。#260 の通常配布版でメモリ判定を緩めるには、#377 全体を同版または先行で
+  配布する gate が必要で、現段階は未達。詳細と残る境界は [接続契約](../../docs/JPEG_RECONCILIATION.md) を参照。
+
 ## 作業コピーの回収
 
 - 保存のDNG一時コピー、展開RGB16、中間Float32は永続原本ではない。成功・取消・失敗とも、FD・stream・workerの解放を確認した後にその場で削除する。調査用に写真コピーは保持しない。

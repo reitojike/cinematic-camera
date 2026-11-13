@@ -100,7 +100,7 @@ internal data class ExplicitRecoveryExport(
         require(previousIntentSha256.matches(Regex("[0-9a-f]{64}")))
         require(previous.generation < Long.MAX_VALUE && request.generation == previous.generation + 1)
         require(previous.source == request.source && previous.captureId == request.captureId)
-        require(rendererContract.toByteArray(Charsets.UTF_8).size in 1..64)
+        require(rendererContract.toByteArray(Charsets.UTF_8).size in 1..128)
         previousPublication?.let {
             require(it.phase == JpegPublicationPhase.UNKNOWN)
             require(it.target.captureId == previous.captureId && it.target.generation == previous.generation)

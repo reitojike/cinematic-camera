@@ -1,12 +1,13 @@
-# 保存結果不明の照合と別書き出し（#377、統合前の設計）
+# 保存結果不明の照合と別書き出し（#377、統合 checkpoint）
 
-これは #377 の実装接続契約。現時点で `JpegReconciliation` は読取専用の基盤であり、
-アプリの保存 owner / UI には未接続。UNKNOWN の救済や別書き出しを製品実装済みとは扱わない。
+これは #377 の実装接続契約。レビュー済み #378 基盤に、未検証 #365 checkpoint
+`7ca7892` と保存 owner / GPU UI の接続を積んだ提案。統合試験完了・製品配布済みとは扱わない。
+同一行の完全一致は標準 publisher に接続し、書きかけ/異内容の再コピーは実装しない。
 
 ## 配布条件
 
 #260 で通常配布版のメモリ事前判定を緩める場合、#377 の救済全体を同じ配布版、
-またはそれ以前に含めることを必須とする。この読取専用基盤だけでは条件を満たさない。
+またはそれ以前に含めることを必須とする。この未検証 checkpoint では条件を満たさない。
 計測専用版の記録のみ判定は別の診断であり、この配布条件の達成とは区別する。
 この変更で production メモリ guard・画質・CPU fallback は変更しない。
 
@@ -20,7 +21,7 @@
 - 既存 `DngContentVerifier` と `DngIoResources` を使う。close が確認できない資源は呼出側が保持し、
   cleanup 完了まで次の要求を受け付けない。例外・停止・世代変更は保留にする。
 - `PUBLIC_BYTES_MATCH` / `PENDING_BYTES_MATCH` は観測結果であり、永続成功 receipt や公開許可ではない。
-  永続照合記録の commit/readback と旧証拠の固定、owner 統合が別途必要。
+  永続照合記録の commit/readback 後、既存 publisher に現在の行を再検証させる。
 - 空／部分／同長改変／過大 pending は `PENDING_BYTES_DIFFER`。単なる不一致から「正しい途中 prefix」や
   「安全に上書き可能」と推定しない。完全 private JPEG がある場合の同一行再開は別の証拠検証が必要。
 - 候補なし・複数候補・改変・権限喪失・I/O 障害は保留。private 出力不在も未公開証明にはならない。
@@ -31,7 +32,8 @@
 `SaveRecoveryCodec` は別 magic/version/kind、上限16KiB、checksum、内包 blob の長さ制限と
 canonical readback を持つ。照合記録は旧 journal 全体、観測分類、URI を固定する。
 `JpegReconciliationReceipt` は呼出側が割り当てた一観測専用 slot に一度だけ保存し、異なる証拠で
-上書きしない。再照合には別 slot が必要。slot の割当・保存先・読取結果の UI 採用は未接続。
+上書きしない。実装は一世代の最初の完全一致だけを `jpeg-reconciliation.bin` に保持する。
+負の観測は旧 UNKNOWN のまま保持し、UI に表示する。原本の旧 intent と journal は変更しない。
 commit 前後に既存 authority が旧 journal/revision・世代と資源解放を確認する必要がある。
 永続記録は過去の観測であり、現在の MediaStore 状態や公開許可を永久に保証しない。
 
@@ -41,13 +43,19 @@ commit 前後に既存 authority が旧 journal/revision・世代と資源解放
 公開前の原本再照合を省略しない。公開済みの後日削除・改変から自動再作成しない。
 書きかけ削除や既存 JPEG 上書きは暗黙に追加しない。
 
-## 明示的な別書き出し（受領モデルのみ、実行・UI 未接続）
+`jpeg-recovery.bin` は同じ target/token/URI/render/fingerprint の PUBLISHING から始める別の
+標準 `JpegPublicationJournal`。完全な pending も公開済みも既存 publisher の byte 再検証を通し、
+pending 公開前に実原本 hash を再確認する。新規 insert/再コピー/再現像を経由しない。
+private JPEG 不在でも既存の完全な行を検証できる。公開済み receipt のみが残った境界では案 B を拒否する。
+pending の過去の観測だけでは公開結果を確定しない。書きかけ・同長改変・空の行は保留し、上書きしない。
+
+## 明示的な別書き出し（通常 GPU の接続案）
 
 初期状態は保留。「もう一度確認」「今は保存しない」「重複の可能性はあるが保存し直す」を区別する。
 最後の選択だけで、旧要求との関連を持つ独立した永続要求を作る。旧保存を成功／取消に偽装しない。
 原本 URI 複製や source cursor の黙った上書きで identity を迂回しない。
 固定 idempotency key の commit/readback、二重タップ・kill・ack 喪失後の再取得、原本 hash 再照合、
-旧新 owner の排他、再び不明になった要求の保留が接続前の条件。
+旧新 owner の排他、再び不明になった要求の保留を既存保存 owner の条件として維持する。
 
 `ExplicitRecoveryExport` は固定 key、旧要求、旧 intent 生 bytes の SHA-256、任意の旧 UNKNOWN journal、
 同じ原本の次世代要求、指定 renderer を保持する。旧 intent の codec を移行せず、旧 bytes は外部に保全する。
@@ -68,7 +76,15 @@ commit 前後に既存 authority が旧 journal/revision・世代と資源解放
   **既存保存 owner の durable intent/readback** に接続する。kill が intent 前なら未開始、intent 後なら
   既存 owner の HOLD/同一 publication 再開規則を使い、ここで再実行可能と推定しない。
 - source cursor の変更が必要なら、consent を先に commit/readback して旧 writer を fence した後、
-  固定した次世代だけを既存受付へ渡す。cursor ack 喪失から別世代を採番しない。この接続は未実装。
+  固定した次世代だけを `installRecovery` へ渡す。cursor ack 喪失から別世代を採番しない。
+
+通常 GPU UI の明示操作だけが `explicit-recovery-export.bin` の受領へ進む。GPU engine と
+publication renderer、#365 executionVersion を固定し、現在の設定から推定しない。
+原本の再 hash と旧 intent/publication 一致、旧 slot と資源ゼロを確認してから受領する。
+新 handle を source の prepared index に反映し、foreground save はその同一 handle を用いる。
+cursor 前で終了した consent は次の明示選択で同一 key を再取得する。cold open は保存を開始しない。
+表示後の別 coroutine metadata 復元を維持し、保留した要求の固定設定を表示へ復元する。
+retained owner の再オープンも救済 UI を表示する。現在設定の edit-only 値から別世代を自動生成しない。
 
 このモデルは保存の進捗・取消・成功状態を持たず、#365 の attempt 台帳や publisher を複製しない。
 
@@ -79,6 +95,9 @@ commit 前後に既存 authority が旧 journal/revision・世代と資源解放
 旧 CPU 履歴維持と、旧 intent-only・公開不明・JPEG 入口後の HOLD を保つ。
 共有候補は `ManualOriginalTrialSaveOwner`、`AndroidManualOriginalTrialSaves`、request/cursor、
 storage file kind、cold-open UI。統合前に #365 の確定 head と codec/受付契約を照合する。
+
+現在は #365 の未検証 checkpoint を取り込んでおり、後続修正と最終契約に追従する。
+取消台帳、CLEAN 確定時点、通常 retry 証明を変更しない。
 
 ## 試験の境界
 
