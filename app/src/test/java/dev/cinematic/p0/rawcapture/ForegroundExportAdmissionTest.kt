@@ -59,7 +59,7 @@ class ForegroundExportAdmissionTest {
         val unsafe = listOf(safe().copy(cameraSessionInUse = true), safe().copy(recordingOrFinalizing = true),
             safe().copy(rebindInProgress = true), safe().copy(thermalAllowed = null),
             safe().copy(storageAllowed = false), safe().copy(rendererAvailable = false),
-            safe().copy(memoryBudgetConfirmed = null), AutoDevelopConditions())
+            AutoDevelopConditions())
         unsafe.forEach { conditions ->
             val c = ready()
             val request = requireNotNull(c.reserveForegroundExport(owner, safe()))

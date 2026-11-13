@@ -30,14 +30,14 @@ class PreviewMemoryAdmissionTest {
         }
     }
 
-    @Test fun pressureStopsPreviewAndRecoveryRequiresExplicitClosureAndANewAttempt() {
+    @Test fun pressureDoesNotRevokePreviewAndOwnershipStillRequiresExplicitClosure() {
         for (value in listOf(false, null)) {
             val coordinator = AutoDevelopCoordinator().apply { updateConditions(previewReady) }
             val first = requireNotNull(coordinator.tryStartPreviewObserved(previewReady))
             coordinator.updateConditions(previewReady.copy(previewMemoryAvailable = value))
-            assertTrue(coordinator.shouldStop(first))
+            assertFalse(coordinator.shouldStop(first))
             coordinator.updateConditions(previewReady)
-            assertTrue(coordinator.shouldStop(first))
+            assertFalse(coordinator.shouldStop(first))
             assertNull(coordinator.tryStartPreviewObserved(previewReady))
             assertTrue(coordinator.completeAfterResourcesClosed(first))
             val next = requireNotNull(coordinator.tryStartPreviewObserved(previewReady))
@@ -67,12 +67,12 @@ class PreviewMemoryAdmissionTest {
         assertNull(coordinator.tryStartPreviewObserved(previewReady))
     }
 
-    @Test fun healthyPreviewObservationCannotKeepAFullSaveRunning() {
+    @Test fun pressureDoesNotRevokeAFullSaveOrReleaseItsSlot() {
         val fullReady = previewReady.copy(memoryBudgetConfirmed = true)
         val coordinator = AutoDevelopCoordinator().apply { updateConditions(fullReady) }
         val save = requireNotNull(coordinator.tryStartObserved(fullReady))
         coordinator.updateConditions(previewReady)
-        assertTrue(coordinator.shouldStop(save))
+        assertFalse(coordinator.shouldStop(save))
         assertNull(coordinator.tryStartPreviewObserved(previewReady))
     }
 }

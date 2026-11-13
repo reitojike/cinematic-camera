@@ -33,7 +33,7 @@ internal class AutoDevelopCoordinator {
     fun updateConditions(value: AutoDevelopConditions) {
         conditions = value
         conditionsObserved = true
-        if (AutoDevelopPolicy.previewBlockers(value.copy(rendererAvailable = true)).isNotEmpty())
+        if (AutoDevelopPolicy.previewContinuationBlockers(value.copy(rendererAvailable = true)).isNotEmpty())
             gpuPreview?.stopRequested = true
         // Job-local renderer availability must not cancel an interactive job with another capability.
         val current = active
@@ -41,8 +41,8 @@ internal class AutoDevelopCoordinator {
         // replace that observer's current resource facts with an incomplete UI snapshot.
         if (current?.foregroundExport == true) return
         val common = if (current?.observed == true) value.copy(rendererAvailable = true) else value
-        val blockers = if (current?.preview == true) AutoDevelopPolicy.previewBlockers(common)
-            else AutoDevelopPolicy.blockers(common)
+        val blockers = if (current?.preview == true) AutoDevelopPolicy.previewContinuationBlockers(common)
+            else AutoDevelopPolicy.continuationBlockers(common)
         if (blockers.isNotEmpty()) current?.stopRequested = true
     }
 
@@ -159,7 +159,7 @@ internal class AutoDevelopCoordinator {
 
     @Synchronized fun updateExportConditions(attempt: Attempt, observations: AutoDevelopConditions) {
         val current = active ?: return
-        if (current.attempt === attempt && current.foregroundExport && exportBlockers(observations).isNotEmpty())
+        if (current.attempt === attempt && current.foregroundExport && (exportBlockers(observations) - AutoDevelopBlocker.MEMORY).isNotEmpty())
             current.stopRequested = true
     }
 

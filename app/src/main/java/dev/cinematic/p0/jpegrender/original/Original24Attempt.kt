@@ -101,7 +101,7 @@ internal class Original24Attempt(context: Context, private val request: Original
                 }
             })
             originalStage(trace, OriginalStage.DECODE_CLOSE) { closeDescriptorOwners() }
-            checkpoint(); Original24Resources.requireAvailable(context)
+            checkpoint(); Original24Resources.requireAvailable(context, checkMemory = false)
             val width = metadata.getInt("width"); val height = metadata.getInt("height")
             validateOriginalSize(width, height)
             val sourceWidth = metadata.getInt("sourceWidth"); val sourceHeight = metadata.getInt("sourceHeight")
@@ -140,7 +140,7 @@ internal class Original24Attempt(context: Context, private val request: Original
             }
             val rendered = if (developEngine == DevelopEngine.CPU) OriginalStageClear24(work, trace, parallelOrtonWorkers, ortonRowProbe, parallelCharacterWorkers, parallelFoundationWorkers = parallelFoundationWorkers, parallelGlowWorkers = parallelGlowWorkers, fuseR7ColorRows = fuseR7ColorRows, parallelToneWorkers = parallelToneWorkers, parallelMistWorkers = parallelMistWorkers)
                 .render(adjusted, ev, request.strength, stop = stop) else null
-            checkpoint(); Original24Resources.requireAvailable(context)
+            checkpoint(); Original24Resources.requireAvailable(context, checkMemory = false)
             val digest = MessageDigest.getInstance("SHA-256")
             var encodedBytes = 0L
             var bitmap: Bitmap? = null

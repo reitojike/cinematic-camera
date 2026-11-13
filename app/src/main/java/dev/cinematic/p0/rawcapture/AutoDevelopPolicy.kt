@@ -24,6 +24,12 @@ internal object AutoDevelopPolicy {
         conditions.copy(memoryBudgetConfirmed = conditions.previewMemoryAvailable)
 
     fun previewBlockers(conditions: AutoDevelopConditions) = blockers(previewConditions(conditions))
+
+    /** A memory-pressure fluctuation cannot retroactively revoke an admitted attempt.
+     * All other stop reasons, including unknown lifecycle/camera/thermal facts, remain active. */
+    fun continuationBlockers(conditions: AutoDevelopConditions) = blockers(conditions) - AutoDevelopBlocker.MEMORY
+    fun previewContinuationBlockers(conditions: AutoDevelopConditions) =
+        continuationBlockers(previewConditions(conditions))
     fun blockers(conditions: AutoDevelopConditions): Set<AutoDevelopBlocker> = buildSet {
         if (conditions.foreground != true) add(AutoDevelopBlocker.FOREGROUND)
         if (conditions.cameraSessionInUse != false) add(AutoDevelopBlocker.CAMERA_SESSION)

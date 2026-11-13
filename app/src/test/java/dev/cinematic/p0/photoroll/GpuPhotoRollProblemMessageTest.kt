@@ -7,12 +7,34 @@ import org.junit.Test
 import java.io.IOException
 
 class GpuPhotoRollProblemMessageTest {
+    @Test fun memoryRetryPreservesExportOwnerAndUsablePreview() {
+        for (hasInput in listOf(true, false)) for (failed in listOf(true, false))
+            assertFalse(gpuMemoryRetryNeedsReopen(true, hasInput, failed))
+        assertFalse(gpuMemoryRetryNeedsReopen(false, true, false))
+        assertTrue(gpuMemoryRetryNeedsReopen(false, false, false))
+        assertTrue(gpuMemoryRetryNeedsReopen(false, true, true))
+    }
+
+    @Test fun memoryCardIsTypedAndRetryNeverImpliesSave() {
+        assertNull(gpuPhotoRollMemoryProblem(IOException("memory"), true))
+        assertNull(gpuPhotoRollMemoryProblem(null, true))
+        val failure = Original24MemoryUnavailable(OutOfMemoryError())
+        val card = requireNotNull(gpuPhotoRollMemoryProblem(failure, false))
+        assertEquals(dev.cinematic.p0.MessageSlot.PROBLEM, card.slot)
+        assertEquals("メモリ不足", card.title)
+        assertEquals(dev.cinematic.p0.MessageAction.RETRY, card.primary?.action)
+        assertFalse(requireNotNull(card.primary).enabled)
+        assertNull(card.secondary)
+        assertTrue(requireNotNull(card.note).contains("保存は自動でやり直しません"))
+        assertTrue(requireNotNull(gpuPhotoRollMemoryProblem(failure, true)?.primary).enabled)
+    }
+
     @Test fun rejectedMemoryIsSpecificWithoutLeakingObservationOrExceptionText() {
         val observation = Original24MemoryObservation(Original24MemoryStage.ORIGINAL_DECODE, 123456L, false, 456L)
         val failure = Original24MemoryUnavailable(IOException("private-source"), observation)
         val message = requireNotNull(gpuPhotoRollProblemMessage(failure))
-        assertTrue(message.contains("空きメモリ"))
-        assertTrue(message.contains("受付条件"))
+        assertTrue(message.contains("OSがメモリ不足"))
+        assertTrue(message.contains("開始できません"))
         assertTrue(message.contains("原本は変更していません"))
         assertTrue(message.contains("再試行"))
         assertFalse(message.contains("123456"))
@@ -41,7 +63,7 @@ class GpuPhotoRollProblemMessageTest {
         assertNull(gpuPhotoRollProblemMessage(null))
     }
     @Test fun rejectedBoundaryDiagnosticHasOnlyStageClassAndActualOsFields() {
-        assertEquals("ORIGINAL_MEMORY_REJECTED stage=ORIGINAL_SAVE exception=Original24MemoryUnavailable availMemBytes=499 lowMemory=true thresholdBytes=100 requiredAvailableBytes=805306368 outputPixels=unknown estimatedAdditionalBytes=unknown rgb16PayloadBytes=unknown",
+        assertEquals("ORIGINAL_MEMORY_REJECTED stage=ORIGINAL_SAVE exception=Original24MemoryUnavailable availMemBytes=499 lowMemory=true thresholdBytes=100 requiredAvailableBytes=0 admissionPolicy=OS_LOW_MEMORY outputPixels=unknown estimatedAdditionalBytes=unknown rgb16PayloadBytes=unknown",
             Original24MemoryObservation(Original24MemoryStage.ORIGINAL_SAVE, 499, true, 100).diagnosticMessage())
     }
     @Test fun pixelsAndPayloadAreNotClaimedAsMeasuredWorkingSet() {
@@ -49,23 +71,22 @@ class GpuPhotoRollProblemMessageTest {
             123, false, 100, 24_000_000).diagnosticMessage()
         assertTrue(message.contains("outputPixels=24000000"))
         assertTrue(message.contains("rgb16PayloadBytes=144000000"))
-        assertTrue(message.contains("requiredAvailableBytes=805306368"))
+        assertTrue(message.contains("requiredAvailableBytes=0"))
         assertTrue(message.contains("estimatedAdditionalBytes=unknown"))
         assertTrue(Original24MemoryObservation(Original24MemoryStage.BOUNDED_PREVIEW,
-            0, false, 100).diagnosticMessage().contains("requiredAvailableBytes=1"))
+            0, false, 100).diagnosticMessage().contains("requiredAvailableBytes=0"))
     }
 
-    @Test fun guardBoundariesRemainUnchangedForEveryStage() {
+    @Test fun osPressureControlsEveryStageWithoutFixedAllowance() {
         val allowance = Original24MemoryPolicy.ORIGINAL_REQUIRED_BYTES
         assertEquals(768L * 1024 * 1024, allowance)
         for (stage in Original24MemoryStage.values()) {
             assertFalse(Original24MemoryPolicy.permits(stage, true, allowance * 2))
             assertFalse(Original24MemoryPolicy.permits(stage, null, allowance * 2))
-            assertFalse(Original24MemoryPolicy.permits(stage, false, null))
-            assertFalse(Original24MemoryPolicy.permits(stage, false, 0))
+            assertTrue(Original24MemoryPolicy.permits(stage, false, null))
+            assertTrue(Original24MemoryPolicy.permits(stage, false, 0))
             assertTrue(Original24MemoryPolicy.permits(stage, false, allowance))
-            assertEquals(stage == Original24MemoryStage.BOUNDED_PREVIEW,
-                Original24MemoryPolicy.permits(stage, false, allowance - 1))
+            assertTrue(Original24MemoryPolicy.permits(stage, false, allowance - 1))
         }
     }
     @Test fun inputAllocationFailuresBeforeAndAfterDecodeBecomeTypedErrors() {

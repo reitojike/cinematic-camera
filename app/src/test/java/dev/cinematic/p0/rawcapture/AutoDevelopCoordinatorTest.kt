@@ -52,7 +52,6 @@ class AutoDevelopCoordinatorTest {
             permittedConditions().copy(thermalAllowed = null),
             permittedConditions().copy(storageAllowed = false),
             permittedConditions().copy(rendererAvailable = false),
-            permittedConditions().copy(memoryBudgetConfirmed = null),
         )
         conditions.forEach { blocked ->
             val coordinator = ready()

@@ -45,7 +45,8 @@ class PhotoRollDevelopConditionsTest {
     @Test fun invalidThermalAndUnknownOrLowMemoryStayBlocked() {
         assertNull(idle.copy(thermalStatus = -1).developConditions(true).thermalAllowed)
         assertEquals(false, idle.copy(thermalStatus = 3).developConditions(true).thermalAllowed)
-        assertNull(idle.copy(availableBytes = null).developConditions(true).memoryBudgetConfirmed)
-        assertEquals(false, idle.copy(availableBytes = 511L * 1024 * 1024).developConditions(true).memoryBudgetConfirmed)
+        assertNull(idle.copy(lowMemory = null).developConditions(true).memoryBudgetConfirmed)
+        assertEquals(false, idle.copy(lowMemory = true).developConditions(true).memoryBudgetConfirmed)
+        assertEquals(true, idle.copy(availableBytes = 128L * 1024 * 1024).developConditions(true).memoryBudgetConfirmed)
     }
 }

@@ -61,7 +61,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
     apply: (PhotoEditInputToken) -> Unit, cancel: (PhotoEditInputToken) -> Unit, close: (PhotoEditInputToken) -> Unit,
     modifier: Modifier = Modifier, statusOverlay: @Composable () -> Unit = {}, fillImageWidth: Boolean = false, viewportModifier: Modifier = Modifier,
     gpuSession: GpuPhotoRollSession? = null, gpuReady: Boolean = false,
-    gpuFailure: dev.cinematic.p0.gpu.GpuFailureHandling? = null, info: @Composable () -> Unit) {
+    gpuFailure: dev.cinematic.p0.gpu.GpuFailureHandling? = null, memoryProblem: dev.cinematic.p0.UiMessage? = null, info: @Composable () -> Unit) {
     var information by remember { mutableStateOf(false) }
     var parameter by remember { mutableStateOf(PhotoEditParameter.STRENGTH) }
     var comparing by remember(preview, comparison, foreground, gpuSession) { mutableStateOf(false) }
@@ -118,7 +118,11 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                 }
                 Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().verticalScroll(rememberScrollState()).background(CaptureDesign.Ink.copy(alpha = .9f))
                     .pointerInput(Unit) { detectTapGestures(onTap = {}) }) {
-                    if (phase == PhotoRollPhase.BLOCKED) {
+                    if (phase == PhotoRollPhase.BLOCKED && memoryProblem != null) {
+                        dev.cinematic.p0.CaptureProblem(memoryProblem, onAction = { action ->
+                            if (action == dev.cinematic.p0.MessageAction.RETRY) retry()
+                        })
+                    } else if (phase == PhotoRollPhase.BLOCKED) {
                         Text(gpuFailure?.let { "${it.title}\n${it.reason}" } ?: message ?: "現像を開始・完了できません", Modifier.padding(8.dp),
                             color = CaptureDesign.Failed, style = CaptureDesign.Explanation)
                         TextButton(onClick = retry, enabled = foreground, shape = RectangleShape) { Text(if (gpuFailure != null) "再試行" else "原本を確認して再試行") }

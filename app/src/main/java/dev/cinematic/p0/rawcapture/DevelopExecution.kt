@@ -15,7 +15,7 @@ internal object DevelopExecution {
         if (AutoDevelopPolicy.blockers(observations).isNotEmpty()) {
             PrivateTrialReuseRegistry.invalidateAll()
         }
-        if (AutoDevelopPolicy.previewBlockers(observations).isNotEmpty() && android.os.Build.VERSION.SDK_INT >= 29)
+        if (AutoDevelopPolicy.previewContinuationBlockers(observations).isNotEmpty() && android.os.Build.VERSION.SDK_INT >= 29)
             AndroidManualOriginalTrialSaves.invalidatePreviews()
         val owner = queue
         if (owner == null) coordinator.updateConditions(observations) else owner.updateConditions(observations)
