@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<lint>
-    <!-- rawDiagnostic removes all camera entry points and permissions. CineRecorder is unreachable.
-         Enabled only for the explicit diagnostic-only lint command; debug/release/aggregate lint keep
-         the default checks. The synthetic smoke asserts no permissions; APK CI asserts one activity. -->
-    <issue id="MissingPermission">
-        <ignore path="**/dev/cinematic/p0/CineRecorder.kt" />
-    </issue>
-</lint>

@@ -31,10 +31,6 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class Original24CancellationRetryInstrumentationTest {
     @get:org.junit.Rule val isolatedUi = dev.cinematic.p0.photoroll.SyntheticFixtureRule()
-    @Test fun diagnosticCpuSaveCancellationRequiresExplicitRetryBeforePublication() = runCase(DevelopEngine.CPU)
-    @Test fun gpuSaveCancellationRequiresExplicitRetryBeforePublication() = runCase(DevelopEngine.GPU)
-    @Test fun diagnosticCpuSaveCancellationAfterJpegEntryRemainsHeld() = runCase(DevelopEngine.CPU, afterJpegEntry = true)
-    @Test fun gpuSaveCancellationAfterJpegEntryRemainsHeld() = runCase(DevelopEngine.GPU, afterJpegEntry = true)
 
     @Test fun normalGpuSaveCancellationRequiresExplicitRetryBeforePublication() = runCase(DevelopEngine.GPU, ordinary = true)
     @Test fun normalGpuSaveCancellationAfterJpegEntryRemainsHeld() = runCase(DevelopEngine.GPU, afterJpegEntry = true, ordinary = true)
@@ -43,15 +39,15 @@ class Original24CancellationRetryInstrumentationTest {
     @Test fun normalGpuConfirmedCancellationCanChangeRecipeThroughOrdinaryUi() =
         runCase(DevelopEngine.GPU, ordinary = true, newGeneration = true, editThroughUi = true)
 
-    private fun runCase(engine: DevelopEngine, afterJpegEntry: Boolean = false, ordinary: Boolean = false,
+    private fun runCase(engine: DevelopEngine, afterJpegEntry: Boolean = false, ordinary: Boolean = true,
         newGeneration: Boolean = false, editThroughUi: Boolean = false) {
         val installed = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
         val args = InstrumentationRegistry.getArguments()
         assumeTrue(args.getString("isolated") == "true" && args.getString("saveCancellationRetry") == "true")
         assumeTrue("Physical devices are excluded", Build.HARDWARE in setOf("ranchu", "goldfish"))
         // Diagnostic CPU/GPU stay selectable; the ordinary build is fixed GPU without a setting UI.
-        assumeTrue(installed.packageName == if (ordinary) "dev.cinematic.p0" else "dev.cinematic.p0.gpudiagnostic")
-        val app = if (ordinary) isolatedGpuSaveSafetyApp() else installed
+        check(ordinary && installed.packageName == "dev.cinematic.p0")
+        val app = isolatedGpuSaveSafetyApp()
         val setting = DevelopEngineSetting(app)
         if (engine == DevelopEngine.GPU) {
             val capabilities = GlThread().use { thread -> thread.call {

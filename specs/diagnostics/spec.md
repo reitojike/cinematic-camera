@@ -26,6 +26,19 @@
 - 合成試験、エミュレーター、実機GPU、個人写真の比較は異なる証拠であり、代替しない。エミュレーター時間は実機の速度保証ではない。
 - [GPU 帯比較基盤](../051-gpu-band-probe/spec.md) は製品未採用。専用引数 gpuBandProbe=true の明示時だけ合成エミュレーター試験を実行し、通常 CI・合成 UI では起動しない。製品接続は #212 の実機 GPU と実写での再判定を条件とする。
 
+## #290: 独立診断variantの退役
+
+`original24Probe` / `rawDiagnostic` / `gpuDiagnostic` / `previewDiagnostic` と各専用source/test/manifest/build入口を廃止する。必要なGPU安全保証は通常androidTestへ移行した。通常debug/releaseはGPUであり、旧診断選択を読み込まずCPUへ自動回避しない。
+
+- 通常1024px `GpuFullPipelineTimingAndroidTest.measure1024FullRecompute`、`GpuStageTap`、引数 `allowDevice` / `measuredFrames`（既定3）は保持。実機操作は毎回本人承認を要する。
+- #379 の元source/branch、メモリ再実行手順、元の計測データは削除しない。旧手順の再現には当時の版が必要で、現行版の退役variantを再生成しない。
+- 通常製品の診断タブ・匿名ログ、共有GPU/LibRaw/JNI/原本入力、旧保存intent/codec読取りはこの削除では変更しない。別module `rawprobe` と Mesa の保持/後続判断を4variant削除と混同しない。
+- 台帳と保持先は [CPU・診断試験整理台帳](../../docs/CPU_DIAGNOSTIC_TEST_RETIREMENT.md)。削除候補headの実走・GPU90/28・CI・レビューが完了するまで削除採用済みとは扱わない。
+
+## 旧独立診断の歴史的契約（現行の起動入口ではない）
+
+以下は過去の計測結果・比較scriptの解釈用に保持する。廃止したvariantの起動手順や旧CPU既定を現行製品仕様へ適用しない。
+
 - [GPU合成診断](../../docs/GPU_DIAGNOSTIC.md) は通常製品と分離した独立 `gpuDiagnostic` アプリ。`cinematicGpuDiagnostic=true` の明示ビルドと画面からの明示起動だけで動く。旧GPU合成診断の入力は合成専用。統合入口は既存RAW保存比較とCPU/GPU編集を分け、診断HubでだけGPU engineを選べる。通常debug/releaseはCPUのまま。写真一覧権限は持たず、実写真の編集入力はFilesで明示的に選ぶ。旧合成診断の専用instrumentationは `gpuPixelProbe=true` と `isolated=true` で明示起動する。全工程/製品GPU結合のinstrumentationは各クラスのopt-in条件とemulator制約に従う。
 - GPU合成診断の1024pxは全LookのCPU差、12MPはぼかし/Orton単体の負荷を測る。12MP単体や背景FGS試験の成功を、全保存出力・製品保存復旧の採用条件の達成に読み替えない。
 - GPU合成診断は合成入力ごとに同一owner threadでEGL/contextと2 shaderを一度準備し、初回と再利用後を区分する。30msの目安は1024pxの `phase=reused` の対象2工程 `sumNs` だけに適用し、準備と初回処理を足した時間は別に記録する。upload/同期付きdraw/readbackのCPU wall内訳を分けるが、純粋GPU演算時間・非同期pipeline・GPU常駐入力の性能とは扱わない。通常製品へ接続せず、原本/goldenを変えない。

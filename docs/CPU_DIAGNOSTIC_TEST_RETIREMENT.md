@@ -750,3 +750,10 @@ rawDiagnosticTestのSyntheticDiagnosticProvider宣言は現checkoutに実装が�
 CIは通常安全試験/manifest検証へ保証を移し、必須チェックを単に免除しない。gpuMesaは別の保持対象。
 #379再実行手順・通常メモリ記録、共有型、旧CPU保存intent/codec読取、HOLD/二重保存防止は維持。
 削除時に未分類source/参照や安全assertが見つかった場合は、削除を止め本表へ追記して確認する。
+## 削除① 候補（検証中）
+
+4variantと専用49ファイル、移行済み旧probe16クラスと診断取消重複4methodを整理する。通常取消4method、通常1024px性能/引数試験、M1/M2の新安全試験は保持。元コード/過去記録はGit履歴に残る。台帳の旧sourceリンクは履歴参照であり、削除後の現行パスではない。
+
+CIのGPU/RAW診断build jobを退役し、通常product jobでdebug/release manifestに診断入口/profileable/largeHeapがないことと4sourceSet/build入口の不在を検査する。必須aggregate名、product/rawprobe/JNI隔離/Mesaの成功条件は維持。比較report用Pythonと元計測データは削除しない。
+
+製品のCPU分岐・診断フラグfalse定数・旧設定View整理は削除②で扱う。GPU/shared/旧保存codecは本候補で変更しない。最終headの実走/GPU90/28/CI/canonical/独立レビューは未完了であり、採用条件として残る。
