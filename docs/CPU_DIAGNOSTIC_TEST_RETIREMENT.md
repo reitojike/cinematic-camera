@@ -577,3 +577,14 @@ insert/copy/publish直前phase、7phase/revision0..6、recipe/source/generation�
 通常Androidコンパイル成功27秒。実走は未実施、12MP/24MPやFGSの代替ではない。
 現時点M2対応実装17元件、既存保持4、未実装28。選択予定18method（M1 cold境界1を含む）。
 #408マージ後のmainを通常mergeで同期し、M1試験はmainの検証済み内容を保持した。
+
+### GPU band故障・取消から新attemptへの復旧（dot・未実走）
+
+旧 `OriginalOrtonParallelSafetyTest.oneWorkerExceptionPropagatesAndSiblingsStop` と
+`OriginalR7ColorFusionAndroidTest.fusedWorkerCancellationAndFailureCloseAttemptOnEmulator` の安全保証を
+`GpuSaveProducerSafetyAndroidTest.gpuBandFailureAndCancellationDrainBeforeFreshAttemptCanSucceed` へ集約。
+実GPU band observerで故障/取消を注入し、同一primaryのcause chain保持、後続eventなし、JPEG未開始、
+texture/thread/attempt owner解放、scratch消失、同attempt再利用禁止、原本不変、新generation保存成功を確認する。
+driver障害そのものを再現する試験ではない。CPU sibling本数・worker固有名・CPU pixel比較は移さない。
+compileDebugAndroidTestKotlin成功45秒、Android未実走。対応実装19元件＋既存保持4、未実装26。
+選択予定19method（M1 cold境界1含む）。#413を含む最新mainは通常mergeで同期済み。

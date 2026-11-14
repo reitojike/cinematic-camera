@@ -23,6 +23,29 @@ import org.junit.runner.RunWith
 /** Ordinary GPU native-input/JPEG producer failures. Private 64x48 fixture; no shared publication. */
 @RunWith(AndroidJUnit4::class)
 class GpuSaveProducerSafetyAndroidTest {
+    @Test fun gpuBandFailureAndCancellationDrainBeforeFreshAttemptCanSucceed() {
+        for (cancel in listOf(false, true)) withFixture { f ->
+            val injected = if (cancel) java.util.concurrent.CancellationException("Synthetic GPU band cancellation")
+                else dev.cinematic.p0.gpu.GpuContextLostException("Synthetic band failure, not a driver loss")
+            var reached = 0
+            val witness = GpuExportBoundaryWitness {
+                reached++
+                throw injected
+            }
+            val failure = Original24GpuOutput.observeForDiagnostics(witness).use { f.requireFailedAttempt() }
+            assertEquals("No later GPU event may run after the fault", 1, reached)
+            assertTrue("Preserve the injected primary in the failure chain",
+                generateSequence(failure as Throwable?) { it.cause }.any { it === injected })
+            assertEquals("Fault occurs before opening a private JPEG", 0, f.outputOpens)
+            assertFalse(f.output.exists())
+            assertFalse(f.attempt.hasUnreleasedResources)
+            assertFalse(f.scratch.exists())
+            witness.assertReleased()
+            f.requireRerenderRejected()
+            f.verifyOriginal()
+            f.requireFreshAttemptSucceeds()
+        }
+    }
     @Test fun unchangedMetadataCannotBypassColdSaveFingerprintBeforeOrAfterGpuJpeg() {
         for (changeAfterOutput in listOf(false, true)) withFixture { f ->
             var restore: (() -> Unit)? = null
@@ -150,7 +173,7 @@ class GpuSaveProducerSafetyAndroidTest {
         }
     }
 
-    private class Fixture(context: Context, trace: OriginalStageTrace?) {
+    private class Fixture(private val context: Context, trace: OriginalStageTrace?) {
         private val root = File(context.noBackupFilesDir, "original24-failure-${UUID.randomUUID()}")
             .also { check(it.mkdir()) }
         private val original = File(root, "synthetic.dng")
@@ -214,9 +237,28 @@ class GpuSaveProducerSafetyAndroidTest {
                 return ByteArrayInputStream(changed)
             }
         }
+        val scratch = File(root, "scratch")
         val attempt = Original24Attempt(context, Original24Request("TRIAL24_synthetic_failure", 1, source), io,
-            File(root, "scratch"), trace, developEngine = DevelopEngine.GPU)
+            scratch, trace, developEngine = DevelopEngine.GPU)
 
+        fun requireFreshAttemptSucceeds() {
+            val freshScratch = File(root, "fresh-scratch")
+            val fresh = Original24Attempt(context, Original24Request("TRIAL24_synthetic_failure", 2, source),
+                io, freshScratch, developEngine = DevelopEngine.GPU)
+            fresh.use {
+                val result = it.render { false }
+                assertEquals(source, result.request.source)
+                assertEquals(2L, result.request.generation)
+                assertEquals(64, result.output.width)
+                assertEquals(48, result.output.height)
+                assertEquals(result.fingerprint,
+                    AndroidJpegInspector().inspect({ output.inputStream() }, output.length()) { false }.fingerprint)
+            }
+            assertFalse(fresh.hasUnreleasedResources)
+            assertFalse(freshScratch.exists())
+            assertTrue(outputCloseAcknowledged)
+            verifyOriginal()
+        }
         fun changePrivateOriginalWithoutChangingMetadata(): () -> Unit {
             val bytes = original.readBytes()
             val modified = original.lastModified()
