@@ -1,0 +1,40 @@
+#version 320 es
+precision highp int;
+// Four caller-ordered ranks, including duplicate and nonmonotonic ranks.
+layout(local_size_x = 4) in;
+layout(std430, binding = 0) readonly buffer Histogram { uint counts[]; };
+layout(std430, binding = 1) readonly buffer Tiles { uvec2 tiles[]; };
+layout(std430, binding = 2) writeonly buffer Selection { uvec4 results[4]; };
+uniform uvec4 u_ranks;
+uniform uvec4 u_rows;
+void main() {
+    uint slot = gl_LocalInvocationID.x;
+    uint rank = u_ranks[slot];
+    uint row = u_rows[slot];
+    uint total = 0u;
+    uint bad = 0u;
+    uint chosen = 256u;
+    uint before = 0u;
+    for (uint tile = 0u; tile < 256u; ++tile) {
+        uvec2 value = tiles[row * 256u + tile];
+        if (chosen == 256u && rank < total + value.x) {
+            chosen = tile;
+            before = total;
+        }
+        total += value.x;
+        bad |= value.y;
+    }
+    uvec4 result = uvec4(0xffffffffu, 0u, 0u, bad == 0u ? total : 0xffffffffu);
+    if (chosen != 256u) {
+        for (uint lane = 0u; lane < 256u; ++lane) {
+            uint bin = chosen * 256u + lane;
+            uint size = counts[row * 65536u + bin];
+            if (rank < before + size) {
+                result.xyz = uvec3(bin, before, size);
+                break;
+            }
+            before += size;
+        }
+    }
+    results[slot] = result;
+}
