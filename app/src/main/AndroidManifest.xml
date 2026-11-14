@@ -16,6 +16,10 @@
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@drawable/ic_probe" android:label="Cinematic Camera Probe"
         android:theme="@android:style/Theme.Material.Light.NoActionBar" android:supportsRtl="true">
+        <provider android:name=".metrics.SaveTimingProvider"
+            android:authorities="${applicationId}.save-timing"
+            android:exported="true" android:permission="android.permission.DUMP"
+            android:grantUriPermissions="false" />
         <service android:name=".photoroll.ForegroundExportService" android:exported="false"
             android:foregroundServiceType="dataSync|mediaProcessing" />
         <activity android:name=".photoroll.PhotoRollActivity" android:exported="false" />

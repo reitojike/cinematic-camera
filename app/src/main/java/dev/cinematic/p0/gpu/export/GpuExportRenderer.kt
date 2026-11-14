@@ -38,6 +38,7 @@ internal class GpuExportRenderer(
         stop: () -> Boolean = { false },
         tap: ((GpuStageTap.Point, Int, GpuTexture) -> Unit)? = null,
         onBandComplete: ((String, Int, Int) -> Unit)? = null,
+        timings: GpuExportTimings? = null,
         consumeRow: (Int, IntArray) -> Unit): Result {
         egl.requireCurrent()
         check(!rendering) { "Export renderer is already running" }
@@ -60,7 +61,7 @@ internal class GpuExportRenderer(
         require(input.width <= capabilities.maxTextureSize && input.height <= capabilities.maxTextureSize)
         rendering = true
         try {
-            return Session(input, gain, warmthGains.copyOf(), strength, stop, tap, onBandComplete, toneWidth, toneHeight).use { it.run(consumeRow) }
+            return Session(input, gain, warmthGains.copyOf(), strength, stop, tap, onBandComplete, toneWidth, toneHeight, timings).use { it.run(consumeRow) }
         } finally { rendering = false }
     }
 
@@ -68,7 +69,7 @@ internal class GpuExportRenderer(
         val strength: Double, val stop: () -> Boolean,
         val tap: ((GpuStageTap.Point, Int, GpuTexture) -> Unit)?,
         val onBandComplete: ((String, Int, Int) -> Unit)?,
-        val toneWidth: Int, val toneHeight: Int) : AutoCloseable {
+        val toneWidth: Int, val toneHeight: Int, val timings: GpuExportTimings?) : AutoCloseable {
         val width = input.width; val height = input.height
         val resample = GpuResample(egl, ledger)
         private val fields = mutableListOf<GpuExportField>()
@@ -97,9 +98,13 @@ internal class GpuExportRenderer(
             originalCheckpoint(stop)
             val start = System.nanoTime()
             boundaryName = name
-            action()
-            GpuFence(egl).use { it.await(stop) }
-            times[name] = System.nanoTime() - start
+            var completed = false
+            try {
+                action()
+                GpuFence(egl).use { it.await(stop) }
+                times[name] = System.nanoTime() - start
+                completed = true
+            } finally { timings?.finished(name, times[name] ?: (System.nanoTime() - start), completed) }
             originalCheckpoint(stop)
         }
         private fun scan(action: (Band) -> Unit) {
@@ -160,7 +165,7 @@ internal class GpuExportRenderer(
                     diffusion = blur(StageClearGlowV1.DIFFUSION_RADIUS, GpuTexture.Format.RGBA32F)
                     scan { band -> diffusion.accept(band.origin, band.glow(withDiffusion = false)) }
                 }
-            }
+            } else { timings?.skipped("B2"); timings?.skipped("B3") }
             boundary("B4") {
                 if (strength != 0.0) StageClearMistV1.KERNELS.forEach { (radius, _) -> mist += blur(radius, GpuTexture.Format.RGBA32F) }
                 scan { band ->
@@ -182,7 +187,7 @@ internal class GpuExportRenderer(
                     val bright = band.draw("look/orton_prepare.frag", listOf("s_mist" to misted))
                     band.release(misted); orton.accept(band.origin, bright)
                 }
-            }
+            } else timings?.skipped("B5")
             boundary("FINAL") {
                 val bytes = ByteBuffer.allocateDirect(Math.multiplyExact(width * minOf(height, bandHeight), 4))
                 val row = IntArray(width)

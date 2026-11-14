@@ -26,6 +26,7 @@ import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.atomic.AtomicLong
 import java.io.Closeable
+import dev.cinematic.p0.metrics.*
 
 /** Process-retained original-trial authority. All metadata, generation and publication use the sole
  * existing queue IO owner. Preparing never generates a JPEG or inserts a shared row. */
@@ -404,6 +405,11 @@ internal object AndroidManualOriginalTrialSaves {
         private val isCurrent: () -> Boolean) : ManualOriginalTrialSaveBackend {
         private val app = context.applicationContext
         private val operation = AndroidRenderedJpegOperation.get(app, request.captureId, request.generation)
+        private var timing: SaveTiming? = null // One admitted queue call; never shared across attempts.
+        fun beginTiming(publicationOnly: Boolean) {
+            timing = startSaveTiming(app, if (publicationOnly) SaveTimingKind.RECHECK else SaveTimingKind.SAVE)
+        }
+        fun endTiming(outcome: SaveTimingOutcome) { timing?.finish(outcome); timing = null }
         @Volatile private var attempt: Original24Attempt? = null
         private var outputCleanupPending = false
         private var selectedEngine: DevelopEngine? = null
@@ -423,8 +429,13 @@ internal object AndroidManualOriginalTrialSaves {
         override val reconciliationFinding get() = reconciliation.lastFinding
         fun hasPublishedEvidence() = reconciliation.hasPublishedEvidence()
         override fun reconcilePublication(stop: () -> Boolean): JpegPublicationRecord? {
-            val old = readPublication() ?: return null
-            return reconciliation.reconcile(old.render, setOf(ManualOriginalTrialRender.CONTRACT), stop)
+            return measured(timing, SaveTimingStage.RECONCILIATION) {
+                val old = readPublication()
+                if (old == null) null else {
+                    timing?.pixels(old.render.request.output.width, old.render.request.output.height)
+                    reconciliation.reconcile(old.render, setOf(ManualOriginalTrialRender.CONTRACT), stop)
+                }
+            }
         }
         override fun pinDurableGpuEngine() {
             check(app.packageName == "dev.cinematic.p0")
@@ -447,6 +458,7 @@ internal object AndroidManualOriginalTrialSaves {
             if (!directory.isDirectory && !directory.mkdirs()) throw IOException("Trial generation directory unavailable")
             // Only this production save opts in; low-level and diagnostic serial baselines stay explicit.
             val engine = Original24Attempt(app, request, io, File(directory, "original-work"),
+                trace = timing, saveTiming = timing,
                 parallelFoundationWorkers = 2, parallelGlowWorkers = 2,
                 parallelToneWorkers = 2, parallelMistWorkers = 2, developEngine = selected).also { attempt = it }
             if (stop()) engine.requestStop()
@@ -475,7 +487,10 @@ internal object AndroidManualOriginalTrialSaves {
                 recoveryJournal.takeIf { it.read() != null })
             return object : ManualOriginalTrialPublication {
                 override val hasUnreleasedResources get() = publisher.hasUnreleasedResources
-                override fun advance(stop: () -> Boolean) = try { publisher.advance(stop) }
+                override fun advance(stop: () -> Boolean) = try {
+                    timing?.pixels(render.request.output.width, render.request.output.height)
+                    measured(timing, SaveTimingStage.PUBLICATION) { publisher.advance(stop) }
+                }
                     catch (failure: Throwable) { throw reportFailure(failure) }
                 override fun releaseResources() = publisher.releaseResources()
             }
@@ -548,6 +563,9 @@ internal object AndroidManualOriginalTrialSaves {
         private fun advanceOwned(conditions: () -> AutoDevelopConditions, foregroundExport: AutoDevelopCoordinator.ForegroundExportRequest?,
             stop: () -> Boolean, retryGpuFailure: Boolean, retryCancellation: Boolean,
             publicationOnly: Boolean = false): CompletableFuture<ManualOriginalTrialSaveState> = queue.manualOriginalIo {
+            backend.beginTiming(publicationOnly)
+            var timingOutcome = SaveTimingOutcome.FAILED
+            try {
             if (slot != null) {
                 owner.releaseResources()
                 if (hasUnreleasedResources) throw IOException("Trial resources remain held")
@@ -576,7 +594,18 @@ internal object AndroidManualOriginalTrialSaves {
                 } }
             }
             owner.confirmCancellationAfterRelease(slotReleased = slot == null)
-            owner.state.value
+            owner.state.value.also { timingOutcome = when (it.phase) {
+                ManualOriginalTrialSavePhase.PUBLISHED -> SaveTimingOutcome.PUBLISHED
+                ManualOriginalTrialSavePhase.CANCELLED -> SaveTimingOutcome.CANCELLED
+                ManualOriginalTrialSavePhase.HOLD -> SaveTimingOutcome.HOLD
+                ManualOriginalTrialSavePhase.GPU_FAILED -> SaveTimingOutcome.GPU_FAILED
+                ManualOriginalTrialSavePhase.UNCONFIRMED -> SaveTimingOutcome.UNCONFIRMED
+                else -> SaveTimingOutcome.INCOMPLETE
+            } }
+            } catch (cancelled: java.util.concurrent.CancellationException) {
+                timingOutcome = SaveTimingOutcome.CANCELLED
+                throw cancelled
+            } finally { backend.endTiming(timingOutcome) }
         }
         fun requestStop() { slot?.let(DevelopExecution::requestStop) }
     }
