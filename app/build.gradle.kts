@@ -46,6 +46,9 @@ android {
         versionName = providers.environmentVariable("CINEMATIC_VERSION_NAME").orNull ?: "0.0.10-p05"
     }
     buildFeatures { compose = true; buildConfig = true }
+    // Legacy CPU trial safety fixtures stay executable in tests, never in an app APK.
+    sourceSets.getByName("test").kotlin.srcDir("src/testSupport/java")
+    sourceSets.getByName("androidTest").kotlin.srcDir("src/testSupport/java")
     signingConfigs {
         if (stableInternalSigning) {
             create("cinematicInternal") {
