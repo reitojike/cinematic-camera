@@ -117,7 +117,7 @@ internal class GpuResample(
             val inputs = listOf(TextureInput("s_input", input, 0), TextureInput("s_weights", weights.values, 1),
                 TextureInput("s_first", weights.first, 2))
             val uniforms: (Int) -> Unit = { program ->
-                GLES32.glUniform1i(GLES32.glGetUniformLocation(program, "u_horizontal"), if (horizontal) 1 else 0)
+                GLES32.glUniform1i(egl.shaders().uniformLocation(program, "u_horizontal"), if (horizontal) 1 else 0)
             }
             if (filter == StageClearBlur.Filter.BOX) {
                 // Reused storage may still be sampled by earlier commands. Image stores are
@@ -129,7 +129,7 @@ internal class GpuResample(
                     groupsX = if (horizontal) output.height else output.width,
                     uniforms = { program ->
                         uniforms(program)
-                        GLES32.glUniform2i(GLES32.glGetUniformLocation(program, "u_outputSize"), output.width, output.height)
+                        GLES32.glUniform2i(egl.shaders().uniformLocation(program, "u_outputSize"), output.width, output.height)
                     }, bindResources = {
                         GLES32.glBindImageTexture(0, output.textureId, 0, false, 0, GLES32.GL_WRITE_ONLY, output.format.internalFormat)
                     }))

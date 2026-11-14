@@ -560,9 +560,9 @@ internal fun present(egl: EglContexts, image: GpuTexture, width: Int, height: In
         GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_MAG_FILTER, filtering)
         egl.passes().run(FragmentPass(egl.shaders().fragment("display/present.frag"), listOf(TextureInput("s_input", image, 0)), target,
             GpuViewport(0, 0, width, height), uniforms = { id ->
-                GLES32.glUniform2f(GLES32.glGetUniformLocation(id, "u_surfaceSize"), width.toFloat(), height.toFloat())
-                GLES32.glUniform1i(GLES32.glGetUniformLocation(id, "u_rotation"), rotation)
-                GLES32.glUniform1i(GLES32.glGetUniformLocation(id, "u_linearFiltering"), if (linearFiltering) 1 else 0)
+                GLES32.glUniform2f(egl.shaders().uniformLocation(id, "u_surfaceSize"), width.toFloat(), height.toFloat())
+                GLES32.glUniform1i(egl.shaders().uniformLocation(id, "u_rotation"), rotation)
+                GLES32.glUniform1i(egl.shaders().uniformLocation(id, "u_linearFiltering"), if (linearFiltering) 1 else 0)
             }))
     } finally {
         GLES32.glActiveTexture(GLES32.GL_TEXTURE0)
