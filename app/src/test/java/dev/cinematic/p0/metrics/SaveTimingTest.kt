@@ -31,19 +31,23 @@ class SaveTimingTest {
 
     @Test fun missingClockIsNotZeroAndFailedSpansAreIncomplete() {
         val records = mutableListOf<SaveTimingRecord>()
-        val timing = SaveTiming.start(10, SaveTimingKind.SAVE, records::add) { throw IOException() }!!
+        val timing = SaveTiming.start(10, SaveTimingKind.SAVE, records::addAll) { throw IOException() }!!
         try { timing.measure(SaveTimingStage.PUBLICATION) { throw IOException() }; fail() } catch (_: IOException) { }
-        assertEquals(SaveTimingOutcome.INCOMPLETE, records.last().outcome)
+        assertTrue(records.isEmpty())
+        timing.finish(SaveTimingOutcome.FAILED)
+        val publication = records.single { it.stage == SaveTimingStage.PUBLICATION }
+        assertEquals(SaveTimingOutcome.INCOMPLETE, publication.outcome)
+        assertNull(publication.nanos)
         assertNull(records.last().nanos)
     }
 
     @Test fun repeatedCleanupAndPixelsRemainSeparateEvents() {
         val records = mutableListOf<SaveTimingRecord>()
         var now = 0L
-        val timing = SaveTiming.start(10, SaveTimingKind.SAVE, records::add) { now }!!
+        val timing = SaveTiming.start(10, SaveTimingKind.SAVE, records::addAll) { now }!!
         timing.started(OriginalStage.NATIVE_DECODE); now += 100
         timing.finished(OriginalStage.NATIVE_DECODE, 100, true)
-        assertNull(records.last().pixels)
+        assertTrue(records.isEmpty())
         timing.pixels(4000, 3000)
         timing.started(OriginalStage.RESOURCE_CLOSE); now += 12
         timing.finished(OriginalStage.RESOURCE_CLOSE, 12, true)
@@ -54,13 +58,14 @@ class SaveTimingTest {
         val cleanup = records.filter { it.stage == SaveTimingStage.RESOURCE_CLOSE && it.outcome != SaveTimingOutcome.STARTED }
         assertEquals(listOf(12L, 34L), cleanup.map { it.nanos })
         assertEquals(listOf(SaveTimingOutcome.COMPLETED, SaveTimingOutcome.INCOMPLETE), cleanup.map { it.outcome })
+        assertNull(records.single { it.stage == SaveTimingStage.NATIVE_DECODE }.pixels)
         assertEquals(12_000_000L, records.last().pixels)
         assertEquals(SaveTimingOutcome.HOLD, records.last().outcome)
     }
 
     @Test fun recheckNeverFabricatesGenerationTimes() {
         val records = mutableListOf<SaveTimingRecord>()
-        val timing = SaveTiming.start(10, SaveTimingKind.RECHECK, records::add)!!
+        val timing = SaveTiming.start(10, SaveTimingKind.RECHECK, records::addAll)!!
         timing.measure(SaveTimingStage.RECONCILIATION) { 1 }
         timing.finish(SaveTimingOutcome.UNCONFIRMED)
         for (stage in listOf(SaveTimingStage.NATIVE_DECODE, SaveTimingStage.JPEG_ENCODE, SaveTimingStage.GPU_RENDER)) {
@@ -72,17 +77,20 @@ class SaveTimingTest {
 
     @Test fun gpuSpansDistinguishSuccessSkippedIncompleteAndUnavailable() {
         val records = mutableListOf<SaveTimingRecord>()
-        val timing = SaveTiming.start(10, SaveTimingKind.SAVE, records::add)!!
+        val timing = SaveTiming.start(10, SaveTimingKind.SAVE, records::addAll)!!
         val gpu = GpuExportTimings()
         gpu.finished("B1", 123, true)
         gpu.finished("B1_QUANTILES", 42, false)
         gpu.drain(timing, false)
+        timing.finish(SaveTimingOutcome.FAILED)
         assertEquals(SaveTimingOutcome.INCOMPLETE, records.single { it.stage == SaveTimingStage.B1_QUANTILES }.outcome)
         assertEquals(SaveTimingOutcome.NOT_REACHED, records.single { it.stage == SaveTimingStage.FINAL }.outcome)
         assertEquals(SaveTimingOutcome.NOT_REACHED, records.single { it.stage == SaveTimingStage.B2 }.outcome)
         records.clear()
         gpu.skipped("B3")
-        gpu.drain(timing, true)
+        val second = SaveTiming.start(10, SaveTimingKind.SAVE, records::addAll)!!
+        gpu.drain(second, true)
+        second.finish(SaveTimingOutcome.PUBLISHED)
         assertEquals(SaveTimingOutcome.SKIPPED, records.single { it.stage == SaveTimingStage.B3 }.outcome)
         assertEquals(SaveTimingOutcome.UNAVAILABLE, records.single { it.stage == SaveTimingStage.B2 }.outcome)
     }
@@ -94,9 +102,13 @@ class SaveTimingTest {
         timing.started(OriginalStage.NATIVE_DECODE)
         now += 123
         timing.finished(OriginalStage.NATIVE_DECODE, 1_000_123, true)
-        assertEquals(123L, records.last().nanos)
         timing.measure(SaveTimingStage.PUBLICATION) { now += 456 }
-        assertEquals(456L, records.last().nanos)
+        assertTrue(records.isEmpty())
+        timing.finish(SaveTimingOutcome.PUBLISHED)
+        assertEquals(123L, records.single { it.stage == SaveTimingStage.NATIVE_DECODE }.nanos)
+        assertEquals(456L, records.single { it.stage == SaveTimingStage.PUBLICATION }.nanos)
+        assertEquals(579L, records.last().nanos)
+        assertEquals(1_000_579L, now)
     }
 
     @Test fun restartAndVersionUpdateKeepValidRecords() {
@@ -151,4 +163,95 @@ class SaveTimingTest {
         assertEquals("existing", directory.readText())
         assertFalse(SaveTimingRecord.valid(record().line().trimEnd().replace("COMPLETED", "secret-photo-name")))
     }
+    @Test fun oneBatchAfterTerminalOutcomeAndNoStartedEvents() {
+        var calls = 0
+        val batches = mutableListOf<List<SaveTimingRecord>>()
+        val timing = SaveTiming.start(20, SaveTimingKind.SAVE, { calls++; batches += it })!!
+        timing.measure(SaveTimingStage.GPU_RENDER) {
+            timing.started(OriginalStage.RESOURCE_CLOSE)
+            timing.finished(OriginalStage.RESOURCE_CLOSE, 1, true)
+            assertEquals(0, calls)
+        }
+        timing.finish(SaveTimingOutcome.CANCELLED)
+        timing.event(SaveTimingStage.PUBLICATION, SaveTimingOutcome.COMPLETED, 99)
+        timing.finish(SaveTimingOutcome.PUBLISHED)
+        assertEquals(1, calls)
+        assertEquals(SaveTimingOutcome.CANCELLED, batches.single().last().outcome)
+        assertTrue(batches.single().none { it.outcome == SaveTimingOutcome.STARTED })
+    }
+
+    @Test fun unendedAttemptIsNotPersistedAndFailedSinkIsNotRetried() {
+        var calls = 0
+        val timing = SaveTiming.start(20, SaveTimingKind.SAVE, { calls++; throw IOException() })!!
+        timing.measure(SaveTimingStage.PUBLICATION) { 1 }
+        assertEquals(0, calls) // Includes process termination before finish: no durable partial attempt.
+        timing.finish(SaveTimingOutcome.FAILED)
+        timing.finish(SaveTimingOutcome.FAILED)
+        assertEquals(1, calls)
+    }
+
+    @Test fun batchPreservesLegacyStartedAndVersionRows() {
+        val directory = temp.newFolder()
+        val legacy = record().copy(version = 19, outcome = SaveTimingOutcome.STARTED, nanos = null)
+        val store = SaveTimingStore(directory)
+        store.append(legacy)
+        val timing = SaveTiming.start(20, SaveTimingKind.SAVE, store::appendAll)!!
+        timing.measure(SaveTimingStage.PUBLICATION) { assertEquals(legacy.line(), store.snapshot().toString(Charsets.US_ASCII)) }
+        timing.finish(SaveTimingOutcome.PUBLISHED)
+        val lines = store.snapshot().toString(Charsets.US_ASCII).trimEnd().lines()
+        assertEquals(legacy.line().trimEnd(), lines.first())
+        assertTrue(lines.drop(1).none { it.contains("STARTED") })
+    }
+
+    @Test fun concurrentBatchesStayContiguousAndSnapshotsNeverSeePartialBatches() {
+        val directory = temp.newFolder()
+        val pool = Executors.newFixedThreadPool(4)
+        try {
+            (0 until 40).map { index -> pool.submit {
+                SaveTimingStore(directory).appendAll(List(15) { record(index) })
+                val lines = SaveTimingStore(directory).snapshot().toString(Charsets.US_ASCII).trimEnd().lines()
+                assertEquals(0, lines.size % 15)
+                assertTrue(lines.chunked(15).all { it.toSet().size == 1 })
+            } }.forEach { it.get(10, TimeUnit.SECONDS) }
+        } finally { pool.shutdownNow() }
+        assertEquals(600, SaveTimingStore(directory).snapshot().toString(Charsets.US_ASCII).trimEnd().lines().size)
+    }
+
+    @Test fun normalGpuSaveHasFifteenEndRecordsAndLegacyRowsExpireOnSave69() {
+        val records = mutableListOf<SaveTimingRecord>()
+        val timing = SaveTiming.start(20, SaveTimingKind.SAVE, records::addAll)!!
+        timing.measure(SaveTimingStage.NATIVE_DECODE) { 1 }
+        timing.pixels(6000, 4000)
+        timing.measure(SaveTimingStage.GPU_RENDER) { 1 }
+        val gpu = GpuExportTimings()
+        for (stage in listOf("B1", "B1_QUANTILES", "B2", "B3", "B4", "B5", "FINAL")) gpu.finished(stage, 1, true)
+        gpu.drain(timing, true)
+        timing.measure(SaveTimingStage.JPEG_ENCODE) { 1 }
+        repeat(2) { timing.started(OriginalStage.RESOURCE_CLOSE); timing.finished(OriginalStage.RESOURCE_CLOSE, 1, true) }
+        timing.measure(SaveTimingStage.PUBLICATION) { 1 }
+        timing.finish(SaveTimingOutcome.PUBLISHED)
+        assertEquals(15, records.size)
+        val store = SaveTimingStore(temp.newFolder())
+        store.append(record().copy(version = 19, outcome = SaveTimingOutcome.STARTED))
+        repeat(68) { store.appendAll(records) }
+        assertTrue(store.snapshot().toString(Charsets.US_ASCII).contains("\t19\t"))
+        store.appendAll(records)
+        assertFalse(store.snapshot().toString(Charsets.US_ASCII).contains("\t19\t"))
+        // Fixed-width schema upper bound, even with maximum numeric fields.
+        val longest = SaveTimingRecord("f".repeat(32), Int.MAX_VALUE, SaveTimingKind.RECHECK,
+            SaveTimingStage.RECONCILIATION, SaveTimingOutcome.NOT_REACHED, 24_000_000, Long.MAX_VALUE).line()
+        assertTrue(longest.length * SaveTimingStore.MAX_RECORDS < SaveTimingStore.MAX_BYTES)
+    }
+
+    @Test fun repeatedCallbacksAreBoundedAndKeepTerminalOutcome() {
+        var batch = emptyList<SaveTimingRecord>()
+        val timing = SaveTiming.start(20, SaveTimingKind.SAVE, { batch = it })!!
+        repeat(SaveTimingStore.MAX_RECORDS + 100) {
+            timing.event(SaveTimingStage.RESOURCE_CLOSE, SaveTimingOutcome.COMPLETED, 1)
+        }
+        timing.finish(SaveTimingOutcome.HOLD)
+        assertEquals(SaveTimingStore.MAX_RECORDS, batch.size)
+        assertEquals(SaveTimingOutcome.HOLD, batch.last().outcome)
+    }
+
 }
