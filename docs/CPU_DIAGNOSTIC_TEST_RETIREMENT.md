@@ -634,3 +634,16 @@ Activity前にqueue startup完了を待つ。既存保存領域に対する一�
 旧headの成功はこの隔離変更後の実走合格ではない。隔離版lint/unit/app/testAPKは成功4分15秒、
 selector限定の最終差分は再ビルド/実走で確認する。最初のlint失敗（LocalContextのActivity cast 2箇所）は
 LocalActivityへ限定修正し、抑制は追加していない。
+### A保存とB/C入力の所有権群（追加・実走待ち）
+
+`GpuExportActiveOwnershipAndroidTest` の10元methodを通常 `GpuActiveSaveOwnershipSafetyAndroidTest` へ移行。
+trim/遅延公開/保存中A再選択/B→C/背景化/表示後・初drawのcontext loss/B preflight中の切替・背景化/A export lossの
+各境界を省略せず保持。通常Activityの製品editor・実FGSを使用し、一覧gestureの代替とは数えない。
+`GpuExportBoundaryFixture.run` の明示ordinaryActivity分岐は通常debugの新class完全一致のみ許可し、
+追加gpuSaveSafety opt-inと試験専用namespace/先行queue初期化を要求。従来normal boundary cancellationの分離方式は維持。
+通常Androidコンパイル成功34秒。M2対応実装39元件＋既存保持4、未実装6。通常側選択37method（M1 cold境界1を含む）。
+
+8d6333c8の隔離previewは1成功42.843秒、既存noBackup全ファイルhash不変。
+同head Home/FGS試験は公開・台帳・owner解放まで通過後、旧診断の操作文言で待機して失敗74.224秒。
+現行DevelopMessagesの保存済み/明示retryアクセシビリティ文言へ通常側試験のみ修正した。製品仕様の変更・assert削除はない。
+失敗時も既存noBackup hash不変、失敗証拠は保持。修正後test APK成功42秒、再実走はこれから。

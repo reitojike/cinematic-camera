@@ -137,7 +137,7 @@ class GpuFullSizeSaveLifecycleSafetyAndroidTest {
             }
             env.returnToEditor()
             await("return shows publication and explicit preview resume") {
-                scenario.state == Lifecycle.State.RESUMED && action("保存したJPEGを照合して開く") != null &&
+                scenario.state == Lifecycle.State.RESUMED && action("保存したJPEGを開く（開く前に照合します）") != null &&
                     action("プレビューを再開") != null
             }
             assertEquals("Publication/return cannot implicitly reopen preview", 1, env.owners.size)
@@ -199,7 +199,7 @@ class GpuFullSizeSaveLifecycleSafetyAndroidTest {
         ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
             val description = requireNotNull(failed.gpuFailure).description
             await("recovered GPU_FAILED reason/count and real retry control", PREPARE_TIMEOUT_MS) {
-                find { it.text?.toString() == description } != null && action("同じ GPU 保存を再試行") != null
+                find { it.text?.toString() == description } != null && action("同じ設定で保存を再試行") != null
             }
             assertEquals("Opening failed save must not start an automatic retry", 0, env.serviceStarts.get())
             assertEquals(failed, save.state.value)
@@ -221,7 +221,7 @@ class GpuFullSizeSaveLifecycleSafetyAndroidTest {
             }
             try {
                 assertTrue(entered.await(10, TimeUnit.SECONDS))
-                click("同じ GPU 保存を再試行") // Real editor callback -> same handle -> actual FGS.
+                click("同じ設定で保存を再試行") // Real editor callback -> same handle -> actual FGS.
                 await("explicit retry admitted to actual FGS") { ForegroundExports.gate.active()?.started == true }
                 assertSame(save, requireNotNull(ForegroundExports.gate.active()).value.identity)
                 env.assertServiceStartedAfterPreviewClosed(save)
@@ -241,7 +241,7 @@ class GpuFullSizeSaveLifecycleSafetyAndroidTest {
             assertArrayEquals(intent, env.intent(save).read(ManualOriginalTrialRequestCodec.MAX_BYTES))
             env.assertFailureCount(beforeCount + 1)
             await("retained retry result shown without automatic preview") {
-                action("保存したJPEGを照合して開く") != null && action("プレビューを再開") != null
+                action("保存したJPEGを開く（開く前に照合します）") != null && action("プレビューを再開") != null
             }
             assertEquals(1, env.owners.size)
             assertEquals(1, env.serviceStarts.get())

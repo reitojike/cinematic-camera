@@ -221,11 +221,11 @@ class GpuSaveLifecycleSafetyAndroidTest {
                     save.request.generation).generationRoot(), "original-work").exists())
                 app.startActivity(Intent(app, PhotoRollActivity::class.java)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
-                await("return shows confirmed retained save") { action("保存したJPEGを照合して開く") != null && action("プレビューを再開") != null }
+                await("return shows confirmed retained save") { action("保存したJPEGを開く（開く前に照合します）") != null && action("プレビューを再開") != null }
                 assertEquals("Publication/return cannot automatically restart preview", 1, owners.size)
                 click("プレビューを再開")
                 await("explicit resume presents the same recipe") { owners.size == 2 && owners.last().session.presented.value == values &&
-                    action("保存したJPEGを照合して開く") != null }
+                    action("保存したJPEGを開く（開く前に照合します）") != null }
                 val same = save.advance(observer.snapshot().developConditions(true)) { false }.get(30, TimeUnit.SECONDS)
                 assertEquals(ManualOriginalTrialSavePhase.PUBLISHED, same.phase)
                 assertEquals(record.uri, same.uri)
