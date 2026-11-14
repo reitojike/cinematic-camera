@@ -133,7 +133,13 @@ class GpuInputFilesSafetyAndroidTest {
                 await("DocumentsUI foreground") { device.currentPackageName?.endsWith(".documentsui") == true }
                 val filesPackage = checkNotNull(device.currentPackageName)
                 openInternalDownload(filesPackage)
-                find("owned synthetic DNG", By.pkg(filesPackage).text(name), Direction.DOWN).click()
+                var ownedDocument: UiObject2? = null
+                await("owned synthetic DNG") {
+                    ownedDocument = device.findObject(By.pkg(filesPackage).text(name))
+                        ?: device.findObject(By.pkg(filesPackage).desc(Pattern.compile(Pattern.quote(name) + ",.*")))
+                    if (ownedDocument != null) true else { scroll(filesPackage); false }
+                }
+                checkNotNull(ownedDocument).click()
                 await("ordinary product GPU presents selected DNG", 60_000) {
                     owners.lastOrNull()?.let { current ->
                         current.failure.value?.let { throw AssertionError("Selected native input failed", it) }
