@@ -4,8 +4,8 @@ import android.opengl.GLES32
 import dev.cinematic.p0.gpu.*
 import dev.cinematic.p0.gpu.diag.GpuStageTap.Point
 import dev.cinematic.p0.gpu.resample.GpuResample
-import dev.cinematic.p0.raw.StageClearCharacterV1
-import dev.cinematic.p0.raw.StageClearOrtonV1
+import dev.cinematic.p0.gpu.constants.StageClearCharacterV1
+import dev.cinematic.p0.gpu.constants.StageClearOrtonV1
 import kotlin.math.max
 import kotlin.math.min
 

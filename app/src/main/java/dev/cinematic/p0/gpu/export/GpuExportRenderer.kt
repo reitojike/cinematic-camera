@@ -1,5 +1,10 @@
 package dev.cinematic.p0.gpu.export
 
+import dev.cinematic.p0.gpu.constants.R7BaseV1
+import dev.cinematic.p0.gpu.constants.StageClearCharacterV1
+import dev.cinematic.p0.gpu.constants.StageClearOrtonV1
+import dev.cinematic.p0.gpu.constants.StageClearMistV1
+import dev.cinematic.p0.gpu.constants.StageClearGlowV1
 import android.opengl.GLES32
 import dev.cinematic.p0.gpu.*
 import dev.cinematic.p0.gpu.analysis.GpuAnalysis

@@ -1,5 +1,6 @@
 package dev.cinematic.p0.raw
 
+import dev.cinematic.p0.gpu.constants.StageClearV1
 import kotlin.math.*
 
 /** Shared PC float32 OKLab boundary. Signed cube roots retain out-of-gamut RGB. */

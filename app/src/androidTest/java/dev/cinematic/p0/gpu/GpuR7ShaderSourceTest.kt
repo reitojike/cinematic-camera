@@ -2,7 +2,7 @@ package dev.cinematic.p0.gpu
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import dev.cinematic.p0.raw.R7BaseV1
+import dev.cinematic.p0.gpu.constants.R7BaseV1
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

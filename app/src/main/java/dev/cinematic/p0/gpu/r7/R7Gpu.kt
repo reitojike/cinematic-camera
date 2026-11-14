@@ -5,7 +5,7 @@ import dev.cinematic.p0.gpu.*
 import dev.cinematic.p0.gpu.analysis.GpuAnalysis
 import dev.cinematic.p0.gpu.diag.GpuStageTap.Point
 import dev.cinematic.p0.gpu.resample.GpuResample
-import dev.cinematic.p0.raw.R7BaseV1
+import dev.cinematic.p0.gpu.constants.R7BaseV1
 import dev.cinematic.p0.raw.StageClearBlur
 import kotlin.math.max
 import kotlin.math.pow

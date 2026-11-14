@@ -4,7 +4,7 @@ import android.opengl.GLES32
 import dev.cinematic.p0.gpu.FragmentPass
 import dev.cinematic.p0.gpu.GpuTexture
 import dev.cinematic.p0.gpu.TextureInput
-import dev.cinematic.p0.raw.StageClearGlowV1
+import dev.cinematic.p0.gpu.constants.StageClearGlowV1
 import dev.cinematic.p0.gpu.resample.GpuResample
 
 /** #281: immutable prepared fields, ordered Float bloom and strength-dependent Glow. */

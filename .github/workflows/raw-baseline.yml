@@ -3,6 +3,7 @@ name: PC RAW checks
 on:
   pull_request:
     paths:
+      - 'app/src/main/java/dev/cinematic/p0/gpu/constants/**'
       - 'tools/raw_baseline/**'
       - 'app/src/androidTest/assets/w1_trial_v1.json'
       - 'app/src/androidTest/assets/as_shot_white_xy_v1.json'
@@ -26,6 +27,7 @@ on:
   push:
     branches: [main]
     paths:
+      - 'app/src/main/java/dev/cinematic/p0/gpu/constants/**'
       - 'tools/raw_baseline/**'
       - 'app/src/androidTest/assets/w1_trial_v1.json'
       - 'app/src/androidTest/assets/as_shot_white_xy_v1.json'
