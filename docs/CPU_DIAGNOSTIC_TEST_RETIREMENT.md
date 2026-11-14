@@ -4,8 +4,9 @@
 
 2026-11-14、監査元 main `4ee8067e77f9109baa0b5600ad4d7360b17a09d6`。
 これは削除前の分類・移行計画であり、移行完了/試験合格の報告ではない。
-#403 は別ブランチの `42da972b8cf9dfa6337f66a8750a1978ff19dde6` を固定して独立レビュー待ち。
-その renderer/pipeline の test-only 化を本台帳の完了件数に算入しない。
+#403 は同期後head `08c5487ed58343ba3ad6c90ce53f213f06cf78ec` で必要検証とレビューを完了し、
+merge `28333f5f206cf18405f975e6fbbe0881c46d1694` でmainへ取り込まれた。
+その renderer/pipeline の test-only 化を本台帳の133メソッドの移行完了件数に算入しない。
 
 対象は #290 の残る `gpuDiagnosticTest` 17 Kotlin ファイル61 `@Test` メソッドと、
 通常 `androidTest` の診断参照候補22ファイル72メソッド、計39ファイル133メソッド。
