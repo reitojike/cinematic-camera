@@ -179,7 +179,7 @@ class GpuSaveProducerSafetyAndroidTest {
             var primary: Throwable? = null
             try {
                 assertThrows(java.util.concurrent.CancellationException::class.java) { f.attempt.render { false } }
-                assertTrue("The real GPU output must reach packing before the injected stop", reached)
+                assertTrue("GPU-selected attempt must reach the pack entry before the injected stop; drawing has not begun", reached)
                 assertTrue(f.attempt.hasUnreleasedResources)
                 assertEquals("keep", blocker.readText())
                 assertThrows(IllegalStateException::class.java) { f.attempt.close() }
