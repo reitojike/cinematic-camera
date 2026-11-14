@@ -702,3 +702,51 @@ M2保持4件はOriginal24CancellationRetryInstrumentationTestのnormalGpu*で、
 試験cleanupの一次失敗上書きを共通helperで修正し、複数cleanupの例外をsuppressedに保持する。
 Lifecycle取消は当該handleのidentity一致時だけに限定。合成例外注入4件でhelper/identityの保証を確認予定。
 この修正はcompile成功（6秒）、Android再実走前。最終headのCI/独立再確認も必要なためHOLD。
+## 移行② 最終実走証拠（2026-11-15）
+
+826714d32c3d184b7d583cc2a395cf3cd76d5043 の同一app/test APKで49 methodを実走成功。
+内訳は移行選択41（M1 cold保存境界1を含む）＋正しい既存保持normalGpu取消4＋cleanup/identity例外注入4。
+M2の移行元49件（45対応/集約＋4保持）とは数え方が違う。
+app APK SHA256: `ad74d7cb0f3c34372be5c2271435bfdc4250fc3fb95996f1112394b53345ad2c`
+test APK SHA256: `048bb2867f54baebe1c7f45f62327b80363442e8b5b7b75631ce30226dcdb381`
+
+| 実走群 | 成功method |
+|---|---:|
+| cleanup例外/identity | 4 |
+| 通常取消retry/HOLD/新世代/UI | 4 |
+| observer/output/producer/readback/raster/journal | 19 |
+| preview/Home/12MP lifecycle | 4 |
+| A/B所有権・重複START取消 | 11 |
+| 並行入力 | 2 |
+| 実一覧A→B | 1 |
+| 実12MP retry/12MP×5/24MP公開/24MP取消 | 4 |
+| 合計 | 49 |
+
+各群はfresh instrumentation、失敗/skip0の最終成功ログを保全。既存noBackup全ファイルの削除/改変なしを前後SHA一覧で確認。
+UUID合成fixture自身の新規成果物は既存データと区別。実機は未操作。
+途中でrunner消失（31成功後）、診断stdoutを成功件数へ数えた集計誤り、System UI ANRによる環境不成立があり、
+いずれも未実走/不成立を合格にしなかった。同headの残件だけを再開し、class/test付き完了ブロックとJUnit集計で49件を再照合。
+boot安定確認のproperty固定値が不適切だった点も記録し、実boot終了イベント＋ANRなし確認後に再開。
+最後の実一覧は67.634秒、実寸4件は1,339.045秒。AVD停止後adb空・QEMU/emulator0を直接確認して返却した。
+
+独立コードレビューと隔離個別レビューは826714d3でOK。監査は元49件の実在/計数と主要assert・対応先/台帳照合で、
+全旧新全文の完全対照とは述べない。指摘された一次例外保全・所有identity照合・隔離root fallbackは修正済み。
+main bff38eeaの同期差はdocs/README3ファイルのみで、app/test/build/workflowは実走headと同一であることを確認。
+この証拠は製品/診断削除後の新headのGPU90回帰を免除しない。
+
+## 全4診断variantの削除範囲（#290 追加指示）
+
+133 method台帳は試験分類でありbuild/source全体の一覧ではなかったため、削除①では次の全4種を対象とする。
+
+| variant | 削除対象source・設定 | 通常側へ残す保証 |
+|---|---|---|
+| original24Probe | property/buildType/applicationIdSuffix/testBuildType、src/original24Probeとoriginal24ProbeTestのmanifest（専用Kotlinなし） | 原本/保存/取消/故障のM2保証。CPU比較/旧probeだけは終了 |
+| rawDiagnostic | src/rawDiagnosticのmanifest/lint.xml/6 Kotlin、rawDiagnosticTest manifest、限定lint/署名条件 | LibRaw/JNI/AS_SHOT/入力owner/取消。GPU variantからのrawDiagnostic/java追加sourceSetも撤去 |
+| gpuDiagnostic | src/gpuDiagnosticの15 Kotlin＋manifest/gitkeep、gpuDiagnosticTestの17 Kotlin/61@Test＋manifest、buildConfig/test source切替 | M1/M2/Eの通常GPU安全保証、製品renderer/共有部品、GpuStageTap/FULL_RECOMPUTE/通常1024px計測 |
+| previewDiagnostic | PreviewPresentationActivity＋manifest、previewDiagnosticTest manifest、build/test切替 | 実gesture/Activity/input/ownerのM1保証。CPU/cache/旧表示probeだけ終了 |
+
+4種排他require、診断署名/限定lint/sourceSets連結、verify-manifest/Android CIの診断ジョブも同時監査する。
+rawDiagnosticTestのSyntheticDiagnosticProvider宣言は現checkoutに実装がなく、診断manifestと共に撤去する。
+CIは通常安全試験/manifest検証へ保証を移し、必須チェックを単に免除しない。gpuMesaは別の保持対象。
+#379再実行手順・通常メモリ記録、共有型、旧CPU保存intent/codec読取、HOLD/二重保存防止は維持。
+削除時に未分類source/参照や安全assertが見つかった場合は、削除を止め本表へ追記して確認する。
