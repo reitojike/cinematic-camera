@@ -59,7 +59,7 @@ OR RawDiagnosticActivity
 `Original24GpuInputAndroidTest` 3件の計12件を先に通常debug用の共通gateへ変更する。
 `isolated=true` と `gpuInputSafety=true`、通常debug package、エミュレーターを必須とし、
 不足条件はskipではなく失敗にする。すべてprivate合成DNGを使い、MediaStore/実機へ広げない。
-残るM1の34元メソッドは実装待ちで、この12件も実走成功までは移行完了に数えない。
+この12件も実走成功までは移行完了に数えない。
 
 入力3件のうち `inputOnlyEntryMatchesCpuSessionAsShotWithoutPreparingR7` は
 `inputOnlyEntryLoadsNativeAsShotWithoutPreparingR7` へ変更し、CPU preview/lookの呼出しを除く。
@@ -71,6 +71,23 @@ adb -s <予約済みemulator> shell am instrument -w -r -e isolated true -e gpuI
 ```
 
 期待12件。native入力試験であり、実GPU描画や90条件回帰の代替ではない。
+
+続けて通常側へ追加する保証（旧診断試験は実走確認まで残す）:
+
+| 通常側の新method | 移行元 | 実装範囲 |
+|---|---|---|
+| `GpuInputOwnershipSafetyAndroidTest.oldSurfaceDetachCannotClearNewAttachmentNotification` | `GpuPreviewLifecycleTest` の同名method | 旧surface detach/resizeで新attachment通知を消さず、GL終了確認後にsurfaceを解放 |
+| `GpuInputOwnershipSafetyAndroidTest.contextRejectsWrongThreadDrawAndCloseAndClosedUseWithoutLosingOwner` | `GpuDiagnosticProbeTest.sessionReusesProgramsAndRejectsWrongThreadAndClosedUse` | 実EglContexts/PassGraphの誤thread draw/close拒否、program再利用、closed-use拒否、次context |
+| `GpuInputOwnershipSafetyAndroidTest.unboundContextIsRejectedThenClosedBeforeNextContext` | `GpuDiagnosticProbeTest.unboundContextIsRejectedAndCanBeReleased` | unbind後の拒否・暗黙再bindなし・close後の次context |
+| `GpuInputAdmissionSafetyAndroidTest.rejectedAndCancelledInputsKeepPrimaryFailureAndReleaseAdmissionBeforeNextInput` | `GpuDiagnosticDngInputTest` の事前取消/非local拒否/foreground未確認/cleanup取消による再分類禁止/cleanup失敗によるprimary置換禁止の5件 | 製品GpuPhotoRollInputs・private providerで各拒否後のread不開始/slot解放/原本不変、release observer取消/失敗後のprimary保持、最後のnative入力成功 |
+
+これでM1の20元メソッドに対する実装へ着手、通常側は計16method（既存12＋追加4）。残る26元メソッドは実装待ち。
+admissionの1methodは複数ケースをまとめたもので、5件実行と数えない。queueのprivate領域を隔離するため同classは新しいinstrumentation processで単独実行する。
+両新classも `isolated=true` / `gpuInputSafety=true` が必要。新classの実GPU/入力試験は未実走。
+
+先頭12件のcommit `c709a2cdd2a67561c3c1de2bc8fbf0eedea29cc6` で
+`:app:compileDebugAndroidTestKotlin :app:testDebugUnitTest --no-daemon --max-workers=2 --stacktrace` は1m18sで成功。
+unit taskはFROM-CACHEのため、新たなhost実走とは数えない。追加4件を含む最終headでコンパイルと対象host試験を取り直す。
 
 - M1/M2で通常debug app/test APKを作成し、移行methodを明示選択する。opt-in引数を渡し、計画件数とinstrumentation結果を照合する。失敗/skipは0、成功件数は必ず1以上。12MP/24MP等の専用caseは別コマンド・別結果として記録する。
 - head/tree、コマンド、APK hash、AVD/driver、開始終了時刻・所要時間、期待/成功/失敗/skip件数、観測した境界とcleanup結果を各PRに残す。ソースにassertがあることと実走成功を別欄で扱う。
