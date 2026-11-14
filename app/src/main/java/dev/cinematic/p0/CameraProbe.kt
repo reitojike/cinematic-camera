@@ -29,6 +29,7 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
@@ -200,6 +201,9 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
     val recordingFailure get() = cine.failure
     val recordingSaveSucceeded get() = cine.saveSucceeded
     val recordingStartSequence get() = cine.startSequence
+    /** Display-only event; the existing recording admission guard remains unchanged. */
+    var thermalRecordingRejectionSequence by mutableLongStateOf(0L)
+        private set
     val recordingDurationMs get() = cine.durationMs
     val recordingAudioAmplitude get() = cine.audioAmplitude
     val recordingAudioState get() = cine.audioState
@@ -692,6 +696,7 @@ class CameraProbe(private val context: Context, private val owner: LifecycleOwne
         if (mode != CaptureMode.CINE || !bound || !controlReady || busy || recordingBusy) return
         val session = cineSession ?: return
         if (ProbeControls.shouldStopRecording(thermalCode)) {
+            thermalRecordingRejectionSequence++
             event("Recording blocked by OS thermal ${ProbeControls.thermalName(thermalCode)}; wait for cooling")
             return
         }

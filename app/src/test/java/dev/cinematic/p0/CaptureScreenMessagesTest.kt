@@ -6,7 +6,7 @@ import org.junit.Test
 class CaptureScreenMessagesTest {
     @Test fun recoveryPrecedesFailureAndActionEligibilityIsPreserved() {
         val result = captureMessages(captureRecovery = true, controlRecovery = true,
-            captureFailed = true, thermalWarning = true, notice = "保存しました")
+            captureFailed = true, thermalWarning = true, notice = CaptureNotice("保存しました", CaptureChromeTone.ACCEPTED))
         assertEquals("capture.recovery", result.center!!.fact)
         assertEquals(MessageAction.STOP_AND_RECOVER, result.center.primary!!.action)
         assertNull(result.banner)
@@ -19,14 +19,14 @@ class CaptureScreenMessagesTest {
     @Test fun processingPrecedesWarningAndWarningsPrecedeToast() {
         assertEquals("capture.processing", captureMessages(phase = "処理中", thermalWarning = true).banner!!.fact)
         assertEquals("recording.thermal", captureMessages(thermalWarning = true,
-            microphoneWarning = true, notice = "保存しました").banner!!.fact)
-        assertNull(captureMessages(microphoneWarning = true, notice = "保存しました").toast)
+            microphoneWarning = true, notice = CaptureNotice("保存しました", CaptureChromeTone.ACCEPTED)).banner!!.fact)
+        assertNull(captureMessages(microphoneWarning = true, notice = CaptureNotice("保存しました", CaptureChromeTone.ACCEPTED)).toast)
     }
 
     @Test fun noticesRetainLifetimeOwnershipAndTone() {
-        assertEquals(CaptureChromeTone.ACCEPTED, captureMessages(notice = "保存しました").toast!!.tone)
-        assertEquals(CaptureChromeTone.ACCEPTED, captureMessages(notice = "設定API受付完了・実測は診断で確認").toast!!.tone)
-        assertEquals(CaptureChromeTone.NORMAL, captureMessages(notice = "回転: 横向き").toast!!.tone)
+        assertEquals(CaptureChromeTone.ACCEPTED, captureMessages(notice = CaptureNotice("保存しました", CaptureChromeTone.ACCEPTED)).toast!!.tone)
+        assertEquals(CaptureChromeTone.ACCEPTED, captureMessages(notice = CaptureNotice("設定を受け付けました。実測値は診断で確認できます。", CaptureChromeTone.ACCEPTED)).toast!!.tone)
+        assertEquals(CaptureChromeTone.NORMAL, captureMessages(notice = captureRotationNotice(false)).toast!!.tone)
     }
 
     @Test fun connectionCenterCanCoexistWithSeparateWarning() {
@@ -51,5 +51,42 @@ class CaptureScreenMessagesTest {
             assertEquals(enabled, captureMessages(captureFailed = true,
                 diagnosticsEnabled = enabled).banner!!.primary!!.enabled)
         }
+    }
+    @Test fun toneComesFromEventAndNotTheWording() {
+        assertEquals(CaptureChromeTone.NORMAL, captureMessages(notice = CaptureNotice("保存しました")).toast!!.tone)
+        assertEquals(CaptureChromeTone.ACCEPTED,
+            captureMessages(notice = CaptureNotice("別の完了文", CaptureChromeTone.ACCEPTED)).toast!!.tone)
+    }
+
+    @Test fun permissionUsesCenterAndOnlyExistingPermissionAction() {
+        val message = captureMessages(cameraPermissionMissing = true).center!!
+        assertEquals(MessageSlot.CENTER, message.slot)
+        assertEquals(CaptureChromeTone.NORMAL, message.tone)
+        assertEquals("カメラの許可が必要です。許可しない場合は、端末のアプリ設定からも変更できます。", message.body)
+        assertEquals(MessageAction.GRANT_ACCESS, message.primary!!.action)
+        assertEquals("カメラを許可", message.primary.label)
+        assertNull(message.secondary)
+    }
+
+    @Test fun thermalFailureIsOnlyTheRecentRejectedPresentation() {
+        val recent = captureMessages(thermalWarning = true, thermalRejected = true).banner!!
+        assertEquals(CaptureChromeTone.FAILURE, recent.tone)
+        assertEquals("端末が熱いため録画を開始できませんでした。温度が下がるまでお待ちください。", recent.body)
+        assertEquals(CaptureChromeTone.WARNING, captureMessages(thermalWarning = true).banner!!.tone)
+        assertNull(captureMessages().banner)
+        assertNull(captureMessages(captureRecovery = true, thermalRejected = true).banner)
+    }
+
+    @Test fun rotationWaitingAndChangingTextAreNaturalAndNormal() {
+        assertEquals("画面の向きに合わせて文字だけ回転します。", captureRotationNotice(false).text)
+        assertEquals("画面の向きに合わせて文字だけ回転します。録画は続いています。", captureRotationNotice(true).text)
+        for (recording in listOf(false, true)) assertEquals(CaptureChromeTone.NORMAL, captureRotationNotice(recording).tone)
+        assertNull(captureWaitingNotice(true))
+        assertEquals("撮影とプレビューの復帰を待っています。完了後に操作できます。", captureWaitingNotice(false)!!.text)
+        assertEquals(CaptureChromeTone.NORMAL, captureWaitingNotice(false)!!.tone)
+        assertEquals("設定を変更しています。", captureChangingMessage(emptyList()))
+        assertEquals("ISO を変更しています。", captureChangingMessage(listOf("ISO")))
+        assertEquals("ISO と SHUTTER を変更しています。", captureChangingMessage(listOf("ISO", "SHUTTER")))
+        assertEquals("ISO、SHUTTER と WB を変更しています。", captureChangingMessage(listOf("ISO", "SHUTTER", "WB")))
     }
 }

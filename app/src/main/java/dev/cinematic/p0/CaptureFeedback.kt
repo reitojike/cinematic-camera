@@ -1,11 +1,29 @@
 package dev.cinematic.p0
 
-data class EditorReceiptFeedback(val editor: CaptureEditor, val notice: String?)
+/** Display information carries its tone at the producing event, never inferred from wording. */
+data class CaptureNotice(val text: String, val tone: CaptureChromeTone = CaptureChromeTone.NORMAL)
+
+data class EditorReceiptFeedback(val editor: CaptureEditor, val notice: CaptureNotice?)
+
+internal fun captureRotationNotice(recording: Boolean) = CaptureNotice(
+    if (recording) "画面の向きに合わせて文字だけ回転します。録画は続いています。"
+    else "画面の向きに合わせて文字だけ回転します。",
+)
+
+internal fun captureChangingMessage(keys: List<String>): String = when (keys.size) {
+    0 -> "設定を変更しています。"
+    1 -> "${keys.single()} を変更しています。"
+    else -> "${keys.dropLast(1).joinToString("、")} と ${keys.last()} を変更しています。"
+}
+
+internal fun captureWaitingNotice(recoveryRequired: Boolean): CaptureNotice? =
+    if (recoveryRequired) null // The recovery problem already owns this fact.
+    else CaptureNotice("撮影とプレビューの復帰を待っています。完了後に操作できます。")
 
 /** A guard/no-op must not turn the last successful request into this edit's receipt. */
 fun beginEditorReceipt(editor: CaptureEditor, before: ControlReceipt, after: ControlReceipt): EditorReceiptFeedback {
     if (before.epoch != after.epoch || editor.epoch != after.epoch || after.sequence <= before.sequence)
-        return EditorReceiptFeedback(editor, "新しい設定要求は未送信です・編集は保持しています")
+        return EditorReceiptFeedback(editor, CaptureNotice("新しい設定要求は未送信です。編集は保持しています。"))
     return completeEditorReceipt(editor.sent(after.sequence), after)
 }
 
@@ -14,7 +32,7 @@ fun completeEditorReceipt(editor: CaptureEditor, receipt: ControlReceipt): Edito
     val accepted = editor.submitting != null && editor.epoch == receipt.epoch &&
         editor.submitting == receipt.sequence && receipt.phase == ControlPhase.ACCEPTED
     val completed = editor.complete(receipt)
-    return if (accepted) EditorReceiptFeedback(completed.copy(note = null), "設定API受付完了・実測は診断で確認")
+    return if (accepted) EditorReceiptFeedback(completed.copy(note = null), CaptureNotice("設定を受け付けました。実測値は診断で確認できます。", CaptureChromeTone.ACCEPTED))
         else EditorReceiptFeedback(completed, null)
 }
 
