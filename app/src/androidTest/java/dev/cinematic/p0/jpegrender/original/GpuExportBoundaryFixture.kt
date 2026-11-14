@@ -3,6 +3,8 @@ package dev.cinematic.p0.jpegrender.original
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
+import android.content.ContextWrapper
+import android.content.SharedPreferences
 import android.net.Uri
 import android.opengl.EGL14
 import android.os.Build
@@ -22,7 +24,6 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.*
-import org.junit.Assume.assumeTrue
 
 /** Real-DNG factory fixture. Default small size has four bands with a two-row tail. No pixel oracle.
  * Explicit dimensions are used only by the opt-in concurrent memory probe. */
@@ -187,14 +188,39 @@ internal class GpuExportBoundaryFixture(val app: Context, val width: Int = WIDTH
         const val WIDTH = 512
         const val HEIGHT = 770
         private const val ENGINE_KEY = "develop/engine"
+        private var normalApp: Context? = null
+
+        /** One fresh namespace per instrumentation process; never recover the target app's saved records. */
+        @Synchronized private fun isolatedNormalApp(target: Context): Context = normalApp ?: run {
+            val namespace = "gpu-export-boundaries-${UUID.randomUUID()}"
+            val root = File(target.cacheDir.canonicalFile, namespace)
+            check(root.mkdir() && root.canonicalFile.parentFile == target.cacheDir.canonicalFile)
+            val cache = File(root, "cache").also { check(it.mkdir()) }
+            val state = File(root, "state").also { check(it.mkdir()) }
+            object : ContextWrapper(target) {
+                override fun getApplicationContext(): Context = this
+                override fun getCacheDir(): File = cache
+                override fun getNoBackupFilesDir(): File = state
+                override fun getSharedPreferences(name: String, mode: Int): SharedPreferences =
+                    target.getSharedPreferences("$namespace-$name", mode)
+            }.also { normalApp = it }
+        }
+
         val ALLOWED = AutoDevelopConditions(true, false, false, false, true, true, true, true, previewMemoryAvailable = true)
         fun run(expectedGpuFailures: Long = 0, expectedReason: GpuSaveFailureReason? = null,
             width: Int = WIDTH, height: Int = HEIGHT, body: (GpuExportBoundaryFixture) -> Unit) {
-            val target = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
+            val installed = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
             val args = InstrumentationRegistry.getArguments()
-            assumeTrue(BuildConfig.BUILD_TYPE == "gpuDiagnostic" && target.packageName == "dev.cinematic.p0.gpudiagnostic")
-            assumeTrue(args.getString("isolated") == "true" && args.getString("gpuExportBoundaries") == "true")
-            assumeTrue("Physical devices are excluded", Build.HARDWARE in setOf("ranchu", "goldfish"))
+            val normal = BuildConfig.BUILD_TYPE == "debug" && BuildConfig.DEBUG && installed.packageName == "dev.cinematic.p0"
+            check(normal || (BuildConfig.BUILD_TYPE == "gpuDiagnostic" && installed.packageName == "dev.cinematic.p0.gpudiagnostic"))
+            check(args.getString("isolated") == "true" && args.getString("gpuExportBoundaries") == "true")
+            check(Build.HARDWARE in setOf("ranchu", "goldfish")) { "Physical devices are excluded" }
+            if (normal) {
+                check(args.getString("class") == Original24GpuBoundaryCancellationAndroidTest::class.java.name) {
+                    "Run only the boundary cancellation class in a fresh instrumentation process"
+                }
+            }
+            val target = if (normal) isolatedNormalApp(installed) else installed
             val capabilities = GlThread().use { thread -> thread.call {
                 EglContexts(thread, target.assets).use { GlCapabilities.inspect(it) }
             } }
