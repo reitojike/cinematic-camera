@@ -1,0 +1,12 @@
+.gradle/
+**/build/
+local.properties
+__pycache__/
+*.pyc
+*.jsonl
+*.onnx
+*.png
+*.jpg
+*.jpeg
+*.dng
+*.csv

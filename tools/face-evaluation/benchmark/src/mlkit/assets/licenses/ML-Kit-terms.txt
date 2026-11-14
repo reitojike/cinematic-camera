@@ -1,0 +1,13 @@
+Evaluation only: com.google.mlkit:face-detection:16.1.7
+The published POM identifies "ML Kit Terms of Service":
+https://developers.google.com/ml-kit/terms
+These terms incorporate Google's APIs Terms of Service.
+This reference is not a grant of rights and does not replace those terms.
+SDK/model terms must not be confused with the Apache license of website code samples.
+
+Data disclosure: https://developers.google.com/ml-kit/android-data-disclosure
+Bundled models do not imply absence of metrics, update or IPC behavior.
+Runtime evaluation and distribution remain on hold pending the documented gates.
+
+Third-party notices from resolved AAR/JAR artifacts are packaged separately by coordinate.
+An artifact with zero notice entries requires further license review before distribution.
