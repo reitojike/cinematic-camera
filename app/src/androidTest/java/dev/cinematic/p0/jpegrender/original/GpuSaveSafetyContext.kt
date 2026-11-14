@@ -20,6 +20,7 @@ private var isolatedSaveApp: Context? = null
     }
     val selected = selector.substringBefore('#')
     check(selected in setOf(
+        "dev.cinematic.p0.jpegrender.original.GpuScratchRecoverySafetyAndroidTest",
         "dev.cinematic.p0.jpegrender.original.GpuPreviewPublicationSafetyAndroidTest",
         "dev.cinematic.p0.jpegrender.original.GpuFullSizeSaveSafetyAndroidTest",
         "dev.cinematic.p0.photoroll.GpuActiveSaveOwnershipSafetyAndroidTest",

@@ -160,6 +160,44 @@ class GpuSaveProducerSafetyAndroidTest {
         }
     }
 
+    @Test fun unknownScratchFileKeepsGpuAttemptOwnedUntilExplicitRemovalAndClose() {
+        lateinit var owned: Fixture
+        var reached = false
+        val trace = object : OriginalStageTrace {
+            override fun started(stage: OriginalStage) {
+                if (stage == OriginalStage.BITMAP_PACK && !reached) {
+                    reached = true
+                    File(owned.scratch, "owned-by-test.tmp").writeText("keep")
+                    owned.attempt.requestStop()
+                }
+            }
+            override fun finished(stage: OriginalStage, elapsedNanos: Long, completed: Boolean) = Unit
+        }
+        withFixture(trace) { f ->
+            owned = f
+            val blocker = File(f.scratch, "owned-by-test.tmp")
+            var primary: Throwable? = null
+            try {
+                assertThrows(java.util.concurrent.CancellationException::class.java) { f.attempt.render { false } }
+                assertTrue("The real GPU output must reach packing before the injected stop", reached)
+                assertTrue(f.attempt.hasUnreleasedResources)
+                assertEquals("keep", blocker.readText())
+                assertThrows(IllegalStateException::class.java) { f.attempt.close() }
+                assertTrue(f.attempt.hasUnreleasedResources)
+                assertTrue(blocker.delete()) // Only the test owns this synthetic obstruction.
+                f.attempt.close()
+                assertFalse(f.attempt.hasUnreleasedResources)
+                assertFalse(f.scratch.exists())
+                f.verifyOriginal()
+            } catch (error: Throwable) { primary = error; throw error }
+            finally {
+                preserveSafetyCleanup(primary,
+                    { if (blocker.exists()) { assertEquals("keep", blocker.readText()); check(blocker.delete()) } },
+                    { f.attempt.close() })
+            }
+        }
+    }
+
     private fun withFixture(trace: OriginalStageTrace? = null, action: (Fixture) -> Unit) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         requireGpuSaveSafetyFixture()
