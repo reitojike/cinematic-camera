@@ -1,0 +1,14 @@
+permission before 1080x2424 density=2.625 fontScale=1.0; camera=false; photo=false; dialog=none
+thermal before 1080x2424 density=2.625 fontScale=1.0; camera=false; photo=false; dialog=none
+thermal-rejected before 1080x2424 density=2.625 fontScale=1.0; camera=false; photo=false; dialog=none
+rotation before 1080x2424 density=2.625 fontScale=1.0; camera=false; photo=false; dialog=none
+rotation-recording before 1080x2424 density=2.625 fontScale=1.0; camera=false; photo=false; dialog=none
+progress before 1080x2424 density=2.625 fontScale=1.0; camera=false; photo=false; dialog=none
+saved before 1080x2424 density=2.625 fontScale=1.0; camera=false; photo=false; dialog=none
+permission after 1080x2424 density=2.625 fontScale=1.0; camera=false; photo=false; dialog=none
+thermal after 1080x2424 density=2.625 fontScale=1.0; camera=false; photo=false; dialog=none
+thermal-rejected after 1080x2424 density=2.625 fontScale=1.0; camera=false; photo=false; dialog=none
+rotation after 1080x2424 density=2.625 fontScale=1.0; camera=false; photo=false; dialog=none
+rotation-recording after 1080x2424 density=2.625 fontScale=1.0; camera=false; photo=false; dialog=none
+progress after 1080x2424 density=2.625 fontScale=1.0; camera=false; photo=false; dialog=none
+saved after 1080x2424 density=2.625 fontScale=1.0; camera=false; photo=false; dialog=none
