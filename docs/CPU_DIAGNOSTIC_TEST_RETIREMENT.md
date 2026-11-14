@@ -106,7 +106,7 @@ unit taskはFROM-CACHEのため、新たなhost実走とは数えない。追加
 `DevelopEngineAndroidTest.releasePolicyHasNoSettingAndDoesNotProbeGpu` の3件を保持先として再実走する（計30 method予定）。
 各classはfresh instrumentation processで実行し、専用queue/observerの混在を避ける。予定件数を実績へ読み替えない。
 
-元46件の内訳は、実装/保持対応42件、部分実装2件、契約差で判断待ち2件。**移行完了は0件**（Android未実走）。
+元46件の内訳は、実装/保持対応42件、部分実装2件、契約差の代替保証2件。代替方針Aは本人承認済みだが、追加assertの実走完了前に旧保証を削除しない。**46件すべての移行完了を意味しない**。
 42件にも既存通常試験への集約と、CPU/診断専用部分を移さない混在試験が含まれ、新規42件を意味しない。
 旧分類133件の M95/D14/E24 は維持し、下表はM1内の実装状況を細分化したもの。
 
@@ -513,3 +513,17 @@ AVDは他レーン利用中。未予約のemulatorには接続・停止・導入
 | method | 分類/移行PR | 保持する保証・削除する部分・対応先 |
 |---|---|---|
 | `dragAndReleaseReachRealSyntheticRawPreview` | M1 | CPU exact/draft worker切替UIは削除。実RAW上のdrag/release・最終recipe描画・readonly provider/idle復帰を通常GPU gesture試験に残す。 |
+
+## 契約差2件の本人承認と代替保証
+
+本人の「提案の方針でOKです」を親担当が候補Aへの承認として確認。以下は製品仕様を変えず、
+`GpuInputLifecycleSafetyAndroidTest` に集約する。上表の「判断待ち」はこの承認で更新されるが、
+追加assertは実走未完。旧診断試験はまだ削除しない。
+
+| 終了候補の旧保証 | 通常側の代替保証 | 実走・終了条件 |
+|---|---|---|
+| 遅延UI_HIDDENでも新loadを継続 | preflightをbarrierで保持してtrimを通知。drainと旧owner終了、原本不変、暗黙再開なし。明示retryで新sessionだけが読み込み・表示 | 追加assert未実走。通常側成功確認後、削除①で旧継続assertを終了 |
+| 実描画まで旧error/retryラベル保持 | 明示retryの初frameをbarrierで保持。CHECKING表示・保存不可・旧owner終了。実frame後のみ保存可能、再度のGPU失敗は問題表示へ | 追加assert未実走。通常側成功確認後、削除①で旧ラベル保持assertを終了 |
+
+部分2件は別扱いを維持する。releasePolicyの旧View依存保証は削除①の入口/定義不在確認で置換し、
+warm metadata/cold保存のSHA保証は移行②の実GPU保存前後改変試験を実走して完了させる。
