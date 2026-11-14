@@ -176,4 +176,3 @@ class RetiredCpuJournalCompatibilityTest {
         fun assertNoIo() { assertTrue("Unexpected IO: $attemptedIo", attemptedIo.isEmpty()) }
     }
 }
-
