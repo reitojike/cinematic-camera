@@ -8,6 +8,7 @@ import android.content.res.AssetManager
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.runtime.*
@@ -94,7 +95,7 @@ class GpuInputLifecycleSafetyAndroidTest {
             return session
         }
         fixture.content = {
-            val host = LocalContext.current as PhotoRollActivity
+            val host = checkNotNull(LocalActivity.current) as PhotoRollActivity
             val uiContext = remember(host) { object : ContextWrapper(host) {
                 override fun getApplicationContext(): Context = app
                 override fun getContentResolver(): ContentResolver = resolver
