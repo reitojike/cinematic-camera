@@ -37,9 +37,6 @@ android {
     sourceSets {
         getByName("main").assets.directories.add("../app/src/main/assets")
         getByName("androidTest").kotlin.directories.add("../app/src/androidTest/java/dev/cinematic/p0/testing")
-        // Compile the current production kernels for measurement; no forked algorithm copies.
-        getByName("androidTest").kotlin.directories.add("../app/src/main/java/dev/cinematic/p0/raw")
-        getByName("androidTest").kotlin.directories.add("../app/src/main/java/dev/cinematic/p0/gpu/constants")
     }
 }
 

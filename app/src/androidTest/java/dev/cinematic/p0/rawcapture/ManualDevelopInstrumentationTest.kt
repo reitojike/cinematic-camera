@@ -19,10 +19,13 @@ import org.junit.runner.RunWith
 /** Entirely synthetic. Its known-none/EV provider is never enrolled in the application singleton. */
 @RunWith(AndroidJUnit4::class)
 class ManualDevelopInstrumentationTest {
+    private val legacyHolder = lazy { LegacyCpuFixture.create(useReuseRegistry = true) }
+    private val legacy by legacyHolder
+    @org.junit.After fun closeLegacyFixture() { if (legacyHolder.isInitialized()) legacy.close() }
     @Test fun privateTrialFactoryRendersAndFreshlyDisplaysWithoutAnyPublicationCapability() {
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
         check(Build.HARDWARE in setOf("goldfish", "ranchu") && Build.VERSION.SDK_INT >= 29)
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val context = legacy.app
         val resolver = context.contentResolver
         val uri = resolver.insert(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, "synthetic_private_${UUID.randomUUID()}.dng")
@@ -32,6 +35,7 @@ class ManualDevelopInstrumentationTest {
         })!!
         var ownedDirectory: File? = null
         var handle: PrivateTrialHandle? = null
+        var primary: Throwable? = null
         try {
             val bytes = syntheticDng(2048, 1536)
             resolver.openOutputStream(uri, "w")!!.use { it.write(bytes) }
@@ -44,13 +48,13 @@ class ManualDevelopInstrumentationTest {
             check(!candidate.exists()) { "Refuse to reuse an existing private operation" }
             ownedDirectory = candidate
             val allowed = AutoDevelopConditions(true, false, false, false, true, true, true, true)
-            DevelopExecution.updateConditions(allowed)
-            val trial = AndroidAutoDevelopQueue.preparePrivateTrial(context, source).join().also { handle = it }
-            val beforeRender = DevelopExecution.reserveCapture()
+            legacy.execution.updateConditions(allowed)
+            val trial = legacy.preparePrivateTrial( source).join().also { handle = it }
+            val beforeRender = legacy.execution.reserveCapture()
             try {
                 trial.start(allowed).join()
                 assertEquals(PrivateTrialPhase.PREPARED, trial.status().join().phase)
-            } finally { DevelopExecution.releaseCapture(beforeRender) }
+            } finally { legacy.execution.releaseCapture(beforeRender) }
             val ready = trial.status().join()
             assertEquals(PrivateTrialPhase.READY, ready.phase)
             assertEquals(AutoRenderQuality.PRIVATE_TRIAL_1024, ready.request.quality)
@@ -68,9 +72,9 @@ class ManualDevelopInstrumentationTest {
             assertNotEquals(android.graphics.Bitmap.Config.HARDWARE, image.bitmap.config)
             assertEquals(ready.fingerprint, image.status.fingerprint)
             image.close(); assertTrue(image.bitmap.isRecycled)
-            val capture = DevelopExecution.reserveCapture()
+            val capture = legacy.execution.reserveCapture()
             try { assertThrows(java.util.concurrent.CompletionException::class.java) { trial.readPreview(allowed) { false }.join() } }
-            finally { DevelopExecution.releaseCapture(capture) }
+            finally { legacy.execution.releaseCapture(capture) }
             val unclaimed = trial.readPreview(allowed) { false }.join()
             trial.requestStop()
             assertNull(unclaimed.claim())
@@ -81,7 +85,7 @@ class ManualDevelopInstrumentationTest {
             val whileSelecting = trial.readPreview(allowed) { false }.join()
             val entered = java.util.concurrent.CountDownLatch(1)
             val release = java.util.concurrent.CountDownLatch(1)
-            val blockedPrepare = AndroidAutoDevelopQueue.get(context).preparePrivateTrial(id) {
+            val blockedPrepare = legacy.get(context).preparePrivateTrial(id) {
                 entered.countDown()
                 check(release.await(5, java.util.concurrent.TimeUnit.SECONDS))
                 journal.read()!!.request
@@ -106,7 +110,7 @@ class ManualDevelopInstrumentationTest {
                 override fun read(maxBytes: Int) = selected.read(maxBytes)
                 override fun replace(contents: ByteArray) { selected.replace(contents); throw java.io.IOException("Synthetic commit acknowledgement lost") }
             }
-            val unknown = AndroidAutoDevelopQueue.get(context).preparePrivateTrial(id) {
+            val unknown = legacy.get(context).preparePrivateTrial(id) {
                 ManualDevelopRequests(source, acknowledgementLost).prepare(JpegGenerationRecipe.trial().snapshot.copy(payload =
                     JpegGenerationRecipe.trial().snapshot.payload + ";synthetic-new-policy"))
             }
@@ -114,7 +118,7 @@ class ManualDevelopInstrumentationTest {
             val staleClaim = stale.claim()
             try { assertNull(staleClaim) } finally { staleClaim?.close() }
             val completeRecipe = JpegGenerationRecipe(AndroidAsShotJpegFrames.CONTRACT, RenderRecipeSnapshot("synthetic-unregistered-v1", "fixed"))
-            val next = AndroidAutoDevelopQueue.prepareManual(context, source, completeRecipe).join()
+            val next = legacy.prepareManual( source, completeRecipe).join()
             assertEquals(trial.request.generation + 2, next.request.generation)
             assertNull(stale.claim())
             assertThrows(java.util.concurrent.CompletionException::class.java) { trial.readPreview(allowed) { false }.join() }
@@ -122,20 +126,26 @@ class ManualDevelopInstrumentationTest {
             assertNull(AndroidAtomicJournalStorage(File(candidate, "renders"), trial.request.generation.toString(),
                 CaptureJournalFile.JPEG_PUBLICATION).read(JpegPublicationCodec.MAX_BYTES))
             DngContentVerifier.verify(fp, { resolver.openInputStream(uri)!! })
-        } finally {
-            handle?.requestStop()
-            check(resolver.delete(uri, null, null) == 1)
-            ownedDirectory?.let { directory ->
-                check(directory.canonicalFile.parentFile == File(context.noBackupFilesDir, "raw-captures").canonicalFile)
-                if (directory.exists()) check(directory.deleteRecursively())
-            }
+        } catch (failure: Throwable) { primary = failure; throw failure }
+        finally {
+            dev.cinematic.p0.jpegrender.original.preserveSafetyCleanup(primary, {
+                handle?.requestStop()
+                legacy.close() // Positive owner close precedes any source/journal deletion.
+                if (primary == null) {
+                    check(resolver.delete(uri, null, null) == 1)
+                    ownedDirectory?.let { directory ->
+                        check(directory.canonicalFile.parentFile == File(context.noBackupFilesDir, "raw-captures").canonicalFile)
+                        if (directory.exists()) check(directory.deleteRecursively())
+                    }
+                }
+            })
         }
     }
 
     @Test fun ownedNativeDngToPrivateJpegThenExplicitPublicationAndFreshConfirmation() {
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
         check(Build.HARDWARE in setOf("goldfish", "ranchu") && Build.VERSION.SDK_INT >= 29)
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val context = legacy.app
         val resolver = context.contentResolver
         val sourceUri = resolver.insert(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, "synthetic_manual_${UUID.randomUUID()}.dng")
@@ -144,6 +154,8 @@ class ManualDevelopInstrumentationTest {
             put(MediaStore.Images.Media.IS_PENDING, 1)
         })!!
         var resultUri: android.net.Uri? = null
+        var primary: Throwable? = null
+        var ownedQueue: AutoDevelopQueue? = null
         var ownedDirectory: File? = null
         try {
             val bytes = syntheticDng()
@@ -169,7 +181,7 @@ class ManualDevelopInstrumentationTest {
                 val directory = RenderedJpegFiles(root, request.captureId, request.generation).generationRoot()
                 AutoDevelopJournal(request.captureId, request.generation, AndroidAtomicJournalStorage(directory.parentFile!!,
                     request.generation.toString(), CaptureJournalFile.AUTO_DEVELOP))
-            }, { request -> AndroidAutoDevelopBackend(context, request, catalog) })
+            }, { request -> AndroidAutoDevelopBackend(context, request, catalog) }).also { ownedQueue = it }
             val requests = ManualDevelopRequests(source, AndroidAtomicJournalStorage(root, id, CaptureJournalFile.MANUAL_REQUEST))
             val handle = queue.prepareManual(id) { requests.prepare(recipe.snapshot) }.join()
             val allowed = AutoDevelopConditions(true, false, false, false, true, true, true, true)
@@ -198,13 +210,21 @@ class ManualDevelopInstrumentationTest {
             assertTrue(handle.confirmPublished(allowed) { false }.isCompletedExceptionally)
             assertEquals(AutoJobPhase.PUBLISHED, handle.status().join().phase)
             assertEquals(attemptId, handle.status().join().attemptId)
-        } finally {
-            resultUri?.let { resolver.delete(it, null, null) }
-            check(resolver.delete(sourceUri, null, null) == 1)
-            ownedDirectory?.let { directory ->
-                check(directory.canonicalFile.parentFile == File(context.noBackupFilesDir, "raw-captures").canonicalFile)
-                if (directory.exists()) check(directory.deleteRecursively())
-            }
+        } catch (failure: Throwable) { primary = failure; throw failure }
+        finally {
+            dev.cinematic.p0.jpegrender.original.preserveSafetyCleanup(primary, {
+                ownedQueue?.requestStop()
+                ownedQueue?.manualOriginalIo { Unit }?.get(60, java.util.concurrent.TimeUnit.SECONDS)
+                legacy.close()
+                if (primary == null) {
+                    resultUri?.let { check(resolver.delete(it, null, null) == 1) }
+                    check(resolver.delete(sourceUri, null, null) == 1)
+                    ownedDirectory?.let { directory ->
+                        check(directory.canonicalFile.parentFile == File(context.noBackupFilesDir, "raw-captures").canonicalFile)
+                        if (directory.exists()) check(directory.deleteRecursively())
+                    }
+                }
+            })
         }
     }
 
