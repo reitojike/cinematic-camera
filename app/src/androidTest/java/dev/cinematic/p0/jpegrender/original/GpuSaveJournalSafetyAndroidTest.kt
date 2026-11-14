@@ -203,6 +203,7 @@ class GpuSaveJournalSafetyAndroidTest {
             override fun releaseResources() { attempt?.close() }
         }
         val owner = ManualOriginalTrialSaveOwner(request, backend, intentStorage) { true }
+        var failure: Throwable? = null
         try {
             val result = owner.advance()
             assertEquals("Save failed: ${owner.lastFailure?.javaClass?.simpleName}", ManualOriginalTrialSavePhase.PUBLISHED, result.phase)
@@ -246,10 +247,12 @@ class GpuSaveJournalSafetyAndroidTest {
             }
             assertEquals(request.source.fingerprint, DngContentVerifier.verify(request.source.fingerprint, ::sourceInput))
             return Observation(jpeg, stages.toList(), events.toList(), records.toList())
-        } finally {
-            owner.releaseResources()
-            assertFalse(owner.hasUnreleasedResources)
-            assertFalse(publication?.hasUnreleasedResources == true)
+        } catch (error: Throwable) { failure = error; throw error }
+        finally {
+            preserveSafetyCleanup(failure,
+                { owner.releaseResources() },
+                { assertFalse(owner.hasUnreleasedResources) },
+                { assertFalse(publication?.hasUnreleasedResources == true) })
         }
     }
 

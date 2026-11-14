@@ -692,3 +692,13 @@ OSキー/ジェスチャー注入そのものは対象外とし、dispatcher以�
 lint/unitは成功1分37秒。ただし終了確認前にAPKビルドを起動してしまったため後発のみ停止し、
 同worktree Gradle wrapperプロセス0を確認して単独APKビルドをやり直した。中断ビルドは証拠として採用しない。
 以後は各Gradleの終了コードと同worktree実行プロセス0の両方を確認してから次を起動する。
+### 独立レビュー対応と保持対象の実走訂正
+
+49件の実在・45対応/集約＋4保持、安全assertの差分は独立監査で確認済み。
+2cd26f86でobserver2＋boundary2が成功したが、これは関連回帰4件でありM2保持4件ではない。
+M2保持4件はOriginal24CancellationRetryInstrumentationTestのnormalGpu*で、再実走は未完了。
+通常4件も専用namespaceへ移し、UI補助に隔離PhotoRollScreenを注入する。既存保存領域は消さず、権限付与はしない。
+新旧source/recipe/同世代retry/JPEG-entry後HOLD/明示新世代/旧intent不変のassertは維持。
+試験cleanupの一次失敗上書きを共通helperで修正し、複数cleanupの例外をsuppressedに保持する。
+Lifecycle取消は当該handleのidentity一致時だけに限定。合成例外注入4件でhelper/identityの保証を確認予定。
+この修正はcompile成功（6秒）、Android再実走前。最終headのCI/独立再確認も必要なためHOLD。

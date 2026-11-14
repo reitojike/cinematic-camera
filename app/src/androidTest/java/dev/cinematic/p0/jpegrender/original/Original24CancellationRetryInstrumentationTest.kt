@@ -30,6 +30,7 @@ import org.junit.runner.RunWith
  */
 @RunWith(AndroidJUnit4::class)
 class Original24CancellationRetryInstrumentationTest {
+    @get:org.junit.Rule val isolatedUi = dev.cinematic.p0.photoroll.SyntheticFixtureRule()
     @Test fun diagnosticCpuSaveCancellationRequiresExplicitRetryBeforePublication() = runCase(DevelopEngine.CPU)
     @Test fun gpuSaveCancellationRequiresExplicitRetryBeforePublication() = runCase(DevelopEngine.GPU)
     @Test fun diagnosticCpuSaveCancellationAfterJpegEntryRemainsHeld() = runCase(DevelopEngine.CPU, afterJpegEntry = true)
@@ -44,12 +45,13 @@ class Original24CancellationRetryInstrumentationTest {
 
     private fun runCase(engine: DevelopEngine, afterJpegEntry: Boolean = false, ordinary: Boolean = false,
         newGeneration: Boolean = false, editThroughUi: Boolean = false) {
-        val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
+        val installed = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
         val args = InstrumentationRegistry.getArguments()
         assumeTrue(args.getString("isolated") == "true" && args.getString("saveCancellationRetry") == "true")
         assumeTrue("Physical devices are excluded", Build.HARDWARE in setOf("ranchu", "goldfish"))
         // Diagnostic CPU/GPU stay selectable; the ordinary build is fixed GPU without a setting UI.
-        assumeTrue(app.packageName == if (ordinary) "dev.cinematic.p0" else "dev.cinematic.p0.gpudiagnostic")
+        assumeTrue(installed.packageName == if (ordinary) "dev.cinematic.p0" else "dev.cinematic.p0.gpudiagnostic")
+        val app = if (ordinary) isolatedGpuSaveSafetyApp() else installed
         val setting = DevelopEngineSetting(app)
         if (engine == DevelopEngine.GPU) {
             val capabilities = GlThread().use { thread -> thread.call {
@@ -141,7 +143,7 @@ class Original24CancellationRetryInstrumentationTest {
 
             if (newGeneration) {
                 val next = if (editThroughUi) dev.cinematic.p0.photoroll.ConfirmedCancellationEditProbe.publish(app,
-                    reference, sourceName, save) else AndroidManualOriginalTrialSaves.prepare(app, reference, .35, ALLOWED,
+                    reference, sourceName, save, isolatedUi) else AndroidManualOriginalTrialSaves.prepare(app, reference, .35, ALLOWED,
                         PhotoAdjustments(-10.0, -.2)).get(30, TimeUnit.SECONDS)
                 // Closing the UI publishes foreground=false; subsequent factory-only assertions
                 // use the same explicit fixture admission as this test's initial cancellation.
@@ -260,7 +262,7 @@ class Original24CancellationRetryInstrumentationTest {
         } catch (error: Throwable) { failure = error; throw error }
         finally {
             stopped.set(true)
-            try {
+            preserveSafetyCleanup(failure, {
                 if (!success) {
                     handle?.requestStop()
                     AndroidManualOriginalTrialSaves.discardPreview(app).get(60, TimeUnit.SECONDS)
@@ -281,15 +283,12 @@ class Original24CancellationRetryInstrumentationTest {
                             arrayOf(app.packageName, row.name)) == 1)
                     }
                 }
-            } catch (cleanup: Throwable) {
-                if (failure == null) throw cleanup
-                if (cleanup !== failure) failure.addSuppressed(cleanup)
-            } finally {
+            }, {
                 val editor = preferences.edit()
                 if (hadEngine) editor.putString(ENGINE_KEY, oldEngine) else editor.remove(ENGINE_KEY)
                 check(editor.commit())
                 check(preferences.contains(ENGINE_KEY) == hadEngine && preferences.getString(ENGINE_KEY, null) == oldEngine)
-            }
+            })
         }
     }
 

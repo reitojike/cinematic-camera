@@ -5,6 +5,8 @@ import android.content.ContentUris
 import android.content.ContentValues
 import androidx.activity.compose.LocalActivity
 import dev.cinematic.p0.jpegrender.original.isolatedGpuSaveSafetyApp
+import dev.cinematic.p0.jpegrender.original.preserveSafetyCleanup
+import dev.cinematic.p0.jpegrender.original.requireOwnedSafetyIdentity
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
@@ -237,9 +239,12 @@ class GpuSaveLifecycleSafetyAndroidTest {
             success = true
         } catch (error: Throwable) { failure = error; throw error }
         finally {
-            try {
+            preserveSafetyCleanup(failure, {
                 observer.stop()
-                ForegroundExports.gate.active()?.let { ForegroundExports.cancel(it.value) }
+                ForegroundExports.gate.active()?.let { ticket ->
+                    requireOwnedSafetyIdentity(ticket.value.identity, handle)
+                    ForegroundExports.cancel(ticket.value)
+                }
                 handle?.requestStop()
                 owners.forEach { it.session.close() }
                 owners.forEach(::assertClosed)
@@ -257,15 +262,13 @@ class GpuSaveLifecycleSafetyAndroidTest {
                     requireOwnedRow(app, input, sourceName); requireOwnedRow(app, output, name)
                     deleteOwnedRow(app, output, name); deleteOwnedRow(app, input, sourceName)
                 }
-            } catch (cleanup: Throwable) {
-                if (failure == null) throw cleanup
-                if (cleanup !== failure) failure.addSuppressed(cleanup)
-            } finally {
+            }, {
                 instrumentation.runOnMainSync { camera?.close() }
+            }, {
                 val edit = preferences.edit()
                 if (previousSetting == null) edit.remove("develop/engine") else edit.putString("develop/engine", previousSetting)
                 check(edit.commit()) { "Restore original develop-engine setting" }
-            }
+            })
         }
     }
 

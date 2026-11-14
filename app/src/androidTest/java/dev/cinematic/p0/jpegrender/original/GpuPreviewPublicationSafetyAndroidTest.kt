@@ -206,7 +206,7 @@ class GpuPreviewPublicationSafetyAndroidTest {
             // Prevent any late callback from changing the setting after restoration. A cancelled
             // future is not a resource-close receipt; drain the same queue before touching rows.
             synchronized(settingLock) { stopped.set(true) }
-            try {
+            preserveSafetyCleanup(failure, {
                 if (!success) {
                     handle?.requestStop()
                     AndroidManualOriginalTrialSaves.discardPreview(app).get(30, TimeUnit.SECONDS)
@@ -221,15 +221,12 @@ class GpuPreviewPublicationSafetyAndroidTest {
                     deleteExactOwnedRow(resolver, jpegUri, jpegName, app.packageName)
                     deleteExactOwnedRow(resolver, originalUri, sourceName, app.packageName)
                 }
-            } catch (cleanup: Throwable) {
-                if (failure == null) throw cleanup
-                if (cleanup !== failure) failure.addSuppressed(cleanup)
-            } finally {
+            }, {
                 val editor = preferences.edit()
                 if (previousSetting == null) editor.remove("develop/engine")
                 else editor.putString("develop/engine", previousSetting)
                 check(editor.commit()) { "Restore original develop-engine preference" }
-            }
+            })
         }
     }
 

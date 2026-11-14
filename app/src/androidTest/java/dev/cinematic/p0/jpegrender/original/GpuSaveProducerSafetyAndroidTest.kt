@@ -164,12 +164,13 @@ class GpuSaveProducerSafetyAndroidTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         requireGpuSaveSafetyFixture()
         val f = Fixture(context, trace)
-        try { action(f) } finally {
-            // Retain failed closes, then remove only known scratch after close acknowledgement.
-            f.failClose = false
-            f.attempt.close()
-            assertFalse(f.attempt.hasUnreleasedResources)
-            f.verifyOriginal()
+        var failure: Throwable? = null
+        try { action(f) } catch (error: Throwable) { failure = error; throw error }
+        finally {
+            preserveSafetyCleanup(failure,
+                { f.failClose = false; f.attempt.close() },
+                { assertFalse(f.attempt.hasUnreleasedResources) },
+                { f.verifyOriginal() })
         }
     }
 

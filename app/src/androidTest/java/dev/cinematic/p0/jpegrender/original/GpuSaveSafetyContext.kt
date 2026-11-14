@@ -25,6 +25,7 @@ private var isolatedSaveApp: Context? = null
         "dev.cinematic.p0.photoroll.GpuActiveSaveOwnershipSafetyAndroidTest",
         "dev.cinematic.p0.photoroll.GpuRealListSwitchSafetyAndroidTest",
         "dev.cinematic.p0.jpegrender.original.GpuConcurrentInputSafetyAndroidTest",
+        "dev.cinematic.p0.jpegrender.original.Original24CancellationRetryInstrumentationTest",
         "dev.cinematic.p0.photoroll.GpuSaveLifecycleSafetyAndroidTest",
         "dev.cinematic.p0.photoroll.GpuFullSizeSaveLifecycleSafetyAndroidTest",
     )) { "Run one allowed safety class in a fresh instrumentation process" }

@@ -6,6 +6,7 @@ import android.content.ContentUris
 import android.content.ContentValues
 import androidx.activity.compose.LocalActivity
 import dev.cinematic.p0.jpegrender.original.isolatedGpuSaveSafetyApp
+import dev.cinematic.p0.jpegrender.original.preserveSafetyCleanup
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
@@ -480,7 +481,7 @@ class GpuFullSizeSaveLifecycleSafetyAndroidTest {
             success = true
         } catch (error: Throwable) { failure = error; throw error }
         finally {
-            try {
+            preserveSafetyCleanup(failure, {
                 // Wake only the screen this test was allowed to turn off. Do not dismiss a secure
                 // lock, alter permissions, or erase any evidence on failure/uncertain closure.
                 if (!device.isScreenOn) device.wakeUp()
@@ -496,18 +497,14 @@ class GpuFullSizeSaveLifecycleSafetyAndroidTest {
                             arrayOf(env.app.packageName, row.name)) == 1)
                     }
                 }
-            } catch (cleanup: Throwable) {
-                if (failure == null) throw cleanup
-                if (cleanup !== failure) failure.addSuppressed(cleanup)
-            } finally {
-                try { instrumentation.runOnMainSync { env.camera?.close() } }
-                finally {
+            }, {
+                instrumentation.runOnMainSync { env.camera?.close() }
+            }, {
                     val editor = preferences.edit()
                     if (hadEngine) editor.putString(ENGINE_KEY, previousEngine) else editor.remove(ENGINE_KEY)
                     check(editor.commit()) { "Restore exact prior develop-engine setting" }
                     check(preferences.contains(ENGINE_KEY) == hadEngine && preferences.getString(ENGINE_KEY, null) == previousEngine)
-                }
-            }
+            })
         }
     }
 
