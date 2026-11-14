@@ -4,14 +4,26 @@ import dev.cinematic.p0.raw.original.OriginalRaster
 import org.junit.Assert.*
 import org.junit.Test
 import java.nio.FloatBuffer
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import dev.cinematic.p0.raw.original.OriginalRasterFile
+import java.nio.file.Files
+import java.io.IOException
+import java.util.Collections
+import java.util.IdentityHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.CancellationException
 
 class GpuExportBandsTest {
     @Test fun orderedRowsBecomeRgbaAndReuseTheBoundedBufferWithShortTail() {
         val bands = mutableListOf<Pair<Int, Int>>()
-        var first: FloatBuffer? = null
+        val buffers = Collections.newSetFromMap(IdentityHashMap<FloatBuffer, Boolean>())
         GpuExportBands.forEach(raster(3, 513), stop = { false }) { origin, rows, rgba ->
-            if (first == null) first = rgba else assertSame(first, rgba)
+            buffers += rgba
+            assertTrue(buffers.size <= 2)
             assertTrue(rgba.isDirect)
             assertEquals(3 * rows * 4, rgba.remaining())
             for (y in 0 until rows) for (x in 0 until 3) {
@@ -23,7 +35,7 @@ class GpuExportBandsTest {
             bands += origin to rows
         }
         assertEquals(listOf(0 to 256, 256 to 256, 512 to 1), bands)
-        assertEquals(3 * 256 * 4, first!!.capacity())
+        buffers.forEach { assertEquals(3 * 256 * 4, it.capacity()) }
     }
 
     @Test fun explicit64RowBandsKeepOriginalOrder() {
@@ -32,13 +44,13 @@ class GpuExportBandsTest {
         assertEquals(listOf(0, 64, 128), origins)
     }
 
-    @Test fun cancellationAfterABandDoesNotReadTheNextRow() {
+    @Test fun cancellationAfterABandReadsAtMostOneAdditionalBand() {
         var reads = 0; var cancelled = false
         val source = raster(4, 513) { reads++ }
         assertThrows(CancellationException::class.java) {
             GpuExportBands.forEach(source, stop = { cancelled }) { _, _, _ -> cancelled = true }
         }
-        assertEquals(256, reads)
+        assertTrue("reads=$reads", reads in 256..512)
     }
 
     @Test fun cancellationBeforeStartingDoesNotOpenTheRaster() {
@@ -55,7 +67,7 @@ class GpuExportBandsTest {
         val observed = assertThrows(IllegalStateException::class.java) {
             GpuExportBands.forEach(raster(4, 513) { reads++ }, stop = { false }) { _, _, _ -> calls++; throw failure }
         }
-        assertSame(failure, observed); assertEquals(1, calls); assertEquals(256, reads)
+        assertSame(failure, observed); assertEquals(1, calls); assertTrue("reads=$reads", reads in 256..512)
     }
 
     @Test fun rejectsReorderedOrMissingRowsAndImplicitBandSize() {
@@ -73,6 +85,99 @@ class GpuExportBandsTest {
         assertThrows(IllegalArgumentException::class.java) {
             GpuExportBands.forEach(raster(4, 2), 128, { false }) { _, _, _ -> }
         }
+    }
+
+    @Test fun readerRunsAheadByOnlyOneBandAndJoinsBeforeFailureReturns() {
+        val reads = AtomicInteger()
+        val closed = AtomicBoolean()
+        val second = CountDownLatch(1)
+        val source = object : OriginalRaster {
+            override val width = 4; override val height = 1024
+            override fun rows(stop: () -> Boolean, consume: (Int, FloatArray) -> Unit) {
+                try {
+                    raster(width, height) {
+                        if (reads.incrementAndGet() == 512) second.countDown()
+                    }.rows(stop, consume)
+                } finally { closed.set(true) }
+            }
+        }
+        val caller = Thread.currentThread()
+        val failure = IOException("synthetic consumer")
+        assertSame(failure, assertThrows(IOException::class.java) {
+            GpuExportBands.forEach(source, stop = { false }) { _, _, _ ->
+                assertSame(caller, Thread.currentThread())
+                assertTrue(second.await(5, TimeUnit.SECONDS))
+                assertEquals(512, reads.get())
+                throw failure
+            }
+        })
+        assertEquals(512, reads.get())
+        assertTrue(closed.get())
+    }
+
+    @Test fun eofFailureAfterLastBandAndCloseFailureAreNotLost() {
+        val eof = IOException("synthetic EOF close")
+        val source = object : OriginalRaster {
+            override val width = 4; override val height = 1
+            override fun rows(stop: () -> Boolean, consume: (Int, FloatArray) -> Unit) {
+                try { consume(0, FloatArray(12)) } finally { throw eof }
+            }
+        }
+        assertSame(eof, assertThrows(IOException::class.java) {
+            GpuExportBands.forEach(source, stop = { false }) { _, _, _ -> }
+        })
+        val consumer = IllegalStateException("consumer")
+        assertSame(consumer, assertThrows(IllegalStateException::class.java) {
+            GpuExportBands.forEach(source, stop = { false }) { _, _, _ -> throw consumer }
+        })
+        assertTrue(consumer.suppressed.any { it === eof })
+    }
+
+    @Test fun callerInterruptDrainsReaderBeforeRestoringInterrupt() {
+        val closed = AtomicBoolean()
+        val source = object : OriginalRaster {
+            override val width = 4; override val height = 1024
+            override fun rows(stop: () -> Boolean, consume: (Int, FloatArray) -> Unit) {
+                try { raster(width, height).rows(stop, consume) } finally { closed.set(true) }
+            }
+        }
+        try {
+            assertThrows(InterruptedException::class.java) {
+                GpuExportBands.forEach(source, stop = { false }) { _, _, _ -> Thread.currentThread().interrupt() }
+            }
+            assertTrue(Thread.currentThread().isInterrupted)
+            assertTrue(closed.get())
+        } finally { Thread.interrupted() }
+    }
+
+    @Test fun rgb16AllSampleValuesKeepExactBitsButFloatNanStillFails() {
+        val file = Files.createTempFile("synthetic-rgb16", ".bin").toFile()
+        try {
+            val bytes = ByteBuffer.allocate(256 * 256 * 3 * 2).order(ByteOrder.LITTLE_ENDIAN)
+            repeat(256 * 256 * 3) { bytes.putShort(it.toShort()) }
+            file.writeBytes(bytes.array())
+            var sample = 0
+            val input = OriginalRasterFile(file, 256, 256, 2)
+            GpuExportBands.forEach(input, stop = { false }) { _, _, rgba ->
+                while (rgba.hasRemaining()) {
+                    repeat(3) { assertEquals(((sample++ and 65535) / 65535f).toRawBits(), rgba.get().toRawBits()) }
+                    assertEquals(1f.toRawBits(), rgba.get().toRawBits())
+                }
+            }
+            assertEquals(256 * 256 * 3, sample)
+            assertFalse(input.hasPendingOwners)
+            file.writeBytes(ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN).putFloat(Float.NaN).putFloat(0f).putFloat(0f).array())
+            assertThrows(IOException::class.java) {
+                GpuExportBands.forEach(OriginalRasterFile(file, 1, 1), stop = { false }) { _, _, _ -> fail() }
+            }
+            val nan = object : OriginalRaster {
+                override val width = 1; override val height = 1
+                override fun rows(stop: () -> Boolean, consume: (Int, FloatArray) -> Unit) = consume(0, floatArrayOf(Float.NaN, 0f, 0f))
+            }
+            assertThrows(IllegalArgumentException::class.java) {
+                GpuExportBands.forEach(nan, stop = { false }) { _, _, _ -> fail() }
+            }
+        } finally { file.delete() }
     }
 
     private fun raster(w: Int, h: Int, beforeRow: () -> Unit = {}) = object : OriginalRaster {
