@@ -8,6 +8,7 @@ import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
@@ -113,7 +114,8 @@ class GpuInputFilesSafetyAndroidTest {
                 CompositionLocalProvider(LocalContext provides uiContext) {
                     CaptureTheme {
                         val document = selected
-                        if (document == null) TextButton(onClick = { picker.launch(arrayOf("image/x-adobe-dng")) }) {
+                        if (document == null) TextButton(modifier = Modifier.safeDrawingPadding(),
+                            onClick = { picker.launch(arrayOf("image/x-adobe-dng")) }) {
                             Text("合成DNGをFilesから選択")
                         } else GpuPhotoRollEditor(repository, renderer, document.toString(), true,
                             "SYNTHETIC", state.isAtLeast(Lifecycle.State.RESUMED), publications, 0, {},
@@ -267,7 +269,9 @@ class GpuInputFilesSafetyAndroidTest {
             if (condition()) return
             SystemClock.sleep(50)
         } while (SystemClock.elapsedRealtime() < deadline)
-        throw AssertionError("Timed out: $label (boundMs=$boundMs)")
+        val failure = AssertionError("Timed out: $label (boundMs=$boundMs)")
+        try { captureEvidence("timeout") } catch (evidenceFailure: Throwable) { failure.addSuppressed(evidenceFailure) }
+        throw failure
     }
 
     private fun captureEvidence(stage: String) {
