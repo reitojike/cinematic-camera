@@ -616,3 +616,11 @@ M2対応実装22元件＋既存保持4、未実装23。新規通常Android選択
 24MPには追加で `gpuExport24=true` を必須とする。原本/実GPU witness/台帳/公開JPEGの検査と限定cleanupを維持。
 コンパイル・test APK成功41秒。Android実走はこれからで、合格とはしない。
 M2対応実装25元件＋既存保持4、未実装20。通常側選択23method（M1 cold境界1を含む）。
+### lifecycleと実24MP取消の追加（コンパイル済み・実走待ち）
+
+- `GpuSaveLifecycleAndroidTest` のHome/復帰/再Homeの1件を通常 `GpuSaveLifecycleSafetyAndroidTest` へ。実製品host・FGS・公開照合・明示preview再開を保持。
+- `GpuExportSafetyLifecycleAndroidTest` の実12MP screen-off公開と実UI retryの2件を通常 `GpuFullSizeSaveLifecycleSafetyAndroidTest` へ。サイズとUI操作は縮小/直接状態代入で置換しない。
+- `OriginalOrtonParallelSafetyTest.synthetic24MpAttemptCancellationAtOrtonClosesResources` を通常 `GpuFullSizeSaveSafetyAndroidTest.optIn24MpCancellationDrainsGpuOwnerAndPreservesOriginal` へ。6000x4000原本とRGB16の成立後、実GPU callbackの取消、未公開・原本/intent不変・owner/scratch解放・暗黙retryなしを保持。CPU Orton row/worker内部だけは移さない。
+
+追加4methodの通常Androidコンパイル成功32秒。実走はまだ。M2対応実装29元件＋既存保持4、未実装16。
+通常側選択27method（M1 cold境界1を含む）。9d4aa571のインストール済みAPKの実走とは分けて扱う。

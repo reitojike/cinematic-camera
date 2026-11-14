@@ -145,11 +145,40 @@ class GpuFullSizeSaveSafetyAndroidTest {
         }
     }
 
+    @Test fun optIn24MpCancellationDrainsGpuOwnerAndPreservesOriginal() {
+        check(InstrumentationRegistry.getArguments().getString("gpuExport24") == "true")
+        withFixture(width = 6000, height = 4000) { fixture ->
+            val save = fixture.prepare(.45, PhotoAdjustments(20.0, .3))
+            val request = save.request
+            val beforeCount = fixture.failureCount()
+            val beforeReason = fixture.failureReason()
+            val witness = GpuWitness(fixture, save, cancelAt = INJECT_AT_GL_CHECKPOINT)
+            val cancelled = save.advance(ALLOWED, stop = witness::stop).get(SAVE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            assertEquals(INJECT_AT_GL_CHECKPOINT, witness.checkpoints.get())
+            assertTrue("Cancellation follows a full-size native raster and real GPU entry", witness.sourceReady.get())
+            assertEquals(ManualOriginalTrialSavePhase.CANCELLED, cancelled.phase)
+            assertEquals(ManualOriginalTrialSaveReason.STOPPED, cancelled.reason)
+            assertNull(cancelled.uri)
+            assertNull(cancelled.gpuFailure)
+            fixture.assertFailedProducerClosed(save)
+            fixture.assertOriginalUnchanged()
+            fixture.assertFailureRecord(beforeCount, beforeReason)
+            val intent = requireNotNull(fixture.intent(save).read(ManualOriginalTrialRequestCodec.MAX_BYTES))
+            assertArrayEquals(ManualOriginalTrialRequestCodec.encode(request), intent)
+            fixture.stopped.set(false)
+            val noRetry = GpuWitness(fixture, save)
+            assertEquals(cancelled, save.advance(ALLOWED, stop = noRetry::stop).get(CLOSE_TIMEOUT_SECONDS, TimeUnit.SECONDS))
+            assertEquals(0, noRetry.checkpoints.get())
+            fixture.assertFailedProducerClosed(save)
+            assertArrayEquals(intent, fixture.intent(save).read(ManualOriginalTrialRequestCodec.MAX_BYTES))
+        }
+    }
     /** Count callbacks with a current EGL context, not rows, bands, passes, or elapsed time. */
     private class GpuWitness(
         private val fixture: Fixture,
         private val save: AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle,
         private val injectAt: Int? = null,
+        private val cancelAt: Int? = null,
     ) {
         val checkpoints = AtomicInteger()
         val sourceReady = AtomicBoolean()
@@ -173,6 +202,7 @@ class GpuFullSizeSaveSafetyAndroidTest {
                 }
                 // Delayed, bounded pseudo failure exercises a started producer. Fence polling
                 // also invokes stop: this number deliberately claims no exact band boundary.
+                if (checkpoint == cancelAt) { fixture.stopped.set(true); return true }
                 if (checkpoint == injectAt && injected.compareAndSet(false, true))
                     throw GpuContextLostException("Synthetic export pseudo context loss")
             }
