@@ -45,7 +45,7 @@ internal object StageClearMistGpu {
                 inputs += TextureInput("s_first$index", halo.first, unit + 2)
             }
             val output = draw(glowed, "look/mist_compose.frag", inputs) { program ->
-                val location = GLES32.glGetUniformLocation(program, "u_amount")
+                val location = glowed.context.shaders().uniformLocation(program, "u_amount")
                 check(location >= 0)
                 GLES32.glUniform1f(location, amount.toFloat())
             }
