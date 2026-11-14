@@ -36,5 +36,5 @@ class SaveTimingProvider : ContentProvider() {
 internal fun timingStore(context: Context) = SaveTimingStore(File(context.noBackupFilesDir, "save-timing"))
 internal fun startSaveTiming(context: Context, kind: SaveTimingKind): SaveTiming? = try {
     val store = timingStore(context.applicationContext)
-    SaveTiming.start(BuildConfig.VERSION_CODE, kind, store::append)
+    SaveTiming.start(BuildConfig.VERSION_CODE, kind, store::appendAll)
 } catch (_: Throwable) { null }
