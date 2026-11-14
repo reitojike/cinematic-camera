@@ -158,7 +158,7 @@ class GpuInputLifecycleSafetyAndroidTest {
                 assertTrue(range.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.id,
                     Bundle().apply { putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE,
                         if (releasedStrength == .7) .6f else .7f) }))
-                await("visible GPU failure") { find("GPU を使えません\nGPU の接続が失われました。再試行してください") != null }
+                await("visible GPU failure") { find("GPU を使えません") != null && find("GPU の接続が失われました。再試行してください") != null }
                 assertFalse(saveReady())
                 assertTrue(first.session.failure.value is GpuContextLostException)
                 val failed = snapshot(first)
@@ -179,7 +179,7 @@ class GpuInputLifecycleSafetyAndroidTest {
                     assertEquals(2, owners.size)
                     assertNull(owners.last().session.presented.value)
                     assertFalse(saveReady())
-                    await("retry remains CHECKING before first real frame") { find("原本を確認中…") != null }
+                    await("retry remains CHECKING before first real frame") { find("画像を準備しています。") != null }
                     provider.verifyUnchanged()
                 } finally { releaseRetryFrame.countDown() }
                 await("explicit GPU retry rechecks original and presents") {
@@ -194,7 +194,7 @@ class GpuInputLifecycleSafetyAndroidTest {
                 failNext.set(true)
                 owners.last().session.submit(dev.cinematic.p0.photoedit.PhotoEditValues(.3, 0.0, 0.0))
                 await("new failure after retry is visible and cannot save") {
-                    find("GPU を使えません\nGPU の接続が失われました。再試行してください") != null && !saveReady()
+                    find("GPU を使えません") != null && find("GPU の接続が失われました。再試行してください") != null && !saveReady()
                 }
                 val failedRetry = owners.last()
                 click("再試行")
@@ -224,7 +224,7 @@ class GpuInputLifecycleSafetyAndroidTest {
                     assertEquals(count, owners.size)
                     assertEquals(reads, provider.opens.get())
                     provider.verifyUnchanged()
-                    click("原本を確認して再試行")
+                    click("再試行")
                     await("trim retry opens a new GPU owner") {
                         owners.size == count + 1 && provider.opens.get() > reads && saveReady() &&
                             owners.last().session.presented.value != null
@@ -316,7 +316,7 @@ class GpuInputLifecycleSafetyAndroidTest {
                         assertEquals(closedCount, owners.size)
                         assertEquals(closedReads, provider.opens.get())
                         provider.verifyUnchanged()
-                        click("原本を確認して再試行")
+                        click("再試行")
                         await("trimmed input requires a fresh explicitly requested generation") {
                             owners.size == closedCount + 1 && owners.last() !== trimmedInput &&
                                 provider.opens.get() > closedReads && owners.last().session.presented.value != null && saveReady()
