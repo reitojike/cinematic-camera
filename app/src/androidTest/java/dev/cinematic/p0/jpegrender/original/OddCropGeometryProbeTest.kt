@@ -1,6 +1,5 @@
 package dev.cinematic.p0.jpegrender.original
 
-import android.os.Build
 import android.os.CancellationSignal
 import android.os.ParcelFileDescriptor
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -12,11 +11,10 @@ import java.io.IOException
 import java.security.MessageDigest
 import org.json.JSONObject
 import org.junit.Assert.*
-import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/** Small synthetic private files only. Explicit original24probe package on an emulator. */
+/** Small synthetic private files only. Explicit ordinary-debug opt-in on an emulator. */
 @RunWith(AndroidJUnit4::class)
 class OddCropGeometryProbeTest {
     @Test fun oddCropPreservesPixelsAndOrientation() = withRoot { root ->
@@ -98,8 +96,7 @@ class OddCropGeometryProbeTest {
 
     private fun withRoot(action: (File) -> Unit) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        assumeTrue(context.packageName == "dev.cinematic.p0.original24probe")
-        assumeTrue(Build.HARDWARE in listOf("ranchu", "goldfish"))
+        requireGpuInputSafetyFixture()
         val root = File(context.cacheDir, "odd-crop-${System.nanoTime()}").apply { check(mkdir()) }
         var failure: Throwable? = null
         try { action(root) } catch (t: Throwable) { failure = t; throw t }

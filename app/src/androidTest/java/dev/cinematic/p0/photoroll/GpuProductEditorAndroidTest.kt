@@ -36,6 +36,7 @@ import org.junit.Test
 class GpuProductEditorAndroidTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     @get:Rule val fixture = SyntheticFixtureRule()
+    private var diagnosticState: () -> String = { "" }
 
     @Test fun slidersComparisonSelectionBackgroundAndRetryKeepOriginalAndOwnerBoundaries() {
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
@@ -54,14 +55,27 @@ class GpuProductEditorAndroidTest {
         queue.manualOriginalIo { Unit }.get(60, TimeUnit.SECONDS)
         val cleanupEntered = CountDownLatch(1)
         val releaseCleanup = CountDownLatch(1)
-        val blockedCleanup = queue.manualOriginalIo {
-            cleanupEntered.countDown()
-            check(releaseCleanup.await(45, TimeUnit.SECONDS)) { "Synthetic cleanup was not released" }
-        }
-        check(cleanupEntered.await(5, TimeUnit.SECONDS))
+        val cleanupExited = CountDownLatch(1)
+        val holdFirstCleanup = java.util.concurrent.atomic.AtomicBoolean(true)
+        val blockedCleanupFailure = java.util.concurrent.atomic.AtomicReference<Throwable>()
+        // Input has its own worker since #341. Blocking the serial save queue cannot exercise
+        // an input admission deadline; hold the real input worker's completed cleanup instead.
+        val inputObservation = GpuPhotoRollInputs.observeForDiagnostics(object : GpuPhotoRollInputs.DiagnosticObserver {
+            override fun released() {
+                if (!holdFirstCleanup.compareAndSet(true, false)) return
+                cleanupEntered.countDown()
+                try {
+                    check(releaseCleanup.await(45, TimeUnit.SECONDS)) { "Synthetic cleanup was not released" }
+                } catch (failure: Throwable) {
+                    blockedCleanupFailure.set(failure)
+                    throw failure
+                } finally { cleanupExited.countDown() }
+            }
+        })
         val publications = MutableStateFlow(GpuInputPublication())
         val observer = PhotoRollResourceObserver(app, DevelopExecution::updateConditions,
             onPublication = { observation -> publications.update { GpuInputPublication(it.sequence + 1, observation) } })
+        diagnosticState = { "opens=${provider.opens.get()} cleanupDone=${cleanupExited.count == 0L} publication=${publications.value}" }
         val renderer = ManualTrialPhotoRollRenderer(app, observer::snapshot, developEngine = DevelopEngine.GPU)
         val repository = PhotoRollRepository(resolver, target.packageName)
         val selected = mutableStateOf(1)
@@ -96,15 +110,23 @@ class GpuProductEditorAndroidTest {
                 }
             }
         }
+        var primary: Throwable? = null
         try {
             ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
+                assertTrue("first real input reaches cleanup", cleanupEntered.await(30, TimeUnit.SECONDS))
+                val firstInputReads = provider.opens.get()
+                assertTrue(firstInputReads > 0)
+                scenario.recreate()
                 await("readiness timeout is visible while old cleanup is still blocked") {
                     find("入力の準備を確認できません。再試行してください") != null
                 }
-                assertEquals("timeout never starts a later original read", 0, provider.opens.get())
+                assertEquals("timeout never starts a later original read", firstInputReads, provider.opens.get())
+                assertEquals("old cleanup is still held when timeout is visible", 1L, cleanupExited.count)
+                assertFalse(saveReady())
                 releaseCleanup.countDown()
-                blockedCleanup.get(10, TimeUnit.SECONDS)
-                click("原本を確認して再試行")
+                assertTrue(cleanupExited.await(10, TimeUnit.SECONDS))
+                blockedCleanupFailure.get()?.let { throw it }
+                click("再試行")
                 await("first GPU presentation") { saveReady() }
                 val openedReads = provider.opens.get()
                 // PhotoEditBar exposes a normalized 0..1 accessibility range for every unit.
@@ -141,7 +163,7 @@ class GpuProductEditorAndroidTest {
                 // preview; a historical event must not pause the subsequently selected photograph.
                 scenario.onActivity { trimEpoch.intValue++ }
                 await("trim disables save") { !saveReady() }
-                click("原本を確認して再試行")
+                click("再試行")
                 await("GPU retry after trim") { saveReady() }
                 val beforeHistoricalTrim = provider.opens.get()
                 scenario.onActivity { selected.value = 1 }
@@ -149,15 +171,31 @@ class GpuProductEditorAndroidTest {
                 provider.verifyUnchanged()
                 assertEquals(0, provider.writes.get())
             }
+        } catch (failure: Throwable) {
+            primary = failure
+            throw failure
         } finally {
             releaseCleanup.countDown()
-            blockedCleanup.get(10, TimeUnit.SECONDS)
-            observer.stop()
-            renderer.discardTransientInputs()
-            AndroidManualOriginalTrialSaves.discardPreview(app).get(60, TimeUnit.SECONDS)
-            GpuPhotoRollRetiredOwners.releaseBeforeOpen()
-            provider.verifyUnchanged()
-            await("all original descriptors closed") { provider.readers.none { it.fileDescriptor.valid() } }
+            var cleanupFailure: Throwable? = null
+            fun cleanup(action: () -> Unit) {
+                try { action() } catch (failure: Throwable) {
+                    val first = primary ?: cleanupFailure
+                    if (first == null) cleanupFailure = failure
+                    else if (first !== failure) first.addSuppressed(failure)
+                }
+            }
+            cleanup {
+                if (cleanupEntered.count == 0L) assertTrue(cleanupExited.await(10, TimeUnit.SECONDS))
+                blockedCleanupFailure.get()?.let { throw it }
+            }
+            cleanup { inputObservation.close() }
+            cleanup { observer.stop() }
+            cleanup { renderer.discardTransientInputs() }
+            cleanup { AndroidManualOriginalTrialSaves.discardPreview(app).get(60, TimeUnit.SECONDS) }
+            cleanup { GpuPhotoRollRetiredOwners.releaseBeforeOpen() }
+            cleanup { provider.verifyUnchanged() }
+            cleanup { await("all original descriptors closed") { provider.readers.none { it.fileDescriptor.valid() } } }
+            cleanupFailure?.let { throw it }
         }
     }
 
@@ -199,12 +237,32 @@ class GpuProductEditorAndroidTest {
     }
     private fun await(label: String, condition: () -> Boolean) {
         val until = SystemClock.uptimeMillis() + 60_000
+        var observed = false
         do {
             instrumentation.waitForIdleSync()
             if (condition()) return
+            if (!observed && SystemClock.uptimeMillis() >= until - 45_000) {
+                observed = true
+                reportWait(label)
+            }
             SystemClock.sleep(50)
         } while (SystemClock.uptimeMillis() < until)
         fixture.failure(label)
+        reportWait(label)
         error("Synthetic GPU editor did not reach: $label")
+    }
+    private fun reportWait(label: String) {
+        val labels = mutableListOf<String>()
+        fun visit(node: AccessibilityNodeInfo?) {
+            if (node == null) return
+            if (node.isVisibleToUser) {
+                node.text?.toString()?.let(labels::add)
+                node.contentDescription?.toString()?.let(labels::add)
+            }
+            for (i in 0 until node.childCount) visit(node.getChild(i))
+        }
+        instrumentation.uiAutomation.clearCache()
+        visit(fixture.fixtureRoot())
+        android.util.Log.i("GpuEditorSafety", "wait=$label ${diagnosticState()} labels=$labels")
     }
 }
