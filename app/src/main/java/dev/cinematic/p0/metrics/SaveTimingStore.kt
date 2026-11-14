@@ -6,11 +6,14 @@ import java.nio.file.StandardCopyOption
 
 /** Small bounded ring, serialized across collector/store instances; no per-band writes. */
 internal class SaveTimingStore(private val directory: File) {
-    fun append(record: SaveTimingRecord) = timingBestEffort {
+    fun append(record: SaveTimingRecord) = appendAll(listOf(record))
+    /** One read/replace per completed attempt, never one per stage. Keeps legacy rows unchanged. */
+    fun appendAll(records: List<SaveTimingRecord>) = timingBestEffort {
+        if (records.isEmpty()) return@timingBestEffort
         synchronized(lock) {
             if (!directory.isDirectory && !directory.mkdirs()) return@synchronized
             val lines = readLines().toMutableList()
-            lines += record.line()
+            lines += records.takeLast(MAX_RECORDS).map { it.line() }
             var bytes = lines.sumOf { it.length } // schema is ASCII only
             while (lines.size > MAX_RECORDS || bytes > MAX_BYTES) bytes -= lines.removeAt(0).length
             val temporary = File(directory, "records.tmp")

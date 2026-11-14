@@ -36,33 +36,42 @@ internal data class SaveTimingRecord(val attempt: String, val version: Int, val 
     }
 }
 
-/** One collector per admitted attempt. Original trace calls are on queue IO, never singleton state. */
+/**
+ * One bounded in-memory collector per admitted attempt. No disk I/O until finish, after all measured
+ * work and resource release. Original callbacks and GPU timing drain run on queue IO.
+ * STARTED is retained only in the schema reader for records written by earlier versions.
+ */
 internal class SaveTiming private constructor(private val version: Int, private val kind: SaveTimingKind,
-    private val sink: (SaveTimingRecord) -> Unit, private val clock: () -> Long) : OriginalStageTrace {
+    private val sink: (List<SaveTimingRecord>) -> Unit, private val clock: () -> Long) : OriginalStageTrace {
     private val id = UUID.randomUUID().toString().replace("-", "")
     private var pixels: Long? = null
     private val entered = mutableSetOf<SaveTimingStage>()
     private val starts = mutableMapOf<SaveTimingStage, Long>()
+    private val records = ArrayDeque<SaveTimingRecord>()
+    private val attemptStart = try { clock() } catch (_: Throwable) { null }
     private var ended = false
-    fun pixels(width: Int, height: Int) = timingBestEffort {
+    @Synchronized fun pixels(width: Int, height: Int) = timingBestEffort {
         val count = width.toLong() * height
         if (width > 0 && height > 0 && count in 1..24_000_000) {
             pixels = count
         }
     }
-    fun event(stage: SaveTimingStage, outcome: SaveTimingOutcome, nanos: Long? = null) = timingBestEffort {
-        entered += stage
-        sink(SaveTimingRecord(id, version, kind, stage, outcome, pixels, nanos))
+    @Synchronized fun event(stage: SaveTimingStage, outcome: SaveTimingOutcome, nanos: Long? = null) = timingBestEffort {
+        if (!ended && outcome != SaveTimingOutcome.STARTED) {
+            entered += stage
+            // Even an unexpectedly repeated callback cannot create an unbounded diagnostic buffer.
+            if (records.size == SaveTimingStore.MAX_RECORDS) records.removeFirst()
+            records.addLast(SaveTimingRecord(id, version, kind, stage, outcome, pixels, nanos))
+        }
     }
-    override fun started(stage: OriginalStage) = timingBestEffort {
+    @Synchronized override fun started(stage: OriginalStage) = timingBestEffort {
         mapped(stage)?.let {
             starts.remove(it)
-            event(it, SaveTimingOutcome.STARTED)
             // originalStage's outer clock includes observer work; use our own action interval.
             starts[it] = clock()
         }
     }
-    override fun finished(stage: OriginalStage, elapsedNanos: Long, completed: Boolean) = timingBestEffort {
+    @Synchronized override fun finished(stage: OriginalStage, elapsedNanos: Long, completed: Boolean) = timingBestEffort {
         mapped(stage)?.let {
             val end = clock()
             val duration = starts.remove(it)?.let { start -> (end - start).coerceAtLeast(0) }
@@ -71,7 +80,6 @@ internal class SaveTiming private constructor(private val version: Int, private 
     }
     fun <T> measure(stage: SaveTimingStage, action: () -> T): T {
         var start: Long? = null
-        event(stage, SaveTimingOutcome.STARTED)
         timingBestEffort { start = clock() }
         var completed = false
         try { return action().also { completed = true } }
@@ -80,14 +88,17 @@ internal class SaveTiming private constructor(private val version: Int, private 
                 start?.let { (clock() - it).coerceAtLeast(0) })
         } }
     }
-    fun finish(outcome: SaveTimingOutcome) = timingBestEffort {
+    @Synchronized fun finish(outcome: SaveTimingOutcome) = timingBestEffort {
         if (!ended) {
-            ended = true
+            val duration = try { attemptStart?.let { (clock() - it).coerceAtLeast(0) } }
+                catch (_: Throwable) { null }
             for (stage in listOf(SaveTimingStage.NATIVE_DECODE, SaveTimingStage.JPEG_ENCODE,
                 SaveTimingStage.GPU_RENDER, SaveTimingStage.PUBLICATION, SaveTimingStage.RECONCILIATION)) {
                 if (stage !in entered) event(stage, SaveTimingOutcome.NOT_REACHED)
             }
-            event(SaveTimingStage.ATTEMPT, outcome)
+            event(SaveTimingStage.ATTEMPT, outcome, duration)
+            ended = true
+            try { sink(records.toList()) } finally { records.clear(); starts.clear() }
         }
     }
     private fun mapped(stage: OriginalStage) = when (stage) {
@@ -97,9 +108,9 @@ internal class SaveTiming private constructor(private val version: Int, private 
         else -> null
     }
     companion object {
-        fun start(version: Int, kind: SaveTimingKind, sink: (SaveTimingRecord) -> Unit,
+        fun start(version: Int, kind: SaveTimingKind, sink: (List<SaveTimingRecord>) -> Unit,
             clock: () -> Long = System::nanoTime): SaveTiming? = try {
-            SaveTiming(version, kind, sink, clock).also { it.event(SaveTimingStage.ATTEMPT, SaveTimingOutcome.STARTED) }
+            SaveTiming(version, kind, sink, clock)
         } catch (_: Throwable) { null }
     }
 }
