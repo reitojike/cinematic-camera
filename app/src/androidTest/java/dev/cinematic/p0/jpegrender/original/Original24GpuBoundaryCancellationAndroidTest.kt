@@ -64,7 +64,13 @@ class Original24GpuBoundaryCancellationAndroidTest {
         assertArrayEquals(intent, fixture.intent(save).read(ManualOriginalTrialRequestCodec.MAX_BYTES))
 
         // Next-save preference must not change the engine frozen by this cancelled generation.
-        assertTrue(fixture.setting.select(DevelopEngine.CPU, GpuAvailability.Available))
+        val nextEngine = if (fixture.setting.visible) {
+            assertTrue(fixture.setting.select(DevelopEngine.CPU, GpuAvailability.Available))
+            DevelopEngine.CPU
+        } else {
+            assertFalse("Normal builds must reject CPU selection", fixture.setting.select(DevelopEngine.CPU, GpuAvailability.Available))
+            DevelopEngine.GPU
+        }
         val retryWitness = GpuExportBoundaryWitness()
         Original24GpuOutput.observeForDiagnostics(retryWitness).use {
             save.advance(GpuExportBoundaryFixture.ALLOWED, retryCancellation = true) { false }.get(180, TimeUnit.SECONDS)
@@ -73,7 +79,7 @@ class Original24GpuBoundaryCancellationAndroidTest {
         assertEquals(listOf(0 to 256, 256 to 256, 512 to 256, 768 to 2),
             retryWitness.events.filter { it.complete && it.stage == "FINAL" }.map { it.origin to it.rows })
         assertEquals(request, save.request)
-        assertEquals(DevelopEngine.CPU, fixture.setting.current())
+        assertEquals(nextEngine, fixture.setting.current())
         assertArrayEquals(intent, fixture.intent(save).read(ManualOriginalTrialRequestCodec.MAX_BYTES))
         fixture.verifyPublication(save)
         assertNull(save.state.value.gpuFailure)
