@@ -36,6 +36,7 @@ import org.junit.Test
 class GpuProductEditorAndroidTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     @get:Rule val fixture = SyntheticFixtureRule()
+    private var diagnosticState: () -> String = { "" }
 
     @Test fun slidersComparisonSelectionBackgroundAndRetryKeepOriginalAndOwnerBoundaries() {
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
@@ -62,6 +63,7 @@ class GpuProductEditorAndroidTest {
         val publications = MutableStateFlow(GpuInputPublication())
         val observer = PhotoRollResourceObserver(app, DevelopExecution::updateConditions,
             onPublication = { observation -> publications.update { GpuInputPublication(it.sequence + 1, observation) } })
+        diagnosticState = { "opens=${provider.opens.get()} cleanupDone=${blockedCleanup.isDone} publication=${publications.value}" }
         val renderer = ManualTrialPhotoRollRenderer(app, observer::snapshot, developEngine = DevelopEngine.GPU)
         val repository = PhotoRollRepository(resolver, target.packageName)
         val selected = mutableStateOf(1)
@@ -96,6 +98,7 @@ class GpuProductEditorAndroidTest {
                 }
             }
         }
+        var primary: Throwable? = null
         try {
             ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
                 await("readiness timeout is visible while old cleanup is still blocked") {
@@ -149,15 +152,27 @@ class GpuProductEditorAndroidTest {
                 provider.verifyUnchanged()
                 assertEquals(0, provider.writes.get())
             }
+        } catch (failure: Throwable) {
+            primary = failure
+            throw failure
         } finally {
             releaseCleanup.countDown()
-            blockedCleanup.get(10, TimeUnit.SECONDS)
-            observer.stop()
-            renderer.discardTransientInputs()
-            AndroidManualOriginalTrialSaves.discardPreview(app).get(60, TimeUnit.SECONDS)
-            GpuPhotoRollRetiredOwners.releaseBeforeOpen()
-            provider.verifyUnchanged()
-            await("all original descriptors closed") { provider.readers.none { it.fileDescriptor.valid() } }
+            var cleanupFailure: Throwable? = null
+            fun cleanup(action: () -> Unit) {
+                try { action() } catch (failure: Throwable) {
+                    val first = primary ?: cleanupFailure
+                    if (first == null) cleanupFailure = failure
+                    else if (first !== failure) first.addSuppressed(failure)
+                }
+            }
+            cleanup { blockedCleanup.get(10, TimeUnit.SECONDS) }
+            cleanup { observer.stop() }
+            cleanup { renderer.discardTransientInputs() }
+            cleanup { AndroidManualOriginalTrialSaves.discardPreview(app).get(60, TimeUnit.SECONDS) }
+            cleanup { GpuPhotoRollRetiredOwners.releaseBeforeOpen() }
+            cleanup { provider.verifyUnchanged() }
+            cleanup { await("all original descriptors closed") { provider.readers.none { it.fileDescriptor.valid() } } }
+            cleanupFailure?.let { throw it }
         }
     }
 
@@ -199,12 +214,32 @@ class GpuProductEditorAndroidTest {
     }
     private fun await(label: String, condition: () -> Boolean) {
         val until = SystemClock.uptimeMillis() + 60_000
+        var observed = false
         do {
             instrumentation.waitForIdleSync()
             if (condition()) return
+            if (!observed && SystemClock.uptimeMillis() >= until - 45_000) {
+                observed = true
+                reportWait(label)
+            }
             SystemClock.sleep(50)
         } while (SystemClock.uptimeMillis() < until)
         fixture.failure(label)
+        reportWait(label)
         error("Synthetic GPU editor did not reach: $label")
+    }
+    private fun reportWait(label: String) {
+        val labels = mutableListOf<String>()
+        fun visit(node: AccessibilityNodeInfo?) {
+            if (node == null) return
+            if (node.isVisibleToUser) {
+                node.text?.toString()?.let(labels::add)
+                node.contentDescription?.toString()?.let(labels::add)
+            }
+            for (i in 0 until node.childCount) visit(node.getChild(i))
+        }
+        instrumentation.uiAutomation.clearCache()
+        visit(fixture.fixtureRoot())
+        android.util.Log.i("GpuEditorSafety", "wait=$label ${diagnosticState()} labels=$labels")
     }
 }
