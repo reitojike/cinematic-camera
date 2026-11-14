@@ -824,3 +824,59 @@ CIのGPU/RAW診断build jobを退役し、通常product jobでdebug/release mani
 初回boot ANRは実行0件で環境不成立。b59a4b73ではsymlink/preflight2件成功、Backend2件はfixtureのjournal factory設定不備で失敗しunknownは未実行。caa8cb16で隔離journalへ修正し、未公開assertを保持して5件を再実走した。失敗証拠を成功ログで上書きしない。
 
 この確認後にprefix sourceSetの52method/8ファイルを削除候補から撤去し、退役検査をtestVariant/androidTestVariant形式にも拡張した。これは候補への編集であり採用完了ではない。#424同期後の削除headで必要回帰・GPU90/28・CI・canonical/独立レビューを確認するまでHOLDする。上の実装/実走待ち欄は追加監査時点の履歴で、この節がM5の現在の証拠である。
+
+
+## 削除②: 製品 CPU 経路（作業中）
+
+- `Original24Attempt` の CPU 行レンダラと `ManualTrialPhotoRollRenderer` の CPU Bitmap 経路を除去。GPU 入力・保存・原本照合は保持。
+- `AndroidManualOriginalTrialSaves` の CPU preview authority/session 保持を除去。GPU owner/token と保存 journal/復旧は別管理で保持。`discardPreview` は metadata IO barrier のみであり、GPU owner drain の代替ではない。
+- `Original24PreviewSession` は GPU 用 snapshot/native RGB16/BOX 入力、geometry/fingerprint、終端取消、失敗時 cleanup を保持。CPU look/draft/比較 Bitmap 保持は終了。
+- `GpuExportParityAndroidTest` は CPU 差分ログだけを終了し、GPU full/band 画素一致・tone/Mist・row/budget/release を保持。
+- `Original24GpuInputAndroidTest` の廃止 CPU field が空である assertion だけを除去。独立 native 入力との一致・所有権保証は保持。
+- `PreviewMemoryProbeTest` は CPU exact/draft/比較 Bitmap 専用の旧 probe として D。旧ソース参照は `PREVIEW_MEMORY_PROBE.md` に保存。#379 固定 source と再実行文書は別に保持。
+- `PreviewMemoryAdmissionInstrumentationTest` は GPU one-shot 入力の4件へ移行。注入 callback の post-decode 許容は実 OS wrapper の default 判定を検証した意味ではない。OS 低メモリ開始の実機確認は未確認のまま。
+- `OriginalSharedSafetyTest` へ量子点、取消/予算失敗、close 失敗の所有/一次例外の3保証を分離。JVM 実走3件成功。元の CPU renderer 試験はこの段階ではまだ残る。
+- ホストだけの foundation/draft 参照4件と共有安全3件は実走成功。Android コンパイルは成功だが、この作業中差分の Android 実走/GPU90 は未実施。
+
+未完了: 旧 bounded/private-trial CPU producer の登録解除と旧 journal 読取/UNSUPPORTED HOLD の保証、CPU 専用実装・試験の最終分類/削除、最終 Android 安全試験/GPU90、CI・独立レビュー。削除②を完了・マージ可能とは扱わない。
+
+### 削除②: 原寸 CPU 専用群の分類
+
+`OriginalStageClear24` / `OriginalR7ColorRow` / `OriginalMaskCount` は製品 GPU 呼出なし。CPU 原寸描画・CPU mask callback 数え上げの実装と専用試験を D として同時退役する。GPU 顔保護・共有サイズ検証・checkpoint の変更ではない。
+
+- D: OriginalGlowParallelTest、OriginalR7ColorFusionTest、OriginalRaw4CombinedTest、OriginalRemainingRowsTest、OriginalMaskCountTest（7件）、OriginalPreviewParityTest、OriginalZeroKeepAndroidTest、および OriginalZeroKeepTest の CPU candidate/pipeline 部分。
+- E: OriginalZeroKeepTest.nonFiniteInputIsRejectedBeforeCandidate は既存 IntermediateValidationTest.rawArrayEntrypointsStillRejectNonfiniteValuesAndInvalidShapes が同じ LinearSrgbImage 入力の NaN/±Inf 拒否を保証。
+- M: OriginalStageClear24Test の quantiles・取消/予算・failed-close の共有3件は OriginalSharedSafetyTest へ移行して実走成功。他は退役CPU rendererの段階/並列/画像比較契約としてD。
+- 保持: Original24CancellationRetryInstrumentationTest の通常GPU4件。旧CPU stack witness分岐のみ除去し、GPU thread/取消/明示retry/原本/公開境界は変更しない。
+
+これらをGPU全量移行と扱わない。GPU90と通常安全試験の最終実走は別のマージ条件。
+
+### 旧 bounded/private-trial の残作業と HOLD
+
+旧5 Androidクラス30methodは既存M1/M2の一括代替ではない。AtomicFile `.bak`復旧、attempt保持、破損private readback、遅延取消後の実破損、旧bindingの新bindingへの干渉防止を保持する。CPU生成fixtureをtest APKへ移す試案は、製品との二重queue attachと同じinventory走査を起こすため独立レビューで不採用。未実走で取り下げた。共有rootの消去やsingleton差し替えでは解決しない。
+
+`RetiredCpuJournalCompatibilityTest` 3件は空catalogでのcanonical要求/HOLD、正規manual bounded PUBLISHEDの再読取・非再実行をhostで確認し実走成功。既存Android inventoryや実保存先のfresh確認を代替しない。旧固定bytes全版互換や実artifact保全をこのfixtureだけで保証したとは扱わない。
+
+producer登録と旧CPU実装は、共有試験を専用namespace・一貫したowner/coordinatorに分離してから撤去する。このチェックポイント時点では未完了（後続の分離実装を下記に記録）。
+
+### 削除②: 旧 bounded fixture の安全な分離
+
+丸コピーqueue案は不採用。新 `LegacyCpuFixture` は各試験のUUID専用context（noBackup/files/cache/prefs）、独立coordinator/IO/cancel ownerを使い、製品singletonへattachせず、既存inventoryやscratch recoveryを走査しない。試験で使う旧CPU producer/coreだけをtestSupportへ移し、製品catalogから既定CPU登録を除く。旧default inventory試験は別の専用namespaceで実製品factoryの復旧を検証する。
+
+- DngTrialRendererTest: 旧CPU表示9件D。shared read/close、原本handoff、pending誤認防止の3件Mを保持（handoff末尾CPU描画のみ除去）。
+- PrivateTrialEndToEndTest: 12MP CPU表示比較1件D、取消/capture優先/破損artifact拒否1件Mを独立ownerで保持。
+- AutoDevelopInventoryInstrumentationTest: 1件Mを実製品factoryで保持。
+- ManualDevelopInstrumentationTest: 2件Mを独立namespaceで保持。cleanupは正のowner解放後、成功時だけ合成物を削除。失敗/不明は保全。
+- PrivateTrialReuseInstrumentationTest: CPUcache/lease保証は実装と同時退役。原本変更、全checkpoint取消+fresh retry、遅延取消下の実破損、別geometryJPEG、同寸法同bytes別hash/foreign attempt、継続close故障owner保持、unknown条件通知取消を7件Mへ整理。製品のGPU/capture facade配線そのものの代替とはしない。
+
+製品から移したCPU一群: R7Base/StageClearLook/PreparedStageClearGlow、Character/Glow/Mist/Orton/Protections/ZeroKeepCandidate、TrialFoundationReuse/PrivateTrialReuse、JpegGenerationAttempt/BoundedJpegRendererAdapter。GPUのV1定数、StageClearBlur(filter/reducedSize/samples)、StageClearColor.unitToLinear、R7PreviewInputs、LinearSrgbImage/FaceMask、旧codec/receiptはmain保持。
+
+追加修正の範囲: 削除前 c428945a の旧private readbackでは、比較frame closeが失敗してもowner参照を捨ててAfter-only成功になり得た。現在のGPUプレビュー/原寸保存ではなく、保持する旧artifact互換読取実装の問題。frame ownerは正のcloseまで保持し、slot/FDも保持する。期待値を緩めず故障注入実走と独立レビューを必須とする。
+
+この節は実装・試験計画の記録。最終Android実走/GPU90完了まではHOLD。
+
+- D追加: `PrivateTrialReuseAdmissionTest` 2件。全JVMで2失敗を検出し、独立確認で両方とも旧CPU `PrivateTrialReuseSession.closed` のみの義務と確認した。製品cache無効化撤去と同時退役し、共通coordinatorの更新/取消/wakeを弱める変更ではない。失敗実行(1376件中2失敗/12skip)は記録として保全し、退役後の再実行と区別する。
+
+候補の非Android検証: 全JVM 1374件（成功1362/skip12/失敗0）、lintDebug、debug APK、androidTest APKの組み立て成功。Android実走・GPU90は未完了でHOLDを維持する。
+
+- D追加: rawprobe RenderMemoryTest 1件は旧CPU R7/StageClearの寸法・3回hash・OOM計測のみ。rawprobe AndroidTest compileで参照漏れを検出し、独立確認後に退役。runnerのclass/expected/report回収と説明も更新し、旧RenderOnly/RenderEdgeはADB操作前に明示拒否。DNG/LibRaw/MemoryPolicy/ProbeMetricsと過去証拠は保持。

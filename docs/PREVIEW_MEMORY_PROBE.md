@@ -3,6 +3,10 @@
 Issue #260。通常版の `Original24PreviewSession` を合成DNGだけで通す、明示起動の
 instrumentation probeです。製品のメモリ条件、画素処理、保存経路は変更しません。
 
+## CPU probe の履歴参照（#290）
+
+CPU exact/draft/比較 Bitmap 専用の `PreviewMemoryProbeTest` は削除②で終了します。以下の旧 probe 手順は履歴として保持し、再現する場合は削除前の固定 commit `c428945a2542033446f53f9d92deb2a1933dc3e8` の専用 worktree を使います。現在の GPU 製品へ戻す手順ではありません。#379 の実機計測は別の [固定ソース・再実行手順](MEMORY_MEASUREMENT_REPLAY.md) に保全済みです。GPU の通常安全試験と、後述の並行保存試験は削除しません。
+
 ## 実行
 
 `docs/MANAGED_DEVICES.md` に従い既存ATD固定枠を単独使用します。

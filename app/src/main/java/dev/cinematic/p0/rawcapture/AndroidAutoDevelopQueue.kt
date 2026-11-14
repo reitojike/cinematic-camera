@@ -43,7 +43,6 @@ internal object AndroidAutoDevelopQueue {
     }
     fun preparePrivateTrial(context: Context, source: SharedOriginalReference,
         recipe: JpegGenerationRecipe = JpegGenerationRecipe.trial(),
-        reuseSession: PrivateTrialReuseSession? = null,
         shouldStop: () -> Boolean = { false }): CompletableFuture<PrivateTrialHandle> {
         require(recipe.isTrial && JpegGenerationRecipe.fromTrialSnapshot(recipe.snapshot) != null)
         val app = context.applicationContext
@@ -52,10 +51,7 @@ internal object AndroidAutoDevelopQueue {
         // A cancelled Future alone is not evidence that native/FD/stream resources have actually closed.
         return get(app).preparePrivateTrial(id, shouldStop) {
             ManualDevelopRequests(source, AndroidAtomicJournalStorage(File(app.noBackupFilesDir, "raw-captures"),
-                id, CaptureJournalFile.MANUAL_REQUEST)).prepare(recipe.snapshot).also {
-                // Bind on this IO owner before acceptance constructs a backend/attempt for the request.
-                PrivateTrialReuseRegistry.bind(reuseSession, it)
-            }
+                id, CaptureJournalFile.MANUAL_REQUEST)).prepare(recipe.snapshot)
         }
     }
 
@@ -66,7 +62,7 @@ internal object AndroidAutoDevelopQueue {
             return AutoDevelopJournal(captureId, generation,
                 AndroidAtomicJournalStorage(requireNotNull(directory.parentFile), generation.toString(), CaptureJournalFile.AUTO_DEVELOP))
         }
-        val catalog = AutoRendererCatalog(adapters + BoundedJpegRendererAdapter.privateTrial(PrivateTrialReuseRegistry::forRequest)) // Completed/full auto enrollment remains empty.
+        val catalog = AutoRendererCatalog(adapters) // Retired CPU requests stay readable but cannot enroll a producer.
         return AutoDevelopQueue(Executors.newSingleThreadExecutor { command ->
             Thread(command, "auto-develop").apply { priority = Thread.MIN_PRIORITY }
         }, DevelopExecution.coordinator, journalFactory = { request ->
