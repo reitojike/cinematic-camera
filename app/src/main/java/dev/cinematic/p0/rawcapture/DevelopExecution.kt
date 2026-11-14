@@ -15,8 +15,6 @@ internal object DevelopExecution {
         if (AutoDevelopPolicy.blockers(observations).isNotEmpty()) {
             PrivateTrialReuseRegistry.invalidateAll()
         }
-        if (AutoDevelopPolicy.previewContinuationBlockers(observations).isNotEmpty() && android.os.Build.VERSION.SDK_INT >= 29)
-            AndroidManualOriginalTrialSaves.invalidatePreviews()
         val owner = queue
         if (owner == null) coordinator.updateConditions(observations) else owner.updateConditions(observations)
         stopRequestedOwners()
@@ -56,7 +54,6 @@ internal object DevelopExecution {
     }
     fun reserveCapture() = run {
         PrivateTrialReuseRegistry.invalidateAll()
-        if (android.os.Build.VERSION.SDK_INT >= 29) AndroidManualOriginalTrialSaves.invalidatePreviews()
         (queue?.reserveCapture() ?: coordinator.reserveCapture()).also { stopRequestedOwners() }
     }
     /** A failing native cancellation must not prevent requesting stop from the other owner. */

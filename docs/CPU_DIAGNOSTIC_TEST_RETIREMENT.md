@@ -824,3 +824,18 @@ CIのGPU/RAW診断build jobを退役し、通常product jobでdebug/release mani
 初回boot ANRは実行0件で環境不成立。b59a4b73ではsymlink/preflight2件成功、Backend2件はfixtureのjournal factory設定不備で失敗しunknownは未実行。caa8cb16で隔離journalへ修正し、未公開assertを保持して5件を再実走した。失敗証拠を成功ログで上書きしない。
 
 この確認後にprefix sourceSetの52method/8ファイルを削除候補から撤去し、退役検査をtestVariant/androidTestVariant形式にも拡張した。これは候補への編集であり採用完了ではない。#424同期後の削除headで必要回帰・GPU90/28・CI・canonical/独立レビューを確認するまでHOLDする。上の実装/実走待ち欄は追加監査時点の履歴で、この節がM5の現在の証拠である。
+
+
+## 削除②: 製品 CPU 経路（作業中）
+
+- `Original24Attempt` の CPU 行レンダラと `ManualTrialPhotoRollRenderer` の CPU Bitmap 経路を除去。GPU 入力・保存・原本照合は保持。
+- `AndroidManualOriginalTrialSaves` の CPU preview authority/session 保持を除去。GPU owner/token と保存 journal/復旧は別管理で保持。`discardPreview` は metadata IO barrier のみであり、GPU owner drain の代替ではない。
+- `Original24PreviewSession` は GPU 用 snapshot/native RGB16/BOX 入力、geometry/fingerprint、終端取消、失敗時 cleanup を保持。CPU look/draft/比較 Bitmap 保持は終了。
+- `GpuExportParityAndroidTest` は CPU 差分ログだけを終了し、GPU full/band 画素一致・tone/Mist・row/budget/release を保持。
+- `Original24GpuInputAndroidTest` の廃止 CPU field が空である assertion だけを除去。独立 native 入力との一致・所有権保証は保持。
+- `PreviewMemoryProbeTest` は CPU exact/draft/比較 Bitmap 専用の旧 probe として D。旧ソース参照は `PREVIEW_MEMORY_PROBE.md` に保存。#379 固定 source と再実行文書は別に保持。
+- `PreviewMemoryAdmissionInstrumentationTest` は GPU one-shot 入力の4件へ移行。注入 callback の post-decode 許容は実 OS wrapper の default 判定を検証した意味ではない。OS 低メモリ開始の実機確認は未確認のまま。
+- `OriginalSharedSafetyTest` へ量子点、取消/予算失敗、close 失敗の所有/一次例外の3保証を分離。JVM 実走3件成功。元の CPU renderer 試験はこの段階ではまだ残る。
+- ホストだけの foundation/draft 参照4件と共有安全3件は実走成功。Android コンパイルは成功だが、この作業中差分の Android 実走/GPU90 は未実施。
+
+未完了: 旧 bounded/private-trial CPU producer の登録解除と旧 journal 読取/UNSUPPORTED HOLD の保証、CPU 専用実装・試験の最終分類/削除、最終 Android 安全試験/GPU90、CI・独立レビュー。削除②を完了・マージ可能とは扱わない。
