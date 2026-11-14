@@ -6,13 +6,11 @@ internal class GpuMemoryLedger(val budgetBytes: Long = PREVIEW_BUDGET) {
     /** 成功した予約の累積最大値。解放しても戻さない（この台帳の生存期間全体）。 */
     var peakAllocatedBytes: Long = 0; private set
     var textureCount: Int = 0; private set
-    /** Cumulative successful storage reservations; reuse does not reserve again. */
-    internal var allocationCount: Long = 0; private set
     init { require(budgetBytes > 0) }
     internal fun reserve(bytes: Long) {
         require(bytes > 0)
         if (bytes > budgetBytes - allocatedBytes) throw GpuMemoryBudgetException("GPU texture budget exceeded ($budgetBytes bytes)")
-        allocatedBytes += bytes; textureCount++; allocationCount++
+        allocatedBytes += bytes; textureCount++
         peakAllocatedBytes = maxOf(peakAllocatedBytes, allocatedBytes)
     }
     internal fun release(bytes: Long) {
