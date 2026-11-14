@@ -64,9 +64,9 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
     var editor by remember { mutableStateOf(CaptureEditor(epoch = probe.currentEpoch)) }
     var panel by remember { mutableStateOf(CapturePanel.NONE) }
     var confirmReset by remember { mutableStateOf(false) }
-    var notice by remember { mutableStateOf<String?>(null) }
+    var notice by remember { mutableStateOf<CaptureNotice?>(null) }
     LaunchedEffect(probe.exposureMigrationNotice) {
-        probe.consumeExposureMigrationNotice()?.let { notice = it }
+        probe.consumeExposureMigrationNotice()?.let { notice = CaptureNotice(it) }
     }
     var backAt by remember { mutableLongStateOf(0L) }
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -104,7 +104,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
         if (evFeedback.affected && evFeedback.tone == SensorControlTone.PENDING) add("EV")
     }
     val pendingNotice = if (receipt.phase == ControlPhase.PENDING || probe.exposureOperationPending || probe.liveControlsPending)
-        if (changingKeys.isEmpty()) "設定変更中" else "${changingKeys.joinToString("・")}変更中" else null
+        captureChangingMessage(changingKeys) else null
     val focusAllowed by rememberUpdatedState(panel == CapturePanel.NONE && editor.submitting == null && !ownsCapture && !probe.busy)
     val previewTap by rememberUpdatedState<(Float?, Float?) -> Unit>({ x, y ->
         when (previewTapAction(panel, editor.selected, focusAllowed)) {
@@ -127,27 +127,37 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
             seenRecording = probe.recordingStartSequence
         }
     }
+    var seenThermalRejection by remember { mutableLongStateOf(probe.thermalRecordingRejectionSequence) }
+    var thermalRejected by remember { mutableStateOf(false) }
+    LaunchedEffect(probe.thermalRecordingRejectionSequence) {
+        if (seenThermalRejection != probe.thermalRecordingRejectionSequence) {
+            seenThermalRejection = probe.thermalRecordingRejectionSequence
+            thermalRejected = true
+            kotlinx.coroutines.delay(4000)
+            thermalRejected = false
+        }
+    }
     var seenOrientation by remember { mutableIntStateOf(orientation.sensorQuarter) }
     LaunchedEffect(orientation.sensorQuarter) {
         if (seenOrientation != orientation.sensorQuarter) {
-            notice = if (probe.recordingBusy) "回転: 配置固定・文字のみ回転・録画継続" else "回転: 配置固定・文字のみ回転"
+            notice = captureRotationNotice(probe.recordingBusy)
             seenOrientation = orientation.sensorQuarter
         }
     }
     LaunchedEffect(editor.note, editor.submitting) {
-        if (editor.submitting == null) editor.note?.let { notice = it }
+        if (editor.submitting == null) editor.note?.let { notice = CaptureNotice(it) }
     }
     var seenSave by remember { mutableStateOf(probe.photoStage to probe.recordingSaveSucceeded) }
     LaunchedEffect(probe.photoStage, probe.recordingSaveSucceeded) {
         val current = probe.photoStage to probe.recordingSaveSucceeded
         if ((probe.mode == CaptureMode.STILL && current.first == PhotoStage.SAVED && seenSave.first != PhotoStage.SAVED) ||
-            (probe.mode == CaptureMode.CINE && current.second == true && seenSave.second != true)) notice = "保存しました"
+            (probe.mode == CaptureMode.CINE && current.second == true && seenSave.second != true)) notice = CaptureNotice("保存しました", CaptureChromeTone.ACCEPTED)
         seenSave = current
     }
     LaunchedEffect(notice) { if (notice != null) { kotlinx.coroutines.delay(4000); notice = null } }
     BackHandler {
         if (ownsCapture) {
-            notice = if (recoveryRequired) "状態不明です。停止・復旧を選んでください" else "撮影・プレビュー復帰の完了を待ってください"
+            notice = captureWaitingNotice(recoveryRequired)
             return@BackHandler
         }
         val decision = captureBack(panel, editor.selected != null, editor.submitting != null, probe.recordingBusy,
@@ -155,7 +165,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
         panel = decision.panel
         if (decision.closeRuler) editor = editor.close()
         if (decision.exit) exit()
-        decision.note?.let { notice = it }
+        decision.note?.let { notice = CaptureNotice(it) }
         if (decision.armExit) backAt = SystemClock.elapsedRealtime()
         if (panel == CapturePanel.NONE) confirmReset = false
     }
@@ -205,11 +215,6 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                         Mono(if (feedback.phase == FocusPhase.PENDING) "要求" else if (feedback.phase == FocusPhase.FAILED) "失敗" else "API完了", focusColor, rotate = false)
                     }
                 }
-                if (!permission) Column(Modifier.align(Alignment.Center).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("カメラの許可が必要です", color = CaptureDesign.Text)
-                    Text("拒否後は端末のアプリ設定からも変更できます", color = CaptureDesign.Muted, fontSize = 12.sp)
-                    TextButton(onClick = requestPermission) { Text("カメラを許可") }
-                }
                 if (panel != CapturePanel.DIAGNOSTICS) {
                     CaptureStatusBar(chromeInput(probe, captureReady),
                         settingsEnabled = unlocked || recoveryRequired, settingsSelected = panel == CapturePanel.SETTINGS,
@@ -220,11 +225,13 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                     val displayFailureFallback = captureFailureFallback(diagnosticsEnabled)
                     val messages = captureMessages(
                         waitingForConnection = !probe.bound && permission,
+                        cameraPermissionMissing = !permission,
                         controlRecovery = probe.bound && !probe.controlReady && !probe.busy && !recoveryRequired,
                         captureRecovery = recoveryRequired,
                         canReconnect = probe.canRecoverControls,
                         diagnosticsEnabled = diagnosticsEnabled,
                         thermalWarning = ProbeControls.shouldStopRecording(probe.thermalSeverity),
+                        thermalRejected = thermalRejected,
                         microphoneWarning = probe.mode == CaptureMode.CINE && probe.audioWanted && probe.audioPermissionDenied,
                         captureFailed = probe.lastFailure != null,
                         recordingFailed = probe.mode == CaptureMode.CINE && probe.recordingFailure != null,
@@ -233,6 +240,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                     )
                     val messageAction: (MessageAction) -> Unit = { action ->
                         when (action) {
+                            MessageAction.GRANT_ACCESS -> requestPermission()
                             MessageAction.RECONNECT -> probe.recoverControls(recoveryEpoch)
                             MessageAction.STOP_AND_RECOVER -> probe.stop()
                             MessageAction.OPEN_DIAGNOSTICS -> { if (diagnosticsEnabled) panel = CapturePanel.DIAGNOSTICS }
@@ -267,7 +275,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                                         val shown = exposureKeyValue(key, probe, measurementTick)
                                         val feedback = exposureFeedback.getValue(key)
                                         CaptureControlKey(key.name, shown.value, shown.qualifier.ifEmpty { "実測未確認" }, selected,
-                                            enabled = available.enabled, onUnavailable = { notice = available.reason }, unavailableReason = available.reason,
+                                            enabled = available.enabled, onUnavailable = { notice = available.reason?.let(::CaptureNotice) }, unavailableReason = available.reason,
                                             onClick = { editor = editor.select(key) }, modifier = Modifier.weight(1f).heightIn(max = keyMaxHeight),
                                             displayLabel = captureKeyVisualLabel(key), unit = shown.unit, rotation = animatedAngle, horizontal = orientation.horizontal,
                                             landscapeCommonHeight = commonHeight, onLandscapeNaturalHeight = { landscapeHeights[key] = it },
@@ -287,7 +295,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                                         val tag = if (key == CaptureKey.FOCUS) field.modeTag else if (key == CaptureKey.LOOK) "未実装" else ""
                                         CaptureControlKey(key.name, field.value, tag, selected, available.enabled,
                                             onClick = { editor = editor.select(key) }, modifier = Modifier.weight(1f).heightIn(max = keyMaxHeight), unit = field.unit,
-                                            onUnavailable = { notice = available.reason }, unavailableReason = available.reason,
+                                            onUnavailable = { notice = available.reason?.let(::CaptureNotice) }, unavailableReason = available.reason,
                                             rotation = animatedAngle, horizontal = orientation.horizontal, valueColor = sensorControlColor(field.tone),
                                             landscapeCommonHeight = commonHeight, onLandscapeNaturalHeight = { landscapeHeights[key] = it },
                                             statusDescription = when {
@@ -320,7 +328,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                     if (panel == CapturePanel.DIAGNOSTICS) return@shutter
                     val before = ShutterPressState(probe.mode, probe.photoStage, probe.recordingStage)
                     if (probe.recordingStage in setOf(RecordingStage.STARTING, RecordingStage.RECORDING)) probe.stopRecording()
-                    else if (probe.mode == CaptureMode.STILL) { if (editor.dirty) notice = "受付値で撮影・未適用の編集は保持"; capture() }
+                    else if (probe.mode == CaptureMode.STILL) { if (editor.dirty) notice = CaptureNotice("受付済みの値で撮影しました。編集中の値は保持しています。"); capture() }
                     else record()
                     val after = ShutterPressState(probe.mode, probe.photoStage, probe.recordingStage)
                     if (shutterPressAccepted(before, after)) hapticView.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY, 0)

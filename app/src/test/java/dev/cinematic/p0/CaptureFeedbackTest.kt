@@ -12,7 +12,7 @@ class CaptureFeedbackTest {
         val unchanged = beginEditorReceipt(editor, history, history)
         assertEquals(editor, unchanged.editor)
         assertNull(unchanged.editor.submitting)
-        assertFalse(unchanged.notice!!.contains("受付完了"))
+        assertFalse(unchanged.notice!!.text.contains("受付完了"))
         assertEquals(editor, beginEditorReceipt(editor, history, history.copy(epoch = 3, sequence = 8)).editor)
     }
 
@@ -23,7 +23,8 @@ class CaptureFeedbackTest {
         assertNull(result.editor.focus)
         assertNull(result.editor.submitting)
         assertNotNull(result.notice)
-        assertTrue(result.notice!!.contains("API受付"))
+        assertEquals("設定を受け付けました。実測値は診断で確認できます。", result.notice!!.text)
+        assertEquals(CaptureChromeTone.ACCEPTED, result.notice.tone)
     }
 
     @Test fun mfAcceptanceAnnouncesCompletionOnceWithoutClaimingMeasurement() {
@@ -31,7 +32,8 @@ class CaptureFeedbackTest {
         val receipt = ControlReceipt(epoch = 2, sequence = 7, phase = ControlPhase.ACCEPTED)
         val completed = completeEditorReceipt(editor, receipt)
         assertNotNull(completed.notice)
-        assertTrue(completed.notice!!.contains("API受付"))
+        assertEquals("設定を受け付けました。実測値は診断で確認できます。", completed.notice!!.text)
+        assertEquals(CaptureChromeTone.ACCEPTED, completed.notice.tone)
         assertNull(completed.editor.submitting)
         assertNull(completed.editor.note)
         assertNull(completeEditorReceipt(completed.editor, receipt).notice)
