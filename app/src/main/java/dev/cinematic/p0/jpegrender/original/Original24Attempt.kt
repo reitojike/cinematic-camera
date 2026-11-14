@@ -9,6 +9,10 @@ import android.os.ParcelFileDescriptor
 import dev.cinematic.p0.raw.R7PreviewInputs
 import dev.cinematic.p0.raw.original.*
 import dev.cinematic.p0.rawcapture.*
+import dev.cinematic.p0.metrics.SaveTiming
+import dev.cinematic.p0.metrics.SaveTimingStage
+import dev.cinematic.p0.metrics.measured
+import dev.cinematic.p0.gpu.export.GpuExportTimings
 import java.io.File
 import java.io.IOException
 import java.io.OutputStream
@@ -41,7 +45,8 @@ internal class Original24Attempt(context: Context, private val request: Original
     private val parallelCharacterWorkers: Int = 2, private val parallelFoundationWorkers: Int = 1, private val parallelGlowWorkers: Int = 1,
     private val fuseR7ColorRows: Boolean = false,
     private val parallelToneWorkers: Int = 1, private val parallelMistWorkers: Int = 1,
-    private val developEngine: DevelopEngine = DevelopEngine.CPU) : AutoCloseable {
+    private val developEngine: DevelopEngine = DevelopEngine.CPU,
+    private val saveTiming: SaveTiming? = null) : AutoCloseable {
     private val context = context.applicationContext
     private val active = AtomicBoolean(false)
     private var started = false
@@ -104,6 +109,7 @@ internal class Original24Attempt(context: Context, private val request: Original
             checkpoint(); Original24Resources.requireAvailable(context, checkMemory = false)
             val width = metadata.getInt("width"); val height = metadata.getInt("height")
             validateOriginalSize(width, height)
+            saveTiming?.pixels(width, height)
             val sourceWidth = metadata.getInt("sourceWidth"); val sourceHeight = metadata.getInt("sourceHeight")
             val orientation = metadata.getInt("orientation")
             val observedGeometry = Original24PreflightGeometry(metadata.getInt("rawWidth"), metadata.getInt("rawHeight"),
@@ -152,9 +158,15 @@ internal class Original24Attempt(context: Context, private val request: Original
                 if (developEngine == DevelopEngine.GPU) {
                     val gpu = Original24GpuOutput(context.assets).also { gpuOutput = it }
                     // source is still as-shot. GPU applies the same gains exactly once before R7.
-                    gpu.render(source, ev, gains, request.strength, stop) { y, row ->
-                        packed.setPixels(row, 0, width, 0, y, width, 1)
-                    }
+                    var gpuTimings: GpuExportTimings? = null
+                    dev.cinematic.p0.metrics.timingBestEffort { if (saveTiming != null) gpuTimings = GpuExportTimings() }
+                    var gpuCompleted = false
+                    try { measured(saveTiming, SaveTimingStage.GPU_RENDER) {
+                        gpu.render(source, ev, gains, request.strength, stop, gpuTimings) { y, row ->
+                            packed.setPixels(row, 0, width, 0, y, width, 1)
+                        }
+                        gpuCompleted = true
+                    } } finally { gpuTimings?.drain(saveTiming, gpuCompleted) }
                     gpu.close(); gpuOutput = null
                 } else {
                     val row = IntArray(width)
