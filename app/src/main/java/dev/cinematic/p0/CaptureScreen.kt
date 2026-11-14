@@ -21,6 +21,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.stateDescription
@@ -175,6 +176,8 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
         if (unlocked) { editor = editor.close(); probe.resetAllControls() }
     })
 
+    val statusDensity = LocalDensity.current
+    var statusBarHeight by remember { mutableStateOf(44.dp) }
     val landscapeDialHeight = rememberLandscapeDialHeight(probe, liveIntent)
     CompositionLocalProvider(LocalCaptureAngle provides animatedAngle, LocalCaptureHorizontal provides orientation.horizontal,
         LocalLandscapeDialHeight provides if (orientation.horizontal) landscapeDialHeight else null) {
@@ -184,7 +187,7 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
             BoxWithConstraints(Modifier.height(dimensions.previewHeight.dp).fillMaxWidth().background(Color.Black)) {
                 val previewAvailableHeight = maxHeight.value
                 // Keep the same PreviewView mounted while panels/rulers change: no UI-induced camera rebind.
-                val previewTop = CaptureLayout.previewTop(probe.mode).dp
+                val previewTop = if (probe.mode == CaptureMode.STILL) statusBarHeight else CaptureLayout.previewTop(probe.mode).dp
                 if (permission) AndroidView(factory = { context ->
                     PreviewView(context).also {
                         it.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
@@ -219,7 +222,10 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                     CaptureStatusBar(chromeInput(probe, captureReady),
                         settingsEnabled = unlocked || recoveryRequired, settingsSelected = panel == CapturePanel.SETTINGS,
                         onSettings = { if (unlocked || recoveryRequired) { editor = editor.close(); panel = if (panel == CapturePanel.SETTINGS) CapturePanel.NONE else CapturePanel.SETTINGS } },
-                        rotation = animatedAngle, horizontal = orientation.horizontal)
+                        rotation = animatedAngle, horizontal = orientation.horizontal,
+                        modifier = Modifier.onSizeChanged { size ->
+                            statusBarHeight = with(statusDensity) { size.height.toDp() }
+                        })
                     val recoveryEpoch = probe.currentEpoch
                     val diagnosticsEnabled = unlocked || recoveryRequired
                     val displayFailureFallback = captureFailureFallback(diagnosticsEnabled)
@@ -248,7 +254,8 @@ fun CaptureScreen(probe: CameraProbe, permission: Boolean, orientation: CaptureO
                         }
                     }
                     CaptureMessageOverlay(messages, orientation.horizontal, recoveryRequired,
-                        messageAction, Modifier.sensorRotation(), failureFallback = displayFailureFallback)
+                        messageAction, Modifier.sensorRotation(), failureFallback = displayFailureFallback,
+                        statusBarHeight = statusBarHeight)
                     if (panel == CapturePanel.NONE) Column(Modifier.align(Alignment.BottomCenter)) {
                         if (editor.selected != null) Box(Modifier.weight(1f, fill = false)
                             .then(if (orientation.horizontal) Modifier.height(48.dp + landscapeDialHeight).background(CaptureDesign.Ruler) else Modifier)) {

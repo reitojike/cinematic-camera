@@ -5,6 +5,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 
 /** Display-only projection. Camera guards and recovery eligibility remain owned by the caller. */
 internal fun captureMessages(
@@ -30,8 +31,9 @@ internal fun captureMessages(
         "再接続して設定を確認してください。", "controls.recovery",
         title = "設定状態を確認できません",
         primary = if (canReconnect) MessageControl(MessageAction.RECONNECT, "再接続") else null))
-    if (cameraPermissionMissing) add(UiMessage(MessageSlot.CENTER, CaptureChromeTone.NORMAL,
-        "カメラの許可が必要です。許可しない場合は、端末のアプリ設定からも変更できます。", "camera.permission",
+    if (cameraPermissionMissing) add(UiMessage(MessageSlot.PROBLEM, CaptureChromeTone.FAILURE,
+        "カメラの許可が必要です。", "camera.permission",
+        title = "カメラを使えません",
         primary = MessageControl(MessageAction.GRANT_ACCESS, "カメラを許可")))
     if (waitingForConnection) add(UiMessage(MessageSlot.CENTER, CaptureChromeTone.NORMAL,
         "接続待ち・プレビュー停止中", "preview.connection"))
@@ -57,7 +59,7 @@ internal fun captureMessages(
 @Composable
 internal fun BoxScope.CaptureMessageOverlay(messages: ScreenMessages, horizontal: Boolean,
     captureRecovery: Boolean, onAction: (MessageAction) -> Unit, rotation: Modifier = Modifier,
-    failureFallback: UiMessage? = null) {
+    failureFallback: UiMessage? = null, statusBarHeight: Dp = 44.dp) {
     if (horizontal && messages.center != null && messages.banner != null) {
         // Both describe different facts. Stack in the existing central area instead of overlapping.
         Column(Modifier.align(Alignment.Center).widthIn(max = 220.dp).then(rotation),
@@ -74,7 +76,7 @@ internal fun BoxScope.CaptureMessageOverlay(messages: ScreenMessages, horizontal
         }
         messages.banner?.let { message ->
             CaptureBanner(message, onAction, Modifier.align(if (horizontal) Alignment.Center else Alignment.TopCenter)
-                .padding(top = if (horizontal) 0.dp else 48.dp)
+                .padding(top = if (horizontal) 0.dp else statusBarHeight + 4.dp)
                 .widthIn(max = if (horizontal) 220.dp else 380.dp).then(rotation), failureFallback = failureFallback)
         }
     }

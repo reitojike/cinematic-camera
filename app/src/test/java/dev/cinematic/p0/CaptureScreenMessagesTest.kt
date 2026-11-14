@@ -58,11 +58,12 @@ class CaptureScreenMessagesTest {
             captureMessages(notice = CaptureNotice("別の完了文", CaptureChromeTone.ACCEPTED)).toast!!.tone)
     }
 
-    @Test fun permissionUsesCenterAndOnlyExistingPermissionAction() {
+    @Test fun permissionUsesFailureProblemAndOnlyExistingPermissionAction() {
         val message = captureMessages(cameraPermissionMissing = true).center!!
-        assertEquals(MessageSlot.CENTER, message.slot)
-        assertEquals(CaptureChromeTone.NORMAL, message.tone)
-        assertEquals("カメラの許可が必要です。許可しない場合は、端末のアプリ設定からも変更できます。", message.body)
+        assertEquals(MessageSlot.PROBLEM, message.slot)
+        assertEquals(CaptureChromeTone.FAILURE, message.tone)
+        assertEquals("カメラを使えません", message.title)
+        assertEquals("カメラの許可が必要です。", message.body)
         assertEquals(MessageAction.GRANT_ACCESS, message.primary!!.action)
         assertEquals("カメラを許可", message.primary.label)
         assertNull(message.secondary)
@@ -75,6 +76,12 @@ class CaptureScreenMessagesTest {
         assertEquals(CaptureChromeTone.WARNING, captureMessages(thermalWarning = true).banner!!.tone)
         assertNull(captureMessages().banner)
         assertNull(captureMessages(captureRecovery = true, thermalRejected = true).banner)
+    }
+
+    @Test fun failureAndWarningUseTheirDistinctDesignTokens() {
+        assertEquals(CaptureDesign.Failed, captureChromeColor(CaptureChromeTone.FAILURE))
+        assertEquals(CaptureDesign.Amber, captureChromeColor(CaptureChromeTone.WARNING))
+        assertNotEquals(captureChromeColor(CaptureChromeTone.WARNING), captureChromeColor(CaptureChromeTone.FAILURE))
     }
 
     @Test fun rotationWaitingAndChangingTextAreNaturalAndNormal() {
