@@ -671,3 +671,17 @@ ordinaryActivity selectorは厳密なclassまたはclass#単一methodのみ許�
 並行入力の元2件は `GpuConcurrentInputSafetyAndroidTest` へ移行中。小さい合成入力を固定し、
 Aの実GPU bandを保持したままB入力の成功/取消例外、B release callbackが結果より前に1回、
 A未完了/不変、B描画、A公開、owner drainを維持する。旧メモリprobeの計測/report集計は移行しない。
+### M2残件の集約（実装と実走の区別）
+
+17241b0bで並行入力2件が実走成功59.007秒、既存noBackup hash不変。
+`simultaneousPrivateSessionsHaveIdenticalOutputAndNoSharedWorkers` のCPU hash/CPU worker比較は承認どおり終了。
+独立入力/ownerの非混同は、通常所有権10件のA保存中B/C・preflight取消と、上記並行入力2件で保証済み。
+`OriginalRemainingRowsAndroidTest.sameApkParityTimingMemoryAndInterruptedCleanup` のCPU比較/旧probe計測は終了。
+残す中断cleanup保証は `SharedRasterCancellationSafetyAndroidTest` と
+`GpuSaveProducerSafetyAndroidTest.gpuBandFailureAndCancellationDrainBeforeFreshAttemptCanSucceed` に集約。
+部分raster/source/owner解放、fault/cancel後に新attemptが成功する保証はb2f01101の実走証拠があり、最終headは再確認する。
+実一覧でA保存中に戻る→B表示→A公開→Bの明示保存は新 `GpuRealListSwitchSafetyAndroidTest` へ実装。
+製品PhotoRollScreenの一覧/BackHandlerを通り、recipe＋dirtyなし＋実Surfaceを確認する。Activityの依存構築自体は隔離する。
+permission付与なし、fixture専用app保存領域のみ。compile成功9秒、APK成功7秒、実走はこれから。
+これで49元methodは45対応実装/集約＋既存通常維持4に分類済み。移行完了とはまだせず、
+実一覧の実走、既存維持4の再実走、最終差分/CI/レビューを完了条件とする。
