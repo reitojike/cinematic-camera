@@ -53,6 +53,27 @@ class GpuResourceReuseAndroidTest {
         assertEquals(128L, ledger.peakAllocatedBytes)
     }
 
+    @Test fun idleRetentionCapDoesNotHideStorageOrRetainOversizedEntries() = gpu { egl ->
+        val ledger = GpuMemoryLedger(192)
+        GpuTexturePool(egl, ledger, maxIdleBytes = 64).use { pool ->
+            val first = GpuTexture.create(egl, ledger, 2, 2, GpuTexture.Format.RGBA32F, pool)
+            val second = first.createSibling()
+            first.close(); second.close()
+            assertEquals(64L, pool.idleBytes)
+            assertEquals(64L, ledger.allocatedBytes)
+            // Matching storage is reused; active storage cannot alias the returned lease.
+            GpuTexture.create(egl, ledger, 2, 2, GpuTexture.Format.RGBA32F, pool).use {
+                assertEquals(0L, pool.idleBytes)
+                assertEquals(1, pool.reuseCount)
+            }
+            GpuTexture.create(egl, ledger, 4, 2, GpuTexture.Format.RGBA32F, pool).close()
+            assertEquals(64L, pool.idleBytes) // Oversized 128-byte storage was destroyed.
+            assertEquals(64L, ledger.allocatedBytes)
+            assertTrue(ledger.peakAllocatedBytes <= 192)
+        }
+        assertEquals(0L, ledger.allocatedBytes)
+    }
+
     @Test fun bothModesMatchAcrossFourShapesAndReleaseTheirPersistentStorage() = gpu { egl ->
         for ((width, height) in listOf(1024 to 768, 768 to 1024, 1024 to 576, 886 to 886)) {
             val input = GpuReferenceImages.create(GpuReferenceImages.Kind.MIXED, GpuReferenceImages.Size(width, height))
