@@ -588,3 +588,23 @@ texture/thread/attempt owner解放、scratch消失、同attempt再利用禁止�
 driver障害そのものを再現する試験ではない。CPU sibling本数・worker固有名・CPU pixel比較は移さない。
 compileDebugAndroidTestKotlin成功45秒、Android未実走。対応実装19元件＋既存保持4、未実装26。
 選択予定19method（M1 cold境界1含む）。#413を含む最新mainは通常mergeで同期済み。
+
+### 移行② 実走証拠とプレビュー・公開集約の追加
+
+head `b2f01101` で通常 Android の上記6 class、19 method を実走し、19成功・失敗0・skip0。
+observer 5 / output 3 / producer 8 / readback 1 / shared-raster 1 / journal 1 を別々の instrumentation で実行した。
+これは合成入力・共有 host-GPU AVD の証拠であり、実機性能や後述の未実装26件の合格ではない。
+lint/unit/app/test APK の確認も成功（unit はキャッシュ・UP-TO-DATEを含み、新規全件実行とはしない）。
+
+新規 `GpuPreviewPublicationSafetyAndroidTest.over1024GpuPreviewThenExplicitSaveKeepsRecipeAndOnePublicJpeg` は以下3元methodの安全保証を集約する。
+
+- `Original24GpuSaveInstrumentationTest.gpuSaveKeepsStartSelectionAndReconcilesOneVerifiedPublicJpeg`
+- `Original24ManualSaveInstrumentationTest.orientedSyntheticDngPreviewAndExplicitSaveReconcileOneVerifiedPublicJpeg`
+- `Original24PreviewSessionInstrumentationTest.over1024SmoothLightDngPreviewAndActualJpegKeepManualRecipe`
+
+1152x768/orientation6 の合成DNGから通常GPU入力682x1024を開き、実際のDISPLAY8プレビュー、
+手動調整/strength/AS_SHOT基準露出、明示保存前のJPEG・公開台帳不存在、GPU保存経路固定、
+公開JPEG寸法・向き・sRGB・fingerprint、再advanceで同一URI/台帳、原本不変・owner解放を確認する。
+CPUプレビューとCPU JPEGの縮小pixel誤差閾値は移さない。GPU画質保証は既存GPU回帰で維持する。
+この追加はコンパイル成功29秒、Android実走はまだであり、削除の完了条件には未算入。
+M2対応実装22元件＋既存保持4、未実装23。新規通常Android選択数20 method（M1 cold境界1を含む）。
