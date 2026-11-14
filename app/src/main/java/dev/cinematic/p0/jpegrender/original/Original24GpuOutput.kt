@@ -5,6 +5,7 @@ import dev.cinematic.p0.BuildConfig
 import dev.cinematic.p0.gpu.*
 import dev.cinematic.p0.gpu.diag.GpuStageTap
 import dev.cinematic.p0.gpu.export.GpuExportRenderer
+import dev.cinematic.p0.gpu.export.GpuExportTimings
 import dev.cinematic.p0.raw.original.OriginalRaster
 import dev.cinematic.p0.rawcapture.GpuSaveFailureReason
 import dev.cinematic.p0.rawcapture.GpuSaveRenderException
@@ -25,7 +26,7 @@ internal class Original24GpuOutput(private val assets: AssetManager) : AutoClose
     val hasUnreleasedResources get() = held
 
     fun render(source: OriginalRaster, ev: Double, gains: DoubleArray, strength: Double,
-        stop: () -> Boolean, consume: (Int, IntArray) -> Unit) {
+        stop: () -> Boolean, timings: GpuExportTimings? = null, consume: (Int, IntArray) -> Unit) {
         check(!started); started = true
         // Freeze one observer for this attempt. Release/internal builds cannot register or invoke it.
         val observer = if (observationsAllowed) diagnosticObserver.get() else null
@@ -54,7 +55,7 @@ internal class Original24GpuOutput(private val assets: AssetManager) : AutoClose
                             } },
                             onBandComplete = observer?.let { observation -> { boundary, origin, rows ->
                                 observation.bandComplete(boundary, origin, rows, snapshot())
-                            } }, consumeRow = consume)
+                            } }, timings = timings, consumeRow = consume)
                     } catch (caught: Throwable) { error = caught; throw caught }
                     finally {
                         // Renderer.use has returned/unwound. Observe before EGL teardown; this is

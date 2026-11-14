@@ -188,11 +188,11 @@ Play App Signingの鍵再設定や署名rotationはこの経路には導入し�
 [GitHub run_number / run_attempt](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts)、
 [Gradle Actions cache設定](https://github.com/gradle/actions/blob/main/docs/setup-gradle.md)。
 
-## v0.1.0 正式版の配布方法（計画・未実装）
+## v0.1.0 正式版の配布方法（公開は個別承認）
 
-現行 `internal-release.yml` は `vX.Y.Z-alpha.N` / `vX.Y.Z-dev.N` のみを受け付け、常に pre-release を作る。正式版 v0.1.0 は現行のままでは配布できない。
+`internal-release.yml` の同じ固定署名経路で正式版と開発版を配布する。正式タグへの対応だけで v0.1.0 の公開条件が満たされたとは扱わない。
 
-- 既存 workflow の最小拡張として、正式タグの厳密検証と正式タグ時だけの非 pre-release 分岐を別 PR でレビューする。署名・main 限定・秘密の扱い・公開前検証は維持する。dev 版の表示だけを変更せず、APK versionName が正式タグと一致する新規 build を行う。
+- 既存 [internal-release workflow](../.github/workflows/internal-release.yml) は `vX.Y.Z` を正式 Release、`vX.Y.Z-alpha.N` / `vX.Y.Z-dev.N`（N は1以上）を pre-release として扱う。署名・main 限定・秘密の扱い・公開前検証は共通で維持する。dev 版の表示だけを変更せず、APK versionName が正式タグと一致する新規 build を行う。
 - 同じ固定署名・applicationId・workflow run_number 採番を維持する。全ページ・draft を含む既存配布の最大番号より大きい versionCode だけを許可する。dev.1 の 15 を根拠に次を 16 と予約しない。
 - v0.1.0 はロードマップv2のCPU/診断経路削除・試験移動・GPU前提整理を対象とする。D0で設計し、GPU回帰を前提に数日の本人使用結果と致命的不具合なしを確認してCPU削除、その後D1〜Dnの小PR、続いてMesa全工程の基準画像比較CI移行へ進む。詳細は #290 / [GPU_ENGINE](GPU_ENGINE.md)。基準の採用・更新は本人判断。
 - 24MP/SIGMA fpを最優先とし、別ファイルならv0.1.0と並行、競合箇所は24MPを先にする。v0.1.0は24MP完成を待たず、完成済みなら含める。24MP完成時のdev.N配布も都度承認を得る。
@@ -203,7 +203,7 @@ Play App Signingの鍵再設定や署名rotationはこの経路には導入し�
 
 正式配布前の最低限の本人実機確認はプレビューと保存を各1回とし、実機操作・配布は個別承認する。applicationIdを変えると既存アプリの更新ではなく別アプリとなり、同一IDでも署名が異なると通常の上書き更新はできない。IDや署名の変更だけで既存データが自動消失するわけではないが、アンインストールすると内部データは消失するため回避手段として行わない。
 
-本節は方法の計画のみ。workflow、鍵、署名設定、Release、端末の操作は変更していない。
+workflow の正式タグ対応は配布許可ではない。鍵・署名設定の変更、tag 作成、Release 公開、端末の操作は別途承認後に行う。
 
 ### 作業と承認の境界（ロードマップ v2）
 
