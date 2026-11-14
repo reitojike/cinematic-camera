@@ -1,5 +1,11 @@
 package dev.cinematic.p0.raw.original
 
+import dev.cinematic.p0.gpu.constants.R7BaseV1
+import dev.cinematic.p0.gpu.constants.StageClearCharacterV1
+import dev.cinematic.p0.gpu.constants.StageClearOrtonV1
+import dev.cinematic.p0.gpu.constants.StageClearMistV1
+import dev.cinematic.p0.gpu.constants.StageClearGlowV1
+import dev.cinematic.p0.gpu.constants.StageClearV1
 import android.os.Debug
 import dev.cinematic.p0.raw.*
 import java.util.concurrent.atomic.AtomicLong

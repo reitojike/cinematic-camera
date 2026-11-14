@@ -1,5 +1,7 @@
 package dev.cinematic.p0.raw
 
+import dev.cinematic.p0.gpu.constants.StageClearOrtonV1
+import dev.cinematic.p0.gpu.constants.StageClearGlowV1
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue

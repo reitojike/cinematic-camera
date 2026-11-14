@@ -1,11 +1,25 @@
 package dev.cinematic.p0.gpu
 
+import dev.cinematic.p0.gpu.constants.R7BaseV1
+import dev.cinematic.p0.gpu.constants.StageClearCharacterV1
+import dev.cinematic.p0.gpu.constants.StageClearOrtonV1
+import dev.cinematic.p0.gpu.constants.StageClearMistV1
+import dev.cinematic.p0.gpu.constants.StageClearGlowV1
+import dev.cinematic.p0.gpu.constants.StageClearV1
 import dev.cinematic.p0.raw.*
 import org.junit.Assert.*
 import org.junit.Test
 import java.lang.reflect.Modifier
 
 class ShaderConstantsTest {
+    @Test fun definesMatchThePreMoveContract() {
+        // Captured from 8d20dccf before moving V1 definitions; never regenerate to hide drift.
+        val expected = checkNotNull(javaClass.getResourceAsStream("/shader_v1_defines.txt"))
+            .bufferedReader().use { it.readText() }.replace("\r\n", "\n")
+        assertEquals(109, expected.lineSequence().count { it.isNotBlank() })
+        assertEquals(expected, ShaderConstants.defines())
+    }
+
     @Test fun everyV1ConstantHasAnExplicitEntryAndExactValue() {
         val groups = listOf(StageClearV1 to "STAGECLEAR", StageClearGlowV1 to "GLOW", StageClearMistV1 to "MIST",
             StageClearOrtonV1 to "ORTON", StageClearCharacterV1 to "CHARACTER", R7BaseV1 to "R7")

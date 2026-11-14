@@ -1,5 +1,7 @@
 package dev.cinematic.p0.gpu
 
+import dev.cinematic.p0.gpu.constants.StageClearMistV1
+import dev.cinematic.p0.gpu.constants.StageClearV1
 import android.opengl.GLES32
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4

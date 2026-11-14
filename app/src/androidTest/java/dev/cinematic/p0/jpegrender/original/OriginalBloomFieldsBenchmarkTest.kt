@@ -6,8 +6,8 @@ import android.os.Debug
 import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import dev.cinematic.p0.raw.StageClearGlowV1
-import dev.cinematic.p0.raw.StageClearV1
+import dev.cinematic.p0.gpu.constants.StageClearGlowV1
+import dev.cinematic.p0.gpu.constants.StageClearV1
 import dev.cinematic.p0.raw.original.OriginalField
 import dev.cinematic.p0.raw.original.OriginalFields
 import dev.cinematic.p0.raw.original.OriginalRaster

@@ -1,5 +1,7 @@
 package dev.cinematic.p0.raw
 
+import dev.cinematic.p0.gpu.constants.StageClearOrtonV1
+import dev.cinematic.p0.gpu.constants.StageClearV1
 import android.opengl.EGL14
 import android.opengl.EGLExt
 import android.opengl.GLES30

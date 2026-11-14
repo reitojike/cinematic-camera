@@ -1,11 +1,11 @@
 package dev.cinematic.p0.gpu
 
-import dev.cinematic.p0.raw.StageClearV1
-import dev.cinematic.p0.raw.StageClearGlowV1
-import dev.cinematic.p0.raw.StageClearMistV1
-import dev.cinematic.p0.raw.StageClearOrtonV1
-import dev.cinematic.p0.raw.StageClearCharacterV1
-import dev.cinematic.p0.raw.R7BaseV1
+import dev.cinematic.p0.gpu.constants.StageClearV1
+import dev.cinematic.p0.gpu.constants.StageClearGlowV1
+import dev.cinematic.p0.gpu.constants.StageClearMistV1
+import dev.cinematic.p0.gpu.constants.StageClearOrtonV1
+import dev.cinematic.p0.gpu.constants.StageClearCharacterV1
+import dev.cinematic.p0.gpu.constants.R7BaseV1
 
 /** V1定数の明示的な対応表。実行時リフレクションは使わない。 */
 internal object ShaderConstants {
