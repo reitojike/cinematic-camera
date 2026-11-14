@@ -49,14 +49,23 @@ def summarize(rows, labels, threshold):
     if labels.get("authority") != "human" or labels.get("split") not in ("tuning", "held-out"):
         raise ValueError("human labels and explicit split required")
     samples = labels["samples"]
-    groups, observed = {}, {}
+    if not samples:
+        raise ValueError("at least one labeled sample required")
+    rows = list(rows)
+    if not rows:
+        raise ValueError("at least one result row required to identify detectors")
+    # The result file identifies detectors; labels define every expected condition for each one.
+    groups = {(detector, condition): {"tp": 0, "fp": 0, "fn": 0, "scored_samples": 0, "failed_runs": 0,
+              "states": {s: 0 for s in ("SUCCESS", "FAILED", "CANCELLED", "NOT_RUN")}, "timings": {}}
+              for detector in sorted({row["detector"] for row in rows})
+              for condition in sorted({sample["condition"] for sample in samples.values()})}
+    observed = {}
     for row in rows:
         sample = samples[row["sample"]]
         if row["geometry"] != sample["geometry"] or [row["width"], row["height"]] != sample["size"]:
             raise ValueError("geometry mismatch")
         key = (row["detector"], sample["condition"])
-        group = groups.setdefault(key, {"tp": 0, "fp": 0, "fn": 0, "scored_samples": 0, "failed_runs": 0,
-                                        "states": {s: 0 for s in ("SUCCESS", "FAILED", "CANCELLED", "NOT_RUN")}, "timings": {}})
+        group = groups[key]
         if row["status"] not in group["states"]:
             raise ValueError("invalid state")
         group["states"][row["status"]] += 1

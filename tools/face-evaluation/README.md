@@ -83,6 +83,13 @@ label形式は `authority: human`、`split: tuning または held-out`、`sample
 YuNetをラベル生成の正解にはしない。`--iou` は必須で既定値なし。
 最大対応数の1対1照合でTP/FN/FPを数え、重複検出はFPとする。同じ画像の反復を精度件数へ水増ししない。
 失敗回数を別計上し、反復間の検出差は自動平均せず停止する。条件別に時間のn/median/p95を返す。
+結果に現れる各detectorについて、人ラベルにある全条件を必ず出力する。結果行がない条件も
+`expected_samples` と `unscored_samples` に含め、未評価を検出漏れFNや成功0件へ変換しない。
+全失敗の条件は未評価のまま、状態別件数のみを記録し、精度件数・時間へ含めない。
+完全に空の結果はdetectorを特定できないためエラーにし、空ラベルも拒否する。
+結果に一度も現れないdetectorの存在は推測できないため、比較予定の全detectorが含まれることは
+収集時に確認する。未実行detectorを含める場合も、そのIDとラベルに一致するsample/geometry/寸法を
+持つ明示的なNOT_RUN行が必要。集計は採用合格を判定せず、`adoption: UNDECIDED` を維持する。
 少数sampleでp95を安定性能の根拠にしない。
 
 ```text
