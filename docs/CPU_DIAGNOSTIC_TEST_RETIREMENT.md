@@ -878,3 +878,5 @@ producer登録と旧CPU実装は、共有試験を専用namespace・一貫した
 - D追加: `PrivateTrialReuseAdmissionTest` 2件。全JVMで2失敗を検出し、独立確認で両方とも旧CPU `PrivateTrialReuseSession.closed` のみの義務と確認した。製品cache無効化撤去と同時退役し、共通coordinatorの更新/取消/wakeを弱める変更ではない。失敗実行(1376件中2失敗/12skip)は記録として保全し、退役後の再実行と区別する。
 
 候補の非Android検証: 全JVM 1374件（成功1362/skip12/失敗0）、lintDebug、debug APK、androidTest APKの組み立て成功。Android実走・GPU90は未完了でHOLDを維持する。
+
+- D追加: rawprobe RenderMemoryTest 1件は旧CPU R7/StageClearの寸法・3回hash・OOM計測のみ。rawprobe AndroidTest compileで参照漏れを検出し、独立確認後に退役。runnerのclass/expected/report回収と説明も更新し、旧RenderOnly/RenderEdgeはADB操作前に明示拒否。DNG/LibRaw/MemoryPolicy/ProbeMetricsと過去証拠は保持。

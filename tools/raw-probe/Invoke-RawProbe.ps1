@@ -11,6 +11,10 @@ param(
     [switch]$LargeHeap
 )
 $ErrorActionPreference = 'Stop'
+# Keep deprecated arguments only to fail before ADB/install, never reinterpret old commands.
+if ($RenderOnly -or $PSBoundParameters.ContainsKey('RenderEdge')) {
+    throw 'CPU render diagnostics were retired in #290. No APK was installed. Use MemoryOnly or NativeOnly for retained diagnostics.'
+}
 if (([int]$MemoryOnly.IsPresent + [int]$NativeOnly.IsPresent + [int]$RenderOnly.IsPresent) -gt 1) {
     throw 'Select at most one of MemoryOnly, NativeOnly and RenderOnly.'
 }
@@ -34,13 +38,11 @@ foreach ($name in $apkNames) {
     Invoke-Adb @('install', '-r', $apk) | Write-Output
 }
 $classes = 'dev.cinematic.rawprobe.MemoryPolicyTest'
-if (-not ($MemoryOnly -or $RenderOnly)) { $classes += ',dev.cinematic.rawprobe.FullResolutionProbeTest' }
-if (-not ($MemoryOnly -or $NativeOnly)) { $classes += ',dev.cinematic.rawprobe.RenderMemoryTest' }
+if (-not $MemoryOnly) { $classes += ',dev.cinematic.rawprobe.FullResolutionProbeTest' }
 $runId = [Guid]::NewGuid().ToString('N')
 $runDirectory = Join-Path $OutputDirectory $runId
 New-Item -ItemType Directory -Path $runDirectory -Force | Out-Null
 $arguments = @('shell', 'am', 'instrument', '-w', '-e', 'rawProbe', 'true', '-e', 'runId', $runId, '-e', 'class', $classes)
-$arguments += @('-e', 'renderEdge', "$RenderEdge")
 if ($AllowPhysical) { $arguments += @('-e', 'allowPhysical', 'true') }
 $arguments += "${package}.test/androidx.test.runner.AndroidJUnitRunner"
 $result = & $adb -s $Serial @arguments 2>&1 | Out-String
@@ -49,11 +51,10 @@ $result = $result.Replace($Serial, '<device>')
 [IO.File]::WriteAllText((Join-Path (Resolve-Path -LiteralPath $runDirectory).Path 'instrumentation.txt'), $result)
 Write-Output $result
 # am instrument may exit 0 on a test failure. Require the JUnit success marker as well.
-$expected = if ($MemoryOnly) { 1 } elseif ($RenderOnly) { 2 } elseif ($NativeOnly) { 3 } else { 4 }
+$expected = if ($MemoryOnly) { 1 } else { 3 }
 $passed = $instrumentExit -eq 0 -and $result -match "OK \($expected tests?\)" -and $result -notmatch 'FAILURES!!!|INSTRUMENTATION_FAILED'
 $names = @('memory-policy')
-if (-not ($MemoryOnly -or $RenderOnly)) { $names += @('full-resolution', 'boundaries') }
-if (-not ($MemoryOnly -or $NativeOnly)) { $names += 'render-memory' }
+if (-not $MemoryOnly) { $names += @('full-resolution', 'boundaries') }
 foreach ($name in $names) {
     try {
         $report = Invoke-Adb @('shell', 'run-as', $package, 'cat', "files/$name.json") | Out-String

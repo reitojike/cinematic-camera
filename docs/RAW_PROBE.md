@@ -16,17 +16,12 @@ Android CIの `cinematic-raw-probe-debug` artifactには、通常/largeHeapそ�
 # 最初はRAM/通常heapポリシーのみ。YOUR_DEVICE_SERIALは手元で置き換え、共有レポートに含めない。
 .\Invoke-RawProbe.ps1 -Serial YOUR_DEVICE_SERIAL -AllowPhysical -MemoryOnly
 .\Invoke-RawProbe.ps1 -Serial YOUR_DEVICE_SERIAL -AllowPhysical -MemoryOnly -LargeHeap
-# 他の重い処理を止め、撮影せず、空き容量と温度を確認して同じ1024px演算を比較。
-.\Invoke-RawProbe.ps1 -Serial YOUR_DEVICE_SERIAL -AllowPhysical -RenderOnly -RenderEdge 1024
-.\Invoke-RawProbe.ps1 -Serial YOUR_DEVICE_SERIAL -AllowPhysical -RenderOnly -RenderEdge 1024 -LargeHeap
 # 12/24MPのnative原寸decodeだけを別に測定。
 .\Invoke-RawProbe.ps1 -Serial YOUR_DEVICE_SERIAL -AllowPhysical -NativeOnly
 ```
 
 通常/largeHeapの各プロセスはinstrumentation開始時に起動します。[AndroidのlargeHeap設定](https://developer.android.com/guide/topics/manifest/application-element#largeHeap)であり、処理中だけheap上限を切り替える仕組みではありません。
 largeHeapの採用を製品へ反映する変更はありません。両条件の `maxHeapBytes` と `largeHeapRequested` を確認して比較します。
-同じ温度・他アプリ負荷で、1回目を初回、続く2回をウォームとして全件残します。結果を見て本人が判断した後に限り、
-`-RenderEdge 1536`、次に `2048` を**手動で**試せます。自動で大きいサイズへ進みません。12/24MPの現像演算は実行しません。
 nativeもlargeHeap条件で比べる場合は `-NativeOnly -LargeHeap` を使い、別工程の最大値を足して全工程のピークにしません。
 
 APKの署名不一致やインストール失敗時は停止します。カメラアプリや旧診断アプリを自動削除しません。
@@ -43,8 +38,6 @@ APKの署名不一致やインストール失敗時は停止します。カメ�
 
 - `memory-policy.json`: Androidの総RAM/空きRAM、memoryClass、largeMemoryClass、Runtime.maxMemory、通常heap使用量、native割当、PSS、温度状態。
   largeMemoryClassは設定照会です。通常診断のlargeHeapはfalse、別packageのlargeHeap診断だけがtrueです。
-- `render-memory.json`: 現行のR7/Stage Clearソースで合成入力を3回演算。入力生成・checksum・計測を含み、DNG/JPEGや本体UIは含みません。
-  faceDetectionはNOT_RUNです。失敗はMANAGED_MEMORYとして記録してJUnitも失敗させ、次のサイズへ進みません。
 - `full-resolution.json`: 原寸16bit線形sRGBのnative decode。half-sizeを無効化し、出力寸法・バイト数と90度回転した四隅の画素を確認します。
   非暗号学的な出力checksumは診断用です。原本保全は別途SHA-256の前後一致と読み取り専用FDで確認します。
 - `boundaries.json`: 開始前/処理前キャンセル、64MiBファイル/24MP画素の固定上限、不正入力、その後の小さい正常decodeの回復。
@@ -72,3 +65,7 @@ Pixel 9aの実測とAVDの測定は別です。AVDへのRAM指定だけでアプ
 約1秒間隔の `dumpsys meminfo` からmanaged/native/graphics/totalなどのメモリ集計行だけをJSONへ残します。
 操作開始→表示完了の秒数、エラー・終了・発熱・撮影へ戻れるかは本人が記録します。端末内の写真や画面は回収しません。
 これは通常appの実測補助であり、largeHeap診断の演算と同じ全工程比較ではありません。サンプル間のピークや正確な現像時間も保証しません。
+
+## CPU 計測の退役（#290）
+
+旧 R7/Stage Clear CPU 専用 RenderMemoryTest は退役しました。`-RenderOnly` または `-RenderEdge` を指定した旧コマンドは、ADB接続・APK導入前に明示的に停止します。過去の render-memory.json は過去のCPU測定証拠として保持し、GPU性能の証拠には使いません。既定実行は MemoryPolicy 1件＋FullResolution 2件の計3件、MemoryOnly は1件、NativeOnly は3件です。DNG原本・LibRaw・境界試験は維持します。
