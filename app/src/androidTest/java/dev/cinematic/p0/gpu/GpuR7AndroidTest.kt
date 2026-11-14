@@ -1,5 +1,6 @@
 package dev.cinematic.p0.gpu
 
+import dev.cinematic.p0.gpu.constants.R7BaseV1
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -110,8 +111,8 @@ class GpuR7AndroidTest {
             val prepared = KotlinReference.prepare(KotlinReference.Source(input), PhotoAdjustments(0.0, manualEv))
             val ev = prepared.externalBaseEv
             assertTrue("auto base EV must be negative", ev - manualEv < 0)
-            val gain = 2.0.pow(ev + dev.cinematic.p0.raw.R7BaseV1.BRIGHTNESS_EV +
-                dev.cinematic.p0.raw.R7BaseV1.FOUNDATION_EV)
+            val gain = 2.0.pow(ev + dev.cinematic.p0.gpu.constants.R7BaseV1.BRIGHTNESS_EV +
+                dev.cinematic.p0.gpu.constants.R7BaseV1.FOUNDATION_EV)
             val seen = mutableSetOf<Point>()
             upload(egl, ledger, width, height, pixels, true).use { texture ->
                 R7Gpu(egl, ledger).use { r7 ->

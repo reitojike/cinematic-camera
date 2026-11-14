@@ -1,5 +1,6 @@
 package dev.cinematic.p0.raw
 
+import dev.cinematic.p0.gpu.constants.StageClearV1
 import kotlin.math.*
 
 /** PC stage-clear-v1 stages 6..8 only. Not a DNG decoder or a complete look renderer. */

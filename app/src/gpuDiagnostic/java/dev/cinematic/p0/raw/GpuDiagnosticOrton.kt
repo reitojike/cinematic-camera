@@ -1,5 +1,7 @@
 package dev.cinematic.p0.raw
 
+import dev.cinematic.p0.gpu.constants.StageClearOrtonV1
+import dev.cinematic.p0.gpu.constants.StageClearV1
 import android.opengl.GLES30
 import java.nio.ByteBuffer
 import java.nio.ByteOrder

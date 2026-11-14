@@ -1,5 +1,6 @@
 package dev.cinematic.p0.raw
 
+import dev.cinematic.p0.gpu.constants.StageClearV1
 import java.util.concurrent.CancellationException
 
 /** All look stages from an ALREADY developed R7 base. No DNG decode, R7 generation or I/O. */

@@ -1,5 +1,6 @@
 package dev.cinematic.p0.raw
 
+import dev.cinematic.p0.gpu.constants.StageClearCharacterV1
 import kotlin.math.*
 
 /** Stages 4/5: current PC vignette and guarded vibrance, without auto-strength. */

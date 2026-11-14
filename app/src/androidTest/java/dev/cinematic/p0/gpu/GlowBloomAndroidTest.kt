@@ -7,7 +7,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.gpu.diag.GpuStageTap
 import dev.cinematic.p0.gpu.look.StageClearGlowGpu
 import dev.cinematic.p0.gpu.reference.ImageDiff
-import dev.cinematic.p0.raw.StageClearGlowV1
+import dev.cinematic.p0.gpu.constants.StageClearGlowV1
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Before

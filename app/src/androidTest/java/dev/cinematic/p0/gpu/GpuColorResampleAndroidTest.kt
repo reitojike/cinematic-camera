@@ -14,7 +14,7 @@ import dev.cinematic.p0.raw.LinearSrgbImage
 import dev.cinematic.p0.raw.StageClearBlur
 import dev.cinematic.p0.raw.StageClearColor
 import dev.cinematic.p0.raw.StageClearProtections
-import dev.cinematic.p0.raw.StageClearV1
+import dev.cinematic.p0.gpu.constants.StageClearV1
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Before

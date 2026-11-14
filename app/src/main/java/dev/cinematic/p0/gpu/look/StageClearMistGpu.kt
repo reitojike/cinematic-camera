@@ -7,7 +7,7 @@ import dev.cinematic.p0.gpu.TextureInput
 import dev.cinematic.p0.gpu.analysis.GpuAnalysis
 import dev.cinematic.p0.gpu.resample.GpuResample
 import dev.cinematic.p0.raw.StageClearBlur
-import dev.cinematic.p0.raw.StageClearMistV1
+import dev.cinematic.p0.gpu.constants.StageClearMistV1
 
 /** #281: borrowed inputs; only a nonzero-strength result image is caller-owned. */
 internal object StageClearMistGpu {
