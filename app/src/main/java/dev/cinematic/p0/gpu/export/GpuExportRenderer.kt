@@ -29,6 +29,7 @@ internal class GpuExportRenderer(
     private val egl: EglContexts,
     private val ledger: GpuMemoryLedger = GpuMemoryLedger(GpuMemoryLedger.EXPORT_BUDGET),
     private val bandHeight: Int = GpuExportBands.HEIGHT,
+    private val reuseTextures: Boolean = true,
 ) {
     internal data class Result(val toneQuantiles: DoubleArray, val nearWhiteCount: Long,
         val mistAutoStrength: Double, val peakTextureBytes: Long, val boundaryNanos: Map<String, Long>)
@@ -71,7 +72,9 @@ internal class GpuExportRenderer(
         val onBandComplete: ((String, Int, Int) -> Unit)?,
         val toneWidth: Int, val toneHeight: Int, val timings: GpuExportTimings?) : AutoCloseable {
         val width = input.width; val height = input.height
-        val resample = GpuResample(egl, ledger)
+        // Limit idle retention independently of the total (active + idle) 192 MiB ledger.
+        val pool = if (reuseTextures) GpuTexturePool(egl, ledger, minOf(64L * 1024 * 1024, ledger.budgetBytes)) else null
+        val resample = GpuResample(egl, ledger, pool)
         private val fields = mutableListOf<GpuExportField>()
         private val times = linkedMapOf<String, Long>()
         private var boundaryName = ""
@@ -89,7 +92,7 @@ internal class GpuExportRenderer(
 
         private fun field(w: Int, h: Int, format: GpuTexture.Format,
             filter: StageClearBlur.Filter = StageClearBlur.Filter.BILINEAR) =
-            GpuExportField(egl, ledger, resample, width, height, w, h, format, filter).also(fields::add)
+            GpuExportField(egl, ledger, resample, width, height, w, h, format, filter, pool).also(fields::add)
         private fun blur(radius: Double, format: GpuTexture.Format): GpuExportField {
             val (w, h) = StageClearBlur.reducedSize(width, height, radius)
             return field(w, h, format)
@@ -109,7 +112,7 @@ internal class GpuExportRenderer(
         }
         private fun scan(action: (Band) -> Unit) {
             GpuExportBands.forEach(input, bandHeight, stop) { origin, rows, rgba ->
-                val upload = GpuTexture.create(egl, ledger, width, rows, GpuTexture.Format.RGBA32F)
+                val upload = GpuTexture.create(egl, ledger, width, rows, GpuTexture.Format.RGBA32F, pool)
                 try { upload.upload(rgba) } catch (failure: Throwable) { upload.close(); throw failure }
                 Band(origin, upload).use { band ->
                     action(band)
@@ -224,7 +227,7 @@ internal class GpuExportRenderer(
             fun release(texture: GpuTexture) { if (texture in owned) { texture.close(); owned.remove(texture) } }
             fun draw(path: String, inputs: List<Pair<String, GpuTexture>>, format: GpuTexture.Format = GpuTexture.Format.RGBA32F,
                 uniforms: (Int) -> Unit = {}): GpuTexture {
-                val output = own(GpuTexture.create(egl, ledger, width, rows, format))
+                val output = own(GpuTexture.create(egl, ledger, width, rows, format, pool))
                 egl.passes().run(FragmentPass(egl.shaders().fragment(path), inputs.mapIndexed { unit, (name, texture) ->
                     TextureInput(name, texture, unit) }, output, uniforms = uniforms))
                 return output
@@ -244,7 +247,7 @@ internal class GpuExportRenderer(
                     GLES32.glUniform2f(location(program, "u_quantiles"), quantiles[0].toFloat(), quantiles[1].toFloat())
                 }
                 release(profile); release(smooth)
-                val roi = own(GpuTexture.create(egl, ledger, width, rows, GpuTexture.Format.R32F))
+                val roi = own(GpuTexture.create(egl, ledger, width, rows, GpuTexture.Format.R32F, pool))
                 GLES32.glBindFramebuffer(GLES32.GL_FRAMEBUFFER, roi.framebufferId)
                 GLES32.glDisable(GLES32.GL_SCISSOR_TEST); GLES32.glColorMask(true, true, true, true)
                 GLES32.glClearBufferfv(GLES32.GL_COLOR, 0, floatArrayOf(0f, 0f, 0f, 0f), 0)
@@ -334,7 +337,7 @@ internal class GpuExportRenderer(
             override fun close() = closeAll(owned.toList().asReversed().map { texture -> { release(texture) } })
         }
         override fun close() {
-            closeAll(fields.asReversed().map { field -> { field.close() } } + { resample.close() })
+            closeAll(fields.asReversed().map { field -> { field.close() } } + listOf({ resample.close() }, { pool?.close(); Unit }))
         }
     }
     private fun closeAll(actions: List<() -> Unit>) {

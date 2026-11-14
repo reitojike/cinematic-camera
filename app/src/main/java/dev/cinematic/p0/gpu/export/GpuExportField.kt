@@ -18,6 +18,7 @@ internal class GpuExportField(
     val height: Int,
     private val format: GpuTexture.Format,
     private val interpolation: StageClearBlur.Filter = StageClearBlur.Filter.BILINEAR,
+    private val pool: GpuTexturePool? = null,
 ) : AutoCloseable {
     // Match GpuResample/StageClearBlur's axis order. The vertical-first temporary
     // is imageWidth x reducedHeight, never imageWidth x imageHeight.
@@ -35,8 +36,8 @@ internal class GpuExportField(
             require(width in 1..imageWidth && height in 1..imageHeight)
             require(format == GpuTexture.Format.R32F || format == GpuTexture.Format.RGBA32F)
             require(interpolation != StageClearBlur.Filter.BOX)
-            accumulation = GpuTexture.create(egl, ledger, accumulationWidth, height, format)
-            scratch = GpuTexture.create(egl, ledger, accumulationWidth, height, format)
+            accumulation = GpuTexture.create(egl, ledger, accumulationWidth, height, format, pool)
+            scratch = GpuTexture.create(egl, ledger, accumulationWidth, height, format, pool)
             GLES32.glBindFramebuffer(GLES32.GL_FRAMEBUFFER, accumulation!!.framebufferId)
             GLES32.glDisable(GLES32.GL_SCISSOR_TEST)
             GLES32.glColorMask(true, true, true, true)
@@ -59,6 +60,8 @@ internal class GpuExportField(
         try {
             val weights = resample.weights(imageHeight, height, StageClearBlur.Filter.BOX)
             val path = if (format == GpuTexture.Format.R32F) "export/accumulate_plane.comp" else "export/accumulate_rgb.comp"
+            // A recycled allocation can have earlier sampling commands queued on this context.
+            if (pool != null) GLES32.glMemoryBarrier(GLES32.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT)
             egl.passes().run(ComputePass(egl.shaders().compute(path),
                 listOf(TextureInput("s_band", horizontal, 0), TextureInput("s_weights", weights.values, 1),
                     TextureInput("s_first", weights.first, 2), TextureInput("s_previous", previous, 3)),
@@ -96,7 +99,7 @@ internal class GpuExportField(
         require(originY >= 0 && rows > 0 && originY.toLong() + rows <= imageHeight)
         val x = resample.weights(width, imageWidth, interpolation)
         val y = resample.weights(height, imageHeight, interpolation)
-        val output = GpuTexture.create(egl, ledger, imageWidth, rows, format)
+        val output = GpuTexture.create(egl, ledger, imageWidth, rows, format, pool)
         try {
             egl.passes().run(FragmentPass(egl.shaders().fragment("export/upsample_band.frag"),
                 listOf(TextureInput("s_field", completeField, 0), TextureInput("s_xWeights", x.values, 1),
