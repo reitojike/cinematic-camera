@@ -212,7 +212,7 @@ internal class GpuExportBoundaryFixture(val app: Context, val width: Int = WIDTH
             val installed = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
             val args = InstrumentationRegistry.getArguments()
             val normal = BuildConfig.BUILD_TYPE == "debug" && BuildConfig.DEBUG && installed.packageName == "dev.cinematic.p0"
-            check(normal || (BuildConfig.BUILD_TYPE == "gpuDiagnostic" && installed.packageName == "dev.cinematic.p0.gpudiagnostic"))
+            check(normal)
             check(args.getString("isolated") == "true" && args.getString("gpuExportBoundaries") == "true")
             check(Build.HARDWARE in setOf("ranchu", "goldfish")) { "Physical devices are excluded" }
             check(!ordinaryActivity || normal)
@@ -223,7 +223,7 @@ internal class GpuExportBoundaryFixture(val app: Context, val width: Int = WIDTH
                     "Run only the boundary cancellation class in a fresh instrumentation process"
                 }
             }
-            val target = if (ordinaryActivity) isolatedGpuSaveSafetyApp() else if (normal) isolatedNormalApp(installed) else installed
+            val target = if (ordinaryActivity) isolatedGpuSaveSafetyApp() else isolatedNormalApp(installed)
             val capabilities = GlThread().use { thread -> thread.call {
                 EglContexts(thread, target.assets).use { GlCapabilities.inspect(it) }
             } }

@@ -40,7 +40,11 @@ jobs:
       - name: Preview timing summary unit tests
         run: python3 -B -m unittest discover -s tools/preview-timing -v
       - name: lint・unit・debug build
-        run: ./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
+        run: ./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :app:processReleaseMainManifest --no-daemon
+      - name: Retired diagnostic entry points stay absent
+        run: |
+          python3 -B -m unittest discover -s tools/diagnostic-retirement -v
+          python3 -B tools/diagnostic-retirement/verify_retired.py . app/build/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml app/build/intermediates/merged_manifest/release/processReleaseMainManifest/AndroidManifest.xml
       - name: Verify LWJGL is absent from normal APK and unit-test dependencies
         shell: bash
         run: |
@@ -95,120 +99,6 @@ jobs:
             app/build/test-results/testDebugUnitTest/
             app/build/reports/lint-results-debug.*
             app/build/reports/gpuMesaIsolation/
-          if-no-files-found: warn
-          retention-days: 7
-
-  gpu-diagnostic:
-    name: GPU 診断 unit・build
-    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
-    runs-on: ubuntu-26.04
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: '25'
-      - uses: android-actions/setup-android@v4
-        with:
-          log-accepted-android-sdk-licenses: false
-      - name: Android SDK 37 and pinned native tools
-        run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0" "ndk;29.0.14206865" "cmake;3.22.1"
-      - uses: gradle/actions/setup-gradle@v6
-        with:
-          cache-provider: basic
-      - name: GPU合成診断をコンパイル（GPU試験は実行しない）
-        run: ./gradlew :app:testGpuDiagnosticUnitTest :app:assembleGpuDiagnostic :app:assembleGpuDiagnosticAndroidTest :app:processDebugMainManifest :app:processReleaseMainManifest -PcinematicGpuDiagnostic=true -PcinematicGpuDiagnosticTests=true --no-daemon
-      - name: GPU診断のmanifest隔離を検証
-        run: python3 -B tools/gpu-diagnostic/verify_manifest.py app/build/intermediates/merged_manifest/gpuDiagnostic/processGpuDiagnosticMainManifest/AndroidManifest.xml app/build/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml app/build/intermediates/merged_manifest/release/processReleaseMainManifest/AndroidManifest.xml
-      - name: GPU診断のunitレポートを保存
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: cinematic-gpu-diagnostic-check-reports
-          path: |
-            app/build/reports/tests/testGpuDiagnosticUnitTest/
-            app/build/test-results/testGpuDiagnosticUnitTest/
-          if-no-files-found: warn
-          retention-days: 7
-
-  raw-diagnostic:
-    name: RAW 診断 unit・build
-    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
-    runs-on: ubuntu-26.04
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: '25'
-      - uses: android-actions/setup-android@v4
-        with:
-          log-accepted-android-sdk-licenses: false
-      - name: Android SDK 37 and pinned native tools
-        run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0" "ndk;29.0.14206865" "cmake;3.22.1"
-      - uses: gradle/actions/setup-gradle@v6
-        with:
-          cache-provider: basic
-      - name: RAW4 diagnostic judgement unit tests
-        run: python3 -B -m unittest discover -s tools/raw-diagnostic -v
-      - name: RAW diagnostic unit・build and release manifest
-        run: ./gradlew :app:testRawDiagnosticUnitTest :app:assembleRawDiagnostic :app:processDebugMainManifest :app:processReleaseMainManifest -PcinematicRawDiagnostic=true -Pandroid.onlyEnableUnitTestForTheTestedBuildType=false --no-daemon
-      - name: Compile synthetic RAW diagnostic instrumentation
-        run: ./gradlew :app:assembleRawDiagnosticAndroidTest -PcinematicRawDiagnostic=true -PcinematicRawDiagnosticTests=true --no-daemon
-      - name: Verify RAW diagnostic optimization recipe
-        shell: bash
-        run: |
-          set -euo pipefail
-          apk=app/build/outputs/apk/rawDiagnostic/app-rawDiagnostic.apk
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify "$apk"
-          "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest print "$apk" > "$RUNNER_TEMP/raw-diagnostic-manifest.xml"
-          python3 - <<'PY'
-          import json
-          import os
-          import shlex
-          import xml.etree.ElementTree as ET
-          from pathlib import Path
-
-          android = '{http://schemas.android.com/apk/res/android}'
-          manifest = ET.parse(Path(os.environ['RUNNER_TEMP']) / 'raw-diagnostic-manifest.xml').getroot()
-          app = manifest.find('application')
-          assert manifest.attrib['package'] == 'dev.cinematic.p0.rawdiagnostic'
-          assert app.attrib.get(android + 'debuggable', 'false') == 'false'
-          assert app.attrib.get(android + 'largeHeap', 'false') == 'false'
-          assert app.find('profileable').attrib[android + 'shell'] == 'true'
-          assert not manifest.findall('uses-permission'), 'diagnostic must request no permissions'
-          activities = app.findall('activity')
-          assert len(activities) == 1 and activities[0].attrib[android + 'name'] == 'dev.cinematic.p0.rawdiagnostic.RawDiagnosticActivity'
-          assert not any(app.findall(tag) for tag in ('service', 'provider', 'receiver', 'activity-alias'))
-          for variant in ('debug', 'release'):
-              path = Path(f'app/build/intermediates/merged_manifest/{variant}/process{variant.title()}MainManifest/AndroidManifest.xml')
-              normal = ET.parse(path).getroot().find('application')
-              assert normal.find('profileable') is None, f'profileable leaked into {variant}'
-
-          abis = set()
-          for path in Path('app/.cxx/RelWithDebInfo').glob('*/*/compile_commands.json'):
-              abi = path.parent.name
-              if abi not in ('arm64-v8a', 'x86_64'):
-                  continue
-              commands = json.loads(path.read_text())
-              assert any(Path(entry['file']).name == 'dng_decoder.cpp' for entry in commands)
-              assert any('libraw-src' in entry['file'] for entry in commands)
-              for entry in commands:
-                  flags = entry.get('arguments') or shlex.split(entry['command'])
-                  assert [flag for flag in flags if flag.startswith('-O')] == ['-O2'], entry['file']
-                  assert '-DNDEBUG' in flags, entry['file']
-              abis.add(abi)
-          assert abis == {'arm64-v8a', 'x86_64'}, abis
-          print('RAW diagnostic manifest and native O2/NDEBUG verified; normal manifests are not profileable.')
-          PY
-      - name: RAW診断のunitレポートを保存
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: cinematic-raw-diagnostic-check-reports
-          path: |
-            app/build/reports/tests/testRawDiagnosticUnitTest/
-            app/build/test-results/testRawDiagnosticUnitTest/
           if-no-files-found: warn
           retention-days: 7
 
@@ -428,24 +318,22 @@ jobs:
   android:
     # Keep the existing branch-protection check name, including its punctuation.
     name: lint・unit・build
-    needs: [product, gpu-diagnostic, raw-diagnostic, rawprobe, jni-isolation, mesa]
+    needs: [product, rawprobe, jni-isolation, mesa]
     if: ${{ always() }}
     runs-on: ubuntu-26.04
     steps:
       - name: Require every validation job to succeed
         env:
           PRODUCT_RESULT: ${{ needs.product.result }}
-          GPU_RESULT: ${{ needs.gpu-diagnostic.result }}
-          RAW_RESULT: ${{ needs.raw-diagnostic.result }}
           RAWPROBE_RESULT: ${{ needs.rawprobe.result }}
           JNI_RESULT: ${{ needs.jni-isolation.result }}
           MESA_RESULT: ${{ needs.mesa.result }}
         shell: bash
         run: |
           set -euo pipefail
-          printf 'product=%s gpu-diagnostic=%s raw-diagnostic=%s rawprobe=%s jni-isolation=%s mesa=%s\n' \
-            "$PRODUCT_RESULT" "$GPU_RESULT" "$RAW_RESULT" "$RAWPROBE_RESULT" "$JNI_RESULT" "$MESA_RESULT"
-          for result in "$PRODUCT_RESULT" "$GPU_RESULT" "$RAW_RESULT" "$RAWPROBE_RESULT" "$JNI_RESULT" "$MESA_RESULT"; do
+          printf 'product=%s rawprobe=%s jni-isolation=%s mesa=%s\n' \
+            "$PRODUCT_RESULT" "$RAWPROBE_RESULT" "$JNI_RESULT" "$MESA_RESULT"
+          for result in "$PRODUCT_RESULT" "$RAWPROBE_RESULT" "$JNI_RESULT" "$MESA_RESULT"; do
             if [[ "$result" != success ]]; then
               echo 'A required validation job failed, was cancelled, or was skipped.' >&2
               exit 1

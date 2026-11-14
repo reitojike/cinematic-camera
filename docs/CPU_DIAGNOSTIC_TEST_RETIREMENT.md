@@ -180,7 +180,7 @@ AVDは他レーン利用中。未予約のemulatorには接続・停止・導入
 - **[PERF]**: [GpuFullPipelineTimingAndroidTest.measure1024FullRecompute](../app/src/androidTest/java/dev/cinematic/p0/gpu/GpuFullPipelineTimingAndroidTest.kt)。削除headで再実走。
 - **[OBSERVE]**: [GpuPreviewObserverSafetyAndroidTest.timingPreservesOutputBitsAndSource](../app/src/androidTest/java/dev/cinematic/p0/gpu/GpuPreviewObserverSafetyAndroidTest.kt) / [GpuPreviewObserverSafetyAndroidTest.enabledGatePreservesOutputBitsAndSource](../app/src/androidTest/java/dev/cinematic/p0/gpu/GpuPreviewObserverSafetyAndroidTest.kt)。削除headで再実走。
 - **[BOUNDARY]**: [Original24GpuBoundaryCancellationAndroidTest.cancelInsideSecondFinalBandRetriesSameGenerationAndReleasesTextures](../app/src/androidTest/java/dev/cinematic/p0/jpegrender/original/Original24GpuBoundaryCancellationAndroidTest.kt) / [Original24GpuBoundaryCancellationAndroidTest.cancelAfterSecondB1BandRetriesSameGenerationAndReleasesTextures](../app/src/androidTest/java/dev/cinematic/p0/jpegrender/original/Original24GpuBoundaryCancellationAndroidTest.kt)。削除headで再実走。
-- **[GPU-SAVE]**: [Original24GpuSaveInstrumentationTest.gpuSaveKeepsStartSelectionAndReconcilesOneVerifiedPublicJpeg](../app/src/androidTest/java/dev/cinematic/p0/jpegrender/original/Original24GpuSaveInstrumentationTest.kt)。対応先もM2の通常側移行待ち。
+- **[GPU-SAVE]**: [GpuPreviewPublicationSafetyAndroidTest](../app/src/androidTest/java/dev/cinematic/p0/jpegrender/original/GpuPreviewPublicationSafetyAndroidTest.kt)。#409で通常側へ移行済み。削除headの再実走は別途確認。
 
 ## 診断側 17ファイル61件
 
@@ -746,7 +746,81 @@ main bff38eeaの同期差はdocs/README3ファイルのみで、app/test/build/w
 | previewDiagnostic | PreviewPresentationActivity＋manifest、previewDiagnosticTest manifest、build/test切替 | 実gesture/Activity/input/ownerのM1保証。CPU/cache/旧表示probeだけ終了 |
 
 4種排他require、診断署名/限定lint/sourceSets連結、verify-manifest/Android CIの診断ジョブも同時監査する。
-rawDiagnosticTestのSyntheticDiagnosticProvider宣言は現checkoutに実装がなく、診断manifestと共に撤去する。
+訂正: rawDiagnosticTestのSyntheticDiagnosticProvider実装はandroidTestRawDiagnosticに存在する。以前の実装なしという監査は誤り。必要安全保証を通常側へ移行・実走してから、診断manifestと共に撤去する。
 CIは通常安全試験/manifest検証へ保証を移し、必須チェックを単に免除しない。gpuMesaは別の保持対象。
 #379再実行手順・通常メモリ記録、共有型、旧CPU保存intent/codec読取、HOLD/二重保存防止は維持。
 削除時に未分類source/参照や安全assertが見つかった場合は、削除を止め本表へ追記して確認する。
+## 削除① 候補（検証中）
+
+4variantと専用49ファイル、移行済み旧probe16クラスと診断取消重複4methodを整理する。通常取消4method、通常1024px性能/引数試験、M1/M2の新安全試験は保持。元コード/過去記録はGit履歴に残る。台帳の旧sourceリンクは履歴参照であり、削除後の現行パスではない。
+
+CIのGPU/RAW診断build jobを退役し、通常product jobでdebug/release manifestに診断入口/profileable/largeHeapがないことと4sourceSet/build入口の不在を検査する。必須aggregate名、product/rawprobe/JNI隔離/Mesaの成功条件は維持。比較report用Pythonと元計測データは削除しない。
+
+製品のCPU分岐・診断フラグfalse定数・旧設定View整理は削除②で扱う。GPU/shared/旧保存codecは本候補で変更しない。最終headの実走/GPU90/28/CI/canonical/独立レビューは未完了であり、採用条件として残る。
+
+## 追加sourceSet監査（削除①・52method）
+
+当初133method台帳はprefix型sourceSetを含まず不完全だった。testRawDiagnostic 29件、androidTestRawDiagnostic 18件、testGpuDiagnostic 5件を追加する。診断専用47件をD、共有安全5件をMと分類する。Mの実走完了前にこのsourceSetを削除しない。元試験ではSyntheticDiagnosticProviderを使うが、新試験では既存の通常側隔離provider/contextを使い、利用者の保存領域へ触れない。
+
+| 元class.method | 分類 | 根拠・対応 |
+|---|---|---|
+| `DiagnosticCancellationLatencyTest.glowAndMistKeepReceiptRenderCloseAndHarnessIntervalsSeparate` | D | 廃止する診断UI受付/時間分類専用。製品取消ownerの保証ではない。 |
+| `DiagnosticCancellationLatencyTest.firstReceiptIsNotResetByRepeatedClickOrLifecycle` | D | 廃止する診断UI受付/時間分類専用。製品取消ownerの保証ではない。 |
+| `DiagnosticCancellationLatencyTest.lifecycleCannotBecomeAUserButtonResult` | D | 廃止する診断UI受付/時間分類専用。製品取消ownerの保証ではない。 |
+| `DiagnosticCancellationLatencyTest.missingRequestDoesNotInventZeroLatency` | D | 廃止する診断UI受付/時間分類専用。製品取消ownerの保証ではない。 |
+| `DiagnosticCancellationLatencyTest.successfulOrFailedRenderIsNotCancellation` | D | 廃止する診断UI受付/時間分類専用。製品取消ownerの保証ではない。 |
+| `DiagnosticCancellationLatencyTest.heldOwnersAndHarnessNeverClaimQuiescence` | D | 廃止する診断UI受付/時間分類専用。製品取消ownerの保証ではない。 |
+| `DiagnosticCancellationLatencyTest.beforeRenderAndAfterTargetAreOutsideTargetNotReconstructedFromLastStage` | D | 廃止する診断UI受付/時間分類専用。製品取消ownerの保証ではない。 |
+| `DiagnosticCancellationLatencyTest.lateClickCannotMeasureEarlierRenderExit` | D | 廃止する診断UI受付/時間分類専用。製品取消ownerの保証ではない。 |
+| `DiagnosticCancellationLatencyTest.anotherThreadCanRequestStopInsideAnObservedSyntheticAction` | D | 廃止する診断UI受付/時間分類専用。製品取消ownerの保証ではない。 |
+| `DiagnosticCancellationLatencyTest.explicitPlansCoverBothArmsAndBothTargetsWithSaveSafetyProfiles` | D | 廃止する診断UI受付/時間分類専用。製品取消ownerの保証ではない。 |
+| `DiagnosticCancellationLatencyTest.elapsedPositionIsFrozenAtFirstReceiptAndMismatchCannotPass` | D | 廃止する診断UI受付/時間分類専用。製品取消ownerの保証ではない。 |
+| `DiagnosticCancellationLatencyTest.heldResourcesTakePrecedenceOverWrongTarget` | D | 廃止する診断UI受付/時間分類専用。製品取消ownerの保証ではない。 |
+| `DiagnosticCancellationLatencyTest.outsideStageAndMissingRequestHaveNoInventedPosition` | D | 廃止する診断UI受付/時間分類専用。製品取消ownerの保証ではない。 |
+| `DiagnosticCancellationLatencyTest.nextStageUsesItsOwnStartAndUnknownClockIntervalStaysNull` | D | 廃止する診断UI受付/時間分類専用。製品取消ownerの保証ではない。 |
+| `DiagnosticIoOwnerTest.failedInputAndOutputClosesHoldOwnerAndDoNotDeleteSource` | D | 廃止する診断専用IoOwnerのstream/delete状態。製品ownerとは別。 |
+| `DiagnosticIoOwnerTest.transientCloseCanBeRetriedButOriginalOperationStillFails` | D | 廃止する診断専用IoOwnerのstream/delete状態。製品ownerとは別。 |
+| `DiagnosticIoOwnerTest.deletionFailureIsExplicitAndLiveAttemptPreventsDeletion` | D | 廃止する診断専用IoOwnerのstream/delete状態。製品ownerとは別。 |
+| `DiagnosticMemorySamplerTest.samplesAt100msAndKeepsIndependentObservedMaximaAndCollectionCost` | D | 廃止する診断専用100ms sampler。#379の外部PSS/再実行手順を維持し、真peakと扱わない。 |
+| `DiagnosticMemorySamplerTest.slowCollectionSkipsSlotsInsteadOfUnboundedCatchup` | D | 廃止する診断専用100ms sampler。#379の外部PSS/再実行手順を維持し、真peakと扱わない。 |
+| `DiagnosticMemorySamplerTest.readerFailureIsNotAZeroByteSuccessfulSample` | D | 廃止する診断専用100ms sampler。#379の外部PSS/再実行手順を維持し、真peakと扱わない。 |
+| `DiagnosticMemorySamplerTest.startFailureStillAllowsCleanup` | D | 廃止する診断専用100ms sampler。#379の外部PSS/再実行手順を維持し、真peakと扱わない。 |
+| `DiagnosticMemorySamplerTest.blockedReaderRequiresHoldUntilThreadActuallyExits` | D | 廃止する診断専用100ms sampler。#379の外部PSS/再実行手順を維持し、真peakと扱わない。 |
+| `DiagnosticMemorySamplerTest.cancellationDuringSleepStopsWithoutAnotherRead` | D | 廃止する診断専用100ms sampler。#379の外部PSS/再実行手順を維持し、真peakと扱わない。 |
+| `DiagnosticMemorySamplerTest.interruptedJoinPreservesInterruptAndDoesNotClaimQuiescence` | D | 廃止する診断専用100ms sampler。#379の外部PSS/再実行手順を維持し、真peakと扱わない。 |
+| `DiagnosticTimingsTest.comparisonArmsKeepExplicitSerialBaselinesIndependentOfProductionSave` | D | 旧CPU比較profile/計測集計専用。既存report解析scriptは保持。 |
+| `DiagnosticTimingsTest.raw4AndFollowUpsHaveExplicitProfiles` | D | 旧CPU比較profile/計測集計専用。既存report解析scriptは保持。 |
+| `DiagnosticTimingsTest.saveSafetyKeepsColorOffAndLegacyTimingProfilesUnchanged` | D | 旧CPU比較profile/計測集計専用。既存report解析scriptは保持。 |
+| `DiagnosticTimingsTest.excludesChildrenAndCpuButRetainsRepeatedTopLevelSpans` | D | 旧CPU比較profile/計測集計専用。既存report解析scriptは保持。 |
+| `DiagnosticTimingsTest.warmupsCannotCountTowardFourSuccessfulMeasuredAttemptsPerArm` | D | 旧CPU比較profile/計測集計専用。既存report解析scriptは保持。 |
+| `RawDiagnosticSmokeTest.tenFreshAttemptsAndPrivacyForEveryComparison` | D | 廃止する診断runner/UI/report/比較受付の契約。通常製品安全はM1/M2を保持。 |
+| `RawDiagnosticSmokeTest.memoryModeAndReverseOrderAreSeparate` | D | 廃止する診断runner/UI/report/比較受付の契約。通常製品安全はM1/M2を保持。 |
+| `RawDiagnosticSmokeTest.boundedCancellationChecksNeverCountAsTimingSuccess` | D | 廃止する診断runner/UI/report/比較受付の契約。通常製品安全はM1/M2を保持。 |
+| `RawDiagnosticSmokeTest.safetyTimingAndUnsupportedCancellationFailBeforeImport` | D | 廃止する診断runner/UI/report/比較受付の契約。通常製品安全はM1/M2を保持。 |
+| `RawDiagnosticSmokeTest.safetyButtonsIgnoreLegacyControlsAndKeepProfileAcrossSessions` | D | 廃止する診断runner/UI/report/比較受付の契約。通常製品安全はM1/M2を保持。 |
+| `RawDiagnosticSmokeTest.singleMemoryArmsKeepSamplingAndDoNotClaimCrossArmJpegEquality` | D | 廃止する診断runner/UI/report/比較受付の契約。通常製品安全はM1/M2を保持。 |
+| `RawDiagnosticSmokeTest.singleMemoryUiFreezesSelectedArmAndIgnoresLegacySettings` | D | 廃止する診断runner/UI/report/比較受付の契約。通常製品安全はM1/M2を保持。 |
+| `RawDiagnosticSmokeTest.manualReceiptAtStageEntryRecordsLatenciesWithoutClaimingBoundarySuccess` | D | 廃止する診断runner/UI/report/比較受付の契約。通常製品安全はM1/M2を保持。 |
+| `RawDiagnosticSmokeTest.manualNoPressAndLifecycleCancellationRemainDistinct` | D | 廃止する診断runner/UI/report/比較受付の契約。通常製品安全はM1/M2を保持。 |
+| `RawDiagnosticSmokeTest.manualUiCancelUsesButtonReceiptWhileImportIsStillRunning` | D | 廃止する診断runner/UI/report/比較受付の契約。通常製品安全はM1/M2を保持。 |
+| `RawDiagnosticSmokeTest.pickerCancellationBackgroundRecreationGateAndRestart` | D | 廃止する診断runner/UI/report/比較受付の契約。通常製品安全はM1/M2を保持。 |
+| `SaveCandidateCancellationTest.mistEntryCancellationWithoutCandidatesThreeTimes` | D | 旧CPU Mist段階入口/worker候補比較だけ。共通取消安全はM2を保持。 |
+| `SaveCandidateCancellationTest.mistEntryCancellationWithCandidatesThreeTimes` | D | 旧CPU Mist段階入口/worker候補比較だけ。共通取消安全はM2を保持。 |
+| `SaveCandidateCancellationTest.boundaryCancellationRemovesPrivateScratchAcrossSessions` | M | 診断runnerのinput/reportは退役、GPU反復取消のFD0/コピー累積0を追加。実装/実走待ち。 |
+| `SaveCandidateCancellationTest.failedCleanupRetainsOwnerAndRetriesWithoutDeletingUnknownFile` | M | 生存GPU attemptの未知ファイル保持→再closeを追加。実装/実走待ち。 |
+| `SaveCandidateCancellationTest.productBackendRemovesCopiesAndPartialJpegOnCancelOrFailure` | M | GPU Backendで非空JPEG前後×cancel/failureの4条件とpartial削除を追加。実装/実走待ち。 |
+| `SaveCandidateCancellationTest.coldRecoveryRejectsSymlinksOnAndroid` | M | GpuScratchRecoverySafetyAndroidTestへ同assert移行。実走前。 |
+| `SaveCandidateCancellationTest.preflightFailedDeletionRetainsSnapshotAndSlotForRetry` | M | GpuScratchRecoverySafetyAndroidTestへ同assert移行。実走前。 |
+| `GpuWorkTimingTest.exclusiveIntervalsAndRemainderReconcile` | D | 廃止する旧probe専用exclusive timing集計。通常GpuStageTap性能試験は別に保持。 |
+| `GpuWorkTimingTest.exceptionsCloseIntervalsWithoutMaskingFailure` | D | 廃止する旧probe専用exclusive timing集計。通常GpuStageTap性能試験は別に保持。 |
+| `GpuWorkTimingTest.nestedIntervalsAndNegativeRemaindersAreRejected` | D | 廃止する旧probe専用exclusive timing集計。通常GpuStageTap性能試験は別に保持。 |
+| `GpuWorkTimingTest.aggregatePreservesCountsAndWholeWallTime` | D | 廃止する旧probe専用exclusive timing集計。通常GpuStageTap性能試験は別に保持。 |
+| `GpuWorkTimingTest.disabledTimingDoesNotChangeResultOrException` | D | 廃止する旧probe専用exclusive timing集計。通常GpuStageTap性能試験は別に保持。 |
+
+### 追加52件の独立確認と移行実走
+
+追加52methodは全ソースと台帳を独立に照合し、欠落/重複なし、D47/M5の分類OKを確認した。M5はcaa8cb16154a84e18bd795d0be8be55dd67d8d73で実走成功。GpuScratchRecoverySafetyAndroidTestの4件は4.698秒、GpuSaveProducerSafetyAndroidTest.unknownScratchFileKeepsGpuAttemptOwnedUntilExplicitRemovalAndCloseは0.576秒、失敗/skip 0。既存no_backupファイルは全てhash不変。合成データ以外を操作せずAVDを返却した。
+
+初回boot ANRは実行0件で環境不成立。b59a4b73ではsymlink/preflight2件成功、Backend2件はfixtureのjournal factory設定不備で失敗しunknownは未実行。caa8cb16で隔離journalへ修正し、未公開assertを保持して5件を再実走した。失敗証拠を成功ログで上書きしない。
+
+この確認後にprefix sourceSetの52method/8ファイルを削除候補から撤去し、退役検査をtestVariant/androidTestVariant形式にも拡張した。これは候補への編集であり採用完了ではない。#424同期後の削除headで必要回帰・GPU90/28・CI・canonical/独立レビューを確認するまでHOLDする。上の実装/実走待ち欄は追加監査時点の履歴で、この節がM5の現在の証拠である。
