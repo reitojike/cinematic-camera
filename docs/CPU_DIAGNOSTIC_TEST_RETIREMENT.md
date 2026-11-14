@@ -685,3 +685,10 @@ A未完了/不変、B描画、A公開、owner drainを維持する。旧メモ�
 permission付与なし、fixture専用app保存領域のみ。compile成功9秒、APK成功7秒、実走はこれから。
 これで49元methodは45対応実装/集約＋既存通常維持4に分類済み。移行完了とはまだせず、
 実一覧の実走、既存維持4の再実走、最終差分/CI/レビューを完了条件とする。
+82310b28の実一覧試験はAの実GPU band/owner/原本/intentまで通過後、OSのBackキー注入がfalseを返して停止（22.856秒）。
+既存noBackup hash不変。Activityの通常Back dispatcherから製品Compose BackHandlerを呼ぶ形へ試験操作を修正。
+独立読取で、selectedUriの直接変更なし、実一覧からBをclick、全保存安全assert維持を確認。
+OSキー/ジェスチャー注入そのものは対象外とし、dispatcher以降の製品経路の検証として再実走する。
+lint/unitは成功1分37秒。ただし終了確認前にAPKビルドを起動してしまったため後発のみ停止し、
+同worktree Gradle wrapperプロセス0を確認して単独APKビルドをやり直した。中断ビルドは証拠として採用しない。
+以後は各Gradleの終了コードと同worktree実行プロセス0の両方を確認してから次を起動する。

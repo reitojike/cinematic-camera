@@ -97,7 +97,7 @@ class GpuRealListSwitchSafetyAndroidTest {
                             f.assertWorkingSource(saveA)
                             val intentA = requireNotNull(f.intent(saveA).read(ManualOriginalTrialRequestCodec.MAX_BYTES))
 
-                            assertTrue(UiDevice.getInstance(instrumentation).pressBack())
+                            scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
                             await("product list after Back") { action(nameB) != null }
                             click(nameB)
                             await("B recipe presented while A holds band") {
