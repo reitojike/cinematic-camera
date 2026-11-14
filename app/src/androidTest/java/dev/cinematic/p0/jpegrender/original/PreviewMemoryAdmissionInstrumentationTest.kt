@@ -4,7 +4,6 @@ import android.os.CancellationSignal
 import android.os.ParcelFileDescriptor
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import dev.cinematic.p0.raw.PhotoAdjustments
 import dev.cinematic.p0.rawcapture.DngContentVerifier
 import dev.cinematic.p0.rawcapture.OriginalGrant
 import dev.cinematic.p0.rawcapture.SharedOriginalReference
@@ -18,90 +17,123 @@ import org.junit.runner.RunWith
 /** Tiny synthetic fixtures and injected observations, not actual OS memory pressure or RAM minima. */
 @RunWith(AndroidJUnit4::class)
 class PreviewMemoryAdmissionInstrumentationTest {
-    @Test fun decodedPreviewCanRenderAndCompareBelowOriginalAllowanceWithoutDecodingAgain() = fixture { input, root, source, geometry ->
-        var available = 1024L * 1024 * 1024
+    @Test fun gpuInputContinuesWhenInjectedPostDecodeAdmissionPermits() = fixture { input, root, source, geometry ->
+        var available = 128L * 1024 * 1024
+        var lowMemory = false
         var decodeAdmissions = 0
+        var boundedChecks = 0
         val session = Original24PreviewSession(source, File(root, "preview"), { stage ->
-            if (!Original24MemoryPolicy.permits(stage, false, available)) throw Original24MemoryUnavailable()
             if (stage == Original24MemoryStage.ORIGINAL_DECODE) {
+                if (!Original24MemoryPolicy.permits(stage, lowMemory, available)) throw Original24MemoryUnavailable()
                 decodeAdmissions++
-                available = 384L * 1024 * 1024 // Inject lower post-decode availability; allocate no pressure buffer.
+                available = 64L * 1024 * 1024
+                lowMemory = true // Observation only; do not allocate artificial pressure.
+            } else if (stage == Original24MemoryStage.BOUNDED_PREVIEW) {
+                boundedChecks++ // Injected callback only; this does not test the OS-backed Resources default.
+                assertTrue(lowMemory)
             }
         }, geometry) { input.inputStream() }
-        try {
-            session.render(.5).recycle()
-            requireNotNull(session.comparisonBitmap()).recycle()
-            session.render(.7).recycle()
-            session.render(.7, PhotoAdjustments(25.0, .4)).recycle()
-            requireNotNull(session.renderDraft(.8, PhotoAdjustments(30.0, .5))).recycle()
-            requireNotNull(session.comparisonBitmap(maxEdge = 256)).recycle()
+        withSession(session) {
+            val image = session.loadGpuAsShotInput()
+            assertEquals(geometry.outputWidth, image.width)
+            assertEquals(geometry.outputHeight, image.height)
             assertEquals(1, decodeAdmissions)
+            assertEquals(1, boundedChecks)
             assertFalse(session.hasUnreleasedResources)
-            assertFalse(Original24MemoryPolicy.permits(Original24MemoryStage.ORIGINAL_SAVE, false, available))
-        } finally { session.close() }
+            val bits = image.copyPixels().map { it.toRawBits() }.toIntArray()
+            session.close()
+            assertArrayEquals(bits, image.copyPixels().map { it.toRawBits() }.toIntArray())
+            assertFalse(Original24MemoryPolicy.permits(Original24MemoryStage.ORIGINAL_SAVE, lowMemory, available))
+        }
     }
 
     @Test fun boundedAllocationFailureReleasesSessionAndCanRetryWithANewOwner() = fixture { input, root, source, geometry ->
-        var injectOom = false
+        var decodeChecks = 0
         var boundedChecks = 0
+        val primary = OutOfMemoryError("synthetic post-decode reduction allocation failure")
         val session = Original24PreviewSession(source, File(root, "first"), { stage ->
-            if (injectOom && stage == Original24MemoryStage.BOUNDED_PREVIEW && ++boundedChecks == 3)
-                throw OutOfMemoryError("synthetic pre-bitmap allocation failure")
+            if (stage == Original24MemoryStage.ORIGINAL_DECODE) decodeChecks++
+            if (stage == Original24MemoryStage.BOUNDED_PREVIEW) {
+                boundedChecks++
+                assertEquals(1, decodeChecks)
+                assertTrue(File(root, "first/source-linear.rgb16").length() > 0L)
+                throw primary
+            }
         }, geometry) { input.inputStream() }
-        val oldDisplay = session.render(.5)
-        try {
-            injectOom = true
-            val failure = assertThrows(Original24MemoryUnavailable::class.java) { session.render(.7) }
-            assertTrue(failure.cause is OutOfMemoryError)
-            assertFalse(oldDisplay.isRecycled) // The caller still owns the prior display.
+        withSession(session) {
+            val failure = assertThrows(Original24MemoryUnavailable::class.java) { session.loadGpuAsShotInput() }
+            assertSame(primary, failure.cause)
+            assertEquals(1, boundedChecks)
             assertFalse(session.hasUnreleasedResources)
-            assertEquals(0, session.previewFieldBytes)
-            assertThrows(IllegalStateException::class.java) { session.render(.7) }
-        } finally { oldDisplay.recycle(); session.close() }
+            assertFalse(File(root, "first").exists())
+            DngContentVerifier.verify(source.fingerprint, { input.inputStream() })
+            assertThrows(IllegalStateException::class.java) { session.loadGpuAsShotInput() }
+            assertEquals(1, decodeChecks)
+        }
         val retry = Original24PreviewSession(source, File(root, "retry"), {}, geometry) { input.inputStream() }
-        try { retry.render(.7).recycle(); assertFalse(retry.hasUnreleasedResources) }
-        finally { retry.close() }
+        withSession(retry) {
+            val image = retry.loadGpuAsShotInput()
+            assertEquals(geometry.outputWidth, image.width)
+            assertEquals(geometry.outputHeight, image.height)
+            assertFalse(retry.hasUnreleasedResources)
+        }
     }
 
-    @Test fun coldDecodeStillRejectsInsufficientOriginalAllowanceAndCleansTransientOwners() = fixture { input, root, source, geometry ->
+    @Test fun coldGpuDecodeRejectsOsLowMemoryAndCleansTransientOwners() = fixture { input, root, source, geometry ->
         var decodeChecks = 0
         val session = Original24PreviewSession(source, File(root, "preview"), { stage ->
             if (stage == Original24MemoryStage.ORIGINAL_DECODE) decodeChecks++
-            if (!Original24MemoryPolicy.permits(stage, false, 767L * 1024 * 1024)) throw Original24MemoryUnavailable()
+            if (!Original24MemoryPolicy.permits(stage, true, 1024L * 1024 * 1024)) throw Original24MemoryUnavailable()
         }, geometry) { input.inputStream() }
-        try {
-            assertThrows(Original24MemoryUnavailable::class.java) { session.render(.5) }
+        withSession(session) {
+            assertThrows(Original24MemoryUnavailable::class.java) { session.loadGpuAsShotInput() }
             assertEquals(1, decodeChecks)
             assertFalse(session.hasUnreleasedResources)
-            assertEquals(0, session.previewFieldBytes)
-        } finally { session.close() }
+            assertFalse(File(root, "preview").exists())
+            assertThrows(IllegalStateException::class.java) { session.loadGpuAsShotInput() }
+        }
     }
 
-    @Test fun outerOriginalReadUsesPreviewPressureWithoutWeakeningSaveAdmission() {
+    @Test fun outerOriginalReadUsesOsPressureForBothPreviewAndSaveAdmission() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("isolated") == "true")
         val resources = dev.cinematic.p0.photoroll.PhotoRollResources(true, 0, false, 384L * 1024 * 1024,
             dev.cinematic.p0.photoroll.PhotoRollCameraSnapshot(false, false, false, false), true, true)
         val conditions = resources.developConditions(true)
-        assertEquals(false, conditions.memoryBudgetConfirmed)
+        assertEquals(true, conditions.memoryBudgetConfirmed)
         assertEquals(true, conditions.previewMemoryAvailable)
         dev.cinematic.p0.rawcapture.DevelopExecution.updateConditions(conditions)
+        var primary: Throwable? = null
         try {
-            repeat(2) { // Completion must release the one shared owner before the next read.
+            for (preview in listOf(true, false, true, false)) { // Each read must release the shared owner.
                 val value = dev.cinematic.p0.photoroll.PhotoRollOriginalChecks.run(
-                    { resources }, CancellationSignal(), preview = true) { readers, stop ->
+                    { resources }, CancellationSignal(), preview = preview) { readers, stop ->
                     assertFalse(stop())
                     readers.open { java.io.ByteArrayInputStream(byteArrayOf(73)) }.use { it.read() }
                 }
                 assertEquals(73, value)
             }
-            assertThrows(dev.cinematic.p0.photoroll.PhotoRollSourceFailure::class.java) {
-                dev.cinematic.p0.photoroll.PhotoRollOriginalChecks.run({ resources }, CancellationSignal()) { _, _ ->
-                    fail("Save-budget admission must remain closed")
+            val pressured = resources.copy(lowMemory = true)
+            dev.cinematic.p0.rawcapture.DevelopExecution.updateConditions(pressured.developConditions(true))
+            for (preview in listOf(true, false)) {
+                assertThrows(dev.cinematic.p0.photoroll.PhotoRollSourceFailure::class.java) {
+                    dev.cinematic.p0.photoroll.PhotoRollOriginalChecks.run({ pressured }, CancellationSignal(), preview = preview) { _, _ ->
+                        fail("OS low-memory admission must remain closed")
+                    }
                 }
             }
-        } finally {
-            dev.cinematic.p0.rawcapture.DevelopExecution.updateConditions(dev.cinematic.p0.rawcapture.AutoDevelopConditions())
+        } catch (failure: Throwable) { primary = failure; throw failure }
+        finally {
+            preserveSafetyCleanup(primary, {
+                dev.cinematic.p0.rawcapture.DevelopExecution.updateConditions(dev.cinematic.p0.rawcapture.AutoDevelopConditions())
+            })
         }
+    }
+
+    private fun withSession(session: Original24PreviewSession, action: () -> Unit) {
+        var primary: Throwable? = null
+        try { action() }
+        catch (failure: Throwable) { primary = failure; throw failure }
+        finally { preserveSafetyCleanup(primary, { session.close() }) }
     }
 
     private fun fixture(run: (File, File, SharedOriginalReference, Original24PreflightGeometry) -> Unit) {
@@ -116,8 +148,13 @@ class PreviewMemoryAdmissionInstrumentationTest {
         val geometry = ParcelFileDescriptor.open(input, ParcelFileDescriptor.MODE_READ_ONLY).use {
             Original24Preflight.inspect(it.fd, CancellationSignal())
         }
-        run(input, root, source, geometry)
-        DngContentVerifier.verify(source.fingerprint, { input.inputStream() })
+        var primary: Throwable? = null
+        try { run(input, root, source, geometry) }
+        catch (failure: Throwable) { primary = failure; throw failure }
+        finally {
+            preserveSafetyCleanup(primary, { DngContentVerifier.verify(source.fingerprint, { input.inputStream() }) })
+        }
+        // Keep the synthetic fixture as evidence on assertion/cleanup failure.
         assertTrue(input.delete()); assertTrue(root.delete())
     }
 }

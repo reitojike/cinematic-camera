@@ -13,9 +13,9 @@ import java.util.concurrent.ExecutionException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 
-/** Uses the sole process queue and its retained private artifact. Never publishes a JPEG. */
+/** Test-APK-only historical renderer, explicitly bound to one isolated legacy fixture. */
 @RequiresApi(29)
-internal class PrivateTrialPhotoRollRenderer(context: Context, private val resources: () -> PhotoRollResources) : PhotoRollRenderer {
+internal class PrivateTrialPhotoRollRenderer(context: Context, private val legacy: LegacyCpuFixture, private val resources: () -> PhotoRollResources) : PhotoRollRenderer {
     private val app = context.applicationContext
     private val reuseLock = Any()
     private var reuseSession: PrivateTrialReuseSession? = null
@@ -47,7 +47,7 @@ internal class PrivateTrialPhotoRollRenderer(context: Context, private val resou
         }
         val session = currentReuseSession()
         request.onStage(PhotoRollRenderStage.TRIAL_WAIT)
-        val handle = await(AndroidAutoDevelopQueue.preparePrivateTrial(app, request.original.reference, recipe,
+        val handle = await(legacy.preparePrivateTrial( request.original.reference, recipe,
             reuseSession = session) { cancellation.isCanceled }, cancellation)
         require(handle.request.source == request.original.reference && handle.request.recipe == recipe.snapshot)
         val issuing = Any()

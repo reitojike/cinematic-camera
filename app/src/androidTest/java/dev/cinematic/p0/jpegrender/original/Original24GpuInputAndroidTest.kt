@@ -31,9 +31,6 @@ class Original24GpuInputAndroidTest {
         val diagnostic = session("gpu-input")
         val direct = try {
             diagnostic.loadGpuAsShotInput().also {
-                assertNull(diagnostic.previewExternalEv)
-                assertNull(diagnostic.previewDecisions)
-                assertEquals(0, diagnostic.previewFieldBuilds)
                 assertFalse(diagnostic.hasUnreleasedResources)
             }
         } finally { diagnostic.close() }
@@ -175,8 +172,6 @@ class Original24GpuInputAndroidTest {
                         assertEquals(expectedWidth, it.width)
                         assertEquals(expectedHeight, it.height)
                         GpuPreviewInputSize.checkSupported(it.width, it.height)
-                        assertNull(session.previewExternalEv)
-                        assertEquals(0, session.previewFieldBuilds)
                         assertFalse(session.hasUnreleasedResources)
                     }
                 }

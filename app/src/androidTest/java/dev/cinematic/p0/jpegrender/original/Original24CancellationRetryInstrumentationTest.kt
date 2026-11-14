@@ -25,7 +25,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /** #345: actual factory cancellation and same-generation explicit retry. Small synthetic DNG,
- * real CPU/GPU producer and JPEG publication; no pixel oracle, performance or device-quality gate.
+ * real GPU producer and JPEG publication; no pixel oracle, performance or device-quality gate.
  * The CPU checkpoint is identified from its real renderer stack; no product test hook is added.
  */
 @RunWith(AndroidJUnit4::class)
@@ -45,7 +45,7 @@ class Original24CancellationRetryInstrumentationTest {
         val args = InstrumentationRegistry.getArguments()
         assumeTrue(args.getString("isolated") == "true" && args.getString("saveCancellationRetry") == "true")
         assumeTrue("Physical devices are excluded", Build.HARDWARE in setOf("ranchu", "goldfish"))
-        // Diagnostic CPU/GPU stay selectable; the ordinary build is fixed GPU without a setting UI.
+        // The ordinary build is fixed GPU without a setting UI.
         check(ordinary && installed.packageName == "dev.cinematic.p0")
         val app = isolatedGpuSaveSafetyApp()
         val setting = DevelopEngineSetting(app)
@@ -298,9 +298,7 @@ class Original24CancellationRetryInstrumentationTest {
                 sawGpu.set(true)
                 glThread.compareAndSet(null, Thread.currentThread())
             }
-            val selected = if (engine == DevelopEngine.GPU) currentGpu else Thread.currentThread().stackTrace.any {
-                it.className == "dev.cinematic.p0.raw.original.OriginalStageClear24" && it.methodName == "render"
-            }
+            val selected = currentGpu
             if (selected) seen.set(true)
             return selected
         }

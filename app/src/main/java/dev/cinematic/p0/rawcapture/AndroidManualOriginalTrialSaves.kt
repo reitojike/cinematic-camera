@@ -3,14 +3,12 @@ package dev.cinematic.p0.rawcapture
 import android.content.Context
 import dev.cinematic.p0.gpu.DevelopEngine
 import dev.cinematic.p0.gpu.DevelopEngineSetting
-import android.graphics.Bitmap
 import android.net.Uri
 import android.os.CancellationSignal
 import android.os.ParcelFileDescriptor
 import androidx.annotation.RequiresApi
 import dev.cinematic.p0.jpegrender.original.Original24Attempt
 import dev.cinematic.p0.jpegrender.original.Original24Request
-import dev.cinematic.p0.jpegrender.original.Original24PreviewSession
 import dev.cinematic.p0.jpegrender.original.Original24Resources
 import dev.cinematic.p0.raw.PhotoAdjustments
 import dev.cinematic.p0.jpegrender.original.Original24Preflight
@@ -24,8 +22,6 @@ import java.nio.file.LinkOption
 import java.nio.file.StandardOpenOption
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
-import java.util.concurrent.atomic.AtomicLong
-import java.io.Closeable
 import dev.cinematic.p0.metrics.*
 
 /** Process-retained original-trial authority. All metadata, generation and publication use the sole
@@ -49,54 +45,9 @@ internal object AndroidManualOriginalTrialSaves {
             authority.restore(queue, geometry)?.also { prepared = prepared + (source to it) }
         }
     }
-    private val previewEpoch = AtomicLong(0)
-    @Volatile private var activePreview: Original24PreviewSession? = null
-    private var previewAuthority: Authority? = null // Queue IO only; bounded to one cached source.
-
-    /** Fast capture/lifecycle invalidation. Actual cleanup remains on the same serial IO owner. */
-    fun invalidatePreviews() { previewEpoch.incrementAndGet(); activePreview?.requestStop() }
-
-    fun discardPreview(context: Context): CompletableFuture<Unit> {
-        invalidatePreviews()
-        return AndroidAutoDevelopQueue.get(context).manualOriginalIo {
-            previewAuthority?.discardPreview(); previewAuthority = null
-        }
-    }
-
-    fun renderPreview(context: Context, source: SharedOriginalReference, strength: Double,
-        conditions: AutoDevelopConditions, adjustments: PhotoAdjustments = PhotoAdjustments.NONE,
-        diagnosticWorkers: Int? = null,
-        checkPreviewSource: ((DngIoResources, () -> Boolean) -> Unit)? = null,
-        shouldStop: () -> Boolean = { false }): CompletableFuture<ManualOriginalTrialPreview> {
-        require(diagnosticWorkers == null || (dev.cinematic.p0.BuildConfig.EDITOR_PREVIEW_DIAGNOSTIC && diagnosticWorkers in 1..2))
-        val app = context.applicationContext
-        val queue = AndroidAutoDevelopQueue.get(app)
-        return queue.manualOriginalIo {
-            if (shouldStop()) throw java.util.concurrent.CancellationException("Trial preview stopped")
-            val key = app.noBackupFilesDir.canonicalPath to source
-            val authority = authorities.getOrPut(key) { Authority(app, source) }
-            val handle = authority.prepare(queue, strength, adjustments, conditions, shouldStop)
-            if (previewAuthority !== authority) {
-                previewAuthority?.discardPreview()
-                previewAuthority = authority
-            }
-            authority.renderPreview(handle, conditions, diagnosticWorkers, checkPreviewSource, shouldStop)
-        }
-    }
-
-    /** Drafts borrow only an existing exact session. They never allocate a durable save request. */
-    fun renderDraftPreview(context: Context, source: SharedOriginalReference, strength: Double,
-        conditions: AutoDevelopConditions, adjustments: PhotoAdjustments, diagnosticWorkers: Int? = null,
-        shouldStop: () -> Boolean): CompletableFuture<ManualOriginalDraftPreview?> {
-        require(diagnosticWorkers == null || (dev.cinematic.p0.BuildConfig.EDITOR_PREVIEW_DIAGNOSTIC && diagnosticWorkers in 1..2))
-        val app = context.applicationContext
-        return AndroidAutoDevelopQueue.get(app).manualOriginalIo {
-            if (shouldStop()) throw java.util.concurrent.CancellationException("Draft preview stopped")
-            val authority = authorities[app.noBackupFilesDir.canonicalPath to source]
-            if (authority == null || previewAuthority !== authority) null
-            else authority.renderDraftPreview(strength, adjustments, conditions, diagnosticWorkers, shouldStop)
-        }
-    }
+    /** Serial metadata-IO barrier retained for callers; GPU/GL owners drain separately. */
+    fun discardPreview(context: Context): CompletableFuture<Unit> =
+        AndroidAutoDevelopQueue.get(context).manualOriginalIo { Unit }
 
     fun prepare(context: Context, source: SharedOriginalReference, strength: Double,
         conditions: AutoDevelopConditions, adjustments: PhotoAdjustments = PhotoAdjustments.NONE,
@@ -138,9 +89,6 @@ internal object AndroidManualOriginalTrialSaves {
         private var preflightSlot: AutoDevelopCoordinator.Attempt? = null
         private var geometry: Original24PreflightGeometry? = null
         private var currentRequest: Original24Request? = null // Same serialized metadata owner as publication.
-        private var previewSession: Original24PreviewSession? = null
-        private var sessionEpoch = -1L
-        private var previewSlot: AutoDevelopCoordinator.Attempt? = null
         private val requests = ManualOriginalTrialRequests(source,
             AndroidAtomicJournalStorage(File(app.noBackupFilesDir, "manual-original24-requests"), id,
                 CaptureJournalFile.MANUAL_REQUEST), ::canSupersede)
@@ -214,7 +162,6 @@ internal object AndroidManualOriginalTrialSaves {
             val old = handles[previous.generation] ?: throw CaptureJournalConflict()
             if (!old.quiescentForRecovery()) throw IOException("Old save resources or slot remain held")
             if (old.hasPublishedEvidence()) throw IOException("Published JPEG evidence must resume the same publication")
-            discardPreview()
             val slot = consent(previous)
             val saved = slot.read()
             if (saved != null) {
@@ -271,82 +218,6 @@ internal object AndroidManualOriginalTrialSaves {
             currentRequest = null // A failed/uncertain metadata change cannot leave an older owner authoritative.
             val request = requests.prepare(strength, adjustments).also { currentRequest = it }
             return handle(queue, request)
-        }
-
-        fun renderPreview(handle: ManualOriginalTrialHandle, conditions: AutoDevelopConditions,
-            diagnosticWorkers: Int?, checkPreviewSource: ((DngIoResources, () -> Boolean) -> Unit)?,
-            stop: () -> Boolean): ManualOriginalTrialPreview {
-            if (previewSlot != null || sessionEpoch != previewEpoch.get()) discardPreview()
-            val slot = DevelopExecution.tryStartPreviewObserved(conditions) ?: throw IOException("Trial preview admission blocked")
-            previewSlot = slot
-            var delivered = false
-            var bitmap: Bitmap? = null
-            var comparison: Bitmap? = null
-            try {
-                val session = previewSession ?: run {
-                    val parent = File(app.noBackupFilesDir.canonicalFile, "manual-original24-previews")
-                    if (Files.isSymbolicLink(parent.toPath()) || parent.canonicalFile != parent ||
-                        (!parent.isDirectory && !parent.mkdirs())) throw IOException("Trial preview directory unavailable")
-                    Original24PreviewSession(source, File(parent, UUID.randomUUID().toString()),
-                        { stage -> Original24Resources.requireAvailable(app, stage) }, handle.geometry, checkPreviewSource, ::readOriginal).also {
-                        previewSession = it; sessionEpoch = previewEpoch.get()
-                    }
-                }
-                activePreview = session
-                DevelopExecution.registerStop(slot, session::requestStop)
-                val stopped = { stop() || DevelopExecution.shouldStop(slot) || currentRequest != handle.request || sessionEpoch != previewEpoch.get() }
-                bitmap = if (diagnosticWorkers == null) session.render(handle.request.strength, handle.request.adjustments, stopped)
-                    else session.renderDiagnostic(handle.request.strength, handle.request.adjustments, false, diagnosticWorkers, stopped)
-                comparison = session.comparisonBitmap {
-                    stop() || DevelopExecution.shouldStop(slot) || currentRequest != handle.request || sessionEpoch != previewEpoch.get()
-                }
-                if (stop() || DevelopExecution.shouldStop(slot) || currentRequest != handle.request || sessionEpoch != previewEpoch.get())
-                    throw java.util.concurrent.CancellationException("Trial preview stopped")
-                val delivery = ManualOriginalTrialPreview(handle, requireNotNull(bitmap), comparison)
-                delivered = true
-                return delivery
-            } finally {
-                activePreview = null
-                if (!delivered) { bitmap?.recycle(); comparison?.recycle(); previewSession?.close(); previewSession = null }
-                if (previewSession?.hasUnreleasedResources != true) {
-                    DevelopExecution.completeAfterResourcesClosed(slot); previewSlot = null
-                }
-            }
-        }
-
-        fun renderDraftPreview(strength: Double, adjustments: PhotoAdjustments,
-            conditions: AutoDevelopConditions, diagnosticWorkers: Int?, stop: () -> Boolean): ManualOriginalDraftPreview? {
-            if (previewSlot != null || sessionEpoch != previewEpoch.get()) discardPreview()
-            val session = previewSession?.takeIf { it.hasDraftDecisions } ?: return null
-            val request = currentRequest ?: return null
-            val slot = DevelopExecution.tryStartPreviewObserved(conditions) ?: throw IOException("Draft preview admission blocked")
-            previewSlot = slot
-            var delivered = false
-            var bitmap: Bitmap? = null
-            var comparison: Bitmap? = null
-            val stopped = { stop() || DevelopExecution.shouldStop(slot) || currentRequest != request || sessionEpoch != previewEpoch.get() }
-            try {
-                activePreview = session
-                DevelopExecution.registerStop(slot, session::requestStop)
-                bitmap = (if (diagnosticWorkers == null) session.renderDraft(strength, adjustments, stopped)
-                    else session.renderDiagnostic(strength, adjustments, true, diagnosticWorkers, stopped)) ?: return null
-                comparison = session.comparisonBitmap(maxEdge = 256, shouldStop = stopped)
-                if (stopped()) throw java.util.concurrent.CancellationException("Draft preview stopped")
-                return ManualOriginalDraftPreview(requireNotNull(bitmap), comparison).also { delivered = true }
-            } finally {
-                activePreview = null
-                if (!delivered) { bitmap?.recycle(); comparison?.recycle(); session.close(); previewSession = null }
-                if (previewSession?.hasUnreleasedResources != true) {
-                    DevelopExecution.completeAfterResourcesClosed(slot); previewSlot = null
-                }
-            }
-        }
-
-        fun discardPreview() {
-            previewSession?.close()
-            if (previewSession?.hasUnreleasedResources == true) throw IOException("Trial preview resources remain held")
-            previewSession = null
-            previewSlot?.let { DevelopExecution.completeAfterResourcesClosed(it) }; previewSlot = null
         }
 
         private fun readOriginal(): InputStream = app.contentResolver.openInputStream(Uri.parse(source.uri))
@@ -456,11 +327,9 @@ internal object AndroidManualOriginalTrialSaves {
             val directory = RenderedJpegFiles(File(app.noBackupFilesDir, "raw-captures"), request.captureId,
                 request.generation).generationRoot()
             if (!directory.isDirectory && !directory.mkdirs()) throw IOException("Trial generation directory unavailable")
-            // Only this production save opts in; low-level and diagnostic serial baselines stay explicit.
+            // New producer attempts are GPU-only; saved-generation authority remains unchanged.
             val engine = Original24Attempt(app, request, io, File(directory, "original-work"),
-                trace = timing, saveTiming = timing,
-                parallelFoundationWorkers = 2, parallelGlowWorkers = 2,
-                parallelToneWorkers = 2, parallelMistWorkers = 2, developEngine = selected).also { attempt = it }
+                trace = timing, saveTiming = timing, developEngine = selected).also { attempt = it }
             if (stop()) engine.requestStop()
             outputCleanupPending = true
             try {
@@ -577,7 +446,6 @@ internal object AndroidManualOriginalTrialSaves {
             }
             if (stop()) throw java.util.concurrent.CancellationException("Trial save stopped before admission")
             if (!revalidate()) throw CaptureJournalConflict()
-            previewAuthority?.discardPreview(); previewAuthority = null
             val observed = conditions()
             val admitted = (if (foregroundExport != null) DevelopExecution.tryStartForegroundExport(foregroundExport, this, observed)
                 else DevelopExecution.tryStartObserved(observed))
@@ -610,28 +478,4 @@ internal object AndroidManualOriginalTrialSaves {
         fun requestStop() { slot?.let(DevelopExecution::requestStop) }
     }
 
-    /** Display-only draft delivery, deliberately without a save handle or committed settings. */
-    internal class ManualOriginalDraftPreview(private var after: Bitmap?, private var before: Bitmap?) : Closeable {
-        @Synchronized fun claimBitmap(): Bitmap = requireNotNull(after).also { after = null }
-        @Synchronized fun claimComparisonBitmap(): Bitmap? = before?.also { before = null }
-        @Synchronized override fun close() { after?.recycle(); after = null; before?.recycle(); before = null }
-    }
-
-    /** UI claims this one independent software bitmap, or closes an abandoned delivery. */
-    internal class ManualOriginalTrialPreview(val save: ManualOriginalTrialHandle, private var owned: Bitmap?,
-        private var ownedComparison: Bitmap?) : Closeable {
-        val comparisonDescription = ownedComparison?.let { "撮影時WBのRAW基準表示（R7・ルック・手動調整なし、暫定色）" }
-        init {
-            val after = requireNotNull(owned)
-            ownedComparison?.let { before ->
-                require(after !== before && after.width == before.width && after.height == before.height)
-            }
-        }
-        @Synchronized fun claimBitmap(): Bitmap = requireNotNull(owned).also { owned = null }
-        @Synchronized fun claimComparisonBitmap(): Bitmap? = ownedComparison?.also { ownedComparison = null }
-        @Synchronized override fun close() {
-            owned?.recycle(); owned = null
-            ownedComparison?.recycle(); ownedComparison = null
-        }
-    }
 }

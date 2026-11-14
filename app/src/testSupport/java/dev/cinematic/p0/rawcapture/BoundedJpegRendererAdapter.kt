@@ -4,12 +4,6 @@ import dev.cinematic.p0.jpegrender.*
 import java.io.Closeable
 import java.io.IOException
 
-/** A resource-owning frame source is mandatory. AndroidAsShotJpegFrames alone does not acknowledge
- * failed native FD closes, so it cannot be silently wrapped as a successfully closed source here. */
-internal interface OwnedJpegFrameSource : JpegFrameSource, Closeable {
-    fun requestStop() {}
-}
-
 /** Connects #127 to the existing attempt IO/publisher owner. Explicit recipe and resource factories;
  * no default face/exposure values, no preview bitmap, no production enrollment. */
 internal class BoundedJpegRendererAdapter(

@@ -40,13 +40,9 @@ internal data class Original24TrialJpeg(val request: Original24Request, val outp
 /** Existing IO/coordinator's synchronous attempt. Does not create a queue, publish, or enroll a renderer. */
 internal class Original24Attempt(context: Context, private val request: Original24Request, private val io: AutoRenderIo,
     private val scratchDirectory: File, private val trace: OriginalStageTrace? = null,
-    private val parallelOrtonWorkers: Int = 4,
-    private val ortonRowProbe: ((Int) -> Unit)? = null,
-    private val parallelCharacterWorkers: Int = 2, private val parallelFoundationWorkers: Int = 1, private val parallelGlowWorkers: Int = 1,
-    private val fuseR7ColorRows: Boolean = false,
-    private val parallelToneWorkers: Int = 1, private val parallelMistWorkers: Int = 1,
-    private val developEngine: DevelopEngine = DevelopEngine.CPU,
+    private val developEngine: DevelopEngine = DevelopEngine.GPU,
     private val saveTiming: SaveTiming? = null) : AutoCloseable {
+    init { require(developEngine == DevelopEngine.GPU) { "CPU rendering has been retired" } }
     private val context = context.applicationContext
     private val active = AtomicBoolean(false)
     private var started = false
@@ -136,16 +132,6 @@ internal class Original24Attempt(context: Context, private val request: Original
             val blue = 2.0.pow(-request.adjustments.warmth / 200.0)
             val norm = .2126 * red + .7152 + .0722 * blue
             val gains = doubleArrayOf(red / norm, 1.0 / norm, blue / norm)
-            val adjusted = if (request.adjustments.warmth == 0.0) source else object : OriginalRaster {
-                override val width = source.width
-                override val height = source.height
-                override fun rows(stop: () -> Boolean, consume: (Int, FloatArray) -> Unit) = source.rows(stop) { y, row ->
-                    row.indices.forEach { i -> row[i] = (row[i] * gains[i % 3]).toFloat() }
-                    consume(y, row)
-                }
-            }
-            val rendered = if (developEngine == DevelopEngine.CPU) OriginalStageClear24(work, trace, parallelOrtonWorkers, ortonRowProbe, parallelCharacterWorkers, parallelFoundationWorkers = parallelFoundationWorkers, parallelGlowWorkers = parallelGlowWorkers, fuseR7ColorRows = fuseR7ColorRows, parallelToneWorkers = parallelToneWorkers, parallelMistWorkers = parallelMistWorkers)
-                .render(adjusted, ev, request.strength, stop = stop) else null
             checkpoint(); Original24Resources.requireAvailable(context, checkMemory = false)
             val digest = MessageDigest.getInstance("SHA-256")
             var encodedBytes = 0L
@@ -155,7 +141,7 @@ internal class Original24Attempt(context: Context, private val request: Original
                 // Retain before invoking the observer: a reporting failure must also recycle it.
                 val packed = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { bitmap = it }
                 packed.setHasAlpha(false)
-                if (developEngine == DevelopEngine.GPU) {
+                run {
                     val gpu = Original24GpuOutput(context.assets).also { gpuOutput = it }
                     // source is still as-shot. GPU applies the same gains exactly once before R7.
                     var gpuTimings: GpuExportTimings? = null
@@ -168,13 +154,6 @@ internal class Original24Attempt(context: Context, private val request: Original
                         gpuCompleted = true
                     } } finally { gpuTimings?.drain(saveTiming, gpuCompleted) }
                     gpu.close(); gpuOutput = null
-                } else {
-                    val row = IntArray(width)
-                    requireNotNull(rendered).raster.rows(stop) { y, rgb ->
-                        row.indices.forEach { x -> row[x] = (255 shl 24) or (channel(rgb[x * 3]) shl 16) or
-                            (channel(rgb[x * 3 + 1]) shl 8) or channel(rgb[x * 3 + 2]) }
-                        packed.setPixels(row, 0, width, 0, y, width, 1)
-                    }
                 }
                 }
                 checkpoint()
@@ -256,9 +235,5 @@ internal class Original24Attempt(context: Context, private val request: Original
         work.disposeConfirmed()
         rawRaster = null
         workspace = null
-    }
-    private fun channel(value: Float): Int {
-        val x = value.toDouble().coerceIn(0.0, 1.0)
-        return ((if (x <= .0031308) 12.92 * x else 1.055 * x.pow(1.0 / 2.4) - .055) * 255).roundToInt().coerceIn(0, 255)
     }
 }
