@@ -857,4 +857,24 @@ CIのGPU/RAW診断build jobを退役し、通常product jobでdebug/release mani
 
 `RetiredCpuJournalCompatibilityTest` 3件は空catalogでのcanonical要求/HOLD、正規manual bounded PUBLISHEDの再読取・非再実行をhostで確認し実走成功。既存Android inventoryや実保存先のfresh確認を代替しない。旧固定bytes全版互換や実artifact保全をこのfixtureだけで保証したとは扱わない。
 
-producer登録と旧CPU実装は、共有試験を専用namespace・一貫したowner/coordinatorに分離してから撤去する。現時点は未完了。
+producer登録と旧CPU実装は、共有試験を専用namespace・一貫したowner/coordinatorに分離してから撤去する。このチェックポイント時点では未完了（後続の分離実装を下記に記録）。
+
+### 削除②: 旧 bounded fixture の安全な分離
+
+丸コピーqueue案は不採用。新 `LegacyCpuFixture` は各試験のUUID専用context（noBackup/files/cache/prefs）、独立coordinator/IO/cancel ownerを使い、製品singletonへattachせず、既存inventoryやscratch recoveryを走査しない。試験で使う旧CPU producer/coreだけをtestSupportへ移し、製品catalogから既定CPU登録を除く。旧default inventory試験は別の専用namespaceで実製品factoryの復旧を検証する。
+
+- DngTrialRendererTest: 旧CPU表示9件D。shared read/close、原本handoff、pending誤認防止の3件Mを保持（handoff末尾CPU描画のみ除去）。
+- PrivateTrialEndToEndTest: 12MP CPU表示比較1件D、取消/capture優先/破損artifact拒否1件Mを独立ownerで保持。
+- AutoDevelopInventoryInstrumentationTest: 1件Mを実製品factoryで保持。
+- ManualDevelopInstrumentationTest: 2件Mを独立namespaceで保持。cleanupは正のowner解放後、成功時だけ合成物を削除。失敗/不明は保全。
+- PrivateTrialReuseInstrumentationTest: CPUcache/lease保証は実装と同時退役。原本変更、全checkpoint取消+fresh retry、遅延取消下の実破損、別geometryJPEG、同寸法同bytes別hash/foreign attempt、継続close故障owner保持、unknown条件通知取消を7件Mへ整理。製品のGPU/capture facade配線そのものの代替とはしない。
+
+製品から移したCPU一群: R7Base/StageClearLook/PreparedStageClearGlow、Character/Glow/Mist/Orton/Protections/ZeroKeepCandidate、TrialFoundationReuse/PrivateTrialReuse、JpegGenerationAttempt/BoundedJpegRendererAdapter。GPUのV1定数、StageClearBlur(filter/reducedSize/samples)、StageClearColor.unitToLinear、R7PreviewInputs、LinearSrgbImage/FaceMask、旧codec/receiptはmain保持。
+
+追加修正の範囲: 削除前 c428945a の旧private readbackでは、比較frame closeが失敗してもowner参照を捨ててAfter-only成功になり得た。現在のGPUプレビュー/原寸保存ではなく、保持する旧artifact互換読取実装の問題。frame ownerは正のcloseまで保持し、slot/FDも保持する。期待値を緩めず故障注入実走と独立レビューを必須とする。
+
+この節は実装・試験計画の記録。最終Android実走/GPU90完了まではHOLD。
+
+- D追加: `PrivateTrialReuseAdmissionTest` 2件。全JVMで2失敗を検出し、独立確認で両方とも旧CPU `PrivateTrialReuseSession.closed` のみの義務と確認した。製品cache無効化撤去と同時退役し、共通coordinatorの更新/取消/wakeを弱める変更ではない。失敗実行(1376件中2失敗/12skip)は記録として保全し、退役後の再実行と区別する。
+
+候補の非Android検証: 全JVM 1374件（成功1362/skip12/失敗0）、lintDebug、debug APK、androidTest APKの組み立て成功。Android実走・GPU90は未完了でHOLDを維持する。

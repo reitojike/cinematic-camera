@@ -31,67 +31,17 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 @SdkSuppress(minSdkVersion = 29)
 class PrivateTrialEndToEndTest {
-    private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
+    private val legacyHolder = lazy { LegacyCpuFixture.create(useReuseRegistry = true) }
+    private val legacy by legacyHolder
+    @org.junit.After fun closeLegacyFixture() { if (legacyHolder.isInitialized()) legacy.close() }
+    private val context get() = legacy.app
     private val ready = PhotoRollResources(true, 0, false, 1024L * 1024 * 1024,
         PhotoRollCameraSnapshot(false, false, false, false), true, true)
     private val allowed get() = ready.developConditions(true)
     @Before fun isolatedOnly() {
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
         check(Build.HARDWARE in setOf("goldfish", "ranchu"))
-        DevelopExecution.updateConditions(allowed) // Controlled functional observations, not measured device capacity.
-    }
-
-    @Test fun twelveMpDngUiAndFreshReadbackUseTheSameUnpublishedJpeg() = Fixture(4000, 3000).use { f ->
-        val first = f.render()
-        try {
-            val handle = f.handle()
-            val status = handle.status().get(30, TimeUnit.SECONDS)
-            assertEquals(PrivateTrialPhase.READY, status.phase)
-            assertEquals(RenderedFaceState.NOT_RUN, status.face)
-            assertEquals(RenderedExposureState.DIAGNOSTIC, status.exposure)
-            assertEquals(AutoRenderQuality.PRIVATE_TRIAL_1024, status.request.quality)
-            assertEquals(768, first.bitmap.width); assertEquals(1024, first.bitmap.height)
-            assertEquals(PhotoRollPreviewMode.PRIVATE_TRIAL, first.mode)
-            assertNull(first.jpegSave)
-            val comparison = requireNotNull(first.comparisonBitmap)
-            assertEquals(first.bitmap.width, comparison.width); assertEquals(first.bitmap.height, comparison.height)
-            assertNotSame(first.bitmap, comparison)
-            assertNotNull(first.comparisonLabel)
-            assertNotEquals(pixels(first.bitmap), pixels(comparison))
-            // Independent same-source decode verifies orientation/scale and pre-R7/pre-look display pixels.
-            val slot = requireNotNull(DevelopExecution.tryStartObserved(allowed))
-            try {
-                f.localReadOnlySource().use {
-                    val raw = dev.cinematic.p0.raw.NativeDngDecoder.decode(it.fd, 1024, CancellationSignal(), 0)
-                    val baseline = TrialDisplayPixels.encode(dev.cinematic.p0.raw.LinearSrgbImage(raw.width, raw.height, raw.pixels), 1024) { false }
-                    val expected = Bitmap.createBitmap(baseline, raw.width, raw.height, Bitmap.Config.ARGB_8888)
-                    try { assertEquals(pixels(expected), pixels(comparison)) } finally { expected.recycle() }
-                }
-            } finally { DevelopExecution.completeAfterResourcesClosed(slot) }
-            val record = f.record()
-            val file = f.output()
-            val fingerprint = requireNotNull(status.fingerprint)
-            DngContentVerifier.verify(fingerprint, { file.inputStream() })
-            val bytes = file.readBytes()
-            val decoded = ImageDecoder.decodeBitmap(ImageDecoder.createSource(ByteBuffer.wrap(bytes))) { decoder, _, _ ->
-                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-            }
-            try { assertEquals(pixels(decoded), pixels(first.bitmap)) } finally { decoded.recycle() }
-            val second = f.render()
-            try {
-                assertNotSame(first.bitmap, second.bitmap)
-                assertFalse(first.bitmap.isRecycled)
-                assertEquals(pixels(first.bitmap), pixels(second.bitmap))
-                assertNotSame(comparison, second.comparisonBitmap)
-                assertFalse(comparison.isRecycled)
-                assertEquals(pixels(comparison), pixels(requireNotNull(second.comparisonBitmap)))
-                assertEquals(record.attemptId, f.record().attemptId)
-                assertEquals(status.request, handle.status().get(30, TimeUnit.SECONDS).request)
-                assertEquals(fingerprint, handle.status().get(30, TimeUnit.SECONDS).fingerprint)
-                DngContentVerifier.verify(fingerprint, { f.output().inputStream() })
-            } finally { second.bitmap.recycle(); second.comparisonBitmap?.recycle() }
-            f.assertUnpublishedAndOriginal()
-        } finally { first.bitmap.recycle(); first.comparisonBitmap?.recycle() }
+        legacy.execution.updateConditions(allowed) // Controlled functional observations, not measured device capacity.
     }
 
     @Test fun cancellationCapturePriorityAndChangedPrivateBytesFailClosed() = Fixture(32, 24).use { f ->
@@ -113,9 +63,9 @@ class PrivateTrialEndToEndTest {
         val reservation = AtomicReference<AutoDevelopCoordinator.CaptureReservation?>()
         val abandoned = AtomicBoolean(false)
         val reserving = FutureTask {
-            val owned = DevelopExecution.reserveCapture()
+            val owned = legacy.execution.reserveCapture()
             reservation.set(owned)
-            if (abandoned.get()) reservation.getAndSet(null)?.let(DevelopExecution::releaseCapture)
+            if (abandoned.get()) reservation.getAndSet(null)?.let(legacy.execution::releaseCapture)
         }
         val reserver = Thread(reserving, "synthetic-capture-priority")
         var reserveStarted = false
@@ -125,13 +75,13 @@ class PrivateTrialEndToEndTest {
             reserver.start(); reserveStarted = true
             reserving.get(5, TimeUnit.SECONDS) // Returns while readback is deliberately blocked.
             capture = requireNotNull(reservation.getAndSet(null))
-            assertNull(DevelopExecution.tryStartObserved(allowed))
-            DevelopExecution.releaseCapture(capture!!); capture = null
-            assertNull(DevelopExecution.tryStartObserved(allowed)) // Stop is not a resource-close acknowledgement.
+            assertNull(legacy.execution.tryStartObserved(allowed))
+            legacy.execution.releaseCapture(capture!!); capture = null
+            assertNull(legacy.execution.tryStartObserved(allowed)) // Stop is not a resource-close acknowledgement.
         } finally {
             abandoned.set(true)
-            reservation.getAndSet(null)?.let(DevelopExecution::releaseCapture)
-            capture?.let(DevelopExecution::releaseCapture)
+            reservation.getAndSet(null)?.let(legacy.execution::releaseCapture)
+            capture?.let(legacy.execution::releaseCapture)
             release.countDown()
             if (reserveStarted) {
                 // Also collect a reservation that succeeded only after the assertion timed out.
@@ -143,9 +93,9 @@ class PrivateTrialEndToEndTest {
             failure != null
         }.get(30, TimeUnit.SECONDS)
         assertTrue("Stopped readback returned a display result", rejected)
-        val probe = DevelopExecution.tryStartObserved(allowed)
+        val probe = legacy.execution.tryStartObserved(allowed)
         assertNotNull(probe)
-        assertTrue(DevelopExecution.completeAfterResourcesClosed(probe!!))
+        assertTrue(legacy.execution.completeAfterResourcesClosed(probe!!))
         val again = f.render()
         again.bitmap.recycle(); again.comparisonBitmap?.recycle()
         assertEquals(before.attemptId, f.record().attemptId)
@@ -193,7 +143,7 @@ class PrivateTrialEndToEndTest {
         private val directory: File
         private var retained: PrivateTrialHandle? = null
         private val jpegCount = sharedJpegs()
-        val renderer = PrivateTrialPhotoRollRenderer(context) { ready }
+        val renderer = PrivateTrialPhotoRollRenderer(context, legacy) { ready }
         init {
             resolver.openOutputStream(uri, "w")!!.use { writeSyntheticTrialDng(it, width, height, 6) }
             check(resolver.update(uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null) == 1)
@@ -211,7 +161,7 @@ class PrivateTrialEndToEndTest {
             assertTrue("Private UI did not display: $result", result is PhotoRollRenderResult.Preview)
             return result as PhotoRollRenderResult.Preview
         }
-        fun handle(): PrivateTrialHandle = retained ?: AndroidAutoDevelopQueue.preparePrivateTrial(context, original.reference)
+        fun handle(): PrivateTrialHandle = retained ?: legacy.preparePrivateTrial( original.reference)
             .get(30, TimeUnit.SECONDS).also { retained = it }
         fun localReadOnlySource() = resolver.openFileDescriptor(uri, "r")!!
         private fun journal() = AutoDevelopJournal(handle().request.id, handle().request.generation,
@@ -233,10 +183,10 @@ class PrivateTrialEndToEndTest {
         override fun close() {
             handle().requestStop()
             handle().status().get(30, TimeUnit.SECONDS)
-            DevelopExecution.updateConditions(allowed)
-            val probe = DevelopExecution.tryStartObserved(allowed)
+            legacy.execution.updateConditions(allowed)
+            val probe = legacy.execution.tryStartObserved(allowed)
             check(probe != null) { "Keep test artifacts until resources actually close" }
-            DevelopExecution.completeAfterResourcesClosed(probe)
+            legacy.execution.completeAfterResourcesClosed(probe)
             check(resolver.delete(uri, null, null) == 1)
             check(directory.canonicalFile.parentFile == File(context.noBackupFilesDir, "raw-captures").canonicalFile)
             if (directory.exists()) check(directory.deleteRecursively())

@@ -36,7 +36,7 @@ internal class AndroidAutoDevelopBackend(
     private val previewOwnership = Any()
     private var comparisonFrames: OwnedJpegFrameSource? = null
     private data class PrivateReceipt(val request: AutoDevelopRequest, val attemptId: String,
-        val output: JpegOutputDescription, val fingerprint: OriginalFingerprint, val reuse: PrivateTrialReuseLease)
+        val output: JpegOutputDescription, val fingerprint: OriginalFingerprint)
     private var privateAttemptToken: Any? = null
     private var privateReceipt: PrivateReceipt? = null // Immutable metadata only, never retained pixels.
 
@@ -44,8 +44,11 @@ internal class AndroidAutoDevelopBackend(
         comparisonFrames?.let { exact -> { exact.requestStop() } }
     }
 
-    override val hasUnreleasedResources get() = resources.hasOpenResources || descriptors.any { !it.closed }
+    override val hasUnreleasedResources get() =
+        synchronized(previewOwnership) { comparisonFrames != null } || resources.hasOpenResources || descriptors.any { !it.closed }
     override fun releaseResources() {
+        // Close the frame owner before its underlying streams/FDs. A failed close retains both.
+        synchronized(previewOwnership) { comparisonFrames }?.let(::closeComparisonFrames)
         var failure = resources.releaseAll()
         descriptors.asReversed().forEach { descriptor ->
             try { descriptor.close() } catch (t: Throwable) { if (failure == null) failure = t else if (failure !== t) failure!!.addSuppressed(t) }
@@ -55,19 +58,22 @@ internal class AndroidAutoDevelopBackend(
         resources = DngIoResources()
         descriptors.clear()
     }
+    private fun closeComparisonFrames(frames: OwnedJpegFrameSource) {
+        frames.close() // Throwing is not a close acknowledgement; retain the exact cancellation target.
+        synchronized(previewOwnership) { if (comparisonFrames === frames) comparisonFrames = null }
+    }
     private fun checkRequest(value: AutoDevelopRequest) { if (value != request) throw CaptureJournalConflict() }
     override fun supports(request: AutoDevelopRequest) = request == this.request && catalog.find(request) != null
     override fun verifyOriginal(request: AutoDevelopRequest, shouldStop: () -> Boolean) {
         checkRequest(request)
-        val reuse = if (request.boundedTrial) PrivateTrialReuseRegistry.forRequest(request) else null
-        val stop = privateValidationStop(reuse, shouldStop)
+        val stop = privateValidationStop(shouldStop)
         var releasing = true
         try {
             releaseResources()
             releasing = false
             DngContentVerifier.verify(request.source.fingerprint, { resources.input(readOriginal()) }, stop)
         } catch (failure: Throwable) {
-            validationFailed(reuse, failure, releasing || hasUnreleasedResources)
+            validationFailed(failure, releasing || hasUnreleasedResources)
             throw failure
         }
     }
@@ -91,7 +97,6 @@ internal class AndroidAutoDevelopBackend(
     }
     override fun createAttempt(request: AutoDevelopRequest, attemptId: String): AutoRenderAttempt {
         checkRequest(request)
-        val reuse = if (request.boundedTrial) PrivateTrialReuseRegistry.forRequest(request) else null
         val token = Any()
         privateAttemptToken = token
         privateReceipt = null
@@ -116,8 +121,8 @@ internal class AndroidAutoDevelopBackend(
                 rendering = true
                 try {
                     return engine.render(shouldStop).also { produced ->
-                        if (reuse != null && privateAttemptToken === token)
-                            privateReceipt = PrivateReceipt(request, attemptId, produced.receipt.output, produced.fingerprint, reuse)
+                        if (request.boundedTrial && privateAttemptToken === token)
+                            privateReceipt = PrivateReceipt(request, attemptId, produced.receipt.output, produced.fingerprint)
                     }
                 }
                 finally { rendering = false }
@@ -133,10 +138,7 @@ internal class AndroidAutoDevelopBackend(
         checkRequest(request)
         val recorded = privateReceipt
         val expected = recorded?.takeIf { it.request == request && it.attemptId == attemptId }
-        // A producing attempt's capability must never be replaced with a newer binding's lease.
-        val reuse = if (recorded != null) expected?.reuse
-            else if (request.boundedTrial) PrivateTrialReuseRegistry.forRequest(request) else null
-        val stop = privateValidationStop(reuse, shouldStop)
+        val stop = privateValidationStop(shouldStop)
         var releasing = true
         try {
             if (recorded != null && expected == null) throw IOException("Private inspection belongs to another attempt")
@@ -150,34 +152,29 @@ internal class AndroidAutoDevelopBackend(
                 throw IOException("Private JPEG inspection differs from the renderer receipt")
             return inspection
         } catch (failure: Throwable) {
-            validationFailed(reuse, failure, releasing || hasUnreleasedResources)
+            validationFailed(failure, releasing || hasUnreleasedResources)
             throw failure
         }
     }
 
     /** Legacy/public JPEG validators interpret Boolean stops as IOException. Preserve a typed private stop. */
-    private fun privateValidationStop(reuse: PrivateTrialReuseLease?, shouldStop: () -> Boolean): () -> Boolean =
-        if (reuse == null) shouldStop else {
+    private fun privateValidationStop(shouldStop: () -> Boolean): () -> Boolean =
+        if (!request.boundedTrial) shouldStop else {
             {
                 if (shouldStop()) throw java.util.concurrent.CancellationException("Private trial validation cancelled")
                 false
             }
         }
 
-    /** Runner can convert validation errors into HELD without entering the display path. */
-    private fun validationFailed(reuse: PrivateTrialReuseLease?, failure: Throwable, closeFailed: Boolean) {
-        if (reuse == null) return // Completed/legacy owners retain their existing error/cleanup behavior.
+    /** Preserve the original failure type; a later stop must not turn an IO failure into cancellation. */
+    private fun validationFailed(failure: Throwable, closeFailed: Boolean) {
+        if (!request.boundedTrial || closeFailed) return
         fun normalCancellation(value: Throwable): Boolean =
             (value is java.util.concurrent.CancellationException || value is android.os.OperationCanceledException ||
                 value is DngVerificationStopped) && value.suppressed.all(::normalCancellation)
-        if (closeFailed || !normalCancellation(failure)) {
-            reuse.invalidate()
-            return
-        }
-        // Ordinary supersession preserves the prior entry only after positively acknowledging close.
+        if (!normalCancellation(failure)) return
         try { releaseResources() }
         catch (cleanup: Throwable) {
-            reuse.invalidate()
             if (cleanup !== failure) failure.addSuppressed(cleanup)
         }
     }
@@ -212,9 +209,7 @@ internal class AndroidAutoDevelopBackend(
     override fun privatePreview(record: AutoDevelopRecord, shouldStop: () -> Boolean): PrivateTrialPreview {
         checkRequest(record.request)
         if (!request.boundedTrial || record.phase != AutoJobPhase.RENDERED) throw CaptureJournalConflict()
-        // This invocation owns one binding. Do not attach reusable pixels to each durable job/backend.
-        val reuse = PrivateTrialReuseRegistry.forRequest(request)
-        val stop = privateValidationStop(reuse, shouldStop)
+        val stop = privateValidationStop(shouldStop)
         var ownedImage: Bitmap? = null
         var ownedComparison: Bitmap? = null
         var releasing = true
@@ -240,67 +235,41 @@ internal class AndroidAutoDevelopBackend(
                 bitmap.height != description.height || bitmap.width > 1024 || bitmap.height > 1024 || bitmap.colorSpace?.isSrgb != true) {
                 throw IOException("Private display image is unsupported")
             }
-            var candidate: IntArray? = null
             val comparison = try {
-                val cached = cachedComparison(reuse, description, stop)
-                val result = cached ?: comparisonImage(description, stop)
-                candidate = result.candidate
+                val result = comparisonImage(description, stop)
                 result.bitmap.also { ownedComparison = it }
             }
             catch (failure: java.util.concurrent.CancellationException) { throw failure }
             catch (failure: android.os.OperationCanceledException) { throw failure }
             catch (failure: DngVerificationStopped) { throw failure }
             catch (failure: DngContentChanged) { throw failure }
-            catch (_: Exception) { reuse?.invalidate(); comparisonUnavailable(stop) }
-            catch (_: OutOfMemoryError) { reuse?.invalidate(); comparisonUnavailable(stop) }
+            catch (failure: Exception) { comparisonUnavailable(failure) }
+            catch (failure: OutOfMemoryError) { comparisonUnavailable(failure) }
             verifyOriginal(request, stop)
             if (stop()) throw DngVerificationStopped()
             releasing = true
-            releaseResources() // Commit only after the final original hash and every stream/FD close succeeds.
+            releaseResources() // Return only after the final original hash and every stream/FD close succeeds.
             releasing = false
             if (stop()) throw DngVerificationStopped()
-            candidate?.let { pixels ->
-                try { reuse?.commitComparison(description.width, description.height, pixels) }
-                catch (_: Exception) { reuse?.invalidate() }
-                catch (_: OutOfMemoryError) { reuse?.invalidate() }
-            }
             return PrivateTrialPreview(bitmap, PrivateTrialStatus.from(record), comparison).also {
                 ownedImage = null; ownedComparison = null
             }
         } catch (failure: Throwable) {
-            if (reuse != null) validationFailed(reuse, failure, releasing || hasUnreleasedResources)
-            else if (failure is java.util.concurrent.CancellationException ||
-                failure is android.os.OperationCanceledException || failure is DngVerificationStopped) {
-                // Keep the legacy no-session cleanup behavior; its Boolean callbacks are unchanged.
-                try { releaseResources() }
-                catch (cleanup: Throwable) {
-                    if (cleanup !== failure) failure.addSuppressed(cleanup)
-                }
-            }
+            validationFailed(failure, releasing || hasUnreleasedResources)
             throw failure
         } finally { ownedImage?.recycle(); ownedComparison?.recycle() }
     }
 
-    private data class ComparisonImage(val bitmap: Bitmap, val candidate: IntArray? = null)
+    private data class ComparisonImage(val bitmap: Bitmap)
 
-    /** Cache allocation failures fall back to the existing decode; cancellation never does. */
-    private fun cachedComparison(reuse: PrivateTrialReuseLease?, description: JpegOutputDescription,
-        shouldStop: () -> Boolean): ComparisonImage? {
-        try {
-            if (shouldStop()) throw DngVerificationStopped()
-            val pixels = reuse?.comparisonCopy(description.width, description.height) ?: return null
-            if (shouldStop()) throw DngVerificationStopped()
-            return ComparisonImage(Bitmap.createBitmap(pixels, description.width, description.height, Bitmap.Config.ARGB_8888))
-        } catch (failure: java.util.concurrent.CancellationException) { throw failure }
-        catch (failure: android.os.OperationCanceledException) { throw failure }
-        catch (failure: DngVerificationStopped) { throw failure }
-        catch (_: Exception) { reuse?.invalidate(); return null }
-        catch (_: OutOfMemoryError) { reuse?.invalidate(); return null }
-    }
-
-    private fun comparisonUnavailable(shouldStop: () -> Boolean): Bitmap? {
-        if (shouldStop()) throw DngVerificationStopped()
-        releaseResources() // A failed close must fail the whole result and retain its coordinator slot.
+    private fun comparisonUnavailable(failure: Throwable): Bitmap? {
+        // Do not retry an unconfirmed frame close here and downgrade its failure to an After-only result.
+        if (synchronized(previewOwnership) { comparisonFrames != null }) throw failure
+        try { releaseResources() }
+        catch (cleanup: Throwable) {
+            if (cleanup !== failure) failure.addSuppressed(cleanup)
+            throw failure
+        }
         return null // The caller still re-verifies the original before returning the valid After image.
     }
 
@@ -319,23 +288,27 @@ internal class AndroidAutoDevelopBackend(
         val frames = comparisonFrameFactory(io, request.source)
         synchronized(previewOwnership) { check(comparisonFrames == null); comparisonFrames = frames }
         var owned: Bitmap? = null
-        var completed = false
+        var failure: Throwable? = null
         try {
             val frame = frames.load(request.source, 1024, shouldStop)
             if (!frame.physicallyOriented || frame.image.width != description.width || frame.image.height != description.height)
                 throw IOException("Comparison geometry differs from private JPEG")
             val pixels = TrialDisplayPixels.encode(frame.image, 1024, shouldStop)
             val bitmap = Bitmap.createBitmap(pixels, frame.image.width, frame.image.height, Bitmap.Config.ARGB_8888).also { owned = it }
-            frames.close()
             if (shouldStop()) throw DngVerificationStopped()
-            return ComparisonImage(bitmap, pixels).also { completed = true }
+            return ComparisonImage(bitmap)
+        } catch (primary: Throwable) {
+            failure = primary
+            throw primary
         } finally {
-            try { frames.close() }
-            catch (failure: Throwable) { owned?.recycle(); throw failure }
-            finally {
-                synchronized(previewOwnership) { if (comparisonFrames === frames) comparisonFrames = null }
-                if (!completed) owned?.recycle()
+            try { closeComparisonFrames(frames) }
+            catch (cleanup: Throwable) {
+                owned?.recycle()
+                val primary = failure
+                if (primary == null) throw cleanup
+                if (cleanup !== primary) primary.addSuppressed(cleanup)
             }
+            if (failure != null) owned?.recycle()
         }
     }
 }

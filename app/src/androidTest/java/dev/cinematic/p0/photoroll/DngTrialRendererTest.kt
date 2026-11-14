@@ -38,7 +38,7 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 @SdkSuppress(minSdkVersion = 29)
 class DngTrialRendererTest {
-    private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
+    private val context get() = dev.cinematic.p0.jpegrender.original.isolatedGpuSaveSafetyApp()
     private val resources = PhotoRollResources(true, 0, false, PhotoRollResources.REQUIRED_AVAILABLE_BYTES)
     private var queueObserver: RawCaptureObserver? = null
 
@@ -80,62 +80,6 @@ class DngTrialRendererTest {
     }
 
     /** Real shared-original→retained private JPEG→fresh readback→UI display copy, without camera capture. */
-    @Test fun privateTrialRendererReopensSameArtifactWithoutPublishingOrRecyclingDisplay() = withOriginal { original ->
-        val resolver = context.contentResolver
-        assertEquals(1, resolver.update(original.uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null))
-        val ready = PhotoRollResources(true, 0, false, 1024L * 1024 * 1024,
-            PhotoRollCameraSnapshot(false, false, false, false), true, true)
-        DevelopExecution.updateConditions(ready.developConditions(true))
-        val renderer = PrivateTrialPhotoRollRenderer(context) { ready }
-        val checked = renderer.checkOriginal(PhotoRollRepository(resolver, context.packageName), original.uri, false, CancellationSignal())
-        val request = PhotoRollRenderRequest(checked, mode = renderer.mode, maxEdge = renderer.maxEdge)
-        val before = sharedJpegCount()
-        val first = renderer.render(request, CancellationSignal()) as PhotoRollRenderResult.Preview
-        val handle = AndroidAutoDevelopQueue.preparePrivateTrial(context, checked.reference).get(15, TimeUnit.SECONDS)
-        val observed = handle.status().get(15, TimeUnit.SECONDS)
-        val output = requireNotNull(observed.output)
-        val second = renderer.render(request, CancellationSignal()) as PhotoRollRenderResult.Preview
-        try {
-            assertEquals(PhotoRollPreviewMode.PRIVATE_TRIAL, first.mode)
-            assertNull(first.jpegSave); assertNull(second.jpegSave)
-            assertNotSame(first.bitmap, second.bitmap)
-            assertFalse(first.bitmap.isRecycled)
-            assertEquals(Bitmap.Config.ARGB_8888, first.bitmap.config)
-            assertTrue(first.bitmap.colorSpace!!.isSrgb)
-            assertEquals(output.width, first.bitmap.width)
-            assertEquals(output.height, first.bitmap.height)
-            assertTrue(first.bitmap.width <= 1024 && first.bitmap.height <= 1024)
-            val one = IntArray(first.bitmap.width * first.bitmap.height)
-            val two = IntArray(one.size)
-            first.bitmap.getPixels(one, 0, first.bitmap.width, 0, 0, first.bitmap.width, first.bitmap.height)
-            second.bitmap.getPixels(two, 0, second.bitmap.width, 0, 0, second.bitmap.width, second.bitmap.height)
-            assertArrayEquals(one, two)
-            assertEquals(observed.request, handle.status().get(15, TimeUnit.SECONDS).request)
-            assertEquals(observed.fingerprint, handle.status().get(15, TimeUnit.SECONDS).fingerprint)
-            assertEquals(before, sharedJpegCount())
-            DngContentVerifier.verify(checked.fingerprint, { resolver.openInputStream(checked.uri)!! })
-        } finally { first.bitmap.recycle(); second.bitmap.recycle(); handle.requestStop() }
-    }
-
-    @Test fun privateTrialUiCancellationBeforeReadbackKeepsOriginalAndAllowsExplicitRetry() = withOriginal { original ->
-        val resolver = context.contentResolver
-        assertEquals(1, resolver.update(original.uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null))
-        val ready = PhotoRollResources(true, 0, false, 1024L * 1024 * 1024,
-            PhotoRollCameraSnapshot(false, false, false, false), true, true)
-        DevelopExecution.updateConditions(ready.developConditions(true))
-        val renderer = PrivateTrialPhotoRollRenderer(context) { ready }
-        val checked = renderer.checkOriginal(PhotoRollRepository(resolver, context.packageName), original.uri, false, CancellationSignal())
-        val signal = CancellationSignal()
-        val request = PhotoRollRenderRequest(checked, mode = renderer.mode, maxEdge = renderer.maxEdge,
-            onStage = { if (it == PhotoRollRenderStage.TRIAL_READBACK) signal.cancel() })
-        val before = sharedJpegCount()
-        assertThrows(OperationCanceledException::class.java) { renderer.render(request, signal) }
-        val result = renderer.render(request.copy(explicitRetry = true, onStage = {}), CancellationSignal())
-        assertTrue("Private trial retry failed: $result", result is PhotoRollRenderResult.Preview)
-        (result as PhotoRollRenderResult.Preview).bitmap.recycle()
-        assertEquals(before, sharedJpegCount())
-        DngContentVerifier.verify(checked.fingerprint, { resolver.openInputStream(checked.uri)!! })
-    }
 
     private fun sharedJpegCount(): Int = context.contentResolver.query(
         MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), arrayOf(MediaStore.Images.Media._ID),
@@ -143,8 +87,8 @@ class DngTrialRendererTest {
         arrayOf(context.packageName, "image/jpeg"), null,
     )!!.use { it.count }
 
-    /** Programmatic callback/queue/list/renderer path, not CameraX capture or Compose interaction. */
-    @Test fun syntheticCaptureHandsOffOneOriginalAndDisplaysItAsTrial() {
+    /** Programmatic callback/queue/list/source-handoff path, not CameraX capture or Compose interaction. */
+    @Test fun syntheticCaptureHandsOffOneOriginalAndPreservesItsFingerprint() {
         check(Build.HARDWARE in setOf("goldfish", "ranchu")) { "Disposable emulator only" }
         val bytes = syntheticDng()
         val fingerprint = DngContentVerifier.identify(bytes.size.toLong(), { bytes.inputStream() })
@@ -202,20 +146,11 @@ class DngTrialRendererTest {
             val uri = Uri.parse(requireNotNull(done.uri))
             val repository = PhotoRollRepository(context.contentResolver, context.packageName)
             assertTrue(repository.list(CancellationSignal()).items.any { it.uri == uri.toString() })
-            val renderer = DngTrialRenderer(context.contentResolver) { resources }
-            val original = repository.check(uri, false, { false }, renderer.maxSourceBytes)
+            val original = repository.check(uri, false, { false }, 64L * 1024 * 1024)
             assertEquals(OriginalGrant.APP_OWNED, original.reference.grant)
             assertEquals(done.fingerprint, original.fingerprint)
             assertEquals(fingerprint, original.fingerprint)
-            val result = renderer.render(PhotoRollRenderRequest(original, mode = PhotoRollPreviewMode.DNG_TRIAL), CancellationSignal())
-            assertTrue(result is PhotoRollRenderResult.Preview)
-            val preview = result as PhotoRollRenderResult.Preview
-            try {
-                assertEquals(PhotoRollPreviewMode.DNG_TRIAL, preview.mode)
-                assertEquals(16, preview.bitmap.width)
-                assertEquals(12, preview.bitmap.height)
-                repository.verify(original) { false }
-            } finally { preview.bitmap.recycle() }
+            repository.verify(original) { false }
         } catch (error: Throwable) {
             primaryFailure = error
             throw error
@@ -246,25 +181,6 @@ class DngTrialRendererTest {
         }
     }
 
-    @Test fun selectedContentUriProducesHonestTrialBitmapAndLeavesOriginalUnchanged() = withOriginal { original ->
-        val renderer = DngTrialRenderer(context.contentResolver) { resources }
-        val result = renderer.render(PhotoRollRenderRequest(original, mode = PhotoRollPreviewMode.DNG_TRIAL), CancellationSignal())
-        assertTrue(result is PhotoRollRenderResult.Preview)
-        val preview = result as PhotoRollRenderResult.Preview
-        try {
-            assertEquals(PhotoRollPreviewMode.DNG_TRIAL, preview.mode)
-            assertNull(preview.jpegSave)
-            assertEquals(16, preview.bitmap.width)
-            assertEquals(12, preview.bitmap.height)
-            assertEquals(Bitmap.Config.ARGB_8888, preview.bitmap.config)
-            assertTrue(preview.bitmap.colorSpace!!.isSrgb)
-            val pixels = IntArray(16 * 12)
-            preview.bitmap.getPixels(pixels, 0, 16, 0, 0, 16, 12)
-            assertTrue(pixels.any { (it and 0xffffff) != 0 })
-            DngContentVerifier.verify(original.fingerprint, { context.contentResolver.openInputStream(original.uri)!! })
-        } finally { preview.bitmap.recycle() }
-    }
-
     @Test fun pendingOriginalCannotBecomeAnAppOwnedControllerReference() = withOriginal { original ->
         val repository = PhotoRollRepository(context.contentResolver, context.packageName)
         try {
@@ -274,123 +190,7 @@ class DngTrialRendererTest {
         DngContentVerifier.verify(original.fingerprint, { context.contentResolver.openInputStream(original.uri)!! })
     }
 
-    @Test fun cancellationDoesNotPreventTheNextRealRequest() = withOriginal { original ->
-        val renderer = DngTrialRenderer(context.contentResolver) { resources }
-        val request = PhotoRollRenderRequest(original, mode = PhotoRollPreviewMode.DNG_TRIAL)
-        try { renderer.render(request, CancellationSignal().apply { cancel() }); fail("Expected cancellation") }
-        catch (_: OperationCanceledException) { /* The next request must still work. */ }
-        val result = renderer.render(request, CancellationSignal())
-        assertTrue(result is PhotoRollRenderResult.Preview)
-        (result as PhotoRollRenderResult.Preview).bitmap.recycle()
-    }
-
-    @Test fun unavailableResourcesAndWrongModeDoNotBecomeSuccessfulImages() = withOriginal { original ->
-        val renderer = DngTrialRenderer(context.contentResolver) { resources.copy(camerasIdle = null) }
-        val blocked = renderer.render(PhotoRollRenderRequest(original, mode = PhotoRollPreviewMode.DNG_TRIAL), CancellationSignal())
-        assertTrue(blocked is PhotoRollRenderResult.Unavailable)
-        assertTrue((blocked as PhotoRollRenderResult.Unavailable).reason.contains("カメラ"))
-        val wrongMode = renderer.render(PhotoRollRenderRequest(original), CancellationSignal())
-        assertTrue(wrongMode is PhotoRollRenderResult.Unavailable)
-        assertTrue((wrongMode as PhotoRollRenderResult.Unavailable).reason.contains("Stage Clear"))
-    }
-
-    @Test fun selectedContentUriRunsRealR7AndLookWithExplicitTrialMode() = withOriginal { original ->
-        val stages = mutableListOf<PhotoRollRenderStage>()
-        val renderer = StageClearTrialRenderer(context.contentResolver) { resources }
-        val request = PhotoRollRenderRequest(original, mode = renderer.mode, maxEdge = renderer.maxEdge, onStage = { stages += it })
-        val result = renderer.render(request, CancellationSignal()) as PhotoRollRenderResult.Preview
-        val plain = DngTrialRenderer(context.contentResolver) { resources }.render(
-            PhotoRollRenderRequest(original, mode = PhotoRollPreviewMode.DNG_TRIAL), CancellationSignal(),
-        ) as PhotoRollRenderResult.Preview
-        try {
-            assertEquals(PhotoRollPreviewMode.STAGE_CLEAR_TRIAL, result.mode)
-            assertNull(result.jpegSave)
-            assertEquals(listOf(PhotoRollRenderStage.DECODE, PhotoRollRenderStage.INPUTS, PhotoRollRenderStage.BASE,
-                PhotoRollRenderStage.LOOK, PhotoRollRenderStage.DISPLAY), stages)
-            assertEquals(16, result.bitmap.width)
-            assertEquals(12, result.bitmap.height)
-            assertEquals(Bitmap.Config.ARGB_8888, result.bitmap.config)
-            assertTrue(result.bitmap.colorSpace!!.isSrgb)
-            val looked = IntArray(16 * 12)
-            val asShot = IntArray(16 * 12)
-            result.bitmap.getPixels(looked, 0, 16, 0, 0, 16, 12)
-            plain.bitmap.getPixels(asShot, 0, 16, 0, 0, 16, 12)
-            assertFalse(looked.contentEquals(asShot))
-            assertTrue(looked.any { (it and 0xffffff) != 0 })
-            DngContentVerifier.verify(original.fingerprint, { context.contentResolver.openInputStream(original.uri)!! })
-        } finally { result.bitmap.recycle(); plain.bitmap.recycle() }
-    }
-
-    @Test fun stageCancellationStopsLookAndAllowsNextNativeRequest() = withOriginal { original ->
-        val renderer = StageClearTrialRenderer(context.contentResolver) { resources }
-        val signal = CancellationSignal()
-        val stages = mutableListOf<PhotoRollRenderStage>()
-        val request = PhotoRollRenderRequest(original, mode = renderer.mode, maxEdge = renderer.maxEdge, onStage = {
-            stages += it
-            if (it == PhotoRollRenderStage.BASE) signal.cancel()
-        })
-        try { renderer.render(request, signal); fail("Expected stage cancellation") }
-        catch (_: java.util.concurrent.CancellationException) { }
-        assertEquals(PhotoRollRenderStage.BASE, stages.last())
-        val result = renderer.render(request.copy(onStage = {}), CancellationSignal()) as PhotoRollRenderResult.Preview
-        result.bitmap.recycle()
-        DngContentVerifier.verify(original.fingerprint, { context.contentResolver.openInputStream(original.uri)!! })
-    }
-
-    @Test fun stageClearRejectsUnknownResourcesAndUnsupportedControlsBeforeDecode() = withOriginal { original ->
-        var stages = 0
-        val renderer = StageClearTrialRenderer(context.contentResolver) { resources }
-        val request = PhotoRollRenderRequest(original, mode = renderer.mode, maxEdge = renderer.maxEdge, onStage = { stages++ })
-        for (invalid in listOf(request.copy(mode = PhotoRollPreviewMode.STAGE_CLEAR), request.copy(maxEdge = 513),
-            request.copy(strength = Double.NaN), request.copy(strength = 1.0), request.copy(lookVersion = "unknown"))) {
-            assertTrue(renderer.render(invalid, CancellationSignal()) is PhotoRollRenderResult.Unavailable)
-        }
-        val blocked = StageClearTrialRenderer(context.contentResolver) { resources.copy(thermalStatus = null) }
-        assertTrue(blocked.render(request, CancellationSignal()) is PhotoRollRenderResult.Unavailable)
-        assertEquals(0, stages)
-    }
-
-    @Test fun maximumPortraitTrialCancelsBeforeBitmapAndNextRequestWorks() =
-        withOriginal(syntheticDng(width = 1024, height = 768, orientation = 6)) { original ->
-            val renderer = StageClearTrialRenderer(context.contentResolver) { resources }
-            val stages = mutableListOf<PhotoRollRenderStage>()
-            val request = PhotoRollRenderRequest(original, mode = renderer.mode, maxEdge = renderer.maxEdge,
-                onStage = { stages += it })
-            val rendered = renderer.render(request, CancellationSignal())
-            assertTrue("512px trial did not complete: $rendered", rendered is PhotoRollRenderResult.Preview)
-            val preview = rendered as PhotoRollRenderResult.Preview
-            try {
-                assertEquals(PhotoRollPreviewMode.STAGE_CLEAR_TRIAL, preview.mode)
-                assertEquals(384, preview.bitmap.width)
-                assertEquals(512, preview.bitmap.height)
-                assertEquals(Bitmap.Config.ARGB_8888, preview.bitmap.config)
-                assertTrue(preview.bitmap.colorSpace!!.isSrgb)
-                assertEquals(listOf(PhotoRollRenderStage.DECODE, PhotoRollRenderStage.INPUTS,
-                    PhotoRollRenderStage.BASE, PhotoRollRenderStage.LOOK, PhotoRollRenderStage.DISPLAY), stages)
-            } finally { preview.bitmap.recycle() }
-
-            // Cancel after the real R7/Look work, before display encoding can return a Bitmap.
-            val signal = CancellationSignal()
-            stages.clear()
-            try {
-                renderer.render(request.copy(onStage = {
-                    stages += it
-                    if (it == PhotoRollRenderStage.DISPLAY) signal.cancel()
-                }), signal)
-                fail("Expected display-stage cancellation")
-            } catch (_: java.util.concurrent.CancellationException) { }
-            assertEquals(PhotoRollRenderStage.DISPLAY, stages.last())
-            val recovered = renderer.render(request.copy(maxEdge = 64, onStage = {}), CancellationSignal())
-            assertTrue("Next trial did not complete: $recovered", recovered is PhotoRollRenderResult.Preview)
-            val next = recovered as PhotoRollRenderResult.Preview
-            try {
-                assertEquals(PhotoRollPreviewMode.STAGE_CLEAR_TRIAL, next.mode)
-                assertEquals(48, next.bitmap.width)
-                assertEquals(64, next.bitmap.height)
-                DngContentVerifier.verify(original.fingerprint, { context.contentResolver.openInputStream(original.uri)!! })
-            } finally { next.bitmap.recycle() }
-        }
-
+    /** Uncompressed Bayer DNG; default bytes stay 32x24/orientation 1. All metadata/samples are synthetic. */
     private fun withOriginal(bytes: ByteArray = syntheticDng(), action: (PhotoRollOriginal) -> Unit) {
         val resolver = context.contentResolver
         val uri = resolver.insert(MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), ContentValues().apply {

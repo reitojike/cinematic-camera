@@ -12,9 +12,6 @@ internal object DevelopExecution {
         queue = owner
     }
     fun updateConditions(observations: AutoDevelopConditions) {
-        if (AutoDevelopPolicy.blockers(observations).isNotEmpty()) {
-            PrivateTrialReuseRegistry.invalidateAll()
-        }
         val owner = queue
         if (owner == null) coordinator.updateConditions(observations) else owner.updateConditions(observations)
         stopRequestedOwners()
@@ -53,7 +50,6 @@ internal object DevelopExecution {
         return coordinator.completeAfterResourcesClosed(attempt).also { if (it) queue?.wake() }
     }
     fun reserveCapture() = run {
-        PrivateTrialReuseRegistry.invalidateAll()
         (queue?.reserveCapture() ?: coordinator.reserveCapture()).also { stopRequestedOwners() }
     }
     /** A failing native cancellation must not prevent requesting stop from the other owner. */

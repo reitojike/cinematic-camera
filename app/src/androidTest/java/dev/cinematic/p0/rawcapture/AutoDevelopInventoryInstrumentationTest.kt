@@ -19,7 +19,22 @@ class AutoDevelopInventoryInstrumentationTest {
     @Test fun defaultFactoryRestoresExistingPrivateRequestBeforeTheNextPrepareWithoutRendering() {
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
         check(Build.HARDWARE in setOf("goldfish", "ranchu"))
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val args = InstrumentationRegistry.getArguments()
+        check(args.getString("class")?.substringBefore('#') == javaClass.name) {
+            "Default-factory inventory proof needs a fresh single-class instrumentation process"
+        }
+        val installed = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
+        val namespace = File(installed.cacheDir.canonicalFile, "legacy-inventory-${UUID.randomUUID()}")
+        check(namespace.mkdir() && namespace.canonicalFile.parentFile == installed.cacheDir.canonicalFile)
+        val state = File(namespace, "state").also { check(it.mkdir()) }
+        val cache = File(namespace, "cache").also { check(it.mkdir()) }
+        val context = object : android.content.ContextWrapper(installed) {
+            override fun getApplicationContext(): android.content.Context = this
+            override fun getNoBackupFilesDir(): File = state
+            override fun getCacheDir(): File = cache
+        }
+        // Populate this new namespace before obtaining the real default product owner.
+        // No legacy fixture queue or installed-app inventory is involved.
         val root = File(context.noBackupFilesDir, "raw-captures")
         val source = SharedOriginalReference("content://synthetic/inventory/${UUID.randomUUID()}",
             OriginalFingerprint(3, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"), OriginalGrant.USER_SELECTED)
