@@ -88,6 +88,8 @@ dev.5のGPU_RENDERには内包する工程の記録I/Oが含まれるため、�
 2. 抽出ファイルを保管し、versionとattemptで版・試行を区別する。繰り返し抽出の重複を別試行として数えない。
 3. 比較対象はNATIVE_DECODE、B1〜FINAL（B1_QUANTILESを含む）、JPEG_ENCODE、PUBLICATIONに限る。
    同じ画素数・工程・成功状態で比較し、INCOMPLETE、NA、SKIPPED等を成功の0msにしない。
+   展開直後はpixels=NAなので、NATIVE_DECODEの画素数は同一attemptの後続行から照合する。
+   対応する画素数が取得できない試行は画素数別の比較に混ぜない。
 4. GPU_RENDERとATTEMPTはdev.5/dev.6比較から除外する。旧版の記録I/O影響や計測値欠如があるため。
    GPUの各境界は別途収集してFuture完了後に記録し、展開・JPEG・公開は開始記録後から終了記録前まで
    時計を取る既存区間を維持する。この比較でも普段使いの入力・端末状態の違いは別要因として扱う。
