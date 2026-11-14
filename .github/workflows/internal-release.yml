@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: '新規pre-release tag (vX.Y.Z-alpha.N / dev.N)'
+        description: '新規tag (vX.Y.Z / vX.Y.Z-alpha.N / vX.Y.Z-dev.N)'
         required: true
         type: string
       commit:
@@ -42,7 +42,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-(alpha|dev)\.[1-9][0-9]*$ ]]
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|dev)\.[1-9][0-9]*)?$ ]]
           [[ "$RELEASE_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]
           git fetch --no-tags origin main
           git cat-file -e "$RELEASE_COMMIT^{commit}"
@@ -173,14 +173,20 @@ jobs:
             printf -- '- workflow: https://github.com/%s/actions/runs/%s\n' "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
           } > RELEASE_NOTES.md
           cat SHA256SUMS.txt SIGNING.txt >> RELEASE_NOTES.md
-      - name: 検証用pre-releaseへ保存
+      - name: tag形式に応じたReleaseへ保存
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
+        shell: bash
         run: |
+          set -euo pipefail
+          release_flags=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            release_flags+=(--prerelease)
+          fi
           gh release create "$RELEASE_TAG" \
             "$RUNNER_TEMP/cinematic-internal-release/cinematic-camera-internal.apk" \
             "$RUNNER_TEMP/cinematic-internal-release/SHA256SUMS.txt" \
             "$RUNNER_TEMP/cinematic-internal-release/SIGNING.txt" \
-            --target "$CINEMATIC_RELEASE_COMMIT" --prerelease --title "$RELEASE_TAG" \
+            --target "$CINEMATIC_RELEASE_COMMIT" "${release_flags[@]}" --title "$RELEASE_TAG" \
             --notes-file "$RUNNER_TEMP/cinematic-internal-release/RELEASE_NOTES.md"
