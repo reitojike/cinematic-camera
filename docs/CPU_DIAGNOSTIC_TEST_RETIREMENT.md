@@ -82,7 +82,7 @@ adb -s <予約済みemulator> shell am instrument -w -r -e isolated true -e gpuI
 | `GpuInputOwnershipSafetyAndroidTest.unboundContextIsRejectedThenClosedBeforeNextContext` | `GpuDiagnosticProbeTest.unboundContextIsRejectedAndCanBeReleased` | unbind後の拒否・暗黙再bindなし・close後の次context |
 | `GpuInputAdmissionSafetyAndroidTest.rejectedAndCancelledInputsKeepPrimaryFailureAndReleaseAdmissionBeforeNextInput` | `GpuDiagnosticDngInputTest` の事前取消/非local拒否/foreground未確認/cleanup取消による再分類禁止/cleanup失敗によるprimary置換禁止の5件 | 製品GpuPhotoRollInputs・private providerで各拒否後のread不開始/slot解放/原本不変、release observer取消/失敗後のprimary保持、最後のnative入力成功 |
 
-これでM1の20元メソッドに対する実装へ着手、通常側は計16method（既存12＋追加4）。残る26元メソッドは実装待ち。
+この先行段階ではM1の20元メソッドに対応、通常側は計16method（既存12＋追加4）だった。現在の追加実装と残件は次の46件対応表を正本とする。
 admissionの1methodは複数ケースをまとめたもので、5件実行と数えない。queueのprivate領域を隔離するため同classは新しいinstrumentation processで単独実行する。
 両新classも `isolated=true` / `gpuInputSafety=true` が必要。新classの実GPU/入力試験は未実走。
 
@@ -97,6 +97,71 @@ unit taskはFROM-CACHEのため、新たなhost実走とは数えない。追加
 - 通常Gradleとgolden wrapper内Gradleは同じworktree/buildで絶対に重ねない。2レーンは別worktree/build。共有AVDは予約→使用→終了/返却確認。#403初回の同時Gradleによるnative出力競合は双方停止後の単独再実行で解消した履歴として残し、成功ログに置換しない。
 - 原本/取消/retry/owner、#365/#377/#357/#383の契約を変更しない。合成MediaStore行はowner/ID/nameを検証し成功時のみ削除、失敗/不明なら保持。ユーザーの保存済みデータは対象外。
 - `OriginalRasterFile` の変更が必要なら追加レーンと先に調整する。本台帳は同ファイルを変更しない。#290を優先し、PR-Fは競合しない待ち時間のみ。
+
+### 移行①の46元メソッド対応（追加実装後・全件Android未実走）
+
+通常側の選択予定は **27 method**。入力解析/入力7+crop4+preflight5=16、GPU所有権3、admission2、routing3、lifecycle1、surface1、Files1。
+これに既存 `GpuProductInputAndroidTest.originalIsReadOnlyAtOpenAndAllPreviewOwnersReleaseAcrossPhotosAndResume`、
+`GpuProductEditorAndroidTest.slidersComparisonSelectionBackgroundAndRetryKeepOriginalAndOwnerBoundaries`、
+`DevelopEngineAndroidTest.releasePolicyHasNoSettingAndDoesNotProbeGpu` の3件を保持先として再実走する（計30 method予定）。
+各classはfresh instrumentation processで実行し、専用queue/observerの混在を避ける。予定件数を実績へ読み替えない。
+
+元46件の内訳は、実装/保持対応42件、部分実装2件、契約差で判断待ち2件。**移行完了は0件**（Android未実走）。
+42件にも既存通常試験への集約と、CPU/診断専用部分を移さない混在試験が含まれ、新規42件を意味しない。
+旧分類133件の M95/D14/E24 は維持し、下表はM1内の実装状況を細分化したもの。
+
+| 元class.method | 状態 | 通常側の保証対応/移さない部分 |
+|---|---|---|
+| `GpuDiagnosticDngInputTest.cancelledSelectionDoesNotReadOrRetainAdmission` | 実装/保持・未実走 | GpuInputAdmissionSafetyAndroidTest.rejectedAndCancelledInputsKeepPrimaryFailureAndReleaseAdmissionBeforeNextInput（実native入力、取消close待ち、FULL_RECOMPUTE。CPU reference log/旧start UIは削除対象） |
+| `GpuDiagnosticDngInputTest.wrappedCancellationIsNotAReadFailure` | 実装/保持・未実走 | GpuInputAdmissionSafetyAndroidTest.productWaitPreservesCancellationAndReadFailureIdentity（製品future待機の実契約。診断専用recursive分類/null helperは移さない） |
+| `GpuDiagnosticDngInputTest.trueReadFailureIsNotCancellation` | 実装/保持・未実走 | GpuInputAdmissionSafetyAndroidTest.productWaitPreservesCancellationAndReadFailureIdentity（製品future待機の実契約。診断専用recursive分類/null helperは移さない） |
+| `GpuDiagnosticDngInputTest.cleanupCancellationDoesNotReclassifyAReadFailure` | 実装/保持・未実走 | GpuInputAdmissionSafetyAndroidTest.rejectedAndCancelledInputsKeepPrimaryFailureAndReleaseAdmissionBeforeNextInput（実native入力、取消close待ち、FULL_RECOMPUTE。CPU reference log/旧start UIは削除対象） |
+| `GpuDiagnosticDngInputTest.cleanupListenerFailureDoesNotReplaceTheOriginalReadFailure` | 実装/保持・未実走 | GpuInputAdmissionSafetyAndroidTest.rejectedAndCancelledInputsKeepPrimaryFailureAndReleaseAdmissionBeforeNextInput（実native入力、取消close待ち、FULL_RECOMPUTE。CPU reference log/旧start UIは削除対象） |
+| `GpuDiagnosticDngInputTest.nonLocalSelectionIsRejectedAndReleasesAdmissionForNextSelection` | 実装/保持・未実走 | GpuInputAdmissionSafetyAndroidTest.rejectedAndCancelledInputsKeepPrimaryFailureAndReleaseAdmissionBeforeNextInput（実native入力、取消close待ち、FULL_RECOMPUTE。CPU reference log/旧start UIは削除対象） |
+| `GpuDiagnosticDngInputTest.unconfirmedForegroundCannotAcquireInputAdmission` | 実装/保持・未実走 | GpuInputAdmissionSafetyAndroidTest.rejectedAndCancelledInputsKeepPrimaryFailureAndReleaseAdmissionBeforeNextInput（実native入力、取消close待ち、FULL_RECOMPUTE。CPU reference log/旧start UIは削除対象） |
+| `GpuDiagnosticDngPipelineTest.syntheticDocumentLoadsNativeAsShotAndRendersWithoutChangingOriginal` | 実装/保持・未実走 | GpuInputAdmissionSafetyAndroidTest.rejectedAndCancelledInputsKeepPrimaryFailureAndReleaseAdmissionBeforeNextInput（実native入力、取消close待ち、FULL_RECOMPUTE。CPU reference log/旧start UIは削除対象） |
+| `GpuDiagnosticFilesSelectionTest.filesSelectsSyntheticDngAndRendersWithoutChangingOriginal` | 実装/保持・未実走 | GpuInputFilesSafetyAndroidTest.filesSelectsOnlyOwnedSyntheticDngAndProductGpuRendersIt（実DocumentsUI、実native/GPU、所有行照合） |
+| `GpuDiagnosticPickerLifecycleTest.repeatedSelectionsThenPauseRejectAllLateResultsAfterResume` | 実装/保持・未実走 | GpuInputLifecycleSafetyAndroidTest.visibleContextLossRetryAndActivityTrimKeepOriginalAndRetireEveryPreviewOwner（実observer、12MP、10回再作成、実gesture、provider barrier中の新選択/pause/resume。旧synthetic/CPU worker UIは移さない） |
+| `GpuDiagnosticPickerLifecycleTest.syntheticChoiceWinsOverCancelledPickerWork` | 実装/保持・未実走 | GpuInputLifecycleSafetyAndroidTest.visibleContextLossRetryAndActivityTrimKeepOriginalAndRetireEveryPreviewOwner（実observer、12MP、10回再作成、実gesture、provider barrier中の新選択/pause/resume。旧synthetic/CPU worker UIは移さない） |
+| `GpuDiagnosticPickerLifecycleTest.failedGpuKeepsRetryVisibleUntilSelectedInputActuallyRenders` | 契約差・判断待ち | 旧診断のgpuError保持と製品の新session/入力loading表示は同じstateではない。新lifecycle試験はfailure可視→明示retry→実再描画を保持するが、load中も旧retryを保持するassertは未移行 |
+| `GpuDiagnosticSurfaceInputTest.surfaceOnlyStopStartRendersAgain` | 実装/保持・未実走 | GpuInputSurfaceSafetyAndroidTest.surfaceRecreationAndInputDeliveredWithoutSurfaceRenderOnResume（実Compose surface、native入力、surface不在で新入力を渡してresume後描画） |
+| `GpuDiagnosticSurfaceInputTest.foregroundSyntheticDngAfterRealPublicationRenders` | 実装/保持・未実走 | GpuInputLifecycleSafetyAndroidTest.visibleContextLossRetryAndActivityTrimKeepOriginalAndRetireEveryPreviewOwner（実observer、12MP、10回再作成、実gesture、provider barrier中の新選択/pause/resume。旧synthetic/CPU worker UIは移さない） |
+| `GpuDiagnosticSurfaceInputTest.syntheticDngDeliveredWhileSurfaceAbsentRendersOnResume` | 実装/保持・未実走 | GpuInputSurfaceSafetyAndroidTest.surfaceRecreationAndInputDeliveredWithoutSurfaceRenderOnResume（実Compose surface、native入力、surface不在で新入力を渡してresume後描画） |
+| `GpuDiagnosticSurfaceInputTest.delayedUiHiddenDuringResumedDngLoadDoesNotCancelNewInput` | 契約差・判断待ち | 旧診断は再開後UI_HIDDENでload継続。製品PhotoRollActivity.onTrimMemory/GpuPhotoRollEditorはpreviewTrimEpochでpreviewを閉じ明示retryを要求。旧期待値を移すには製品契約変更となるため未移行/未削除 |
+| `GpuPreviewLifecycleTest.oldSurfaceDetachCannotClearNewAttachmentNotification` | 実装/保持・未実走 | GpuInputOwnershipSafetyAndroidTest.oldSurfaceDetachCannotClearNewAttachmentNotification |
+| `GpuPreviewLifecycleTest.readinessTimeoutReplacementPauseAndDestroyKeepOnlyCurrentInput` | 実装/保持・未実走 | 既存 GpuProductEditorAndroidTest.slidersComparisonSelectionBackgroundAndRetryKeepOriginalAndOwnerBoundaries のtimeout/read不開始＋新 GpuInputLifecycleSafetyAndroidTest の旧callback/破棄確認に集約。両方の再実走が必要 |
+| `GpuPreviewLifecycleTest.composeStopStartTrimAndTenActivityRecreationsRenderAgain` | 実装/保持・未実走 | GpuInputLifecycleSafetyAndroidTest.visibleContextLossRetryAndActivityTrimKeepOriginalAndRetireEveryPreviewOwner（実observer、12MP、10回再作成、実gesture、provider barrier中の新選択/pause/resume。旧synthetic/CPU worker UIは移さない） |
+| `EditorPreviewParallelTest.workerCancellationClearsBothCachesAndRequiresNewSession` | 実装/保持・未実走 | Original24GpuInputAndroidTest.cancelledInputEntryIsTerminalAndRetainsNoTransientFiles（新sessionのnative成功を追加）。CPU worker/cache固有比較は移さない |
+| `GpuProductLifecycleAndroidTest.visibleContextLossRetryAndActivityTrimKeepOriginalAndRetireEveryPreviewOwner` | 実装/保持・未実走 | GpuInputLifecycleSafetyAndroidTest.visibleContextLossRetryAndActivityTrimKeepOriginalAndRetireEveryPreviewOwner（実observer、12MP、10回再作成、実gesture、provider barrier中の新選択/pause/resume。旧synthetic/CPU worker UIは移さない） |
+| `GpuDiagnosticProbeTest.sessionReusesProgramsAndRejectsWrongThreadAndClosedUse` | 実装/保持・未実走 | GpuInputOwnershipSafetyAndroidTest.contextRejectsWrongThreadDrawAndCloseAndClosedUseWithoutLosingOwner |
+| `GpuDiagnosticProbeTest.unboundContextIsRejectedAndCanBeReleased` | 実装/保持・未実走 | GpuInputOwnershipSafetyAndroidTest.unboundContextIsRejectedThenClosedBeforeNextContext |
+| `PreviewParallelDiagnosticTest.explicitStartCanCancelAndReleaseGate` | 実装/保持・未実走 | GpuInputAdmissionSafetyAndroidTest.rejectedAndCancelledInputsKeepPrimaryFailureAndReleaseAdmissionBeforeNextInput（実native入力、取消close待ち、FULL_RECOMPUTE。CPU reference log/旧start UIは削除対象） |
+| `DevelopEngineAndroidTest.ordinaryContextIgnoresAllDiagnosticPreferencesWithoutMigration` | 実装/保持・未実走 | GpuInputRoutingSafetyAndroidTest.ordinaryContextIgnoresAllDiagnosticPreferencesWithoutMigration |
+| `DevelopEngineAndroidTest.releasePolicyHasNoSettingAndDoesNotProbeGpu` | 部分実装・削除時確認待ち | 新 GpuInputRoutingSafetyAndroidTest.ordinaryPolicyCannotReadOrWriteLegacySelectionOrAdmitAChoice はroutingを保持。旧 DevelopEngineAndroidTest.releasePolicyHasNoSettingAndDoesNotProbeGpu は通常側で実走可能なため選択実行を保持。診断View削除時のentry不在検証への置換は未完 |
+| `DevelopEngineAndroidTest.recreatedSettingsViewUsesTheSharedCapabilityResult` | 実装/保持・未実走 | GpuInputRoutingSafetyAndroidTest.capabilityResultIsSharedAcrossConsumersUntilExplicitRefresh（旧Viewなし、共有cacheを直接検証） |
+| `OddCropGeometryProbeTest.oddCropPreservesPixelsAndOrientation` | 実装/保持・未実走 | OddCropGeometryProbeTest.oddCropPreservesPixelsAndOrientation（通常gateへ変更、assert保持） |
+| `OddCropGeometryProbeTest.evenCropAndActiveAreaBoundariesPreservePixels` | 実装/保持・未実走 | OddCropGeometryProbeTest.evenCropAndActiveAreaBoundariesPreservePixels（通常gateへ変更、assert保持） |
+| `OddCropGeometryProbeTest.invalidGeometryRemainsRejected` | 実装/保持・未実走 | OddCropGeometryProbeTest.invalidGeometryRemainsRejected（通常gateへ変更、assert保持） |
+| `OddCropGeometryProbeTest.cancellationKeepsOriginalAndAllowsNextDecode` | 実装/保持・未実走 | OddCropGeometryProbeTest.cancellationKeepsOriginalAndAllowsNextDecode（通常gateへ変更、assert保持） |
+| `Original24GpuInputAndroidTest.inputOnlyEntryMatchesCpuSessionAsShotWithoutPreparingR7` | 実装/保持・未実走 | Original24GpuInputAndroidTest.inputOnlyEntryLoadsNativeAsShotWithoutPreparingR7（CPU look比較を除去、native独立oracle維持） |
+| `Original24GpuInputAndroidTest.cancelledInputEntryIsTerminalAndRetainsNoTransientFiles` | 実装/保持・未実走 | Original24GpuInputAndroidTest.cancelledInputEntryIsTerminalAndRetainsNoTransientFiles（新sessionのnative成功を追加）。CPU worker/cache固有比較は移さない |
+| `Original24GpuInputAndroidTest.gpuInputReducesOriginalOnceToPixelLimitedDimensions` | 実装/保持・未実走 | Original24GpuInputAndroidTest.gpuInputReducesOriginalOnceToPixelLimitedDimensions |
+| `Original24PreflightInstrumentationTest.existingNativeParserReportsExpectedRotationWithoutMovingBorrowedDescriptor` | 実装/保持・未実走 | Original24PreflightInstrumentationTest.existingNativeParserReportsExpectedRotationWithoutMovingBorrowedDescriptor（通常gateへ変更、assert保持） |
+| `Original24PreflightInstrumentationTest.existingNativeParserRejectsCyclesAmbiguousRawIfdsAndDuplicateCriticalTags` | 実装/保持・未実走 | Original24PreflightInstrumentationTest.existingNativeParserRejectsCyclesAmbiguousRawIfdsAndDuplicateCriticalTags（通常gateへ変更、assert保持） |
+| `Original24PreflightInstrumentationTest.integralDefaultCropReportsAbsoluteOffsetsAlongWithOutputDimensions` | 実装/保持・未実走 | Original24PreflightInstrumentationTest.integralDefaultCropReportsAbsoluteOffsetsAlongWithOutputDimensions（通常gateへ変更、assert保持） |
+| `Original24PreflightInstrumentationTest.existingNativeParserRejectsFractionalCropNonunitScaleAndUnknownUserCrop` | 実装/保持・未実走 | Original24PreflightInstrumentationTest.existingNativeParserRejectsFractionalCropNonunitScaleAndUnknownUserCrop（通常gateへ変更、assert保持） |
+| `Original24PreflightInstrumentationTest.cancellationAndNonclassicTiffAreRejectedBeforeOwnerAdmission` | 実装/保持・未実走 | Original24PreflightInstrumentationTest.cancellationAndNonclassicTiffAreRejectedBeforeOwnerAdmission（通常gateへ変更、assert保持） |
+| `Original24PreviewSessionInstrumentationTest.optionalComparisonOomDoesNotMaskSourceCancelCloseAdmissionOrIoFailure` | 実装/保持・未実走 | Original24GpuInputAndroidTest.inputFaultsCannotBecomeOptionalComparisonSuccessOrRestart＋同classのclose所有権試験。CPU comparison Bitmap/OOM fallbackは移さない |
+| `Original24PreviewSessionInstrumentationTest.sourceChangeFailsBeforeReuseAndNeverRestartsFailedSession` | 実装/保持・未実走 | Original24GpuInputAndroidTest.changedOriginalIsRejectedAtColdInputAndFailedSessionCannotRestart＋既存 GpuProductInputAndroidTest.originalIsReadOnlyAtOpenAndAllPreviewOwnersReleaseAcrossPhotosAndResume。GPU一度限りの入力にCPU warm session再利用を導入しない |
+| `Original24PreviewSessionInstrumentationTest.failedSourceCloseRemainsOwnedAndCloseRetriesExactStream` | 実装/保持・未実走 | Original24GpuInputAndroidTest.failedSourceCloseRetainsExactStreamUntilCloseIsAcknowledged |
+| `Original24PreviewSessionInstrumentationTest.independentDecodeRejectsSameSizeCropAndOrientationMismatch` | 実装/保持・未実走 | Original24GpuInputAndroidTest.sameSizeCropAndOrientationMismatchCannotProduceGpuInput |
+| `Original24PreviewSessionInstrumentationTest.draftDefersSourceFailureUntilExactWhileCancellationStillClearsAllDecisions` | 実装/保持・未実走 | Original24GpuInputAndroidTest のchangedOriginal/cancelledInput/failedSourceClose 3件へ集約。CPU draft遅延検証は移さない |
+| `Original24PreviewSessionInstrumentationTest.metadataFencesAvoidWarmSourceReadsAndKeepPixelsAndStrongColdBoundary` | 部分実装・M2対応待ち | 新 changedOriginalIsRejectedAtColdInputAndFailedSessionCannotRestart＋既存 GpuProductInputAndroidTest のwarm frame/read不開始を使用。実cold保存境界はM2との対応確認が必要 |
+| `PreviewRawGestureFixtureAndroidTest.dragAndReleaseReachRealSyntheticRawPreview` | 実装/保持・未実走 | GpuInputLifecycleSafetyAndroidTest.visibleContextLossRetryAndActivityTrimKeepOriginalAndRetireEveryPreviewOwner（実observer、12MP、10回再作成、実gesture、provider barrier中の新選択/pause/resume。旧synthetic/CPU worker UIは移さない） |
+
+契約差の2件を「旧probe」という名前だけで削除しない。製品変更なしで維持できる安全境界を確認し、
+診断固有の表示/trim継続仕様を廃止するかは記録して判断する。製品コードを旧診断の期待値へ合わせる変更は行っていない。
+AVDは他レーン利用中。未予約のemulatorには接続・停止・導入せず、初回30件の実走は返却調整後に実施する。
 
 ## 既存の保持先（Eの参照）
 
