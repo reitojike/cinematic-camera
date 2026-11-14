@@ -56,12 +56,12 @@ class GpuExportRendererAndroidTest {
 
     private data class Output(val pixels: IntArray, val result: GpuExportRenderer.Result)
 
-    private fun render(egl: EglContexts, input: OriginalRaster, bandRows: Int, strength: Double): Output {
+    private fun render(egl: EglContexts, input: OriginalRaster, bandRows: Int, strength: Double, reuseTextures: Boolean = true): Output {
         val ledger = GpuMemoryLedger(GpuMemoryLedger.EXPORT_BUDGET)
         val output = IntArray(input.width * input.height)
         val bands = mutableListOf<Pair<Int, Int>>()
         var nextRow = 0
-        val result = GpuExportRenderer(egl, ledger, bandRows).render(input, .25, doubleArrayOf(1.02, 1.0, .98), strength,
+        val result = GpuExportRenderer(egl, ledger, bandRows, reuseTextures).render(input, .25, doubleArrayOf(1.02, 1.0, .98), strength,
             tap = { point, origin, texture ->
                 assertEquals(GpuStageTap.Point.MIST, point)
                 bands += origin to texture.height
@@ -78,6 +78,18 @@ class GpuExportRendererAndroidTest {
         assertTrue(result.peakTextureBytes > 0 && result.peakTextureBytes <= GpuMemoryLedger.EXPORT_BUDGET)
         assertTrue(result.boundaryNanos.keys.containsAll(listOf("B1", "B1_QUANTILES", "B4", "FINAL")))
         return Output(output, result)
+    }
+
+    @Test fun pooledAndFreshStorageAreBitIdenticalIncludingTheShortLastBand() = gpu { egl ->
+        for (bandRows in listOf(64, 256)) for (strength in listOf(0.0, .75)) {
+            val fresh = render(egl, Raster(), bandRows, strength, reuseTextures = false)
+            val pooled = render(egl, Raster(), bandRows, strength, reuseTextures = true)
+            assertArrayEquals(fresh.pixels, pooled.pixels)
+            assertArrayEquals(fresh.result.toneQuantiles.map { it.toRawBits() }.toLongArray(),
+                pooled.result.toneQuantiles.map { it.toRawBits() }.toLongArray())
+            assertEquals(fresh.result.nearWhiteCount, pooled.result.nearWhiteCount)
+            assertEquals(fresh.result.mistAutoStrength.toRawBits(), pooled.result.mistAutoStrength.toRawBits())
+        }
     }
 
     @Test fun finalArgbAndGlobalScalarsDoNotDependOn64Or256RowBands() = gpu { egl ->
