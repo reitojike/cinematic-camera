@@ -1,0 +1,30 @@
+#version 320 es
+precision highp int;
+// One workgroup per 256-bin tile, one row per histogram. No floating point math.
+layout(local_size_x = 128) in;
+layout(std430, binding = 0) readonly buffer Histogram { uint counts[]; };
+layout(std430, binding = 1) writeonly buffer Tiles { uvec2 tiles[]; };
+uniform int u_finite;
+shared uint sizes[128];
+shared uint invalid[128];
+void main() {
+    uint lane = gl_LocalInvocationID.x;
+    uint tile = gl_WorkGroupID.x;
+    uint row = gl_WorkGroupID.y;
+    uint bin = tile * 256u + lane;
+    uint value = counts[row * 65536u + bin];
+    uint other = counts[row * 65536u + bin + 128u];
+    sizes[lane] = value + other;
+    invalid[lane] = (u_finite != 0 && (bin < 128u || bin >= 65408u) && value != 0u) ? 1u : 0u;
+    uint secondBin = bin + 128u;
+    if (u_finite != 0 && (secondBin < 128u || secondBin >= 65408u) && other != 0u) invalid[lane] = 1u;
+    barrier();
+    for (uint step = 64u; step > 0u; step >>= 1u) {
+        if (lane < step) {
+            sizes[lane] += sizes[lane + step];
+            invalid[lane] |= invalid[lane + step];
+        }
+        barrier();
+    }
+    if (lane == 0u) tiles[row * 256u + tile] = uvec2(sizes[0], invalid[0]);
+}

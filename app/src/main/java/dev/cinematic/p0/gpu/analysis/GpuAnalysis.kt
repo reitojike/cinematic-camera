@@ -24,7 +24,7 @@ internal object GpuAnalysis {
         require(width == input.width && height == input.height && width.toLong() * height <= Int.MAX_VALUE)
         val count = width * height
         val bins = HistogramRanks.BINS
-        fun histogram(targets: IntArray?): IntArray {
+        fun histogram(targets: IntArray?) {
             val length = bins * (targets?.size ?: 1)
             workspace.clear(length)
             val path = if (targets == null) "analysis/histogram_high.comp" else "analysis/histogram_low.comp"
@@ -39,21 +39,17 @@ internal object GpuAnalysis {
                     }
                 }, bindResources = workspace::bind,
                 memoryBarrier = GLES32.GL_SHADER_STORAGE_BARRIER_BIT or GLES32.GL_BUFFER_UPDATE_BARRIER_BIT))
-            GpuFence(egl).use { it.await() }
-            return workspace.read(length)
         }
         val ranks = doubleArrayOf((count - 1) * .5, (count - 1) * .92)
         val orders = ranks.flatMap { listOf(floor(it).toInt(), ceil(it).toInt()) }.toIntArray()
-        val selected = HistogramRanks.select(histogram(null), 0, orders, count.toLong(), finite = true)
+        histogram(null)
+        val selected = workspace.select(IntArray(4), orders, LongArray(4) { count.toLong() }, 1, finite = true)
         val targets = selected.map { it.bin }.distinct().toIntArray()
-        val low = histogram(targets)
-        val keys = IntArray(orders.size)
-        for ((targetIndex, highBin) in targets.withIndex()) {
-            val indices = orders.indices.filter { selected[it].bin == highBin }
-            val lowRanks = indices.map { orders[it] - selected[it].before.toInt() }.toIntArray()
-            val lower = HistogramRanks.select(low, targetIndex * bins, lowRanks, selected[indices.first()].count)
-            indices.forEachIndexed { index, original -> keys[original] = (highBin shl 16) or lower[index].bin }
-        }
+        histogram(targets)
+        val rows = IntArray(4) { targets.indexOf(selected[it].bin) }
+        val lowRanks = IntArray(4) { orders[it] - selected[it].before.toInt() }
+        val lower = workspace.select(rows, lowRanks, LongArray(4) { selected[it].count }, targets.size)
+        val keys = IntArray(4) { (selected[it].bin shl 16) or lower[it].bin }
         val values = keys.map { key ->
             val bits = if (key < 0) key xor Int.MIN_VALUE else key.inv()
             Float.fromBits(bits).toDouble()
