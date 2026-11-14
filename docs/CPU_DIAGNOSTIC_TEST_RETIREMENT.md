@@ -656,3 +656,14 @@ trim/遅延公開/保存中A再選択/B→C/背景化/表示後・初drawのcont
 通常製品経路のprepareGpuを同じ検証済みgeometry/source/recipeで呼び、同一handle/request/geometryとindexをassertしてから
 faultを注入するsetupへ補正した。これは同一processの準備済みGPU保存失敗からのUI retryで、process death復旧とは区別する。
 独立読取り確認済み、補正後test APK成功31秒。再実走前のためこのretry保証は未合格のまま。
+### 隔離後の実走と重複START/取消の移行
+
+9c6d39a1で12MPの同世代UI retryが成功205.868秒、A/B入力所有権10件が成功415.837秒。
+各実走の前後で既存noBackup全ファイルhashが一致。これらは同headの証拠で、後続headの一括合格ではない。
+`GpuDiagnosticProbeTest.repeatedStartsCancelAndStopService` の安全保証は通常の
+`repeatedDuplicateStartsThenUiCancellationStopActualServiceAndGpuOwners` へ移す。
+2回の独立した明示保存ごとに実FGSへ同ticket STARTを3回届け、UI取消、owner drain、未公開、
+原本/intent不変、実サービス停止を確認する。診断Service自体の保証は終了する。
+追加methodはcompile成功26秒、実走待ち。M2は40実装＋既存維持4、未実装5（実走済みとは区別）。
+ordinaryActivity selectorは厳密なclassまたはclass#単一methodのみ許可し、複数classを許可しない。
+従来boundary単独classの制約は変更しない。

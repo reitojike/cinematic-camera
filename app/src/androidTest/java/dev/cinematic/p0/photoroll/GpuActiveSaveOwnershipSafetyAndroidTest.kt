@@ -1,5 +1,7 @@
 package dev.cinematic.p0.photoroll
 
+import android.app.ActivityManager
+import android.content.Intent
 import android.content.Context
 import android.content.ContextWrapper
 import java.io.File
@@ -53,6 +55,47 @@ class GpuActiveSaveOwnershipSafetyAndroidTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     @get:Rule val ui = SyntheticFixtureRule()
 
+    @Test fun repeatedDuplicateStartsThenUiCancellationStopActualServiceAndGpuOwners() {
+        repeat(2) {
+            withEditor { fixture, _, _ ->
+                val barrier = BandBarrier()
+                Original24GpuOutput.observeForDiagnostics(barrier.witness).use {
+                    try {
+                        click("JPEGを保存")
+                        val save = awaitActiveBand(fixture, barrier)
+                        val ticket = requireNotNull(ForegroundExports.gate.active())
+                        val intent = requireNotNull(fixture.intent(save).read(ManualOriginalTrialRequestCodec.MAX_BYTES))
+                        instrumentation.runOnMainSync {
+                            repeat(3) {
+                                fixture.app.startForegroundService(Intent(fixture.app, ForegroundExportService::class.java)
+                                    .setAction(ForegroundExportService.START)
+                                    .putExtra(ForegroundExportService.TOKEN, ticket.token))
+                            }
+                        }
+                        instrumentation.waitForIdleSync()
+                        assertSame(ticket, ForegroundExports.gate.active())
+                        assertSame(save, ticket.value.identity)
+                        click("保存を取り消す")
+                        assertTrue(ticket.stopRequested)
+                        barrier.release.countDown()
+                        await("cancelled foreground export drains") { ForegroundExports.gate.active() == null }
+                        assertEquals(ManualOriginalTrialSavePhase.CANCELLED, save.state.value.phase)
+                        assertNull(save.state.value.uri)
+                        fixture.assertClosed(save, unpublished = true)
+                        barrier.witness.assertReleased()
+                        fixture.verifyOriginals()
+                        assertArrayEquals(intent, fixture.intent(save).read(ManualOriginalTrialRequestCodec.MAX_BYTES))
+                        val manager = requireNotNull(fixture.app.getSystemService(ActivityManager::class.java))
+                        @Suppress("DEPRECATION")
+                        fun serviceRunning() = manager.getRunningServices(100).any {
+                            it.service.className == ForegroundExportService::class.java.name
+                        }
+                        await("actual FGS stops before another explicit save") { !serviceRunning() }
+                    } finally { barrier.release.countDown() }
+                }
+            }
+        }
+    }
     @Test fun activeGpuExportSurvivesPreviewTrimCallbacksWithoutReopeningPreview() = withEditor { fixture, env, scenario ->
         val barrier = BandBarrier()
         Original24GpuOutput.observeForDiagnostics(barrier.witness).use {
