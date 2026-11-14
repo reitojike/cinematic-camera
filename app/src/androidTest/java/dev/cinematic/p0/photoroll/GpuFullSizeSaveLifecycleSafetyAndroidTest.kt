@@ -4,6 +4,8 @@ import android.app.KeyguardManager
 import android.content.ComponentName
 import android.content.ContentUris
 import android.content.ContentValues
+import androidx.activity.compose.LocalActivity
+import dev.cinematic.p0.jpegrender.original.isolatedGpuSaveSafetyApp
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
@@ -311,9 +313,13 @@ class GpuFullSizeSaveLifecycleSafetyAndroidTest {
 
         fun installEditor() {
             fixture.content = {
-                val host = LocalContext.current as PhotoRollActivity
+                val host = requireNotNull(LocalActivity.current) as PhotoRollActivity
                 val uiContext = remember(host) { object : ContextWrapper(host) {
                     override fun getApplicationContext(): Context = app
+                    override fun getNoBackupFilesDir(): File = app.noBackupFilesDir
+                    override fun getCacheDir(): File = app.cacheDir
+                    override fun getSharedPreferences(name: String, mode: Int) = app.getSharedPreferences(name, mode)
+                    override fun getContentResolver() = app.contentResolver
                 } }
                 val lifecycle = LocalLifecycleOwner.current.lifecycle
                 val state by lifecycle.currentStateFlow.collectAsState()
@@ -436,7 +442,7 @@ class GpuFullSizeSaveLifecycleSafetyAndroidTest {
     }
 
     private fun withFixture(run: (Environment) -> Unit) {
-        val target = instrumentation.targetContext.applicationContext
+        val target = isolatedGpuSaveSafetyApp()
         val arguments = InstrumentationRegistry.getArguments()
         // Every test checks all opt-ins before touching preferences, media, or a GL context.
         check(BuildConfig.BUILD_TYPE == "debug")

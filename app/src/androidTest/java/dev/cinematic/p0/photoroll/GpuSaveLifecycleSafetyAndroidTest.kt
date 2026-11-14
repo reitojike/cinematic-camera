@@ -3,6 +3,8 @@ package dev.cinematic.p0.photoroll
 import android.content.ComponentName
 import android.content.ContentUris
 import android.content.ContentValues
+import androidx.activity.compose.LocalActivity
+import dev.cinematic.p0.jpegrender.original.isolatedGpuSaveSafetyApp
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
@@ -63,7 +65,7 @@ class GpuSaveLifecycleSafetyAndroidTest {
         check(InstrumentationRegistry.getArguments().getString("gpuSaveSafety") == "true")
         check(Build.HARDWARE in setOf("ranchu", "goldfish") && Build.VERSION.SDK_INT >= 29)
         check(ForegroundExports.gate.active() == null)
-        val target = instrumentation.targetContext.applicationContext
+        val target = isolatedGpuSaveSafetyApp()
         val preferences = target.getSharedPreferences("capture-probe", Context.MODE_PRIVATE)
         val previousSetting = preferences.getString("develop/engine", null)
         val setting = DevelopEngineSetting(target)
@@ -129,9 +131,13 @@ class GpuSaveLifecycleSafetyAndroidTest {
                 { requireNotNull(resolver.openInputStream(uri)) }), OriginalGrant.APP_OWNED).also { source = it }
             AndroidPhotoEditRecipes(app).save(original, values).get(30, TimeUnit.SECONDS)
             fixture.content = {
-                val host = LocalContext.current as PhotoRollActivity
+                val host = requireNotNull(LocalActivity.current) as PhotoRollActivity
                 val uiContext = remember(host) { object : ContextWrapper(host) {
                     override fun getApplicationContext(): Context = app
+                    override fun getNoBackupFilesDir(): File = app.noBackupFilesDir
+                    override fun getCacheDir(): File = app.cacheDir
+                    override fun getSharedPreferences(name: String, mode: Int) = app.getSharedPreferences(name, mode)
+                    override fun getContentResolver() = app.contentResolver
                 } }
                 val lifecycle = LocalLifecycleOwner.current.lifecycle
                 val state by lifecycle.currentStateFlow.collectAsState()

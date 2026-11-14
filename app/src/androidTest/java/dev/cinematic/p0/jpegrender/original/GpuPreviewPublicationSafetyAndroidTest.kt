@@ -39,7 +39,7 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class GpuPreviewPublicationSafetyAndroidTest {
     @Test fun over1024GpuPreviewThenExplicitSaveKeepsRecipeAndOnePublicJpeg() {
-        val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
+        val app = isolatedGpuSaveSafetyApp()
         requireGpuSaveSafetyFixture()
         val capabilities = GlThread().use { thread -> thread.call {
             EglContexts(thread, app.assets).use { GlCapabilities.inspect(it) }

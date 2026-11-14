@@ -624,3 +624,13 @@ M2対応実装25元件＋既存保持4、未実装20。通常側選択23method�
 
 追加4methodの通常Androidコンパイル成功32秒。実走はまだ。M2対応実装29元件＋既存保持4、未実装16。
 通常側選択27method（M1 cold境界1を含む）。9d4aa571のインストール済みAPKの実走とは分けて扱う。
+### 実走と隔離の追記
+
+9d4aa571でpreview/publication 1件成功（59.517秒）、実24MP公開・実12MP×5・実12MP明示retryの3件成功（1,215.8秒）。失敗/skip0。
+その後main c39d7a0f（#420）を同期。UI通常化に伴い、試験専用namespaceのcache/noBackup/prefsを使い、
+Activity前にqueue startup完了を待つ。既存保存領域に対する一括削除・前処理は行わない。
+実Activityを包むUI contextも同じ保存先・prefs・resolverへ揃える。実FGSは既存handleを進める。
+独立読み取りで配線を確認し、selectorのcomma/複数class混在を防ぐ限定guardを追加した。
+旧headの成功はこの隔離変更後の実走合格ではない。隔離版lint/unit/app/testAPKは成功4分15秒、
+selector限定の最終差分は再ビルド/実走で確認する。最初のlint失敗（LocalContextのActivity cast 2箇所）は
+LocalActivityへ限定修正し、抑制は追加していない。

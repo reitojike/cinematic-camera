@@ -337,7 +337,7 @@ class GpuFullSizeSaveSafetyAndroidTest {
     private data class OwnedRow(val uri: Uri, val name: String)
 
     private fun withFixture(width: Int = WIDTH, height: Int = HEIGHT, run: (Fixture) -> Unit) {
-        val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
+        val app = isolatedGpuSaveSafetyApp()
         requireGpuSaveSafetyFixture()
         val capabilities = GlThread().use { thread -> thread.call {
             EglContexts(thread, app.assets).use { GlCapabilities.inspect(it) }
