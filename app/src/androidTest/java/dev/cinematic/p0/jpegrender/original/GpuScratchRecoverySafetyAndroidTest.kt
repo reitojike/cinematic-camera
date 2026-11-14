@@ -39,8 +39,11 @@ class GpuScratchRecoverySafetyAndroidTest {
         val directory = RenderedJpegFiles(File(app.noBackupFilesDir, "raw-captures"), id, request.generation).generationRoot()
         val scratch = File(directory, "original-work")
         val output = File(directory, "output.jpg")
+        val journal = JpegPublicationJournal(request.captureId, request.generation,
+            AndroidAtomicJournalStorage(requireNotNull(directory.parentFile), request.generation.toString(),
+                CaptureJournalFile.JPEG_PUBLICATION))
         val backend = AndroidManualOriginalTrialSaves.Backend(app, request, geometry,
-            { error("No publication is permitted") }, { true })
+            { journal }, { true })
         var reached = false
         var primary: Throwable? = null
         try {
@@ -59,6 +62,7 @@ class GpuScratchRecoverySafetyAndroidTest {
             assertFalse(backend.hasUnreleasedResources)
             assertFalse(scratch.exists())
             assertFalse(output.exists())
+            assertNull("No publication journal may be written by render-only failure/cancellation", journal.read())
             val prefix = directory.canonicalPath + "/"
             val descriptors = File("/proc/self/fd").listFiles() ?: error("Cannot enumerate descriptors")
             val open = descriptors.mapNotNull { runCatching { Files.readSymbolicLink(it.toPath()).toString() }.getOrNull() }
