@@ -204,13 +204,11 @@ internal class GpuExportRenderer(
                     GLES32.glPixelStorei(GLES32.GL_PACK_SKIP_ROWS, 0)
                     GLES32.glReadPixels(0, 0, width, output.height, GLES32.GL_RGBA, GLES32.GL_UNSIGNED_BYTE, bytes)
                     egl.checkGl("read export band RGBA8")
+                    bytes.position(0)
+                    bytes.limit(width * output.height * 4)
                     repeat(output.height) { y ->
                         originalCheckpoint(stop)
-                        for (x in 0 until width) {
-                            val i = (y * width + x) * 4
-                            row[x] = (255 shl 24) or ((bytes.get(i).toInt() and 255) shl 16) or
-                                ((bytes.get(i + 1).toInt() and 255) shl 8) or (bytes.get(i + 2).toInt() and 255)
-                        }
+                        GpuExportRgba8.readRow(bytes, y, row)
                         consumeRow(band.origin + y, row)
                     }
                 }
