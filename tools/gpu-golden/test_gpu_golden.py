@@ -98,16 +98,29 @@ class GoldenToolsTest(unittest.TestCase):
         (baseline / 'host.json').write_text(json.dumps(host), encoding='utf-8')
         with self.assertRaises(ValueError): g.compare(baseline, self.candidate, self.root / 'result')
 
-    def test_changed_environment_holds_even_without_pixel_diff(self):
+    def test_changed_environment_passes_without_pixel_diff(self):
         baseline = self.approved()
         self.host['environment']['emulatorVersion'] = 'new-version'
+        self.capture['android']['fingerprint'] = 'aosp-build'
         self.save()
-        self.assertFalse(g.compare(baseline, self.candidate, self.root / 'result'))
+        self.assertTrue(g.compare(baseline, self.candidate, self.root / 'result'))
         result = g.load_json(self.root / 'result' / 'comparison.json')
         self.assertTrue(result['environmentChanged'])
+        self.assertEqual(result['status'], 'pass')
+        self.assertEqual(result['candidateEnvironment']['host']['emulatorVersion'], 'new-version')
+        self.assertEqual(result['baselineEnvironment']['android']['fingerprint'], 'test')
+        self.assertEqual(result['candidateEnvironment']['android']['fingerprint'], 'aosp-build')
 
     def test_changed_pixels_emit_location_and_magnitude(self):
+        self.check_changed_pixels(False)
+
+    def test_changed_environment_with_pixel_difference_still_holds(self):
+        self.check_changed_pixels(True)
+
+    def check_changed_pixels(self, change_environment):
         baseline = self.approved()
+        if change_environment:
+            self.host['environment']['hostGpuDrivers'] = 'different-driver'
         case = self.capture['cases'][0]
         rgb = bytearray(g.pixels(self.candidate, case)); rgb[3] += 2
         blob = gzip.compress(rgb, mtime=0)
@@ -119,6 +132,23 @@ class GoldenToolsTest(unittest.TestCase):
         result = g.load_json(self.root / 'result' / 'comparison.json')['cases'][0]
         self.assertEqual((result['changedPixels'], result['maxDelta'], result['boundingBox']), (1, 2, [1, 0, 1, 0]))
         self.assertTrue((self.root / 'result' / 'c001-diff32.png').exists())
+
+    def test_changed_environment_does_not_bypass_failed_instrumentation_or_bands(self):
+        baseline = self.approved()
+        self.host['environment']['emulatorVersion'] = 'new-version'
+        self.host['instrumentationPassed'] = False
+        self.save()
+        with self.assertRaises(ValueError): g.compare(baseline, self.candidate, self.root / 'failed')
+        self.host['instrumentationPassed'] = True
+        self.capture['cases'][-1]['bands64']['changedPixels'] = 1
+        self.save()
+        with self.assertRaises(ValueError): g.compare(baseline, self.candidate, self.root / 'bands')
+
+    def test_missing_environment_metadata_is_rejected(self):
+        baseline = self.approved()
+        del self.host['environment']['hostGpuDrivers']
+        self.save()
+        with self.assertRaises(ValueError): g.compare(baseline, self.candidate, self.root / 'missing')
 
     def test_all_rgb_percentile_and_no_change(self):
         a = bytes(3000); b = bytearray(a); b[0] = 1
