@@ -217,7 +217,7 @@ internal class GpuExportBoundaryFixture(val app: Context, val width: Int = WIDTH
             check(Build.HARDWARE in setOf("ranchu", "goldfish")) { "Physical devices are excluded" }
             check(!ordinaryActivity || normal)
             if (normal) {
-                val expectedClass = if (ordinaryActivity) "dev.cinematic.p0.photoroll.GpuActiveSaveOwnershipSafetyAndroidTest"
+                val expectedClass = if (ordinaryActivity) args.getString("class").orEmpty().substringBefore('#')
                     else Original24GpuBoundaryCancellationAndroidTest::class.java.name
                 check(if (ordinaryActivity) args.getString("class")?.matches(Regex(Regex.escape(expectedClass) + "(?:#[A-Za-z0-9_]+)?")) == true else args.getString("class") == expectedClass) {
                     "Run only the boundary cancellation class in a fresh instrumentation process"

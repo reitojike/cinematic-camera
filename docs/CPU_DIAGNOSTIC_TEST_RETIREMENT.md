@@ -667,3 +667,7 @@ faultを注入するsetupへ補正した。これは同一processの準備済み
 追加methodはcompile成功26秒、実走待ち。M2は40実装＋既存維持4、未実装5（実走済みとは区別）。
 ordinaryActivity selectorは厳密なclassまたはclass#単一methodのみ許可し、複数classを許可しない。
 従来boundary単独classの制約は変更しない。
+重複START/明示取消/FGS停止は6bacd074で1件実走成功31.39秒、既存保存領域hash不変。
+並行入力の元2件は `GpuConcurrentInputSafetyAndroidTest` へ移行中。小さい合成入力を固定し、
+Aの実GPU bandを保持したままB入力の成功/取消例外、B release callbackが結果より前に1回、
+A未完了/不変、B描画、A公開、owner drainを維持する。旧メモリprobeの計測/report集計は移行しない。
