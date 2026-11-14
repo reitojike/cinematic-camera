@@ -14,20 +14,19 @@ import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/** Short emulator-only execution evidence, independent of image golden comparison and Gate 1. */
+/** Short synthetic execution evidence, independent of image golden comparison and Gate 1. */
 @RunWith(AndroidJUnit4::class)
 class GpuFullPipelineTimingAndroidTest {
     @Test fun measure1024FullRecompute() {
         val args = InstrumentationRegistry.getArguments()
-        check(args.getString("gpuPerformance") == "true") { "Explicit gpuPerformance=true required" }
-        check(args.getString("isolated") == "true") { "Synthetic isolated run required" }
-        check(Build.HARDWARE in setOf("ranchu", "goldfish")) { "Emulator only" }
+        val options = GpuTimingOptions.parse(args, Build.HARDWARE)
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val input = GpuReferenceImages.create(GpuReferenceImages.Kind.MIXED, GpuReferenceImages.Size(1024, 768))
         val samples = JSONArray()
         val report = JSONObject().put("schema", 1).put("frameMode", "FULL_RECOMPUTE")
             .put("width", 1024).put("height", 768).put("fixture", "MIXED").put("seed", GpuReferenceImages.SEED)
-            .put("warmups", 1).put("measuredFrames", 3).put("samples", samples)
+            .put("warmups", 1).put("measuredFrames", options.measuredFrames).put("samples", samples)
+            .put("allowDevice", options.allowDevice).put("executionTarget", if (options.emulator) "emulator" else "device")
             .put("scope", "CPU wall including GPU completion and DISPLAY8 readback; excludes openPhoto, EGL setup and close; not pure GPU time or physical presentation")
         GlThread().use { thread -> thread.call {
             EglContexts(thread, context.assets).use { egl ->
@@ -53,7 +52,7 @@ class GpuFullPipelineTimingAndroidTest {
                     }
                 }.use { engine -> engine.openPhoto(input) { false }.use { photo ->
                     // Same settings deliberately repeat: every measured frame must recompute, not reuse a result.
-                    repeat(4) { ordinal ->
+                    repeat(1 + options.measuredFrames) { ordinal ->
                         points.clear()
                         val beforeR7 = connected?.r7FragmentPassCount ?: 0
                         val beforeGlow = connected?.glowPreparationCount ?: 0
@@ -81,7 +80,7 @@ class GpuFullPipelineTimingAndroidTest {
                             .put("glowPreparations", glowPreparations).put("stages", JSONArray(points.map { it.name })))
                     }
                 } }
-                assertEquals(4, samples.length())
+                assertEquals(1 + options.measuredFrames, samples.length())
                 assertEquals("All texture bytes released", 0L, ledger.allocatedBytes)
                 assertEquals("All textures released", 0, ledger.textureCount)
                 report.put("closedBytes", ledger.allocatedBytes).put("closedTextures", ledger.textureCount)
