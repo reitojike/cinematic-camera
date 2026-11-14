@@ -27,8 +27,8 @@ internal class Original24GpuOutput(private val assets: AssetManager) : AutoClose
     fun render(source: OriginalRaster, ev: Double, gains: DoubleArray, strength: Double,
         stop: () -> Boolean, consume: (Int, IntArray) -> Unit) {
         check(!started); started = true
-        // Freeze one observer for this attempt. Normal builds cannot register or invoke it.
-        val observer = if (BuildConfig.BUILD_TYPE == "gpuDiagnostic") diagnosticObserver.get() else null
+        // Freeze one observer for this attempt. Release/internal builds cannot register or invoke it.
+        val observer = if (observationsAllowed) diagnosticObserver.get() else null
         val interrupted = AtomicBoolean(false)
         var failure: Throwable? = null
         var cleanupConfirmed = false
@@ -125,9 +125,11 @@ internal class Original24GpuOutput(private val assets: AssetManager) : AutoClose
         fun rendererReleased(balance: TextureBalance) {}
     }
     companion object {
+        private val observationsAllowed = BuildConfig.BUILD_TYPE == "gpuDiagnostic" ||
+            (BuildConfig.BUILD_TYPE == "debug" && BuildConfig.DEBUG)
         private val diagnosticObserver = AtomicReference<DiagnosticObserver?>()
         internal fun observeForDiagnostics(observer: DiagnosticObserver): AutoCloseable {
-            check(BuildConfig.BUILD_TYPE == "gpuDiagnostic")
+            check(observationsAllowed) { "GPU observations require debug instrumentation or gpuDiagnostic" }
             check(diagnosticObserver.compareAndSet(null, observer)) { "Export diagnostic observer already installed" }
             return AutoCloseable {
                 check(diagnosticObserver.compareAndSet(observer, null)) { "Export diagnostic observer changed" }
