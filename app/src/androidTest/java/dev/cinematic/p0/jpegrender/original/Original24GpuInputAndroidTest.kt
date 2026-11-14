@@ -1,6 +1,5 @@
 package dev.cinematic.p0.jpegrender.original
 
-import android.graphics.Bitmap
 import android.os.CancellationSignal
 import android.os.ParcelFileDescriptor
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -15,7 +14,6 @@ import dev.cinematic.p0.rawcapture.OriginalGrant
 import dev.cinematic.p0.rawcapture.SharedOriginalReference
 import dev.cinematic.p0.testing.writeSyntheticTrialDng
 import org.junit.Assert.*
-import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
@@ -24,7 +22,7 @@ import org.json.JSONObject
 /** Reuses the existing native input path. No EGL or user photos, no save/publication. */
 @RunWith(AndroidJUnit4::class)
 class Original24GpuInputAndroidTest {
-    @Test fun inputOnlyEntryMatchesCpuSessionAsShotWithoutPreparingR7() = fixture { input, root, source, geometry ->
+    @Test fun inputOnlyEntryLoadsNativeAsShotWithoutPreparingR7() = fixture { input, root, source, geometry ->
         fun session(name: String) = Original24PreviewSession(source, File(root, name), {}, geometry) { input.inputStream() }
         val diagnostic = session("gpu-input")
         val direct = try {
@@ -35,16 +33,9 @@ class Original24GpuInputAndroidTest {
                 assertFalse(diagnostic.hasUnreleasedResources)
             }
         } finally { diagnostic.close() }
-        var cpuInput: LinearSrgbImage? = null
-        session("cpu-preview").use { cpu ->
-            cpu.render(.5).recycle()
-            cpu.comparisonBitmap(createBitmap = { image, _ ->
-                cpuInput = image
-                Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
-            })?.recycle()
-            assertFalse(cpu.hasUnreleasedResources)
-        }
-        val expected = requireNotNull(cpuInput)
+        // The independent oracle decodes native AS_SHOT RGB16; it never executes a CPU look.
+        val expected = reduceOriginal(input, root, geometry.outputWidth, geometry.outputHeight,
+            geometry.outputWidth, geometry.outputHeight)
         assertEquals(expected.width, direct.width)
         assertEquals(expected.height, direct.height)
         repeat(expected.pixelCount * 3) { i -> assertEquals("channel $i", expected[i].toRawBits(), direct[i].toRawBits()) }
@@ -113,7 +104,7 @@ class Original24GpuInputAndroidTest {
     private fun fixture(width: Int = 64, height: Int = 48,
         action: (File, File, SharedOriginalReference, Original24PreflightGeometry) -> Unit) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        assumeTrue(context.packageName == "dev.cinematic.p0.original24probe")
+        requireGpuInputSafetyFixture()
         val root = File.createTempFile("gpu-input-synthetic-", ".tmp", context.cacheDir)
         assertTrue(root.delete() && root.mkdir())
         val input = File(root, "input.dng")

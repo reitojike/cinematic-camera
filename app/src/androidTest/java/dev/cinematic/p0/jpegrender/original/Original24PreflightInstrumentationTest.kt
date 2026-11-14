@@ -13,7 +13,6 @@ import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import org.junit.Assert.*
-import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -84,7 +83,7 @@ class Original24PreflightInstrumentationTest {
 
     private fun withSource(bytes: ByteArray, action: (ParcelFileDescriptor) -> Unit) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        assumeTrue(context.packageName == "dev.cinematic.p0.original24probe")
+        requireGpuInputSafetyFixture()
         val file = File.createTempFile("preflight-synthetic-", ".dng", context.cacheDir)
         try {
             file.writeBytes(bytes)

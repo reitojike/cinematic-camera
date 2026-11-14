@@ -53,6 +53,25 @@ OR RawDiagnosticActivity
 本台帳作成ではAndroid試験を新たに実行していない。静的照合133/133件は実行件数ではない。
 #395/#397の性能、#398の保存境界2件、#399の観測2件と各GPU回帰は既存PRの証拠であり、新しい移行/削除headの成功へ流用しない。
 
+### 移行①の実装着手（実走前）
+
+`OddCropGeometryProbeTest` 4件、`Original24PreflightInstrumentationTest` 5件、
+`Original24GpuInputAndroidTest` 3件の計12件を先に通常debug用の共通gateへ変更する。
+`isolated=true` と `gpuInputSafety=true`、通常debug package、エミュレーターを必須とし、
+不足条件はskipではなく失敗にする。すべてprivate合成DNGを使い、MediaStore/実機へ広げない。
+残るM1の34元メソッドは実装待ちで、この12件も実走成功までは移行完了に数えない。
+
+入力3件のうち `inputOnlyEntryMatchesCpuSessionAsShotWithoutPreparingR7` は
+`inputOnlyEntryLoadsNativeAsShotWithoutPreparingR7` へ変更し、CPU preview/lookの呼出しを除く。
+既存native RGB16 decode→BOXの独立入力oracle、R7未解析、寸法/bit一致、owner解放、原本hashは保持する。
+他の11メソッド名は変更しない。以下のコマンドは実行計画であり、成功記録ではない。
+
+```text
+adb -s <予約済みemulator> shell am instrument -w -r -e isolated true -e gpuInputSafety true -e class dev.cinematic.p0.jpegrender.original.OddCropGeometryProbeTest,dev.cinematic.p0.jpegrender.original.Original24PreflightInstrumentationTest,dev.cinematic.p0.jpegrender.original.Original24GpuInputAndroidTest dev.cinematic.p0.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+期待12件。native入力試験であり、実GPU描画や90条件回帰の代替ではない。
+
 - M1/M2で通常debug app/test APKを作成し、移行methodを明示選択する。opt-in引数を渡し、計画件数とinstrumentation結果を照合する。失敗/skipは0、成功件数は必ず1以上。12MP/24MP等の専用caseは別コマンド・別結果として記録する。
 - head/tree、コマンド、APK hash、AVD/driver、開始終了時刻・所要時間、期待/成功/失敗/skip件数、観測した境界とcleanup結果を各PRに残す。ソースにassertがあることと実走成功を別欄で扱う。
 - 製品変更/削除headで `tools/gpu-golden/capture_android.ps1` と `tools/gpu-golden/gpu_golden.py compare` を実行する。基準 `docs/gpu-golden-baselines/golden-20261112-131916-51b691ad` の90条件＋28帯比較を変更しない。
