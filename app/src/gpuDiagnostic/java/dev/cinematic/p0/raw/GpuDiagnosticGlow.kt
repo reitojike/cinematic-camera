@@ -1,6 +1,10 @@
 // 診断専用の比較経路。製品Glowは変更せず、最小半径のbloomだけGPUへ置換する。
 package dev.cinematic.p0.raw
 
+import dev.cinematic.p0.gpu.constants.StageClearGlowV1
+
+import dev.cinematic.p0.gpu.constants.StageClearV1
+
 import kotlin.math.max
 import kotlin.math.pow
 
