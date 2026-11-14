@@ -839,3 +839,22 @@ CIのGPU/RAW診断build jobを退役し、通常product jobでdebug/release mani
 - ホストだけの foundation/draft 参照4件と共有安全3件は実走成功。Android コンパイルは成功だが、この作業中差分の Android 実走/GPU90 は未実施。
 
 未完了: 旧 bounded/private-trial CPU producer の登録解除と旧 journal 読取/UNSUPPORTED HOLD の保証、CPU 専用実装・試験の最終分類/削除、最終 Android 安全試験/GPU90、CI・独立レビュー。削除②を完了・マージ可能とは扱わない。
+
+### 削除②: 原寸 CPU 専用群の分類
+
+`OriginalStageClear24` / `OriginalR7ColorRow` / `OriginalMaskCount` は製品 GPU 呼出なし。CPU 原寸描画・CPU mask callback 数え上げの実装と専用試験を D として同時退役する。GPU 顔保護・共有サイズ検証・checkpoint の変更ではない。
+
+- D: OriginalGlowParallelTest、OriginalR7ColorFusionTest、OriginalRaw4CombinedTest、OriginalRemainingRowsTest、OriginalMaskCountTest（7件）、OriginalPreviewParityTest、OriginalZeroKeepAndroidTest、および OriginalZeroKeepTest の CPU candidate/pipeline 部分。
+- E: OriginalZeroKeepTest.nonFiniteInputIsRejectedBeforeCandidate は既存 IntermediateValidationTest.rawArrayEntrypointsStillRejectNonfiniteValuesAndInvalidShapes が同じ LinearSrgbImage 入力の NaN/±Inf 拒否を保証。
+- M: OriginalStageClear24Test の quantiles・取消/予算・failed-close の共有3件は OriginalSharedSafetyTest へ移行して実走成功。他は退役CPU rendererの段階/並列/画像比較契約としてD。
+- 保持: Original24CancellationRetryInstrumentationTest の通常GPU4件。旧CPU stack witness分岐のみ除去し、GPU thread/取消/明示retry/原本/公開境界は変更しない。
+
+これらをGPU全量移行と扱わない。GPU90と通常安全試験の最終実走は別のマージ条件。
+
+### 旧 bounded/private-trial の残作業と HOLD
+
+旧5 Androidクラス30methodは既存M1/M2の一括代替ではない。AtomicFile `.bak`復旧、attempt保持、破損private readback、遅延取消後の実破損、旧bindingの新bindingへの干渉防止を保持する。CPU生成fixtureをtest APKへ移す試案は、製品との二重queue attachと同じinventory走査を起こすため独立レビューで不採用。未実走で取り下げた。共有rootの消去やsingleton差し替えでは解決しない。
+
+`RetiredCpuJournalCompatibilityTest` 3件は空catalogでのcanonical要求/HOLD、正規manual bounded PUBLISHEDの再読取・非再実行をhostで確認し実走成功。既存Android inventoryや実保存先のfresh確認を代替しない。旧固定bytes全版互換や実artifact保全をこのfixtureだけで保証したとは扱わない。
+
+producer登録と旧CPU実装は、共有試験を専用namespace・一貫したowner/coordinatorに分離してから撤去する。現時点は未完了。
