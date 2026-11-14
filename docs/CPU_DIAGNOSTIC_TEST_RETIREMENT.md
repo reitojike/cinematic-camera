@@ -565,3 +565,15 @@ observer試験は実GL資源の失敗を偽装するものではなく、報告�
 CPU look/Orton画像比較は行わず、共有raster製品実装と旧試験は変更しない。
 `:app:compileDebugAndroidTestKotlin` 成功35秒。Android未実走なので削除条件成立とは扱わない。
 M2対応実装16元件、既存保持4、未実装29。選択予定17 method（M1 cold境界1を含む）。
+
+### 保存journal全revisionの通常GPU移行（dot・未実走）
+
+`OriginalSaveParallelParityInstrumentationTest.threeWorkerSettingsKeepJpegStageOrderPublicationAndJournalAcrossRetries`
+を `GpuSaveJournalSafetyAndroidTest.gpuSaveKeepsStageOrderPublicationAndEveryJournalRevisionAcrossRetries` へ対応。
+CPU worker arm比較だけを除き、実GPU producer、回転/調整の2条件、intent先行・render close後publisher、
+insert/copy/publish直前phase、7phase/revision0..6、recipe/source/generation、永続codecの一致、
+公開後2回advanceでrender/publisher各1・events/journal bytes不変・原本保持を残す。
+所有合成MediaStore行だけを成功時にowner/name/pending状態照合して片付け、失敗時証拠は残す。
+通常Androidコンパイル成功27秒。実走は未実施、12MP/24MPやFGSの代替ではない。
+現時点M2対応実装17元件、既存保持4、未実装28。選択予定18method（M1 cold境界1を含む）。
+#408マージ後のmainを通常mergeで同期し、M1試験はmainの検証済み内容を保持した。
