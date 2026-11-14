@@ -67,6 +67,8 @@ internal class OriginalRasterFile internal constructor(
     fun closePending() = owners.releaseAll()
     init { validateOriginalSize(width, height); require(bytesPerChannel == 2 || bytesPerChannel == 4) }
     val bytes get() = width.toLong() * height * 3 * bytesPerChannel
+    // Unsigned 16-bit samples divided by 65535f are finite by construction.
+    val isRgb16 get() = bytesPerChannel == 2
     override fun rows(stop: () -> Boolean, consume: (Int, FloatArray) -> Unit) {
         check(!hasPendingOwners)
         owners.using(FileChannel.open(file.toPath(), StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) { channel ->
@@ -80,7 +82,7 @@ internal class OriginalRasterFile internal constructor(
                 buffer.flip()
                 if (bytesPerChannel == 4) buffer.asFloatBuffer().get(row)
                 else repeat(row.size) { row[it] = (buffer.short.toInt() and 65535) / 65535f }
-                if (!row.all { it.isFinite() }) throw IOException("Non-finite original raster")
+                if (!isRgb16 && !row.all { it.isFinite() }) throw IOException("Non-finite original raster")
                 consume(y, row)
             }
             if (channel.size() != bytes || channel.position() != bytes) throw IOException("Original raster changed")
