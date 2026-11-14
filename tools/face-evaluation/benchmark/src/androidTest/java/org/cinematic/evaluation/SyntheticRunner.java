@@ -18,8 +18,8 @@ public final class SyntheticRunner extends Instrumentation {
         bitmap.eraseColor(Color.BLACK);
         bitmap.setHasAlpha(false);
         try {
-            if (!"true".equals(arguments.getString("offlineReviewed"))) {
-                throw new IllegalStateException("Runtime offline/IPC gate not approved");
+            if (!"true".equals(arguments.getString("syntheticRunApproved"))) {
+                throw new IllegalStateException("Synthetic evaluation run not approved");
             }
             String mode = arguments.getString("mode", "FAST");
             long start = SystemClock.elapsedRealtimeNanos();

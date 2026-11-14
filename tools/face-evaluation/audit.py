@@ -8,6 +8,21 @@ import zipfile
 ANDROID = "{http://schemas.android.com/apk/res/android}"
 
 
+NETWORK_PERMISSIONS = {"android.permission.INTERNET", "android.permission.ACCESS_NETWORK_STATE"}
+
+
+def validate_permissions(flavor, permissions):
+    """Allow SDK diagnostics only in ML Kit; reject all other platform permissions."""
+    platform = {p for p in permissions if p.startswith("android.permission.")}
+    expected = NETWORK_PERMISSIONS if flavor == "mlkit" else set()
+    if platform != expected:
+        raise ValueError("Unexpected platform permissions for evaluation flavor")
+    # AndroidX may add only this package's signature-protected receiver permission.
+    own = f"org.cinematic.evaluation.{flavor}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+    if set(permissions) - platform - {own}:
+        raise ValueError("Unexpected custom permission")
+
+
 def audit(root):
     result = {}
     for flavor in ("baseline", "mlkit", "yunet"):
@@ -15,10 +30,7 @@ def audit(root):
         manifest = root / f"intermediates/merged_manifests/{flavor}Debug/process{flavor.capitalize()}DebugManifest/AndroidManifest.xml"
         xml = ET.parse(manifest).getroot()
         permissions = [node.get(ANDROID + "name") for node in xml if node.tag.startswith("uses-permission")]
-        forbidden = {"android.permission.INTERNET", "android.permission.ACCESS_NETWORK_STATE", "android.permission.CAMERA",
-                     "android.permission.READ_MEDIA_IMAGES", "android.permission.READ_EXTERNAL_STORAGE", "android.permission.WRITE_EXTERNAL_STORAGE"}
-        if forbidden.intersection(permissions):
-            raise ValueError("Unapproved permissions")
+        validate_permissions(flavor, permissions)
         with zipfile.ZipFile(apk) as archive:
             entries = archive.infolist()
             notices = [x.filename for x in entries if any(s in x.filename.lower() for s in ("license", "notice", "third_party"))]

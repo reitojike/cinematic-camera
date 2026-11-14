@@ -44,19 +44,32 @@ APK圧縮済み容量とnative非圧縮容量を区別する。製品容量差�
 ABI、AGP、build type、署名方式、圧縮/縮小の条件を変えた値と混ぜない。
 root製品CIは従来通り必須。本projectの検証は上記の独立コマンドで別途実行する。
 
-## Android 実走は停止中
+## Android 合成評価の実行条件
 
-現時点で実写・Pixel・AVD・SDK推論を実行していない。写真入力のUI/ファイル読込経路は実装していない。
-`SyntheticRunner` は黒一色640×480のみを作り、11回直列に実行する将来の合成smoke用。
-runner は明示的な `offlineReviewed=true` がない場合に停止する。この値は無通信を技術的に保証しない。
-providerの初期化はrunnerのチェックより前に起こり得る。引数チェックを安全な起動許可の代わりにしない。
-通信/IPCの検証計画と実走許可、`docs/MANAGED_DEVICES.md` の排他・他レーンの返却を確認するまで渡さない。
-非製品APKでもINTERNET/ACCESS_NETWORK_STATEをmanifest mergeで除去する。自動初期化providerや
-DataTransport関連componentが残るかは `audit.py` で一覧化する。権限除去だけを無通信の証明にしない。
+本人はオフラインでも動くことを重視しつつ、ML Kit の利用・診断ログ通信を許容している。
+完全無通信は要件ではない。画像・顔検出結果の送信、製品への組込み・依存採用は別判断。
+現時点で実写・Pixel・AVD・SDK推論は未実行。写真入力のUI/ファイル読込経路は実装していない。
 
-将来の許可後は、別プロセス起動で各 FAST/ACCURATE/MULTI を個別に実行する。
-排他取得済みのエミュレーターだけを明示指定し、対象flavorのapp/test APKをインストールする。
-対象評価packageのforce-stop後に `am instrument -w -e offlineReviewed true -e mode FAST
+ML Kit flavor だけ INTERNET/ACCESS_NETWORK_STATE を持たせ、SDK の通常の診断通信を妨げない。
+baseline/YuNet は通信権限を持たず、全 flavor のカメラ・写真・連絡先等の権限は認めない。
+`audit.py` で完成 manifest の許可リストを検査する。固定 SDK/runtime/model は変更しない。
+Google 向け利用・診断情報（評価用アプリ/端末情報、インストール単位ID、処理時間、
+入力形式・解像度、イベント・エラー等）が通信対象。入力画像と顔結果は送信対象にしない。
+これは公式説明を基にした許可範囲であり、この固定版の全payloadを観測した証明ではない。
+
+`SyntheticRunner` は黒一色640×480だけを生成し、11回直列に実行する。
+明示的な `syntheticRunApproved=true` がない場合に停止するが、provider 初期化は
+runner より先に動き得る。引数で通信を遮断できるとは扱わない。
+実行前に個人アカウント/写真のない評価環境と `docs/MANAGED_DEVICES.md` の排他を確認し、
+#290 の AVD 利用を優先する。実機は都度承認。端末のセキュリティ/ネットワーク設定を勝手に変更しない。
+
+1. 初回オフライン起動で bundled モデルの FAST/ACCURATE が動くか確認する。
+2. オンライン時の SDK ログ通信は別項目で記録し、オフライン動作の合否と混ぜない。
+3. 各条件で初期化・推論・待機・再起動を分ける。宛先/時刻/量だけで暗号化payloadやIPCの内容を断定しない。
+   画像/顔結果や想定外データの送信が疑われる場合は中断して確認する。raw capture は公開しない。
+
+排他取得済みの評価エミュレーターを明示指定し、各 FAST/ACCURATE/MULTI を別プロセス起動する。
+対象評価packageのforce-stop後に `am instrument -w -e syntheticRunApproved true -e mode FAST
 org.cinematic.evaluation.mlkit.test/org.cinematic.evaluation.SyntheticRunner` を実行する。
 ACCURATEはmodeだけ変更、YuNetはmode MULTIと `org.cinematic.evaluation.yunet.test` を使う。
 終了bundleのresultまたはerror_typeを確認し、失敗を0件成功と扱わない。baselineは容量用で実走対象外。
