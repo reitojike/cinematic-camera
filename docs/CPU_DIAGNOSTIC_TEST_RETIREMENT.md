@@ -608,3 +608,11 @@ lint/unit/app/test APK の確認も成功（unit はキャッシュ・UP-TO-DATE
 CPUプレビューとCPU JPEGの縮小pixel誤差閾値は移さない。GPU画質保証は既存GPU回帰で維持する。
 この追加はコンパイル成功29秒、Android実走はまだであり、削除の完了条件には未算入。
 M2対応実装22元件＋既存保持4、未実装23。新規通常Android選択数20 method（M1 cold境界1を含む）。
+### 実12MP/24MPの通常側移行（追加・実走待ち）
+
+`Original24GpuSafetyInstrumentationTest` の3件を `GpuFullSizeSaveSafetyAndroidTest` へ移行。
+12MPの明示retry/同世代intent保持、12MP×5の新世代/別recipe/別URI/各owner解放、24MPの原寸公開を維持。
+診断CPU選択のみ旧prefs値注入へ変更し、通常設定はGPU固定を確認する。全て通常debug/隔離emulatorのfail-fast gate、
+24MPには追加で `gpuExport24=true` を必須とする。原本/実GPU witness/台帳/公開JPEGの検査と限定cleanupを維持。
+コンパイル・test APK成功41秒。Android実走はこれからで、合格とはしない。
+M2対応実装25元件＋既存保持4、未実装20。通常側選択23method（M1 cold境界1を含む）。
