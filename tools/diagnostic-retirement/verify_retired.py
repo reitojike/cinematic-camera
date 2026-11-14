@@ -11,8 +11,8 @@ ANDROID = "{http://schemas.android.com/apk/res/android}"
 def verify_sources(root: Path) -> None:
     gradle = (root / "app/build.gradle.kts").read_text(encoding="utf-8")
     for variant in VARIANTS:
-        for suffix in ("", "Test"):
-            assert not (root / "app/src" / (variant + suffix)).exists(), variant + suffix
+        for source_set in (variant, variant + "Test", "test" + variant[0].upper() + variant[1:], "androidTest" + variant[0].upper() + variant[1:]):
+            assert not (root / "app/src" / source_set).exists(), source_set
         assert not re.search(r'create\(\s*"' + variant + r'"\s*\)', gradle), variant
         assert "cinematic" + variant[0].upper() + variant[1:] not in gradle, variant
     assert 'cinematicGpuMesa' in gradle, 'Keep the separate Mesa regression path'

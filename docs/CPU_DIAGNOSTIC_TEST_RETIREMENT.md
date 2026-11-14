@@ -816,3 +816,11 @@ CIのGPU/RAW診断build jobを退役し、通常product jobでdebug/release mani
 | `GpuWorkTimingTest.nestedIntervalsAndNegativeRemaindersAreRejected` | D | 廃止する旧probe専用exclusive timing集計。通常GpuStageTap性能試験は別に保持。 |
 | `GpuWorkTimingTest.aggregatePreservesCountsAndWholeWallTime` | D | 廃止する旧probe専用exclusive timing集計。通常GpuStageTap性能試験は別に保持。 |
 | `GpuWorkTimingTest.disabledTimingDoesNotChangeResultOrException` | D | 廃止する旧probe専用exclusive timing集計。通常GpuStageTap性能試験は別に保持。 |
+
+### 追加52件の独立確認と移行実走
+
+追加52methodは全ソースと台帳を独立に照合し、欠落/重複なし、D47/M5の分類OKを確認した。M5はcaa8cb16154a84e18bd795d0be8be55dd67d8d73で実走成功。GpuScratchRecoverySafetyAndroidTestの4件は4.698秒、GpuSaveProducerSafetyAndroidTest.unknownScratchFileKeepsGpuAttemptOwnedUntilExplicitRemovalAndCloseは0.576秒、失敗/skip 0。既存no_backupファイルは全てhash不変。合成データ以外を操作せずAVDを返却した。
+
+初回boot ANRは実行0件で環境不成立。b59a4b73ではsymlink/preflight2件成功、Backend2件はfixtureのjournal factory設定不備で失敗しunknownは未実行。caa8cb16で隔離journalへ修正し、未公開assertを保持して5件を再実走した。失敗証拠を成功ログで上書きしない。
+
+この確認後にprefix sourceSetの52method/8ファイルを削除候補から撤去し、退役検査をtestVariant/androidTestVariant形式にも拡張した。これは候補への編集であり採用完了ではない。#424同期後の削除headで必要回帰・GPU90/28・CI・canonical/独立レビューを確認するまでHOLDする。上の実装/実走待ち欄は追加監査時点の履歴で、この節がM5の現在の証拠である。

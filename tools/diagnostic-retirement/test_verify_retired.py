@@ -22,7 +22,7 @@ class RetirementContractTest(unittest.TestCase):
         verify_manifest(self.manifest('<activity android:name="dev.cinematic.p0.photoroll.PhotoRollActivity"/>'))
 
     def test_each_retired_source_set_is_rejected(self):
-        for variant in ('original24Probe', 'rawDiagnostic', 'gpuDiagnostic', 'previewDiagnostic'):
+        for variant in ('original24Probe', 'rawDiagnostic', 'gpuDiagnostic', 'previewDiagnostic', 'testRawDiagnostic', 'androidTestRawDiagnostic', 'testGpuDiagnostic'):
             path = self.root / 'app/src' / variant
             path.mkdir()
             with self.assertRaises(AssertionError):
