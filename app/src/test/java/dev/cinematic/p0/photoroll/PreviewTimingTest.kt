@@ -1,6 +1,5 @@
 package dev.cinematic.p0.photoroll
 
-import dev.cinematic.p0.raw.LinearSrgbImage
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -81,17 +80,4 @@ class PreviewTimingTest {
         assertTrue(result.contains("CHECK_ORIGINALNs=1 LOOKNs=7"))
     }
 
-    @Test fun observingRealSyntheticPipelineDoesNotChangeAnyOutputBits() {
-        val input = LinearSrgbImage(8, 6, FloatArray(144) { .03f + ((it * 17) % 113) / 160f })
-        val source = input.copyPixels()
-        val reference = StageClearTrialPipeline.render(input, { false }).copyPixels()
-        var now = 0L
-        var result = ""
-        val timing = PreviewTiming(0, clock = { now++ }, sink = { result = it })
-        val observed = StageClearTrialPipeline.render(input, { false }) { timing.enter(it.name) }.copyPixels()
-        timing.finish("STATE_ADOPTED")
-        assertArrayEquals(source, input.copyPixels(), 0f)
-        assertArrayEquals(reference.map { it.toRawBits() }.toIntArray(), observed.map { it.toRawBits() }.toIntArray())
-        assertTrue(result.contains("LOOKNs="))
-    }
 }

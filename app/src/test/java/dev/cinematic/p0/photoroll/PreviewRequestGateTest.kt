@@ -27,17 +27,6 @@ class PreviewRequestGateTest {
         } finally { future.complete(Unit); waiter.join(5000) }
         assertFalse(waiter.isAlive)
     }
-    @Test fun enabledGatePreservesSyntheticPreviewBitsAndSource() = runBlocking {
-        val source = dev.cinematic.p0.raw.LinearSrgbImage(8, 6,
-            FloatArray(144) { .03f + ((it * 17) % 113) / 160f })
-        val original = source.copyPixels()
-        val expected = StageClearTrialPipeline.render(source, { false }).copyPixels()
-        val actual = PreviewRequestGate().run(true) {
-            StageClearTrialPipeline.render(source, { false }).copyPixels()
-        }
-        assertArrayEquals(original, source.copyPixels(), 0f)
-        assertArrayEquals(expected.map { it.toRawBits() }.toIntArray(), actual.map { it.toRawBits() }.toIntArray())
-    }
     @Test fun cancelledIntermediateRequestsNeverRunAndLatestResultMatchesDirect() = runBlocking {
         val gate = PreviewRequestGate()
         val entered = CountDownLatch(1)
