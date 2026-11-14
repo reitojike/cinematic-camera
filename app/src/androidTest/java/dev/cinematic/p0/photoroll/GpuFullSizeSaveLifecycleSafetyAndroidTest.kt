@@ -157,6 +157,15 @@ class GpuFullSizeSaveLifecycleSafetyAndroidTest {
         DevelopExecution.updateConditions(ALLOWED)
         val save = AndroidManualOriginalTrialSaves.prepare(env.app, env.source, VALUES.strength, ALLOWED,
             PhotoAdjustmentPolicy.adjustments(VALUES)).get(120, TimeUnit.SECONDS).also { env.handle = it }
+        // Normal UI prepares through prepareGpu, which publishes the knownPrepared index.
+        // This is same-process retry, not cold process-death restoration.
+        val indexed = AndroidManualOriginalTrialSaves.prepareGpu(env.app, env.source, save.geometry,
+            VALUES.strength, ALLOWED, PhotoAdjustmentPolicy.adjustments(VALUES)) { false }
+            .get(120, TimeUnit.SECONDS)
+        assertSame(save, indexed)
+        assertEquals(save.request, indexed.request)
+        assertEquals(save.geometry, indexed.geometry)
+        assertSame(save, AndroidManualOriginalTrialSaves.knownPrepared(env.source))
         val request = save.request
         env.assertRequest(save)
         val beforeCount = env.failureCount()

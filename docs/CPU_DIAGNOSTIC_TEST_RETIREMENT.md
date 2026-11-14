@@ -647,3 +647,12 @@ trim/遅延公開/保存中A再選択/B→C/背景化/表示後・初drawのcont
 同head Home/FGS試験は公開・台帳・owner解放まで通過後、旧診断の操作文言で待機して失敗74.224秒。
 現行DevelopMessagesの保存済み/明示retryアクセシビリティ文言へ通常側試験のみ修正した。製品仕様の変更・assert削除はない。
 失敗時も既存noBackup hash不変、失敗証拠は保持。修正後test APK成功42秒、再実走はこれから。
+### 通常UIの実走とsetup補正
+
+3138434aでHome/復帰/再Homeの1件成功61.624秒、実24MP取消1件成功76.775秒。
+実12MP screen-off公開も成功。既存noBackupファイル全件hashは各検証前後で不変。
+同じ実走の12MP UI retryは、旧setupがgeneric prepareだけのためknownPrepared index未登録となり、
+初回preview openPhoto禁止assertで失敗（2件全体245.047秒、1成功1失敗）。assertは削除/緩和しない。
+通常製品経路のprepareGpuを同じ検証済みgeometry/source/recipeで呼び、同一handle/request/geometryとindexをassertしてから
+faultを注入するsetupへ補正した。これは同一processの準備済みGPU保存失敗からのUI retryで、process death復旧とは区別する。
+独立読取り確認済み、補正後test APK成功31秒。再実走前のためこのretry保証は未合格のまま。
