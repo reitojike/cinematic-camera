@@ -1,8 +1,10 @@
 package dev.cinematic.p0.gpu
 
 import android.opengl.EGL14
+import android.opengl.GLES32
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import dev.cinematic.p0.gpu.analysis.HistogramRanks
 import dev.cinematic.p0.gpu.analysis.GpuAnalysis
 import dev.cinematic.p0.gpu.analysis.GpuQuantileWorkspace
 import dev.cinematic.p0.gpu.diag.GpuStageTap
@@ -59,12 +61,73 @@ class GpuQuantileReuseAndroidTest {
                 }
             }
             assertEquals(1, workspace.allocations)
-            assertEquals(1024 * 1024, workspace.retainedGlBytes)
+            assertEquals(1024 * 1024 + 8192 + 64, workspace.retainedGlBytes)
         }
         assertEquals(0, workspace.retainedGlBytes)
         workspace.close()
         assertThrows(IllegalStateException::class.java) { workspace.clear(65536) }
         assertEquals(0L, ledger.allocatedBytes)
+    }
+    @Test fun gpuRankSelectionMatchesCpuAtTileEdgesWithFourRowsAndLargeCounts() = gpu { egl ->
+        GpuQuantileWorkspace(egl).use { workspace ->
+            val bins = HistogramRanks.BINS
+            val counts = IntArray(4 * bins)
+            val edges = intArrayOf(0, 127, 128, 255, 256, 32767, 65407, 65535)
+            repeat(4) { row -> edges.forEachIndexed { index, bin -> counts[row * bins + bin] = index + row + 1 } }
+            // Exercise uint arithmetic close to the maximum supported texture pixel count.
+            counts[0] = Int.MAX_VALUE - counts.take(bins).sum() + counts[0]
+            counts.fill(0, 3 * bins, 4 * bins)
+            counts[3 * bins + 128] = 8
+            counts[4 * bins - 1] = 1
+            val totals = LongArray(4) { row -> (0 until bins).sumOf { counts[row * bins + it].toLong() } }
+            val rows = intArrayOf(0, 3, 2, 0)
+            val ranks = intArrayOf(Int.MAX_VALUE - 1, 0, (totals[2] / 2).toInt(), 1)
+            val expected = LongArray(4) { totals[rows[it]] }
+            repeat(2) {
+                workspace.clear(counts.size)
+                val upload = ByteBuffer.allocateDirect(counts.size * 4).order(ByteOrder.nativeOrder())
+                    .asIntBuffer().apply { put(counts); flip() }
+                GLES32.glBufferSubData(GLES32.GL_SHADER_STORAGE_BUFFER, 0, counts.size * 4, upload)
+                egl.checkGl("upload synthetic histogram")
+                val actual = workspace.select(rows, ranks, expected, 4)
+                for (i in rows.indices) assertEquals(
+                    HistogramRanks.select(counts, rows[i] * bins, intArrayOf(ranks[i]), expected[i]).single(), actual[i])
+                // Select both ends of every occupied bin, including all tile boundaries and all four rows.
+                val probes = buildList {
+                    repeat(4) { row ->
+                        var before = 0L
+                        repeat(bins) { bin ->
+                            val size = counts[row * bins + bin].toLong()
+                            if (size > 0) {
+                                add(row to before.toInt())
+                                add(row to (before + size - 1).toInt())
+                            }
+                            before += size
+                        }
+                    }
+                }
+                for (chunk in probes.chunked(4)) {
+                    val query = List(4) { chunk[minOf(it, chunk.lastIndex)] }
+                    val queryRows = IntArray(4) { query[it].first }
+                    val queryRanks = IntArray(4) { query[it].second }
+                    val queryTotals = LongArray(4) { totals[queryRows[it]] }
+                    val result = workspace.select(queryRows, queryRanks, queryTotals, 4)
+                    for (i in query.indices) assertEquals(HistogramRanks.select(counts,
+                        queryRows[i] * bins, intArrayOf(queryRanks[i]), queryTotals[i]).single(), result[i])
+                }
+                assertThrows(IllegalStateException::class.java) {
+                    workspace.select(rows, ranks, expected.copyOf().apply { this[0]-- }, 4)
+                }
+                assertThrows(IllegalStateException::class.java) {
+                    workspace.select(rows, ranks.copyOf().apply { this[1] = totals[3].toInt() }, expected, 4)
+                }
+                // Nonfinite high bins must fail even if they do not contain a selected rank.
+                assertThrows(IllegalArgumentException::class.java) {
+                    workspace.select(IntArray(4) { 3 }, intArrayOf(0, 1, 2, 3), LongArray(4) { totals[3] }, 4, finite = true)
+                }
+                assertEquals(actual, workspace.select(rows, ranks, expected, 4))
+            }
+        }
     }
     @Test fun uniformCacheIsProgramOwnedAndClosedProgramsCannotBeRevived() = gpu { egl ->
         val library = egl.shaders()
