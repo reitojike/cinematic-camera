@@ -233,7 +233,10 @@ internal class GpuExportBoundaryFixture(val app: Context, val width: Int = WIDTH
             var success = false
             var failure: Throwable? = null
             try {
-                assertTrue(fixture.setting.select(DevelopEngine.GPU, GpuAvailability.Available))
+                if (fixture.setting.visible) {
+                    assertTrue(fixture.setting.select(DevelopEngine.GPU, GpuAvailability.Available))
+                }
+                assertEquals(DevelopEngine.GPU, fixture.setting.current())
                 DevelopExecution.updateConditions(ALLOWED)
                 fixture.createSource()
                 body(fixture)
