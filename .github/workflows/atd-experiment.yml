@@ -34,12 +34,13 @@ jobs:
         run: python3 -m pip install Pillow==12.0.0
       - name: Validate verification harness
         run: python3 -B -m unittest discover -s tools/atd-ci -v
-      - name: SDK and ATD image
+      - name: SDK and ATD package inventory
         run: |
-          sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0' 'ndk;29.0.14206865' 'cmake;3.22.1' 'emulator' 'system-images;android-37;google_atd;x86_64'
           mkdir -p atd-evidence
+          sdkmanager --list > atd-evidence/sdk-packages.txt
+          sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0' 'ndk;29.0.14206865' 'cmake;3.22.1' 'emulator' 'system-images;android-37.0;google_atd;x86_64'
           "$ANDROID_HOME/emulator/emulator" -version > atd-evidence/emulator.txt 2>&1
-          cat "$ANDROID_HOME/system-images/android-37/google_atd/x86_64/source.properties" > atd-evidence/image.txt
+          cat "$ANDROID_HOME/system-images/android-37.0/google_atd/x86_64/source.properties" > atd-evidence/image.txt
       - name: Require existing KVM access (no permission changes)
         run: |
           test -r /dev/kvm && test -w /dev/kvm
@@ -57,6 +58,11 @@ jobs:
             -Pandroid.testInstrumentationRunnerArguments.isolated=true \
             -Pandroid.testInstrumentationRunnerArguments.dngImportStorage=true \
             2>&1 | tee atd-evidence/gradle.txt
+      - name: Record installed image revisions
+        if: always()
+        run: |
+          mkdir -p atd-evidence
+          find "$ANDROID_HOME/system-images" -name source.properties -exec cat {} \; > atd-evidence/images.txt 2>/dev/null || true
       - name: Require exact methods, zero skips and all software Canvas images
         shell: bash
         if: ${{ !cancelled() }}
