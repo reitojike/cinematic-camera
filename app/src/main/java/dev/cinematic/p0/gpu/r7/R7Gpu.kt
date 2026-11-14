@@ -3,6 +3,7 @@ package dev.cinematic.p0.gpu.r7
 import android.opengl.GLES32
 import dev.cinematic.p0.gpu.*
 import dev.cinematic.p0.gpu.analysis.GpuAnalysis
+import dev.cinematic.p0.gpu.analysis.GpuQuantileWorkspace
 import dev.cinematic.p0.gpu.diag.GpuStageTap.Point
 import dev.cinematic.p0.gpu.resample.GpuResample
 import dev.cinematic.p0.gpu.constants.R7BaseV1
@@ -19,6 +20,8 @@ internal class R7Gpu(private val egl: EglContexts, private val ledger: GpuMemory
     private var key: Key? = null
     private var result: GpuTexture? = null
     private var closed = false
+    private var quantileWorkspace: GpuQuantileWorkspace? = null
+    internal val retainedQuantileGlBytes: Int get() = quantileWorkspace?.retainedGlBytes ?: 0
     /** R7自身のfragment実行数。共有resample/computeは含まない。再利用では増えない。 */
     var fragmentPassCount = 0; private set
 
@@ -54,9 +57,9 @@ internal class R7Gpu(private val egl: EglContexts, private val ledger: GpuMemory
         val red = 2.0.pow(warmth / 200.0); val blue = 2.0.pow(-warmth / 200.0)
         val norm = .2126 * red + .7152 + .0722 * blue
         fun profile(output: GpuTexture, warmthOnly: Boolean) = pass("r7/profile.frag", listOf(TextureInput("s_input", input, 0)), output) { program ->
-            GLES32.glUniform3f(GLES32.glGetUniformLocation(program, "u_warmthGain"),
+            GLES32.glUniform3f(egl.shaders().uniformLocation(program, "u_warmthGain"),
                 (red / norm).toFloat(), (1.0 / norm).toFloat(), (blue / norm).toFloat())
-            GLES32.glUniform1i(GLES32.glGetUniformLocation(program, "u_warmthOnly"), if (warmthOnly) 1 else 0)
+            GLES32.glUniform1i(egl.shaders().uniformLocation(program, "u_warmthOnly"), if (warmthOnly) 1 else 0)
         }
         try {
             if (tap != null) {
@@ -72,11 +75,12 @@ internal class R7Gpu(private val egl: EglContexts, private val ledger: GpuMemory
             if (smooth !== small) owned += smooth
             if (small !== smooth) release(small)
             if (log !== smooth) release(log)
-            val quantiles = GpuAnalysis.localToneQuantiles(smooth, input.width, input.height)
+            val workspace = quantileWorkspace ?: GpuQuantileWorkspace(egl).also { quantileWorkspace = it }
+            val quantiles = GpuAnalysis.localToneQuantiles(smooth, input.width, input.height, workspace)
             smoothLogTap?.invoke(smooth, quantiles.copyOf())
             val toned = create()
             pass("r7/tone_apply.frag", listOf(TextureInput("s_input", profiled, 0), TextureInput("s_smoothLogLuma", smooth, 1)), toned) { program ->
-                GLES32.glUniform2f(GLES32.glGetUniformLocation(program, "u_quantiles"), quantiles[0].toFloat(), quantiles[1].toFloat())
+                GLES32.glUniform2f(egl.shaders().uniformLocation(program, "u_quantiles"), quantiles[0].toFloat(), quantiles[1].toFloat())
             }
             release(profiled); release(smooth); tap?.invoke(Point.R7_TONE, toned)
             val roi = foundationRoi ?: create(GpuTexture.Format.R32F).also {
@@ -88,7 +92,7 @@ internal class R7Gpu(private val egl: EglContexts, private val ledger: GpuMemory
             }
             val foundation = create()
             pass("r7/foundation.frag", listOf(TextureInput("s_input", toned, 0), TextureInput("s_roi", roi, 1)), foundation) { program ->
-                GLES32.glUniform1f(GLES32.glGetUniformLocation(program, "u_gain"), gain)
+                GLES32.glUniform1f(egl.shaders().uniformLocation(program, "u_gain"), gain)
             }
             release(toned); if (foundationRoi == null) release(roi); tap?.invoke(Point.R7_FOUNDATION, foundation)
             val final = create(); pass("r7/finish.frag", listOf(TextureInput("s_input", foundation, 0)), final)
@@ -104,6 +108,12 @@ internal class R7Gpu(private val egl: EglContexts, private val ledger: GpuMemory
     override fun close() {
         egl.glThread.requireCurrent()
         if (closed) return
-        discardResult(); if (ownsResample) resample.close(); closed = true
+        var failure: Throwable? = null
+        fun cleanup(block: () -> Unit) { try { block() } catch (e: Throwable) { if (failure == null) failure = e else failure.addSuppressed(e) } }
+        cleanup { discardResult() }
+        cleanup { quantileWorkspace?.close(); quantileWorkspace = null }
+        if (ownsResample) cleanup { resample.close() }
+        failure?.let { throw it }
+        closed = true
     }
 }

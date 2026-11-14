@@ -25,22 +25,36 @@ internal class ShaderSource(private val read: (String) -> String, private val de
     companion object { private val INCLUDE = Regex("\\s*#include\\s+\"([^\"]+)\"\\s*(?://.*)?") }
 }
 
-internal class GpuProgram internal constructor(private val egl: EglContexts, private var handle: Int, val compute: Boolean) : AutoCloseable {
+internal class GpuProgram internal constructor(private val egl: EglContexts, private var handle: Int, val compute: Boolean,
+    private val onClose: () -> Unit = {}) : AutoCloseable {
+    private val uniformLocations = mutableMapOf<String, Int>()
+    internal val cachedUniformCount: Int get() { id; return uniformLocations.size }
     val id: Int get() { egl.requireCurrent(); check(handle != 0) { "GPU program is closed" }; return handle }
+    fun uniformLocation(name: String): Int {
+        val program = id // Validate ownership/lifetime even on a cache hit.
+        return uniformLocations.getOrPut(name) { GLES32.glGetUniformLocation(program, name) }
+    }
     internal fun requireContext(expected: EglContexts) { check(egl === expected) { "Program belongs to another context" }; id }
     override fun close() {
         egl.glThread.requireCurrent()
         if (handle == 0) return
-        egl.releaseResource { GLES32.glDeleteProgram(handle) }; handle = 0
+        // A live but non-current context may reject cleanup. Preserve ownership for retry.
+        egl.releaseResource { GLES32.glDeleteProgram(handle) }
+        handle = 0; uniformLocations.clear(); onClose()
     }
 }
 
 internal class ShaderLibrary(private val egl: EglContexts, assets: AssetManager) : AutoCloseable {
     private val source = ShaderSource({ path -> assets.open("gpu/$path").bufferedReader().use { it.readText() } })
     private val programs = mutableMapOf<Pair<Boolean, String>, GpuProgram>()
+    private val linkedPrograms = mutableMapOf<Int, GpuProgram>()
     private var closed = false
     fun fragment(path: String): GpuProgram = cached(false, path) { fragmentSource(path, source.expand(path)) }
     fun compute(path: String): GpuProgram = cached(true, path) { computeSource(path, source.expand(path)) }
+    fun uniformLocation(program: Int, name: String): Int {
+        requireOpen()
+        return checkNotNull(linkedPrograms[program]) { "Program is not owned by this shader library" }.uniformLocation(name)
+    }
     private fun cached(compute: Boolean, path: String, build: () -> GpuProgram): GpuProgram {
         requireOpen()
         return programs.getOrPut(compute to path, build).also { it.id }
@@ -68,7 +82,9 @@ internal class ShaderLibrary(private val egl: EglContexts, assets: AssetManager)
             val status = IntArray(1); GLES32.glGetProgramiv(program, GLES32.GL_LINK_STATUS, status, 0)
             check(status[0] != 0) { "Shader link failed: $label\n${GLES32.glGetProgramInfoLog(program)}" }
             egl.checkGl("compile/link $label")
-            return GpuProgram(egl, program, compute).also { program = 0 }
+            val linked = program
+            return GpuProgram(egl, linked, compute) { linkedPrograms.remove(linked) }
+                .also { linkedPrograms[linked] = it; program = 0 }
         } finally {
             shaders.forEach(GLES32::glDeleteShader)
             if (program != 0) GLES32.glDeleteProgram(program)
@@ -77,7 +93,7 @@ internal class ShaderLibrary(private val egl: EglContexts, assets: AssetManager)
     override fun close() {
         egl.glThread.requireCurrent()
         if (closed) return
-        programs.values.forEach { it.close() }; programs.clear(); closed = true
+        programs.values.forEach { it.close() }; programs.clear(); linkedPrograms.clear(); closed = true
     }
     companion object {
         private val VERTEX = """#version 320 es

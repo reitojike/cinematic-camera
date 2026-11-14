@@ -84,7 +84,7 @@ internal class StageClearFinishGpu(private val egl: EglContexts, private val led
             return output
         } catch (failure: Throwable) { output.close(); throw failure }
     }
-    private fun location(program: Int, name: String) = GLES32.glGetUniformLocation(program, name).also { check(it >= 0) { "Missing uniform $name" } }
+    private fun location(program: Int, name: String) = egl.shaders().uniformLocation(program, name).also { check(it >= 0) { "Missing uniform $name" } }
     private fun validate(texture: GpuTexture, format: GpuTexture.Format, aligned: GpuTexture? = null) {
         egl.requireCurrent(); check(!closed) { "GPU finish is closed" }
         texture.requireContext(egl)

@@ -20,7 +20,7 @@ internal object StageClearGlowGpu {
         val egl = source.context
         val program = egl.shaders().fragment("look/glow_bloom_accumulate.frag")
         val graph = egl.passes()
-        val weightLocation = GLES32.glGetUniformLocation(program.id, "u_kernelWeight")
+        val weightLocation = program.uniformLocation("u_kernelWeight")
         check(weightLocation >= 0) { "Bloom kernel weight uniform is missing" }
         val buffers = mutableListOf<GpuTexture>()
         var retained: GpuTexture? = null
@@ -108,8 +108,8 @@ internal object StageClearGlowGpu {
             val inputs = listOf("s_base" to base, "s_skinWeight" to skinWeight,
                 "s_bloom" to bloom, "s_halation" to halation)
             val uniforms: (Int) -> Unit = { program ->
-                uniform(program, "u_bloomAmount", (StageClearGlowV1.BLOOM * strength).toFloat())
-                uniform(program, "u_halationAmount", (StageClearGlowV1.HALATION * strength).toFloat())
+                uniform(base, program, "u_bloomAmount", (StageClearGlowV1.BLOOM * strength).toFloat())
+                uniform(base, program, "u_halationAmount", (StageClearGlowV1.HALATION * strength).toFloat())
             }
             val glowed = draw(base, "look/glow_compose.frag", inputs, uniforms = uniforms)
             val amount = (StageClearGlowV1.DIFFUSION * strength).toFloat()
@@ -122,7 +122,7 @@ internal object StageClearGlowGpu {
                 // retaining glowed + soft + output alongside all immutable prepared fields.
                 if (soft !== glowed) glowed.close()
                 return draw(base, "look/glow_diffusion.frag", inputs + ("s_soft" to soft), uniforms = { program ->
-                    uniforms(program); uniform(program, "u_diffusionAmount", amount)
+                    uniforms(program); uniform(base, program, "u_diffusionAmount", amount)
                 })
             } finally {
                 soft?.close()
@@ -147,8 +147,8 @@ internal object StageClearGlowGpu {
             return output
         } catch (failure: Throwable) { output.close(); throw failure }
     }
-    private fun uniform(program: Int, name: String, value: Float) {
-        val location = GLES32.glGetUniformLocation(program, name)
+    private fun uniform(base: GpuTexture, program: Int, name: String, value: Float) {
+        val location = base.context.shaders().uniformLocation(program, name)
         check(location >= 0) { "Missing Glow uniform $name" }
         GLES32.glUniform1f(location, value)
     }
