@@ -1,0 +1,68 @@
+{
+  "tests": {
+    "dev.cinematic.p0.metrics.SaveTimingAndroidTest": [
+      "shellExtractsFixedSnapshotButAppUidCannotReadOrWrite"
+    ],
+    "dev.cinematic.p0.rawcapture.ManualTrialAttemptStorageAndroidTest": [
+      "unfinishedReplacementCannotConsumeCleanProofAndCommittedStartedCannotRestoreIt",
+      "beforeCommitAfterCommitAndReadbackFailuresPreserveTheExactDurableOutcome"
+    ],
+    "dev.cinematic.p0.rawcapture.DngImportStorageAndroidTest": [
+      "pendingCopyPublishesExactlyOneSharedOriginalAndCanReopen",
+      "publishResponseLossReconcilesSameUriAfterJournalReopen",
+      "pendingCancelAndEmptyPrecommitDirectoryRecoverWithoutPublishing"
+    ],
+    "dev.cinematic.p0.CaptureMessagesScreenshotTest": [
+      "captureMajorStates"
+    ],
+    "dev.cinematic.p0.photoroll.DevelopMessagesScreenshotAndroidTest": [
+      "captureProductMessageStatesWithSyntheticImage"
+    ]
+  },
+  "images": [
+    "ui-pr-b/01-connecting-horizontal.png",
+    "ui-pr-b/01-connecting-vertical.png",
+    "ui-pr-b/02-control-recovery-horizontal.png",
+    "ui-pr-b/02-control-recovery-vertical.png",
+    "ui-pr-b/03-capture-recovery-horizontal.png",
+    "ui-pr-b/03-capture-recovery-vertical.png",
+    "ui-pr-b/04-thermal-horizontal.png",
+    "ui-pr-b/04-thermal-vertical.png",
+    "ui-pr-b/05-microphone-horizontal.png",
+    "ui-pr-b/05-microphone-vertical.png",
+    "ui-pr-b/06-failure-horizontal.png",
+    "ui-pr-b/06-failure-vertical.png",
+    "ui-pr-b/07-progress-horizontal.png",
+    "ui-pr-b/07-progress-vertical.png",
+    "ui-pr-b/08-saved-horizontal.png",
+    "ui-pr-b/08-saved-vertical.png",
+    "ui-pr-b/09-connecting-thermal-horizontal.png",
+    "ui-pr-b/09-connecting-thermal-vertical.png",
+    "ui-pr-b/10-reset-horizontal.png",
+    "ui-pr-b/10-reset-vertical.png",
+    "ui-pr-b/13-display-fallback-horizontal.png",
+    "ui-pr-b/13-display-fallback-vertical.png",
+    "ui-pr-b/14-display-fallback-busy-horizontal.png",
+    "ui-pr-b/14-display-fallback-busy-vertical.png",
+    "ui-pr-b/11-settings-busy-horizontal.png",
+    "ui-pr-b/11-settings-busy-vertical.png",
+    "ui-pr-b/12-settings-applying-horizontal.png",
+    "ui-pr-b/12-settings-applying-vertical.png",
+    "ui-pr-c/01-preparing.png",
+    "ui-pr-c/02-ready.png",
+    "ui-pr-c/03-editing.png",
+    "ui-pr-c/04-saving-paused.png",
+    "ui-pr-c/05-published-paused.png",
+    "ui-pr-c/06-cancelled.png",
+    "ui-pr-c/07-save-failed.png",
+    "ui-pr-c/08-low-memory.png",
+    "ui-pr-c/09-unconfirmed.png",
+    "ui-pr-c/10-hold.png",
+    "ui-pr-c/11-rechecking.png",
+    "ui-pr-c/12-published-feedback.png",
+    "ui-pr-c/15-saving-notifications-disabled.png",
+    "ui-pr-c/16-cancelled-other-photo-saving.png",
+    "ui-pr-c/17-generic-failure-hold.png",
+    "ui-pr-c/18-generic-failure-navigation-disabled.png"
+  ]
+}

@@ -1,0 +1,75 @@
+name: ATD non-GPU experiment
+
+# Deliberately independent of Android checks and its required aggregate.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/atd-experiment.yml'
+      - 'tools/atd-ci/**'
+      - 'docs/ATD_CI_FEASIBILITY.md'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: atd-experiment-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  selected-atd:
+    name: ATD experiment (not GPU evidence)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: android-actions/setup-android@v4
+        with:
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+      - name: Install pinned PNG decoder
+        run: python3 -m pip install Pillow==12.0.0
+      - name: Validate verification harness
+        run: python3 -B -m unittest discover -s tools/atd-ci -v
+      - name: SDK and ATD image
+        run: |
+          sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0' 'ndk;29.0.14206865' 'cmake;3.22.1' 'emulator' 'system-images;android-37;google_atd;x86_64'
+          mkdir -p atd-evidence
+          "$ANDROID_HOME/emulator/emulator" -version > atd-evidence/emulator.txt 2>&1
+          cat "$ANDROID_HOME/system-images/android-37/google_atd/x86_64/source.properties" > atd-evidence/image.txt
+      - name: Require existing KVM access (no permission changes)
+        run: |
+          test -r /dev/kvm && test -w /dev/kvm
+          "$ANDROID_HOME/emulator/emulator" -accel-check | tee atd-evidence/acceleration.txt
+      - name: Build before emulator boot
+        run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon --max-workers=2
+      - name: Run only eight selected methods on one managed ATD
+        shell: bash
+        run: |
+          set -euo pipefail
+          selection=$(python3 tools/atd-ci/verify.py --selection)
+          ./gradlew :app:pixel9aapi37atdDebugAndroidTest --rerun --no-daemon --max-workers=1 --console=plain \
+            -Pandroid.testoptions.manageddevices.emulator.gpu=swiftshader_indirect \
+            -Pandroid.testInstrumentationRunnerArguments.class="$selection" \
+            -Pandroid.testInstrumentationRunnerArguments.isolated=true \
+            -Pandroid.testInstrumentationRunnerArguments.dngImportStorage=true \
+            2>&1 | tee atd-evidence/gradle.txt
+      - name: Require exact methods, zero skips and all software Canvas images
+        shell: bash
+        if: ${{ !cancelled() }}
+        run: python3 tools/atd-ci/verify.py app/build | tee atd-evidence/verification.txt
+      - name: Keep evidence (software Canvas is not screen/GPU output)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: atd-experiment-${{ github.run_attempt }}
+          path: |
+            atd-evidence/
+            app/build/outputs/androidTest-results/
+            app/build/outputs/managed_device_android_test_additional_output/
+            app/build/reports/androidTests/
+          if-no-files-found: error
+          retention-days: 7
