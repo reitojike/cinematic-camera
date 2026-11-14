@@ -191,7 +191,7 @@ internal class GpuExportBoundaryFixture(val app: Context, val width: Int = WIDTH
         private var normalApp: Context? = null
 
         /** One fresh namespace per instrumentation process; never recover the target app's saved records. */
-        @Synchronized private fun isolatedNormalApp(target: Context): Context = normalApp ?: run {
+        @Synchronized private fun isolatedNormalApp(target: Context): Context = normalApp ?: kotlin.run {
             val namespace = "gpu-export-boundaries-${UUID.randomUUID()}"
             val root = File(target.cacheDir.canonicalFile, namespace)
             check(root.mkdir() && root.canonicalFile.parentFile == target.cacheDir.canonicalFile)
