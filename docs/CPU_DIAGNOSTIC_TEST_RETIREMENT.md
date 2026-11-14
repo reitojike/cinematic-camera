@@ -106,7 +106,7 @@ unit taskはFROM-CACHEのため、新たなhost実走とは数えない。追加
 `DevelopEngineAndroidTest.releasePolicyHasNoSettingAndDoesNotProbeGpu` の3件を保持先として再実走する（計30 method予定）。
 各classはfresh instrumentation processで実行し、専用queue/observerの混在を避ける。予定件数を実績へ読み替えない。
 
-元46件の内訳は、実装/保持対応42件、部分実装2件、契約差で判断待ち2件。**移行完了は0件**（Android未実走）。
+元46件の内訳は、実装/保持対応42件、部分実装2件、契約差の代替保証2件。代替方針Aは本人承認済みだが、追加assertの実走完了前に旧保証を削除しない。**46件すべての移行完了を意味しない**。
 42件にも既存通常試験への集約と、CPU/診断専用部分を移さない混在試験が含まれ、新規42件を意味しない。
 旧分類133件の M95/D14/E24 は維持し、下表はM1内の実装状況を細分化したもの。
 
@@ -514,21 +514,19 @@ AVDは他レーン利用中。未予約のemulatorには接続・停止・導入
 |---|---|---|
 | `dragAndReleaseReachRealSyntheticRawPreview` | M1 | CPU exact/draft worker切替UIは削除。実RAW上のdrag/release・最終recipe描画・readonly provider/idle復帰を通常GPU gesture試験に残す。 |
 
-## 契約差2件・部分移行2件の根拠と完了先（M2準備）
+## 契約差2件の本人承認と代替保証
 
-#408 の調査時headは `37763a3e`。その後CIの試験側lint修正 `5d1e36e8` を依存先へ取り込んだ。この節は後続の移行②で追記する準備であり、
-契約差の採否、旧試験削除、製品仕様変更を実施した記録ではない。42/2/2を46完了へ変更しない。
+本人の「提案の方針でOKです」を親担当が候補Aへの承認として確認。以下は製品仕様を変えず、
+`GpuInputLifecycleSafetyAndroidTest` に集約する。上表の「判断待ち」はこの承認で更新されるが、
+追加assertは実走未完。旧診断試験はまだ削除しない。
 
-| 元保証 | 当初の目的・実装根拠 | 現在の製品保証と対応候補 | 完了先・判断 |
-|---|---|---|---|
-| 遅延UI_HIDDENでも再開後のloadを継続 | `f282aaf9` は診断Activityだけに resumed時のUI_HIDDEN無視を追加。前の背景期間に属する遅延通知で新epochを取り消さないためのもの | [現行仕様](../specs/develop/spec.md) のGPU preview節、[GPU_ENGINE](GPU_ENGINE.md)の解放契約はtrim20以上でpreview owner終了。PhotoRollActivity.onTrimMemoryがpreviewTrimEpochを進め、GpuPhotoRollEditorがtrimBlockedにして閉じる。M1の実12MP lifecycle試験は所有者終了・明示retry・原本不変を保持するが「遅延通知でも継続」は保持していない | **推奨候補A**: 現行製品契約を維持し、load中trimで旧入力drain/暗黙再開なし/明示retry/原本保持を追加検証してから、削除①で診断専用継続assertのみ廃止。**候補B**: 製品にも遅延通知識別を導入するなら別の仕様変更承認・製品PR・90条件回帰が必要。採否未決で削除停止 |
-| 新入力の実描画まで旧GPU retry表示保持 | `f238869f` は同じ診断rendererがfailed状態のままerrorだけ消える問題を修正。closePhoto→retry→native入力→実frameまでerror/retryを維持 | 製品はGpuPhotoRollSession単位の失敗で、自動回復なし。明示retryは旧owner終了を待ち別sessionを作成しloadingとなる。GpuPhotoRollEditorのready/canSaveは実presentedと要求recipeの一致を必要とする。M1はfailure可視/再試行/原本再照合/描画/旧owner終了を保持するが、loading中の旧retryラベル維持は未移行 | **推奨候補A**: 製品仕様は変えず、retry後の初回frameをbarrierで止めてCHECKING/保存非活性/旧owner解放、完了後だけ保存可能を明示検証。診断ラベル継続は削除①で廃止候補。**候補B**: loading中も旧error/retry表示を残すUXにするなら本人の表示仕様判断と製品変更条件が必要。採否未決で削除停止 |
-| releasePolicyの設定非表示・非probe | DevelopEngineSettingViewはvisible=falseなら能力確認を起動しない。既存通常試験は実Viewをattachしてinspect callback未呼出しを確認 | M1の通常routing試験はlegacy prefsをread/writeしないGPU固定を保持。旧Viewを残している期間は既存releasePolicy試験を通常側で選択実走。旧Viewを使うassertのままクラスを削除できない | **削除①**でentry/callsite残存0・製品APKに診断設定View/Activity定義0を検証し、通常routing/prefs不変と合わせて置換。View/入口削除前に既存試験を消さない |
-| warm metadataとcold保存の強い照合 | [PREVIEW_ORIGINAL_CHECKS](PREVIEW_ORIGINAL_CHECKS.md) と現行specは同一size/mtime変更の限界を明示。保存backendへpreview用metadata callbackを渡さない | M1はwarm frameの再readなし、cold入力のSHA不一致拒否。Original24AttemptはSOURCE_VERIFY_BEFORE、snapshot copy、SOURCE_VERIFY_AFTERで固定fingerprintを照合 | **移行②**のGpuSaveProducerSafetyAndroidTest.unchangedMetadataCannotBypassColdSaveFingerprintBeforeOrAfterGpuJpegへ集約。私有合成DNGのsize/mtimeを保った改変を保存前と実JPEG書込後で注入し、結果なし・再render不可・owner解放を確認。未実走なので完了ではない |
+| 終了候補の旧保証 | 通常側の代替保証 | 実走・終了条件 |
+|---|---|---|
+| 遅延UI_HIDDENでも新loadを継続 | preflightをbarrierで保持してtrimを通知。drainと旧owner終了、原本不変、暗黙再開なし。明示retryで新sessionだけが読み込み・表示 | 追加assert未実走。通常側成功確認後、削除①で旧継続assertを終了 |
+| 実描画まで旧error/retryラベル保持 | 明示retryの初frameをbarrierで保持。CHECKING表示・保存不可・旧owner終了。実frame後のみ保存可能、再度のGPU失敗は問題表示へ | 追加assert未実走。通常側成功確認後、削除①で旧ラベル保持assertを終了 |
 
-契約差候補Aは診断専用の継続/表示仕様を廃止する範囲判断が必要であり、現時点では採用していない。
-本人へ判断を求める場合は「現行製品仕様のまま代替安全試験を補って旧診断固有assertを廃止」か
-「旧診断の挙動を製品にも採用する別仕様変更」かを区別する。旧probeという名称だけでは判断しない。
+部分2件は別扱いを維持する。releasePolicyの旧View依存保証は削除①の入口/定義不在確認で置換し、
+warm metadata/cold保存のSHA保証は移行②の実GPU保存前後改変試験を実走して完了させる。
 
 ## 移行②の先行実装（未実走）
 

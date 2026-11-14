@@ -43,6 +43,23 @@ class SaveTimingAndroidTest {
     }
 
     @Test fun ordinaryGpuSaveRecordsDecodeGpuEncodeAndPublicationWithoutPhotoIdentifiers() {
+        runSyntheticSave(64, 48)
+    }
+
+    /** Explicit opt-in; one warm-up and three measured saves, with identical synthetic input. */
+    @Test fun captureSaveStageBenchmark() {
+        check(InstrumentationRegistry.getArguments().getString("saveBenchmark") == "true")
+        val label = InstrumentationRegistry.getArguments().getString("saveBenchmarkRun")!!
+        require(label.matches(Regex("[a-z0-9-]{1,40}")))
+        val directory = java.io.File(app.getExternalFilesDir(null), "save-benchmark/$label")
+        check(!directory.exists() && directory.mkdirs())
+        repeat(4) { iteration ->
+            val records = runSyntheticSave(1600, 1200)
+            java.io.File(directory, "save-$iteration.tsv").writeText(records, Charsets.US_ASCII)
+        }
+    }
+
+    private fun runSyntheticSave(width: Int, height: Int): String {
         check(app.packageName == "dev.cinematic.p0")
         val resolver = app.contentResolver
         val name = "synthetic_timing_${UUID.randomUUID()}.dng"
@@ -53,7 +70,7 @@ class SaveTimingAndroidTest {
                 put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/Cinematic Camera Synthetic Tests/")
                 put(MediaStore.MediaColumns.IS_PENDING, 1)
             }))
-        val bytes = requireNotNull(resolver.openOutputStream(original, "w")).use { writeSyntheticTrialDng(it, 64, 48, 1) }
+        val bytes = requireNotNull(resolver.openOutputStream(original, "w")).use { writeSyntheticTrialDng(it, width, height, 1) }
         check(resolver.update(original, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null) == 1)
         val fingerprint = DngContentVerifier.identify(bytes, { requireNotNull(resolver.openInputStream(original)) })
         val source = SharedOriginalReference(original.toString(), fingerprint, OriginalGrant.APP_OWNED)
@@ -68,15 +85,19 @@ class SaveTimingAndroidTest {
         val records = snapshot.lines().filter { SaveTimingRecord.valid(it) }
             .map { it.split('\t') }.filter { it[1] !in before }
         assertEquals(1, records.map { it[1] }.toSet().size)
+        assertEquals(15, records.size)
+        assertTrue(records.none { it[5] == "STARTED" })
+        assertTrue(records.single { it[4] == "ATTEMPT" }[7] != "NA")
         for (stage in listOf("NATIVE_DECODE", "B1", "B1_QUANTILES", "B2", "B3", "B4", "B5", "FINAL", "JPEG_ENCODE", "PUBLICATION")) {
             assertTrue("Missing completed $stage", records.any { it[4] == stage && it[5] == "COMPLETED" && it[7] != "NA" })
         }
-        assertTrue(records.any { it[4] == "ATTEMPT" && it[5] == "PUBLISHED" && it[6] == "3072" })
+        assertTrue(records.any { it[4] == "ATTEMPT" && it[5] == "PUBLISHED" && it[6] == (width.toLong() * height).toString() })
         for (privateText in listOf(name, original.toString(), save.request.captureId, source.fingerprint.toString()))
             assertFalse(snapshot.contains(privateText))
         assertEquals(fingerprint, DngContentVerifier.verify(fingerprint, { requireNotNull(resolver.openInputStream(original)) }))
         // Delete only exact rows created by this successful synthetic case; keep failure evidence.
         resolver.delete(Uri.parse(requireNotNull(result.uri)), null, null)
         resolver.delete(original, null, null)
+        return records.joinToString("\n", postfix = "\n") { it.joinToString("\t") }
     }
 }

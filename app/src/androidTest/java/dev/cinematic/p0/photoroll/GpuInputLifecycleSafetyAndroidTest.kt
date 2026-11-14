@@ -73,6 +73,7 @@ class GpuInputLifecycleSafetyAndroidTest {
         val selected = mutableIntStateOf(1)
         val owners = CopyOnWriteArrayList<Owner>()
         val failNext = AtomicBoolean()
+        val firstFrameBarrier = AtomicReference<Pair<CountDownLatch, CountDownLatch>>()
         fun newSession(assets: AssetManager): GpuPhotoRollSession {
             val ledger = AtomicReference<GpuMemoryLedger>()
             val dimensions = AtomicReference<Pair<Int, Int>>()
@@ -86,6 +87,10 @@ class GpuInputLifecycleSafetyAndroidTest {
                     }
                     override fun renderPreview(photo: StageClearGpuPhoto, params: GpuRenderParams,
                         target: GpuPreviewTarget, display: GpuDisplayOptions): GpuFrameStats {
+                        firstFrameBarrier.getAndSet(null)?.let { (entered, release) ->
+                            entered.countDown()
+                            check(release.await(60, TimeUnit.SECONDS)) { "First frame barrier timed out" }
+                        }
                         if (failNext.compareAndSet(true, false)) throw GpuContextLostException("Synthetic editor context loss")
                         return real.renderPreview(photo, params, target, display)
                     }
@@ -153,7 +158,7 @@ class GpuInputLifecycleSafetyAndroidTest {
                 assertTrue(range.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.id,
                     Bundle().apply { putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE,
                         if (releasedStrength == .7) .6f else .7f) }))
-                await("visible GPU failure") { find("GPU を使えません\nGPU の接続が失われました。再試行してください") != null }
+                await("visible GPU failure") { find("GPU を使えません") != null && find("GPU の接続が失われました。再試行してください") != null }
                 assertFalse(saveReady())
                 assertTrue(first.session.failure.value is GpuContextLostException)
                 val failed = snapshot(first)
@@ -164,7 +169,19 @@ class GpuInputLifecycleSafetyAndroidTest {
                 assertEquals(failed.drawCount, snapshot(first).drawCount)
                 assertEquals(initialReads, provider.opens.get())
                 provider.verifyUnchanged()
-                click("再試行")
+                val retryFrameEntered = CountDownLatch(1)
+                val releaseRetryFrame = CountDownLatch(1)
+                firstFrameBarrier.set(retryFrameEntered to releaseRetryFrame)
+                try {
+                    click("再試行")
+                    assertTrue(retryFrameEntered.await(60, TimeUnit.SECONDS))
+                    assertClosed(first)
+                    assertEquals(2, owners.size)
+                    assertNull(owners.last().session.presented.value)
+                    assertFalse(saveReady())
+                    await("retry remains CHECKING before first real frame") { find("画像を準備しています。") != null }
+                    provider.verifyUnchanged()
+                } finally { releaseRetryFrame.countDown() }
                 await("explicit GPU retry rechecks original and presents") {
                     owners.size == 2 && provider.opens.get() > initialReads && saveReady() &&
                         owners.last().session.presented.value != null
@@ -172,6 +189,17 @@ class GpuInputLifecycleSafetyAndroidTest {
                 assertClosed(first)
                 assertNull(owners.last().session.failure.value)
                 assertTrue(snapshot(owners.last()).allocatedBytes > 0L)
+
+                // A later failure must become visible again, rather than inheriting retry readiness.
+                failNext.set(true)
+                owners.last().session.submit(dev.cinematic.p0.photoedit.PhotoEditValues(.3, 0.0, 0.0))
+                await("new failure after retry is visible and cannot save") {
+                    find("GPU を使えません") != null && find("GPU の接続が失われました。再試行してください") != null && !saveReady()
+                }
+                val failedRetry = owners.last()
+                click("再試行")
+                await("second explicit retry presents") { owners.last() !== failedRetry && saveReady() }
+                assertClosed(failedRetry)
 
                 val beforeLow = owners.last()
                 val lowReads = provider.opens.get()
@@ -196,7 +224,7 @@ class GpuInputLifecycleSafetyAndroidTest {
                     assertEquals(count, owners.size)
                     assertEquals(reads, provider.opens.get())
                     provider.verifyUnchanged()
-                    click("原本を確認して再試行")
+                    click("再試行")
                     await("trim retry opens a new GPU owner") {
                         owners.size == count + 1 && provider.opens.get() > reads && saveReady() &&
                             owners.last().session.presented.value != null
@@ -259,6 +287,44 @@ class GpuInputLifecycleSafetyAndroidTest {
                         assertClosed(cancelledOwner)
                         owners.dropLast(1).forEach(::assertClosed)
                     } finally { releaseOldInput.countDown() }
+                }
+                val trimInputEntered = CountDownLatch(1)
+                val releaseTrimInput = CountDownLatch(1)
+                val holdTrimInput = AtomicBoolean(true)
+                GpuPhotoRollInputs.observeForDiagnostics(object : GpuPhotoRollInputs.DiagnosticObserver {
+                    override fun preflightOpened() {
+                        if (holdTrimInput.compareAndSet(true, false)) {
+                            trimInputEntered.countDown()
+                            check(releaseTrimInput.await(60, TimeUnit.SECONDS))
+                        }
+                    }
+                }).use {
+                    try {
+                        scenario.onActivity { selected.intValue = 1 }
+                        assertTrue(trimInputEntered.await(60, TimeUnit.SECONDS))
+                        val trimmedInput = owners.last()
+                        scenario.onActivity { it.onTrimMemory(ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) }
+                        await("in-flight trim blocks saving") { !saveReady() }
+                        releaseTrimInput.countDown()
+                        queue.manualOriginalIo { Unit }.get(60, TimeUnit.SECONDS)
+                        assertClosed(trimmedInput)
+                        assertNull(trimmedInput.session.presented.value)
+                        val closedCount = owners.size
+                        val closedReads = provider.opens.get()
+                        instrumentation.waitForIdleSync()
+                        queue.manualOriginalIo { Unit }.get(30, TimeUnit.SECONDS)
+                        assertEquals(closedCount, owners.size)
+                        assertEquals(closedReads, provider.opens.get())
+                        provider.verifyUnchanged()
+                        click("再試行")
+                        await("trimmed input requires a fresh explicitly requested generation") {
+                            owners.size == closedCount + 1 && owners.last() !== trimmedInput &&
+                                provider.opens.get() > closedReads && owners.last().session.presented.value != null && saveReady()
+                        }
+                        assertEquals(1024 to 768, owners.last().dimensions.get())
+                        assertNull(trimmedInput.session.presented.value)
+                        owners.dropLast(1).forEach(::assertClosed)
+                    } finally { releaseTrimInput.countDown() }
                 }
                 provider.verifyUnchanged()
                 assertEquals(0, provider.writes.get())

@@ -1,0 +1,24 @@
+name: Embedded JPEG contract
+on:
+  pull_request:
+    paths: ['tools/embedded-jpeg/**', 'third_party/libraw/**', '.github/workflows/embedded-jpeg.yml']
+  push:
+    branches: [main]
+    paths: ['tools/embedded-jpeg/**', 'third_party/libraw/**', '.github/workflows/embedded-jpeg.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Configure with address and undefined behavior sanitizers
+        run: >-
+          cmake -S tools/embedded-jpeg -B build/embedded-jpeg
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer'
+          -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined'
+      - run: cmake --build build/embedded-jpeg --parallel 2
+      - run: ctest --test-dir build/embedded-jpeg --output-on-failure
