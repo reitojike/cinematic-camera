@@ -85,6 +85,9 @@ class SaveTimingAndroidTest {
         val records = snapshot.lines().filter { SaveTimingRecord.valid(it) }
             .map { it.split('\t') }.filter { it[1] !in before }
         assertEquals(1, records.map { it[1] }.toSet().size)
+        assertEquals(15, records.size)
+        assertTrue(records.none { it[5] == "STARTED" })
+        assertTrue(records.single { it[4] == "ATTEMPT" }[7] != "NA")
         for (stage in listOf("NATIVE_DECODE", "B1", "B1_QUANTILES", "B2", "B3", "B4", "B5", "FINAL", "JPEG_ENCODE", "PUBLICATION")) {
             assertTrue("Missing completed $stage", records.any { it[4] == stage && it[5] == "COMPLETED" && it[7] != "NA" })
         }
