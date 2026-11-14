@@ -547,3 +547,14 @@ M2の49元メソッド中14件について通常側の対応を実装、4件は�
 通常gateは `isolated=true` / `gpuSaveSafety=true`、debug package、emulator限定。欠落はskipでなく失敗。
 observer試験は実GL資源の失敗を偽装するものではなく、報告例外/不明cleanup証拠の合成注入である。
 旧診断側・CPU試験は対応する通常試験が実走するまで削除しない。AVDは未予約/未使用。
+
+### 移行② dot 追加分（コンパイル済み・Android未実走）
+
+`Original24PipelineTest.dngToR7LookOriginalJpegAndSameFileReadback` の GPU 安全保証を
+`GpuSaveReadbackSafetyAndroidTest.bothOrientationsAndStrengthsKeepSameFileProofOriginalAndReleasedOwners`
+へ追加。orientation 1/6、strength 0/.5、実 GPU JPEG の寸法と同じファイルの fingerprint/readback、
+原本不変・全 attempt owner 解放を保持。CPU stage timing/worker設定は移さない。
+合成 64x48 のみで、12MP/24MP 実寸保証の代わりにはしない。旧試験は残す。
+直接 `:app:compileDebugAndroidTestKotlin` は成功（31秒）。Android 実走は未実施のため完了扱いしない。
+先行の SDK 未指定/不完全な D ドライブ SDK 指定による構成失敗後、既存の完全な C ドライブ SDK で成功した。
+この追加で M2 対応実装は15元件、既存保持4、未実装30。選択予定は16 method（M1 cold境界1を含む）。
