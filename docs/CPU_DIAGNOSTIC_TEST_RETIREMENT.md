@@ -558,3 +558,12 @@ observer試験は実GL資源の失敗を偽装するものではなく、報告�
 直接 `:app:compileDebugAndroidTestKotlin` は成功（31秒）。Android 実走は未実施のため完了扱いしない。
 先行の SDK 未指定/不完全な D ドライブ SDK 指定による構成失敗後、既存の完全な C ドライブ SDK で成功した。
 この追加で M2 対応実装は15元件、既存保持4、未実装30。選択予定は16 method（M1 cold境界1を含む）。
+
+### 共有raster取消の通常移行（dot・コンパイル済み）
+
+`OriginalOrtonParallelSafetyTest.largeDimensionsCancelAndRemovePartialRaster` の共有資源保証を
+`SharedRasterCancellationSafetyAndroidTest.fullSizePartialRasterRemainsOwnedUntilWorkersDrainAndExplicitDispose`
+へ追加。6000x4000 の行入力、実 partial 書込、worker終了、close確認後disposeを検証する。
+CPU look/Orton画像比較は行わず、共有raster製品実装と旧試験は変更しない。
+`:app:compileDebugAndroidTestKotlin` 成功35秒。Android未実走なので削除条件成立とは扱わない。
+M2対応実装16元件、既存保持4、未実装29。選択予定17 method（M1 cold境界1を含む）。
