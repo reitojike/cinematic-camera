@@ -136,6 +136,7 @@ class GpuScratchRecoverySafetyAndroidTest {
         val conditions = AutoDevelopConditions(true, false, false, false, true, true, true, true, true)
         val slot = requireNotNull(DevelopExecution.tryStartPreviewObserved(conditions))
         snapshotField.set(authority, snapshot); slotField.set(authority, slot)
+        var primary: Throwable? = null
         try {
             val error = assertThrows(java.lang.reflect.InvocationTargetException::class.java) { release.invoke(authority) }
             assertTrue(error.cause is java.nio.file.DirectoryNotEmptyException)
@@ -148,9 +149,11 @@ class GpuScratchRecoverySafetyAndroidTest {
             assertNull(snapshotField.get(authority)); assertNull(slotField.get(authority))
             val next = requireNotNull(DevelopExecution.tryStartPreviewObserved(conditions))
             assertTrue(DevelopExecution.completeAfterResourcesClosed(next))
-        } finally {
-            if (blocker.exists()) check(blocker.delete())
-            release.invoke(authority)
+        } catch (error: Throwable) { primary = error; throw error }
+        finally {
+            preserveSafetyCleanup(primary,
+                { if (blocker.exists()) { assertEquals("keep", blocker.readText()); check(blocker.delete()) } },
+                { release.invoke(authority) })
         }
     }
 }
