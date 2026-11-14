@@ -208,19 +208,22 @@ internal class GpuExportBoundaryFixture(val app: Context, val width: Int = WIDTH
 
         val ALLOWED = AutoDevelopConditions(true, false, false, false, true, true, true, true, previewMemoryAvailable = true)
         fun run(expectedGpuFailures: Long = 0, expectedReason: GpuSaveFailureReason? = null,
-            width: Int = WIDTH, height: Int = HEIGHT, body: (GpuExportBoundaryFixture) -> Unit) {
+            width: Int = WIDTH, height: Int = HEIGHT, ordinaryActivity: Boolean = false, body: (GpuExportBoundaryFixture) -> Unit) {
             val installed = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
             val args = InstrumentationRegistry.getArguments()
             val normal = BuildConfig.BUILD_TYPE == "debug" && BuildConfig.DEBUG && installed.packageName == "dev.cinematic.p0"
             check(normal || (BuildConfig.BUILD_TYPE == "gpuDiagnostic" && installed.packageName == "dev.cinematic.p0.gpudiagnostic"))
             check(args.getString("isolated") == "true" && args.getString("gpuExportBoundaries") == "true")
             check(Build.HARDWARE in setOf("ranchu", "goldfish")) { "Physical devices are excluded" }
+            check(!ordinaryActivity || normal)
             if (normal) {
-                check(args.getString("class") == Original24GpuBoundaryCancellationAndroidTest::class.java.name) {
+                val expectedClass = if (ordinaryActivity) args.getString("class").orEmpty().substringBefore('#')
+                    else Original24GpuBoundaryCancellationAndroidTest::class.java.name
+                check(if (ordinaryActivity) args.getString("class")?.matches(Regex(Regex.escape(expectedClass) + "(?:#[A-Za-z0-9_]+)?")) == true else args.getString("class") == expectedClass) {
                     "Run only the boundary cancellation class in a fresh instrumentation process"
                 }
             }
-            val target = if (normal) isolatedNormalApp(installed) else installed
+            val target = if (ordinaryActivity) isolatedGpuSaveSafetyApp() else if (normal) isolatedNormalApp(installed) else installed
             val capabilities = GlThread().use { thread -> thread.call {
                 EglContexts(thread, target.assets).use { GlCapabilities.inspect(it) }
             } }

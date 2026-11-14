@@ -22,8 +22,8 @@ internal object ConfirmedCancellationEditProbe {
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
 
     fun publish(app: Context, source: SharedOriginalReference, name: String,
-        cancelled: AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle): AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle =
-        publishRequest(app, source, name, cancelled.request, cancelled)
+        cancelled: AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle, isolatedUi: SyntheticFixtureRule? = null): AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle =
+        publishRequest(app, source, name, cancelled.request, cancelled, isolatedUi = isolatedUi)
 
     fun publishCold(app: Context, source: SharedOriginalReference, name: String,
         request: Original24Request): AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle {
@@ -38,30 +38,35 @@ internal object ConfirmedCancellationEditProbe {
     }
 
     private fun publishRequest(app: Context, source: SharedOriginalReference, name: String, request: Original24Request,
-        live: AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle?, changeRecipe: Boolean = true): AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle {
+        live: AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle?, changeRecipe: Boolean = true, isolatedUi: SyntheticFixtureRule? = null): AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle {
         check(Build.HARDWARE in setOf("ranchu", "goldfish") && app.packageName == "dev.cinematic.p0")
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
         if (live != null) AndroidPhotoEditRecipes(app).save(source, PhotoEditValues(request.strength,
             request.adjustments.warmth, request.adjustments.exposureEv)).get(30, TimeUnit.SECONDS)
         cameraRollReadPermissions(Build.VERSION.SDK_INT).forEach {
-            instrumentation.uiAutomation.grantRuntimePermission(app.packageName, it)
+            if (isolatedUi == null) instrumentation.uiAutomation.grantRuntimePermission(app.packageName, it)
+            else check(app.checkSelfPermission(it) == android.content.pm.PackageManager.PERMISSION_GRANTED)
         }
+        val screen = isolatedUi?.let { IsolatedSavePhotoRollScreen(app, it) }
+        isolatedFixture = isolatedUi
+        var primary: Throwable? = null
         var camera: PhotoRollCameraOwners.Owner? = null
         var published: AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle? = null
-        instrumentation.runOnMainSync {
-            camera = AndroidPhotoRollCameraObservations.register { PhotoRollCameraSnapshot(false, false, false, false) }
-        }
         try {
+            instrumentation.runOnMainSync {
+                camera = AndroidPhotoRollCameraObservations.register { PhotoRollCameraSnapshot(false, false, false, false) }
+            }
+            screen?.install()
             ActivityScenario.launch(PhotoRollActivity::class.java).use {
                 click(name)
                 await("confirmed cancellation remains retryable and editable") {
-                    action("取り消した保存を同じ設定で再試行") != null && action("STRENGTH") != null
+                    action("同じ設定で保存を再試行") != null && action("STRENGTH") != null
                 }
                 val cancelled = live ?: requireNotNull(AndroidManualOriginalTrialSaves.knownPrepared(source))
                 assertEquals(request, cancelled.request)
                 assertEquals(ManualOriginalTrialSavePhase.CANCELLED, cancelled.state.value.phase)
                 if (!changeRecipe) {
-                    click("取り消した保存を同じ設定で再試行")
+                    click("同じ設定で保存を再試行")
                     await("restored same recipe publication", 180_000) {
                         cancelled.state.value.phase == ManualOriginalTrialSavePhase.PUBLISHED && ForegroundExports.gate.active() == null
                     }
@@ -89,11 +94,17 @@ internal object ConfirmedCancellationEditProbe {
             }
             GpuPhotoRollRetiredOwners.releaseBeforeOpen()
             return requireNotNull(published)
-        } finally {
-            instrumentation.runOnMainSync { camera?.close() }
+        } catch (error: Throwable) { primary = error; throw error }
+        finally {
+            try {
+                dev.cinematic.p0.jpegrender.original.preserveSafetyCleanup(primary,
+                    { screen?.close(primary) },
+                    { instrumentation.runOnMainSync { camera?.close() } })
+            } finally { isolatedFixture = null }
         }
     }
 
+    private var isolatedFixture: SyntheticFixtureRule? = null
     private fun action(label: String): AccessibilityNodeInfo? {
         fun find(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
             if (node == null || !node.refresh()) return null
@@ -102,7 +113,8 @@ internal object ConfirmedCancellationEditProbe {
             return null
         }
         instrumentation.uiAutomation.clearCache()
-        var node = find(instrumentation.uiAutomation.rootInActiveWindow)
+        val fixture = isolatedFixture
+        var node = find(if (fixture != null) fixture.fixtureRoot() else instrumentation.uiAutomation.rootInActiveWindow)
         while (node != null && !node.isClickable && node.isEnabled) node = node.parent
         return node?.takeIf { it.refresh() && it.isVisibleToUser && it.isClickable && it.isEnabled }
     }
