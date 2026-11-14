@@ -527,3 +527,226 @@ AVDは他レーン利用中。未予約のemulatorには接続・停止・導入
 
 部分2件は別扱いを維持する。releasePolicyの旧View依存保証は削除①の入口/定義不在確認で置換し、
 warm metadata/cold保存のSHA保証は移行②の実GPU保存前後改変試験を実走して完了させる。
+
+## 移行②の先行実装（未実走）
+
+M1/#408 の試験側lint修正head `5d1e36e8` に依存する別branch/worktreeで準備。製品hook/共有raster/sourceSetsは変更しない。
+M2の49元メソッド中14件について通常側の対応を実装、4件は既存通常取消試験を保持して再実走予定、残る31件は未実装。
+さらにM1のcold保存部分を1method追加したため、この先行実装の通常Android選択予定は **15 method**。
+49件を15件だけで完了扱いにしない。移行②は同じPRへ保存/所有権/FGS/実12MP×5/24MPを追加する。
+
+| 移行元 | 通常側 | 予定method数 | 保持・変更範囲 |
+|---|---|---:|---|
+| Original24GpuObserverFailureAndroidTest 5件 | GpuSaveObserverSafetyAndroidTest | 5 | 全assert保持。失敗primary/suppressed/self-suppression、cleanup不明はHOLDを維持。ledger/thread終了と保守的held ownerを区別。旧診断gateを通常debug/明示引数のfail-fastへ |
+| Original24GpuOutputAndroidTest 3件 | 同名class | 3 | 実GPU row順序・neutral/warm値、consumer失敗、interrupt/drain/retry禁止を保持。通常gateへ変更 |
+| Original24FailureInstrumentationTest 6件 | GpuSaveProducerSafetyAndroidTest | 6 | CPU producerを明示GPU producerへ置換。実JPEG partial write/同stream close保持/同長decodable改変/出力開始後取消/報告失敗の全assertを保持。BITMAP_PACKは現GPU JPEG橋渡しにも存在するため、GPU rows packing後の報告境界として保持 |
+| M1 metadataFencesのcold保存部分 | GpuSaveProducerSafetyAndroidTest.unchangedMetadataCannotBypassColdSaveFingerprintBeforeOrAfterGpuJpeg | 1 | size/mtime同一でも前後SHA拒否。変更対象は試験が作った私有DNGのみ。テスト終了時に復元して原本hash確認 |
+
+通常gateは `isolated=true` / `gpuSaveSafety=true`、debug package、emulator限定。欠落はskipでなく失敗。
+observer試験は実GL資源の失敗を偽装するものではなく、報告例外/不明cleanup証拠の合成注入である。
+旧診断側・CPU試験は対応する通常試験が実走するまで削除しない。AVDは未予約/未使用。
+
+### 移行② dot 追加分（コンパイル済み・Android未実走）
+
+`Original24PipelineTest.dngToR7LookOriginalJpegAndSameFileReadback` の GPU 安全保証を
+`GpuSaveReadbackSafetyAndroidTest.bothOrientationsAndStrengthsKeepSameFileProofOriginalAndReleasedOwners`
+へ追加。orientation 1/6、strength 0/.5、実 GPU JPEG の寸法と同じファイルの fingerprint/readback、
+原本不変・全 attempt owner 解放を保持。CPU stage timing/worker設定は移さない。
+合成 64x48 のみで、12MP/24MP 実寸保証の代わりにはしない。旧試験は残す。
+直接 `:app:compileDebugAndroidTestKotlin` は成功（31秒）。Android 実走は未実施のため完了扱いしない。
+先行の SDK 未指定/不完全な D ドライブ SDK 指定による構成失敗後、既存の完全な C ドライブ SDK で成功した。
+この追加で M2 対応実装は15元件、既存保持4、未実装30。選択予定は16 method（M1 cold境界1を含む）。
+
+### 共有raster取消の通常移行（dot・コンパイル済み）
+
+`OriginalOrtonParallelSafetyTest.largeDimensionsCancelAndRemovePartialRaster` の共有資源保証を
+`SharedRasterCancellationSafetyAndroidTest.fullSizePartialRasterRemainsOwnedUntilWorkersDrainAndExplicitDispose`
+へ追加。6000x4000 の行入力、実 partial 書込、worker終了、close確認後disposeを検証する。
+CPU look/Orton画像比較は行わず、共有raster製品実装と旧試験は変更しない。
+`:app:compileDebugAndroidTestKotlin` 成功35秒。Android未実走なので削除条件成立とは扱わない。
+M2対応実装16元件、既存保持4、未実装29。選択予定17 method（M1 cold境界1を含む）。
+
+### 保存journal全revisionの通常GPU移行（dot・未実走）
+
+`OriginalSaveParallelParityInstrumentationTest.threeWorkerSettingsKeepJpegStageOrderPublicationAndJournalAcrossRetries`
+を `GpuSaveJournalSafetyAndroidTest.gpuSaveKeepsStageOrderPublicationAndEveryJournalRevisionAcrossRetries` へ対応。
+CPU worker arm比較だけを除き、実GPU producer、回転/調整の2条件、intent先行・render close後publisher、
+insert/copy/publish直前phase、7phase/revision0..6、recipe/source/generation、永続codecの一致、
+公開後2回advanceでrender/publisher各1・events/journal bytes不変・原本保持を残す。
+所有合成MediaStore行だけを成功時にowner/name/pending状態照合して片付け、失敗時証拠は残す。
+通常Androidコンパイル成功27秒。実走は未実施、12MP/24MPやFGSの代替ではない。
+現時点M2対応実装17元件、既存保持4、未実装28。選択予定18method（M1 cold境界1を含む）。
+#408マージ後のmainを通常mergeで同期し、M1試験はmainの検証済み内容を保持した。
+
+### GPU band故障・取消から新attemptへの復旧（dot・未実走）
+
+旧 `OriginalOrtonParallelSafetyTest.oneWorkerExceptionPropagatesAndSiblingsStop` と
+`OriginalR7ColorFusionAndroidTest.fusedWorkerCancellationAndFailureCloseAttemptOnEmulator` の安全保証を
+`GpuSaveProducerSafetyAndroidTest.gpuBandFailureAndCancellationDrainBeforeFreshAttemptCanSucceed` へ集約。
+実GPU band observerで故障/取消を注入し、同一primaryのcause chain保持、後続eventなし、JPEG未開始、
+texture/thread/attempt owner解放、scratch消失、同attempt再利用禁止、原本不変、新generation保存成功を確認する。
+driver障害そのものを再現する試験ではない。CPU sibling本数・worker固有名・CPU pixel比較は移さない。
+compileDebugAndroidTestKotlin成功45秒、Android未実走。対応実装19元件＋既存保持4、未実装26。
+選択予定19method（M1 cold境界1含む）。#413を含む最新mainは通常mergeで同期済み。
+
+### 移行② 実走証拠とプレビュー・公開集約の追加
+
+head `b2f01101` で通常 Android の上記6 class、19 method を実走し、19成功・失敗0・skip0。
+observer 5 / output 3 / producer 8 / readback 1 / shared-raster 1 / journal 1 を別々の instrumentation で実行した。
+これは合成入力・共有 host-GPU AVD の証拠であり、実機性能や後述の未実装26件の合格ではない。
+lint/unit/app/test APK の確認も成功（unit はキャッシュ・UP-TO-DATEを含み、新規全件実行とはしない）。
+
+新規 `GpuPreviewPublicationSafetyAndroidTest.over1024GpuPreviewThenExplicitSaveKeepsRecipeAndOnePublicJpeg` は以下3元methodの安全保証を集約する。
+
+- `Original24GpuSaveInstrumentationTest.gpuSaveKeepsStartSelectionAndReconcilesOneVerifiedPublicJpeg`
+- `Original24ManualSaveInstrumentationTest.orientedSyntheticDngPreviewAndExplicitSaveReconcileOneVerifiedPublicJpeg`
+- `Original24PreviewSessionInstrumentationTest.over1024SmoothLightDngPreviewAndActualJpegKeepManualRecipe`
+
+1152x768/orientation6 の合成DNGから通常GPU入力682x1024を開き、実際のDISPLAY8プレビュー、
+手動調整/strength/AS_SHOT基準露出、明示保存前のJPEG・公開台帳不存在、GPU保存経路固定、
+公開JPEG寸法・向き・sRGB・fingerprint、再advanceで同一URI/台帳、原本不変・owner解放を確認する。
+CPUプレビューとCPU JPEGの縮小pixel誤差閾値は移さない。GPU画質保証は既存GPU回帰で維持する。
+この追加はコンパイル成功29秒、Android実走はまだであり、削除の完了条件には未算入。
+M2対応実装22元件＋既存保持4、未実装23。新規通常Android選択数20 method（M1 cold境界1を含む）。
+### 実12MP/24MPの通常側移行（追加・実走待ち）
+
+`Original24GpuSafetyInstrumentationTest` の3件を `GpuFullSizeSaveSafetyAndroidTest` へ移行。
+12MPの明示retry/同世代intent保持、12MP×5の新世代/別recipe/別URI/各owner解放、24MPの原寸公開を維持。
+診断CPU選択のみ旧prefs値注入へ変更し、通常設定はGPU固定を確認する。全て通常debug/隔離emulatorのfail-fast gate、
+24MPには追加で `gpuExport24=true` を必須とする。原本/実GPU witness/台帳/公開JPEGの検査と限定cleanupを維持。
+コンパイル・test APK成功41秒。Android実走はこれからで、合格とはしない。
+M2対応実装25元件＋既存保持4、未実装20。通常側選択23method（M1 cold境界1を含む）。
+### lifecycleと実24MP取消の追加（コンパイル済み・実走待ち）
+
+- `GpuSaveLifecycleAndroidTest` のHome/復帰/再Homeの1件を通常 `GpuSaveLifecycleSafetyAndroidTest` へ。実製品host・FGS・公開照合・明示preview再開を保持。
+- `GpuExportSafetyLifecycleAndroidTest` の実12MP screen-off公開と実UI retryの2件を通常 `GpuFullSizeSaveLifecycleSafetyAndroidTest` へ。サイズとUI操作は縮小/直接状態代入で置換しない。
+- `OriginalOrtonParallelSafetyTest.synthetic24MpAttemptCancellationAtOrtonClosesResources` を通常 `GpuFullSizeSaveSafetyAndroidTest.optIn24MpCancellationDrainsGpuOwnerAndPreservesOriginal` へ。6000x4000原本とRGB16の成立後、実GPU callbackの取消、未公開・原本/intent不変・owner/scratch解放・暗黙retryなしを保持。CPU Orton row/worker内部だけは移さない。
+
+追加4methodの通常Androidコンパイル成功32秒。実走はまだ。M2対応実装29元件＋既存保持4、未実装16。
+通常側選択27method（M1 cold境界1を含む）。9d4aa571のインストール済みAPKの実走とは分けて扱う。
+### 実走と隔離の追記
+
+9d4aa571でpreview/publication 1件成功（59.517秒）、実24MP公開・実12MP×5・実12MP明示retryの3件成功（1,215.8秒）。失敗/skip0。
+その後main c39d7a0f（#420）を同期。UI通常化に伴い、試験専用namespaceのcache/noBackup/prefsを使い、
+Activity前にqueue startup完了を待つ。既存保存領域に対する一括削除・前処理は行わない。
+実Activityを包むUI contextも同じ保存先・prefs・resolverへ揃える。実FGSは既存handleを進める。
+独立読み取りで配線を確認し、selectorのcomma/複数class混在を防ぐ限定guardを追加した。
+旧headの成功はこの隔離変更後の実走合格ではない。隔離版lint/unit/app/testAPKは成功4分15秒、
+selector限定の最終差分は再ビルド/実走で確認する。最初のlint失敗（LocalContextのActivity cast 2箇所）は
+LocalActivityへ限定修正し、抑制は追加していない。
+### A保存とB/C入力の所有権群（追加・実走待ち）
+
+`GpuExportActiveOwnershipAndroidTest` の10元methodを通常 `GpuActiveSaveOwnershipSafetyAndroidTest` へ移行。
+trim/遅延公開/保存中A再選択/B→C/背景化/表示後・初drawのcontext loss/B preflight中の切替・背景化/A export lossの
+各境界を省略せず保持。通常Activityの製品editor・実FGSを使用し、一覧gestureの代替とは数えない。
+`GpuExportBoundaryFixture.run` の明示ordinaryActivity分岐は通常debugの新class完全一致のみ許可し、
+追加gpuSaveSafety opt-inと試験専用namespace/先行queue初期化を要求。従来normal boundary cancellationの分離方式は維持。
+通常Androidコンパイル成功34秒。M2対応実装39元件＋既存保持4、未実装6。通常側選択37method（M1 cold境界1を含む）。
+
+8d6333c8の隔離previewは1成功42.843秒、既存noBackup全ファイルhash不変。
+同head Home/FGS試験は公開・台帳・owner解放まで通過後、旧診断の操作文言で待機して失敗74.224秒。
+現行DevelopMessagesの保存済み/明示retryアクセシビリティ文言へ通常側試験のみ修正した。製品仕様の変更・assert削除はない。
+失敗時も既存noBackup hash不変、失敗証拠は保持。修正後test APK成功42秒、再実走はこれから。
+### 通常UIの実走とsetup補正
+
+3138434aでHome/復帰/再Homeの1件成功61.624秒、実24MP取消1件成功76.775秒。
+実12MP screen-off公開も成功。既存noBackupファイル全件hashは各検証前後で不変。
+同じ実走の12MP UI retryは、旧setupがgeneric prepareだけのためknownPrepared index未登録となり、
+初回preview openPhoto禁止assertで失敗（2件全体245.047秒、1成功1失敗）。assertは削除/緩和しない。
+通常製品経路のprepareGpuを同じ検証済みgeometry/source/recipeで呼び、同一handle/request/geometryとindexをassertしてから
+faultを注入するsetupへ補正した。これは同一processの準備済みGPU保存失敗からのUI retryで、process death復旧とは区別する。
+独立読取り確認済み、補正後test APK成功31秒。再実走前のためこのretry保証は未合格のまま。
+### 隔離後の実走と重複START/取消の移行
+
+9c6d39a1で12MPの同世代UI retryが成功205.868秒、A/B入力所有権10件が成功415.837秒。
+各実走の前後で既存noBackup全ファイルhashが一致。これらは同headの証拠で、後続headの一括合格ではない。
+`GpuDiagnosticProbeTest.repeatedStartsCancelAndStopService` の安全保証は通常の
+`repeatedDuplicateStartsThenUiCancellationStopActualServiceAndGpuOwners` へ移す。
+2回の独立した明示保存ごとに実FGSへ同ticket STARTを3回届け、UI取消、owner drain、未公開、
+原本/intent不変、実サービス停止を確認する。診断Service自体の保証は終了する。
+追加methodはcompile成功26秒、実走待ち。M2は40実装＋既存維持4、未実装5（実走済みとは区別）。
+ordinaryActivity selectorは厳密なclassまたはclass#単一methodのみ許可し、複数classを許可しない。
+従来boundary単独classの制約は変更しない。
+重複START/明示取消/FGS停止は6bacd074で1件実走成功31.39秒、既存保存領域hash不変。
+並行入力の元2件は `GpuConcurrentInputSafetyAndroidTest` へ移行中。小さい合成入力を固定し、
+Aの実GPU bandを保持したままB入力の成功/取消例外、B release callbackが結果より前に1回、
+A未完了/不変、B描画、A公開、owner drainを維持する。旧メモリprobeの計測/report集計は移行しない。
+### M2残件の集約（実装と実走の区別）
+
+17241b0bで並行入力2件が実走成功59.007秒、既存noBackup hash不変。
+`simultaneousPrivateSessionsHaveIdenticalOutputAndNoSharedWorkers` のCPU hash/CPU worker比較は承認どおり終了。
+独立入力/ownerの非混同は、通常所有権10件のA保存中B/C・preflight取消と、上記並行入力2件で保証済み。
+`OriginalRemainingRowsAndroidTest.sameApkParityTimingMemoryAndInterruptedCleanup` のCPU比較/旧probe計測は終了。
+残す中断cleanup保証は `SharedRasterCancellationSafetyAndroidTest` と
+`GpuSaveProducerSafetyAndroidTest.gpuBandFailureAndCancellationDrainBeforeFreshAttemptCanSucceed` に集約。
+部分raster/source/owner解放、fault/cancel後に新attemptが成功する保証はb2f01101の実走証拠があり、最終headは再確認する。
+実一覧でA保存中に戻る→B表示→A公開→Bの明示保存は新 `GpuRealListSwitchSafetyAndroidTest` へ実装。
+製品PhotoRollScreenの一覧/BackHandlerを通り、recipe＋dirtyなし＋実Surfaceを確認する。Activityの依存構築自体は隔離する。
+permission付与なし、fixture専用app保存領域のみ。compile成功9秒、APK成功7秒、実走はこれから。
+これで49元methodは45対応実装/集約＋既存通常維持4に分類済み。移行完了とはまだせず、
+実一覧の実走、既存維持4の再実走、最終差分/CI/レビューを完了条件とする。
+82310b28の実一覧試験はAの実GPU band/owner/原本/intentまで通過後、OSのBackキー注入がfalseを返して停止（22.856秒）。
+既存noBackup hash不変。Activityの通常Back dispatcherから製品Compose BackHandlerを呼ぶ形へ試験操作を修正。
+独立読取で、selectedUriの直接変更なし、実一覧からBをclick、全保存安全assert維持を確認。
+OSキー/ジェスチャー注入そのものは対象外とし、dispatcher以降の製品経路の検証として再実走する。
+lint/unitは成功1分37秒。ただし終了確認前にAPKビルドを起動してしまったため後発のみ停止し、
+同worktree Gradle wrapperプロセス0を確認して単独APKビルドをやり直した。中断ビルドは証拠として採用しない。
+以後は各Gradleの終了コードと同worktree実行プロセス0の両方を確認してから次を起動する。
+### 独立レビュー対応と保持対象の実走訂正
+
+49件の実在・45対応/集約＋4保持、安全assertの差分は独立監査で確認済み。
+2cd26f86でobserver2＋boundary2が成功したが、これは関連回帰4件でありM2保持4件ではない。
+M2保持4件はOriginal24CancellationRetryInstrumentationTestのnormalGpu*で、再実走は未完了。
+通常4件も専用namespaceへ移し、UI補助に隔離PhotoRollScreenを注入する。既存保存領域は消さず、権限付与はしない。
+新旧source/recipe/同世代retry/JPEG-entry後HOLD/明示新世代/旧intent不変のassertは維持。
+試験cleanupの一次失敗上書きを共通helperで修正し、複数cleanupの例外をsuppressedに保持する。
+Lifecycle取消は当該handleのidentity一致時だけに限定。合成例外注入4件でhelper/identityの保証を確認予定。
+この修正はcompile成功（6秒）、Android再実走前。最終headのCI/独立再確認も必要なためHOLD。
+## 移行② 最終実走証拠（2026-11-15）
+
+826714d32c3d184b7d583cc2a395cf3cd76d5043 の同一app/test APKで49 methodを実走成功。
+内訳は移行選択41（M1 cold保存境界1を含む）＋正しい既存保持normalGpu取消4＋cleanup/identity例外注入4。
+M2の移行元49件（45対応/集約＋4保持）とは数え方が違う。
+app APK SHA256: `ad74d7cb0f3c34372be5c2271435bfdc4250fc3fb95996f1112394b53345ad2c`
+test APK SHA256: `048bb2867f54baebe1c7f45f62327b80363442e8b5b7b75631ce30226dcdb381`
+
+| 実走群 | 成功method |
+|---|---:|
+| cleanup例外/identity | 4 |
+| 通常取消retry/HOLD/新世代/UI | 4 |
+| observer/output/producer/readback/raster/journal | 19 |
+| preview/Home/12MP lifecycle | 4 |
+| A/B所有権・重複START取消 | 11 |
+| 並行入力 | 2 |
+| 実一覧A→B | 1 |
+| 実12MP retry/12MP×5/24MP公開/24MP取消 | 4 |
+| 合計 | 49 |
+
+各群はfresh instrumentation、失敗/skip0の最終成功ログを保全。既存noBackup全ファイルの削除/改変なしを前後SHA一覧で確認。
+UUID合成fixture自身の新規成果物は既存データと区別。実機は未操作。
+途中でrunner消失（31成功後）、診断stdoutを成功件数へ数えた集計誤り、System UI ANRによる環境不成立があり、
+いずれも未実走/不成立を合格にしなかった。同headの残件だけを再開し、class/test付き完了ブロックとJUnit集計で49件を再照合。
+boot安定確認のproperty固定値が不適切だった点も記録し、実boot終了イベント＋ANRなし確認後に再開。
+最後の実一覧は67.634秒、実寸4件は1,339.045秒。AVD停止後adb空・QEMU/emulator0を直接確認して返却した。
+
+独立コードレビューと隔離個別レビューは826714d3でOK。監査は元49件の実在/計数と主要assert・対応先/台帳照合で、
+全旧新全文の完全対照とは述べない。指摘された一次例外保全・所有identity照合・隔離root fallbackは修正済み。
+main bff38eeaの同期差はdocs/README3ファイルのみで、app/test/build/workflowは実走headと同一であることを確認。
+この証拠は製品/診断削除後の新headのGPU90回帰を免除しない。
+
+## 全4診断variantの削除範囲（#290 追加指示）
+
+133 method台帳は試験分類でありbuild/source全体の一覧ではなかったため、削除①では次の全4種を対象とする。
+
+| variant | 削除対象source・設定 | 通常側へ残す保証 |
+|---|---|---|
+| original24Probe | property/buildType/applicationIdSuffix/testBuildType、src/original24Probeとoriginal24ProbeTestのmanifest（専用Kotlinなし） | 原本/保存/取消/故障のM2保証。CPU比較/旧probeだけは終了 |
+| rawDiagnostic | src/rawDiagnosticのmanifest/lint.xml/6 Kotlin、rawDiagnosticTest manifest、限定lint/署名条件 | LibRaw/JNI/AS_SHOT/入力owner/取消。GPU variantからのrawDiagnostic/java追加sourceSetも撤去 |
+| gpuDiagnostic | src/gpuDiagnosticの15 Kotlin＋manifest/gitkeep、gpuDiagnosticTestの17 Kotlin/61@Test＋manifest、buildConfig/test source切替 | M1/M2/Eの通常GPU安全保証、製品renderer/共有部品、GpuStageTap/FULL_RECOMPUTE/通常1024px計測 |
+| previewDiagnostic | PreviewPresentationActivity＋manifest、previewDiagnosticTest manifest、build/test切替 | 実gesture/Activity/input/ownerのM1保証。CPU/cache/旧表示probeだけ終了 |
+
+4種排他require、診断署名/限定lint/sourceSets連結、verify-manifest/Android CIの診断ジョブも同時監査する。
+rawDiagnosticTestのSyntheticDiagnosticProvider宣言は現checkoutに実装がなく、診断manifestと共に撤去する。
+CIは通常安全試験/manifest検証へ保証を移し、必須チェックを単に免除しない。gpuMesaは別の保持対象。
+#379再実行手順・通常メモリ記録、共有型、旧CPU保存intent/codec読取、HOLD/二重保存防止は維持。
+削除時に未分類source/参照や安全assertが見つかった場合は、削除を止め本表へ追記して確認する。
