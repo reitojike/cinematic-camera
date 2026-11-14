@@ -8,4 +8,3 @@ import java.io.Closeable
 internal interface OwnedJpegFrameSource : JpegFrameSource, Closeable {
     fun requestStop() {}
 }
-
