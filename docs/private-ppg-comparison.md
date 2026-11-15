@@ -29,17 +29,20 @@ AHD/PPGを同じ拡大位置で切り替える。ピンチで最大6倍に拡大
 - opt-in比較版app/testAPKと限定manifest用lint成功。
 - 通常Debug/Releaseのarm64-v8a・x86_64とも比較専用JNIなし。通常Debug APKに比較Activityなし。
 - 比較APKの権限はAndroidXの署名限定内部receiver用だけ。通信/カメラ/マイク/共有ストレージ権限なし。
-- AOSP AVD合成8試験成功：世代、正常AHD/PPG表示、原本不変、開始前の取消、原本変更検知、読取不能、cleanup失敗後の再開禁止、Activity再生成/背景化。
+- AOSP AVD合成11試験成功：世代、正常AHD/PPG表示、原本不変、開始前の取消、原本変更検知、読取不能、cleanup失敗後の再開禁止、Activity再生成/背景化。
   cleanup故障試験は合成の削除障害を作る小試験であり、全種類のOS/native故障の網羅ではない。
-  処理中のnative/GPU取消・実処理中の連続選択、権限喪失、OOM、native所有者の解放失敗の故障注入/接続試験は未実施。開始前取消を処理中取消の実証とは扱わない。
+  GPU の R7_FINAL 工程境界での取消、旧処理を待機させた状態での次画像選択、最終再読込の SecurityException 注入により、画像の取り違え・private 一時ファイル・FD の残留がないことを確認した。
+  実行中の GL 命令/native 内部の即時中断、OS による実際の URI 権限剥奪、OOM、native close 失敗は未検証。完了済み旧画像が UI キューで遅延到着する全順序も網羅しない。
 - 実操作：FilesのDownloadsから合成DNGを選択→AHD完了→PPG切替を確認。写真の実物は使っていない。
 - 修正版の縦横UI領域を確認し、system bars/cutoutとの重なりを除去。
 - GPU90/帯28回帰成功。919af45fの通常製品出力は採用済み51b691adと全画素差0。
   以後の変更はopt-in専用UI/試験/文書だけで通常製品経路は不変。環境差はAOSP/default API37 rev6、Emulator37.2.13、同一NVIDIAドライバーで記録。
-- AVDは90秒安定ゲート、試験前後system_server690不変/boot1/ANR0。一時コピーなしを確認して自分の5610だけ停止/返却済み。
+- AVDは90秒安定ゲート、試験前後最初の system_server690、追加実行の664とも不変/boot1/ANR0。一時コピーなしを確認して自分の5610だけ停止/返却済み。
 - dot独立レビューで指摘修正。通常製品へのPPG採用や基準画像の更新は行っていない。
 
 ### 途中の不成立も含む記録
+追加試験の初回コンパイルは protected onActivityResult の直接呼出しで失敗し、試験専用 reflection に修正した。
+11件の初回実走は10件成功・権限喪失1件失敗。pair は未公開だが setImageBitmap(null) が空の BitmapDrawable を保持したため、比較専用画面で setImageDrawable(null) を明示する修正を行った。928ae1d の再実走は11件成功（76.64秒）、lint/app/testAPKビルドも成功。この秒数は合成の正しさ検証の時間で、Pixel の性能値ではない。
 限定manifestの最初のlintは、到達不能な製品CineRecorder/ForegroundExportServiceの2件で失敗。
 初回のファイル指定が効かず再度失敗したため、比較版だけのlint.xmlで対象2ファイル名と検査種別に限定したパターンへ修正し、再実行成功。
 通常製品lintには例外を追加していない。
@@ -47,13 +50,13 @@ UIの日本語XMLをPowerShellの文字列経由で読んだ際に転送時の�
 合成生成RGBを単純な正解画像と扱うことはしていない。忠実なGT導出は小さな作業ではないため深追いしない。
 
 ## 比較APK（製品とは別）
-実装source: 930042e60afbacb383190bc45c7cb6a500227153。
+実装source: 928ae1d627c8fa0c2a097a735f621ead5932b147。
 後続commitは合成試験と文書のみ。APKはこの実装で固定する。
 versionCode=10 / versionName=0.0.10-p05。通常リリースの番号系列とは別。
 Android Debug証明書SHA-256:
 0e6fc2b5e12b4bcf5142592992f3b4879b44ca849c6c26c14464003ca0a35a8c
 APK SHA-256:
-191577dd931fc14e0a5d8f0102a3d9d3206fb31ad48557addd9156f73ea81c9f
+27ce512be19f94469450b7a0298c965192980b6af2a459bc4ded29a024578d31
 
 ## 本人へ提示する手順案
 1. PC接続時に、比較用の別アプリを追加してよいか確認する。製品アプリはそのまま残す。
