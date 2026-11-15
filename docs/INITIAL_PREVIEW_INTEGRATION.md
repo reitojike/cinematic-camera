@@ -40,3 +40,12 @@ exact presentedの同request値を観測したらoverlayを不可逆に外す。
 - GPU90/帯28、関連Android回帰、表示スクリーンショット比較と本人承認、最終CI/canonical/独立レビューが残る。実写真・Pixel・配布は別許可。
 
 既存IssueとLiving Specを正本にし、重複する番号付きspec一式は生成していない。
+
+## ローカル検証追記（61a678b1）
+
+- build対象tree `e1bf4315`：lint・unit1399件（失敗0、skip12）・app/test APKの4task成功。初回unit fixture不整合は構築条件を修正し関連14件再成功。次buildでAndroid ownership testの型推論失敗を検出し明示型で修正。失敗ログは残す。
+- 専用read-only AOSPでnative/JPEG/lookup/ownership/halfの25件成功。任意linear計測1件は初回引数不足skip、その後明示有効化して成功。UI ABBA/別capture1件も成功。旧entropy完全拒否失敗とは契約を区別する。
+- 匿名1536×1024、Surface/preflight準備後のABBA（FULLのみ／half→FULL／half→FULL／FULLのみ）：half線形ready421〜502 ms、Bitmap-ready585〜839 ms、Compose draw-record625〜885 ms、FULL開始586〜841 ms。対照FULL開始7〜21 ms。exact GPU presentedはhalfあり2633〜2901 ms、対照2026〜2745 ms。cold順序効果があり小標本、Pixel速度ではない。Compose記録は最終画面合成完了ではない。別visual runの待機時間は性能値から除外。
+- halfによるexact開始遅延が約0.6〜0.8秒あり、採用判断は未完了。撮影画像や実機は未使用。
+- 描画合成スクリーンショットで案内ラベル、Fit画像、無効操作→exactラベル/操作への置換を確認。背景復帰試験成功。ただし実際のeditor/provider選択全体をこのUI試験で覆ったとはしない。
+- GPU ledger解放は成功。一方、GCを強制しないnative heap標本はFULLのみを含めrun毎約9.5 MB増加した。GC待ちか保持か未確定であり、反復メモリ安定・総確保上限の合格とはしない。原因確認を継続する。
