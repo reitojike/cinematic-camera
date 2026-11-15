@@ -49,3 +49,9 @@ exact presentedの同request値を観測したらoverlayを不可逆に外す。
 - halfによるexact開始遅延が約0.6〜0.8秒あり、採用判断は未完了。撮影画像や実機は未使用。
 - 描画合成スクリーンショットで案内ラベル、Fit画像、無効操作→exactラベル/操作への置換を確認。背景復帰試験成功。ただし実際のeditor/provider選択全体をこのUI試験で覆ったとはしない。
 - GPU ledger解放は成功。一方、GCを強制しないnative heap標本はFULLのみを含めrun毎約9.5 MB増加した。GC待ちか保持か未確定であり、反復メモリ安定・総確保上限の合格とはしない。原因確認を継続する。
+
+### 追加メモリ診断（0d100731）
+
+app/test APK build成功。新AVDで最初の試行はmain APK未導入によりinstrumentation開始前に失敗し、導入後の再試行は1件成功した。run復帰とfixture参照解放後、idleと診断専用GC要求を加えても、native heap標本はFULL/half交互6回で50.5→60.1→69.5→79.0→88.4→97.9 MBと増加した（decimal MB、約9,450,000 bytes/run）。GC待ちのみで説明できたとはしない。1536×1024×3×2=9,437,184 bytesとの近似は相関であり、RGB16漏れの証明ではない。
+
+独立静的監査ではLibRaw mem-imageのcustom-deleter/free、row bufferとchannel解放を確認したが、原因は未確定。FULL decodeのみとGPU表示のみを別instrumentationで切り分ける。GPU90/28は原因確認前には進めない。AVDは終了後停止しQEMU0/adb空を確認した。製品にGC追加やメモリgate緩和はしていない。
