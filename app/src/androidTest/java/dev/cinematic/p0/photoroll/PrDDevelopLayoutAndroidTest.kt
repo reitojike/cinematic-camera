@@ -62,7 +62,7 @@ class PrDDevelopLayoutAndroidTest {
                                 saving, false, false, {}, {}, {}, {}, { _, _, _ -> }, {}, {}, {}, {},
                                 modifier = Modifier.fillMaxSize().safeDrawingPadding(),
                                 gpuSession = gpu.takeUnless { saving || cancelled || failed }, gpuReady = !saving && !cancelled && !failed,
-                                gpuPresentedValues = shown.requestedValues.takeUnless { name == "pending" },
+                                gpuPresentedValues = shown.requestedValues.takeUnless { name == "pending" || saving || cancelled || failed },
                                 productMessages = messages, productSave = developSavePresentation(messageState), info = {})
                         }
                     }

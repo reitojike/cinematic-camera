@@ -76,7 +76,9 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
     val requested = session?.draft ?: state.requestedValues
     val unapplied = mode in setOf(PhotoRollPreviewMode.MANUAL_TRIAL, PhotoRollPreviewMode.STAGE_CLEAR,
         PhotoRollPreviewMode.PRIVATE_TRIAL) && state.displayedValues != requested
-    val captionUpdating = gpuPresentedValues != requested
+    // A deliberately paused/failed preview is not an update in progress.
+    val captionUpdating = gpuSession != null && phase != PhotoRollPhase.BLOCKED &&
+        phase != PhotoRollPhase.PAUSED && gpuPresentedValues != requested
     val saveLabel = productSave?.label ?: developSaveLabel(mode, savePhase, savePending, session != null)
     val saveTone = productSave?.tone ?: when {
         savePending || savePhase == PhotoRollSavePhase.SAVING -> CaptureChromeTone.WARNING
