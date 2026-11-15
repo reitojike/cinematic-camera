@@ -66,6 +66,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
     productMessages: ScreenMessages? = null, productFailureFallback: UiMessage? = null, productSave: DevelopSavePresentation? = null,
     onProductAction: (MessageAction) -> Unit = {}, memoryProblem: dev.cinematic.p0.UiMessage? = null, info: @Composable () -> Unit) {
     var information by remember { mutableStateOf(false) }
+    var gpuCaptionHeight by remember(gpuSession) { mutableIntStateOf(0) }
     var parameter by remember { mutableStateOf(PhotoEditParameter.STRENGTH) }
     var comparing by remember(preview, comparison, foreground, gpuSession) { mutableStateOf(false) }
     val session = state.session
@@ -103,21 +104,26 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                     if (developShowsFaceWarning(mode)) StatusChip(CaptureStatusChip("face-warning", "顔保護なし", tone = CaptureChromeTone.WARNING),
                         style = StatusChipStyle.EDITOR_LABEL)
                 }
-                TextButton(onClick = { information = !information }, shape = RectangleShape,
+                if (productMessages != null) CaptureTextAction(
+                    MessageControl(MessageAction.OPEN_INFO, "ⓘ", description = "原本と現像について"),
+                    { information = !information })
+                else TextButton(onClick = { information = !information }, shape = RectangleShape,
                     modifier = Modifier.semantics { contentDescription = "原本情報と試験品質の注意" }) { Text("ⓘ") }
             }
             Box((if (compact) Modifier.fillMaxWidth().height(260.dp) else Modifier.fillMaxWidth().weight(1f))
                 .then(viewportModifier).semantics { contentDescription = "現像画像の表示領域" }, contentAlignment = Alignment.Center) {
                 val updating = phase in setOf(PhotoRollPhase.CHECKING, PhotoRollPhase.RENDERING, PhotoRollPhase.PAUSED)
                 if (gpuSession != null) GpuPhotoRollImage(gpuSession, requested, comparing && compareEnabled,
-                    compareEnabled, { comparing = it }, Modifier.fillMaxSize())
+                    compareEnabled, { comparing = it }, Modifier.fillMaxSize(), onCaptionHeight = { gpuCaptionHeight = it })
                 else if (preview != null && phase != PhotoRollPhase.BLOCKED) PhotoRollComparisonImage(preview,
                     comparison.takeIf { compareEnabled }, foreground, "現像結果（表示用）", comparisonLabel,
                     Modifier.fillMaxSize(), comparing && compareEnabled, { comparing = it }, unapplied || updating,
                     fillImageWidth = fillImageWidth, stableCaption = true)
                 else if (productMessages == null && phase != PhotoRollPhase.BLOCKED) Text(if (updating) "画像を準備中…" else "原本の確認待ち", color = CaptureDesign.Muted)
                 if (productMessages != null) {
-                    Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
+                    // Temporary until PR-D owns the caption: use its measured height, not a fixed offset.
+                    Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()
+                        .padding(top = with(LocalDensity.current) { if (gpuSession != null) gpuCaptionHeight.toDp() else 0.dp })) {
                         productMessages.banner?.let { CaptureBanner(it, onProductAction, failureFallback = productFailureFallback) }
                         productMessages.inline.forEach { CaptureInlineNote(it, onProductAction) }
                     }

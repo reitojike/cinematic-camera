@@ -41,7 +41,7 @@ import kotlinx.coroutines.flow.StateFlow
     var input by remember { mutableStateOf<ManualTrialPhotoRollRenderer.GpuInput?>(null) }
     var error by remember { mutableStateOf<Throwable?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
-    var noticeIsFailure by remember { mutableStateOf(true) }
+    var noticeTone by remember { mutableStateOf(CaptureChromeTone.FAILURE) }
     var savingRecipe by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
     var rechecking by remember { mutableStateOf(false) }
@@ -248,8 +248,8 @@ import kotlinx.coroutines.flow.StateFlow
     LaunchedEffect(justPublished) {
         if (justPublished) { delay(4000); justPublished = false }
     }
-    LaunchedEffect(notice, noticeIsFailure) {
-        if (notice != null && !noticeIsFailure) { delay(4000); notice = null }
+    LaunchedEffect(notice, noticeTone) {
+        if (notice != null && noticeTone != CaptureChromeTone.FAILURE) { delay(4000); notice = null }
     }
     fun commit(next: TrialStrengthEditor) {
         editor = next
@@ -297,7 +297,7 @@ import kotlinx.coroutines.flow.StateFlow
                         save = next; saveState = next.snapshot
                         next.startForegroundSave(context)
                     } catch (cancelled: CancellationException) { throw cancelled }
-                    catch (failure: Exception) { noticeIsFailure = true; notice = "再書き出しの受付を確認できません。前回の記録を保留しています" }
+                    catch (failure: Exception) { noticeTone = CaptureChromeTone.FAILURE; notice = "再書き出しの受付を確認できません。前回の記録を保留しています" }
                     finally { saving = false }
                 }
     }
@@ -312,7 +312,7 @@ import kotlinx.coroutines.flow.StateFlow
                             ensureActive()
                             if (save === old) saveState = result
                         } catch (cancelled: CancellationException) { throw cancelled }
-                        catch (_: Exception) { noticeIsFailure = true; notice = "保存結果を確認できません。保留を維持します" }
+                        catch (_: Exception) { noticeTone = CaptureChromeTone.FAILURE; notice = "保存結果を確認できません。保留を維持します" }
                         finally { saving = false; rechecking = false }
                     }
     }
@@ -356,7 +356,7 @@ import kotlinx.coroutines.flow.StateFlow
                         if (result.phase == PhotoRollSavePhase.PUBLISHED && result.uri != null) try {
                             context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(result.uri), "image/jpeg")
                                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
-                        } catch (_: Exception) { noticeIsFailure = true; notice = "保存したJPEGを開けませんでした。対応する写真アプリを確認してください" }
+                        } catch (_: Exception) { noticeTone = CaptureChromeTone.FAILURE; notice = "保存したJPEGを開けませんでした。対応する写真アプリを確認してください" }
                     }
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (failure: Exception) { error = failure }
@@ -392,6 +392,7 @@ import kotlinx.coroutines.flow.StateFlow
         phase = phase, savePhase = saveState?.phase, exportPaused = exportPaused,
         saving = saving, savingRecipe = savingRecipe, editing = editor.session != null, foreground = foreground,
         memoryProblem = memoryProblem, gpuFailure = gpuFailure, message = problemMessage,
+        sourceInvalid = gpuPhotoRollSourceInvalid(problem),
         saveFailureMessage = saveState?.gpuFailure?.description,
         canLeave = !savingRecipe,
         canResumePreview = foreground && !saving && !savingRecipe && gpuSaveCanResumePreview(saveState?.phase),
@@ -399,9 +400,7 @@ import kotlinx.coroutines.flow.StateFlow
         retryEnabled = foreground && !saving && !savingRecipe, rechecking = rechecking, justPublished = justPublished,
     )
     val noticeMessage = notice?.let {
-        UiMessage(if (noticeIsFailure) MessageSlot.BANNER else MessageSlot.TOAST,
-            if (noticeIsFailure) CaptureChromeTone.FAILURE else CaptureChromeTone.NORMAL,
-            it, "develop.operation_notice")
+        developOperationNotice(it, noticeTone)
     }
     val productMessages = developMessages(presentationState,
         foregroundSaveMessages(foregroundMessageBinding.state, activeOnly = true) + listOfNotNull(noticeMessage))
@@ -446,10 +445,10 @@ import kotlinx.coroutines.flow.StateFlow
                 try {
                     withContext(NonCancellable + Dispatchers.IO) { write.get() }
                     if (editor.accepts(current)) {
-                        editor = next; noticeIsFailure = false; notice = "調整設定をこの端末に保持しました。JPEGの保存とは別です"
+                        editor = next; noticeTone = CaptureChromeTone.ACCEPTED; notice = "調整設定をこの端末に保持しました。JPEGの保存とは別です"
                     }
                 } catch (cancelled: CancellationException) { throw cancelled }
-                catch (_: Exception) { noticeIsFailure = true; notice = "調整設定の保持を確認できません。閉じる操作を再試行してください" }
+                catch (_: Exception) { noticeTone = CaptureChromeTone.FAILURE; notice = "調整設定の保持を確認できません。閉じる操作を再試行してください" }
                 finally { savingRecipe = false }
             }
         },

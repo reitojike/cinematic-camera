@@ -8,6 +8,33 @@ class DevelopMessagesTest {
     private fun state(phase: PhotoRollSavePhase? = PhotoRollSavePhase.READY) =
         DevelopMessageState(PhotoRollPhase.DISPLAYED, savePhase = phase)
 
+    @Test fun sourceFailureUsesOnlyExistingBackActionAndEligibility() {
+        for (canLeave in listOf(false, true)) {
+            val result = developMessages(DevelopMessageState(PhotoRollPhase.BLOCKED,
+                sourceInvalid = true, canLeave = canLeave, retryEnabled = true,
+                message = "原本の内容が変わりました。Filesから選び直してください"))
+            val card = requireNotNull(result.center)
+            assertEquals("原本を読み込めません", card.title)
+            assertEquals(MessageAction.BACK_TO_LIST, card.primary?.action)
+            assertEquals(canLeave, card.primary?.enabled)
+            assertNull(card.secondary)
+            assertFalse(card.primary?.action == MessageAction.RETRY)
+        }
+        assertEquals(MessageAction.RETRY, developMessages(DevelopMessageState(PhotoRollPhase.BLOCKED,
+            retryEnabled = true)).center?.primary?.action)
+    }
+
+    @Test fun operationNoticesUseExplicitToneAndRecoveryIsNotEmphasized() {
+        val accepted = developOperationNotice("調整設定をこの端末に保持しました。JPEGの保存とは別です", CaptureChromeTone.ACCEPTED)
+        assertEquals(MessageSlot.TOAST, accepted.slot)
+        assertEquals(CaptureChromeTone.ACCEPTED, accepted.tone)
+        assertEquals(CaptureChromeTone.NORMAL, developOperationNotice("補足", CaptureChromeTone.NORMAL).tone)
+        assertEquals(MessageSlot.BANNER, developOperationNotice("失敗", CaptureChromeTone.FAILURE).slot)
+        val recovery = developMessages(state(PhotoRollSavePhase.UNCONFIRMED).copy(canRecover = true)).banner?.primary
+        assertEquals("保存結果を確認", recovery?.label)
+        assertFalse(requireNotNull(recovery).emphasis)
+    }
+
     @Test fun allSavePhasesHaveDistinctProductPresentation() {
         val labels = mapOf(
             PhotoRollSavePhase.READY to "未保存", PhotoRollSavePhase.SAVING to "保存中",

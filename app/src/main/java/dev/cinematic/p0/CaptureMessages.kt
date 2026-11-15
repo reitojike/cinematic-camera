@@ -13,6 +13,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
@@ -29,7 +31,7 @@ internal enum class MessageSlot { CHIP, CAPTION, CENTER, PROBLEM, BANNER, INLINE
 internal enum class MessageAction {
     RETRY, RECONNECT, STOP_AND_RECOVER, BACK_TO_LIST, RESUME_PREVIEW, CANCEL_SAVE,
     RECHECK_SAVE, ALLOW_NOTIFICATIONS, GRANT_ACCESS, CHOOSE_AGAIN, OPEN_DIAGNOSTICS,
-    OPEN_FILES, OPEN_SETTINGS, CONFIRM, CLOSE,
+    OPEN_FILES, OPEN_SETTINGS, CONFIRM, CLOSE, CANCEL_IMPORT, RELEASE_GRANT, OPEN_INFO,
 }
 
 /** Labels and enabled state are supplied by the pure screen assembler, never inferred by drawing. */
@@ -39,6 +41,7 @@ internal data class MessageControl(
     val enabled: Boolean = true,
     val description: String? = null,
     val stateDescription: String? = null,
+    val emphasis: Boolean = false,
 ) {
     init { if (BuildConfig.DEBUG) require(label.isNotBlank()) }
 }
@@ -188,7 +191,8 @@ internal fun CaptureTextAction(
         },
         shape = RectangleShape,
         colors = ButtonDefaults.textButtonColors(
-            contentColor = tone?.let(::captureChromeColor) ?: CaptureDesign.Text,
+            containerColor = if (control.emphasis) CaptureDesign.Amber else androidx.compose.ui.graphics.Color.Transparent,
+            contentColor = if (control.emphasis) CaptureDesign.Ink else tone?.let(::captureChromeColor) ?: CaptureDesign.Text,
             disabledContentColor = CaptureDesign.Disabled,
         ),
     ) { Text(control.label, style = CaptureDesign.Explanation) }
@@ -232,7 +236,10 @@ internal fun CaptureProblem(message: UiMessage, onAction: (MessageAction) -> Uni
         return
     }
     Column(modifier.semantics { liveRegion = LiveRegionMode.Polite }
-        .background(CaptureDesign.Scrim, RectangleShape).padding(16.dp),
+        .background(CaptureDesign.Scrim, RectangleShape)
+        .border(1.dp, CaptureDesign.Line, RectangleShape)
+        .drawBehind { drawRect(captureChromeColor(message.tone), size = Size(size.width, 3.dp.toPx())) }
+        .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(requireNotNull(message.title), Modifier.semantics { heading() },
             style = CaptureDesign.Label, color = captureChromeColor(message.tone))
@@ -288,12 +295,12 @@ internal fun CaptureDialog(message: MessageDialog, onDismissRequest: () -> Unit,
             border = BorderStroke(1.dp, CaptureDesign.Border)) {
             Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(message.title, Modifier.semantics { heading() }, style = CaptureDesign.Label, color = CaptureDesign.Text)
+                Text(message.title, Modifier.semantics { heading() }, style = CaptureDesign.Title, color = CaptureDesign.Text)
                 Text(message.body, style = CaptureDesign.Body, color = CaptureDesign.Text)
                 content()
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    CaptureTextAction(message.close, onAction)
                     message.confirm?.let { CaptureTextAction(it, onAction) }
+                    CaptureTextAction(message.close, onAction)
                 }
             }
         }

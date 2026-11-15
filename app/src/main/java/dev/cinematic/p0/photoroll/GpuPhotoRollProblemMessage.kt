@@ -49,3 +49,7 @@ internal fun gpuPhotoRollMemoryProblem(problem: Throwable?, retryEnabled: Boolea
 // A save-admission rejection must not discard its existing preview or retained export owner.
 internal fun gpuMemoryRetryNeedsReopen(exportPaused: Boolean, hasInput: Boolean, sessionFailed: Boolean): Boolean =
     !exportPaused && (!hasInput || sessionFailed)
+
+/** Same typed source failures used by the existing message classifier; display input only. */
+internal fun gpuPhotoRollSourceInvalid(problem: Throwable?): Boolean =
+    problem is PhotoRollSourceFailure || problem is dev.cinematic.p0.rawcapture.DngContentChanged || problem is SecurityException
