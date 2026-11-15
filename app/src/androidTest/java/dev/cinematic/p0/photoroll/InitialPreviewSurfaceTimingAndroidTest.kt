@@ -99,6 +99,35 @@ class InitialPreviewSurfaceTimingAndroidTest {
         }
     }
 
+    /** Artifact-only capture for visual review. Never replaces the strict UI assertions above. */
+    @Test fun captureSyntheticComparisonWithoutParameterNodeAssertions() {
+        org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments()
+            .getString("initialVisualCapture")=="true")
+        requireGpuInputSafetyFixture()
+        val context=instrumentation.targetContext
+        val root=File.createTempFile("initial-guide-visual-",".tmp",context.cacheDir.canonicalFile)
+        check(root.delete() && root.mkdir())
+        val input=File(root,"synthetic.dng")
+        input.outputStream().use { writeSyntheticTrialDng(it,1536,1024,1) }
+        val source=SharedOriginalReference("content://synthetic/initial-guide",
+            DngContentVerifier.identify(input.length(),{input.inputStream()}),OriginalGrant.USER_SELECTED)
+        val geometry=ParcelFileDescriptor.open(input,ParcelFileDescriptor.MODE_READ_ONLY).use {
+            Original24Preflight.inspect(it.fd,CancellationSignal())
+        }
+        val configured=InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")
+        val outputRoot=configured?.let(::File) ?: File(context.getExternalFilesDir(null),"additional_test_output")
+        val outputs=File(outputRoot,"initial-preview-visual-only").apply { check(isDirectory || mkdirs()) }
+        var success=false
+        try {
+            run(source,geometry,input,File(root,"visual"),true,true,outputs,verifyParameterNodes=false)
+            DngContentVerifier.verify(source.fingerprint,{input.inputStream()})
+            success=true
+        } finally {
+            GpuPhotoRollRetiredOwners.releaseBeforeOpen()
+            if(success) { assertTrue(input.delete()); assertTrue(root.delete()) }
+        }
+    }
+
     /** Separate retention diagnostic. Forced GC here is observation only, never a product policy,
      * performance sample, pass threshold or proof of a total memory cap. */
     @Test fun postRunMemoryAfterFixtureReleaseAndDiagnosticGc() {
@@ -173,7 +202,8 @@ class InitialPreviewSurfaceTimingAndroidTest {
         }
     }
     private fun run(source: SharedOriginalReference, geometry: Original24PreflightGeometry,
-        input: File, scratch: File, fallback: Boolean, capture: Boolean, output: File): Times {
+        input: File, scratch: File, fallback: Boolean, capture: Boolean, output: File,
+        verifyParameterNodes: Boolean = true): Times {
         val times=Times(fallback,capture)
         val owner=GpuPhotoRollSession(instrumentation.targetContext.assets)
         owner.presentedForDiagnostics={ times.presented.compareAndSet(0,SystemClock.elapsedRealtimeNanos()); Unit }
@@ -191,6 +221,8 @@ class InitialPreviewSurfaceTimingAndroidTest {
         var guideViewport: Rect?=null
         val saveCalls=AtomicInteger()
         val evidence=JSONObject().put("scope","View boundary and real GPU, not full Editor/save-owner E2E")
+            .put("parameterNodeAssertions",verifyParameterNodes)
+            .put("purpose",if(verifyParameterNodes) "strict UI validation" else "visual artifacts only; not strict UI pass or performance evidence")
             .put("settings","same source; camera WB linear AS_SHOT; half clamp+sRGB vs FULL GPU before; exact uses unchanged defaults")
         val valueBounds=mutableListOf<Rect>()
         fixture.content={
@@ -235,10 +267,11 @@ class InitialPreviewSurfaceTimingAndroidTest {
                             val saveBounds=Rect().also { save.getBoundsInScreen(it) }
                             tap(saveBounds)
                             assertEquals("View disabled tap never invokes callback",0,saveCalls.get())
+                            guideCapture=screen(File(output,"guide.png"))
+                            recordNodeKinds(File(output,"guide-nodes.local.json"))
                             guideViewport=imageBounds()
                             valueBounds.clear()
-                            valueBounds.addAll(parameterButtonBounds(enabled = false))
-                            guideCapture=screen(File(output,"guide.png"))
+                            if(verifyParameterNodes) valueBounds.addAll(parameterButtonBounds(enabled = false))
                             assertBlackLetterbox(checkNotNull(guideCapture),checkNotNull(guideViewport))
                         }
                     }
@@ -272,7 +305,7 @@ class InitialPreviewSurfaceTimingAndroidTest {
                         assertNotNull(find(developCaption(false,false).body))
                         val viewport=imageBounds()
                         assertEquals("same image viewport",guideViewport,viewport)
-                        assertEquals("three parameter button positions/sizes unchanged",valueBounds,
+                        if(verifyParameterNodes) assertEquals("three parameter button positions/sizes unchanged",valueBounds,
                             parameterButtonBounds(enabled = true))
                         assertBlackLetterbox(exactCapture,viewport)
                         val draws=drawCount(owner)
@@ -325,6 +358,21 @@ class InitialPreviewSurfaceTimingAndroidTest {
                 .put("javaUsedBytes",runtime.totalMemory()-runtime.freeMemory())
         }
     }
+    private fun recordNodeKinds(file: File) {
+        val records=JSONArray()
+        val known=setOf("STRENGTH","色温度","明るさ","50","+0","+0.0")
+        fun walk(node: AccessibilityNodeInfo?) {
+            if(node==null) return
+            val bounds=Rect().also { node.getBoundsInScreen(it) }
+            records.put(JSONObject().put("class",node.className?.toString())
+                .put("label",node.text?.toString()?.takeIf { it in known } ?: "other")
+                .put("enabled",node.isEnabled).put("clickable",node.isClickable)
+                .put("bounds",JSONArray(listOf(bounds.left,bounds.top,bounds.right,bounds.bottom))))
+            for(i in 0 until node.childCount) walk(node.getChild(i))
+        }
+        fixture.automation.clearCache(); walk(fixture.fixtureRoot())
+        file.writeText(records.toString(2))
+    }
     private fun parameterButtonBounds(enabled: Boolean): List<Rect> {
         fixture.automation.clearCache()
         val root=checkNotNull(fixture.fixtureRoot())
@@ -336,15 +384,16 @@ class InitialPreviewSurfaceTimingAndroidTest {
         val bounds=labels.map { (label,value) ->
             val matches=mutableListOf<AccessibilityNodeInfo>()
             fun walk(node: AccessibilityNodeInfo) {
-                if(node.className?.toString()=="android.widget.Button") {
-                    val tokens=texts(node).split(Regex("\\s+")).filter { it.isNotBlank() }
-                    if(label in tokens && value in tokens) matches.add(node)
-                }
+                // Match the visible key label, then its clickable ancestor, as DevelopViewAndroidTest
+                // does. Compose selected keys need not map to android.widget.Button.
+                if(node.text?.toString()==label) matches.add(actionNode(node))
                 for(i in 0 until node.childCount) node.getChild(i)?.let(::walk)
             }
             walk(root)
             assertEquals("one parameter button: $label",1,matches.size)
             val node=matches.single()
+            val tokens=texts(node).split(Regex("\\s+")).filter { it.isNotBlank() }
+            assertTrue("parameter value: $label",value in tokens)
             assertEquals("parameter enabled state: $label",enabled,node.isEnabled)
             Rect().also { node.getBoundsInScreen(it); assertFalse(it.isEmpty) }
         }

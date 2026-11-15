@@ -2,8 +2,8 @@
     <!-- AGP overrides the first instrumentation with testInstrumentationRunner. -->
     <instrumentation
         android:name="androidx.test.runner.AndroidJUnitRunner"
-        android:targetPackage="dev.cinematic.p0" />
+        android:targetPackage="${cinematicTestTarget}" />
     <instrumentation
         android:name="dev.cinematic.p0.rawcapture.DngHandoffInstrumentation"
-        android:targetPackage="dev.cinematic.p0" />
+        android:targetPackage="${cinematicTestTarget}" />
 </manifest>
