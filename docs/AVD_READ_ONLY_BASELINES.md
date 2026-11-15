@@ -111,6 +111,8 @@ Emulator/image/AVD設定の更新でsnapshotは無効化され得る。基準を
 製品最小試験が `eglCreateContext(ES 3.2) failed: EGL 0x3005` で失敗した。
 この候補のGPU90は未実施で、不採用。製品の要求・期待値・goldenを緩めていない。
 GPUのread-only cold boot/並列は別途段階検証中であり、本書のATD成立範囲に含めない。
+同じAVDの共有 `emu-launch-params.txt` が後起動で上書きされるため、instance別の証拠帰属には未解決の課題がある。
+端末別の起動記録・serialとの照合を修正し、両instanceの正規採取を実証するまではGPU並列運用は未完成とする。
 
 ## 公式根拠
 
