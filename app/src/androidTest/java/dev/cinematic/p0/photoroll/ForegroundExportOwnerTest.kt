@@ -405,8 +405,10 @@ class ForegroundExportOwnerTest {
                 // Cancellation before admission leaves the durable core READY, but the failed
                 // delivery is conservatively UNCONFIRMED in the existing presentation owner.
                 // Neither state authorizes automatic publication or a retry.
+                // Assert the main state message, not a badge that may be horizontally off-screen.
                 fun unconfirmed(node: AccessibilityNodeInfo?): Boolean = node != null &&
-                    ((node.isVisibleToUser && node.text?.toString() == "保存未確認") ||
+                    ((node.isVisibleToUser && (node.text?.toString() == "保存できたか確認できません。もう一度確認してください。" ||
+                        node.contentDescription?.toString() == "保存できたか確認できません。もう一度確認してください。")) ||
                         (0 until node.childCount).any { unconfirmed(node.getChild(it)) })
                 fun revealHeader(node: AccessibilityNodeInfo?): Boolean {
                     if (node == null) return false
