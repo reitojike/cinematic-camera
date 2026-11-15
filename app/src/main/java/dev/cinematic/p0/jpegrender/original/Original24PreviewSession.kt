@@ -24,6 +24,12 @@ import kotlin.math.max
 import kotlin.math.min
 import org.json.JSONObject
 
+/** Explicit comparison candidate only; all product callers retain FULL until owner approval. */
+internal enum class PreviewRasterMode(val halfSize: Int, val scope: String) {
+    FULL(0, "PRELIMINARY_ORIGINAL_NO_FACE_NO_VERIFIED_EV"),
+    HALF_CANDIDATE(1, "HALF_PREVIEW_CANDIDATE_NOT_SAVE_INPUT"),
+}
+
 /** One caller-admitted IO session, never a queue/slot, saved image or face-protected completion.
  * The first render decodes an immutable, fingerprint-bound private snapshot to row-readable RGB16,
  * reduces it, closes all owners and deletes both files before retaining <=1024 AS_SHOT input.
@@ -37,6 +43,7 @@ internal class Original24PreviewSession(
     private val expectedGeometry: Original24PreflightGeometry,
     /** Optional provider-metadata fence supplied by the checked photo selection. Saves never use it. */
     private val checkPreviewSource: ((DngIoResources, () -> Boolean) -> Unit)? = null,
+    private val rasterMode: PreviewRasterMode = PreviewRasterMode.FULL,
     private val openOriginal: () -> InputStream,
 ) : AutoCloseable {
     private val active = AtomicBoolean(false)
@@ -115,19 +122,32 @@ internal class Original24PreviewSession(
         rasterFd = ParcelFileDescriptor.open(rasterFile, ParcelFileDescriptor.MODE_READ_WRITE)
         sourceFd = ParcelFileDescriptor.open(snapshotFile, ParcelFileDescriptor.MODE_READ_ONLY)
         resourceAdmission(Original24MemoryStage.ORIGINAL_DECODE)
-        val metadata = JSONObject(originalNativeMemoryCall { NativeOriginalRaster.decode24(requireNotNull(sourceFd).fd,
-            requireNotNull(rasterFd).fd, signal) })
+        val metadata = JSONObject(originalNativeMemoryCall {
+            val inputFd = requireNotNull(sourceFd).fd
+            val outputFd = requireNotNull(rasterFd).fd
+            when (rasterMode) {
+                PreviewRasterMode.FULL -> NativeOriginalRaster.decode24(inputFd, outputFd, signal)
+                PreviewRasterMode.HALF_CANDIDATE -> NativeOriginalRaster.decodeHalfPreview(inputFd, outputFd, signal)
+            }
+        })
         closeDescriptors()
         originalCheckpoint(stop)
+        // Source geometry remains full-resolution. Never weaken the full preflight contract
+        // by treating half output dimensions as the original's dimensions.
+        val sourceWidth = metadata.getInt("sourceWidth"); val sourceHeight = metadata.getInt("sourceHeight")
+        val orientation = metadata.getInt("orientation")
         val geometry = Original24PreflightGeometry(metadata.getInt("rawWidth"), metadata.getInt("rawHeight"),
-            metadata.getInt("sourceWidth"), metadata.getInt("sourceHeight"), metadata.getInt("orientation"),
-            metadata.getInt("width"), metadata.getInt("height"), metadata.getInt("cropLeft"), metadata.getInt("cropTop"))
+            sourceWidth, sourceHeight, orientation,
+            if (orientation >= 5) sourceHeight else sourceWidth,
+            if (orientation >= 5) sourceWidth else sourceHeight, metadata.getInt("cropLeft"), metadata.getInt("cropTop"))
         if (geometry != expectedGeometry) throw IOException("Original preview geometry differs from admitted preflight")
-        val width = geometry.outputWidth; val height = geometry.outputHeight
-        if (metadata.getInt("bits") != 16 || metadata.getInt("channels") != 3 || metadata.getInt("halfSize") != 0 ||
+        val width = if (rasterMode == PreviewRasterMode.FULL) geometry.outputWidth else (geometry.outputWidth + 1) / 2
+        val height = if (rasterMode == PreviewRasterMode.FULL) geometry.outputHeight else (geometry.outputHeight + 1) / 2
+        if (metadata.getInt("width") != width || metadata.getInt("height") != height ||
+            metadata.getInt("bits") != 16 || metadata.getInt("channels") != 3 || metadata.getInt("halfSize") != rasterMode.halfSize ||
             metadata.getLong("pixelsWritten") != width.toLong() * height ||
             metadata.getString("color") != "linear-sRGB-D65" ||
-            metadata.getString("scope") != "PRELIMINARY_ORIGINAL_NO_FACE_NO_VERIFIED_EV" ||
+            metadata.getString("scope") != rasterMode.scope ||
             rasterFile.length() != width.toLong() * height * 6)
             throw IOException("Original preview raster observations differ")
         val rows = OriginalRasterFile(rasterFile, width, height, 2).also { raster = it }
