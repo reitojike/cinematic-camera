@@ -38,7 +38,7 @@ try {
     $emulator=Join-Path $SdkRoot 'emulator/emulator.exe'
     $arguments="-avd $avdName -port $Port -cores $Cores -memory $MemoryMiB -gpu host -feature GuestAngle,Vulkan -read-only -no-snapshot -no-snapshot-save -no-window -no-audio -no-boot-anim"
     $launcher=Start-Process $emulator -ArgumentList $arguments -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $output 'emulator.stdout.local.txt') -RedirectStandardError (Join-Path $output 'emulator.stderr.local.txt')
-    $launcherIdentity=[pscustomobject]@{processId=$launcher.Id;startedUtc=$launcher.StartTime.ToUniversalTime().ToString('o')}
+    $launcherIdentity=New-LauncherIdentity $launcher (Get-CimInstance Win32_Process -Filter "ProcessId=$($launcher.Id)")
     $until=[DateTime]::UtcNow.AddSeconds(60)
     do {Start-Sleep -Milliseconds 250;try {$live=Get-LiveGpuProcess $Serial}catch {$live=$null}}while(!$live -and [DateTime]::UtcNow -lt $until)
     if(!$live){throw 'New QEMU process did not appear'}

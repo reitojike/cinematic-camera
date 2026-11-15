@@ -18,6 +18,14 @@ function Assert-LaunchAssociation($Live,[string[]]$Lines,[DateTime]$Modified,[st
     foreach($key in $expected.Keys){
         if((Get-LaunchValue $Lines $key) -ne $expected[$key] -or (Get-CommandValue $Live.commandLine $key) -ne $expected[$key]){throw "Launch/process mismatch: $key"}
     }
+    foreach($flag in @('-read-only','-no-snapshot','-no-snapshot-save')) {
+        if(@($Lines|Where-Object {$_ -ceq $flag}).Count -ne 1 -or [regex]::Matches($Live.commandLine,'(?:^|\s)'+[regex]::Escape($flag)+'(?=\s|$)').Count -ne 1){throw "Missing or ambiguous read-only launch flag: $flag"}
+    }
+    foreach($option in @('-cores','-memory')) {
+        $raw=Get-LaunchValue $Lines $option;$actual=Get-CommandValue $Live.commandLine $option
+        if($raw -notmatch '^[0-9]+$' -or $raw -cne $actual){throw "Launch/process mismatch: $option"}
+        if(($option -eq '-cores' -and ([int]$raw -lt 1 -or [int]$raw -gt 8)) -or ($option -eq '-memory' -and ([int]$raw -lt 2048 -or [int]$raw -gt 8192))){throw "Out of supported range: $option"}
+    }
     $started=([DateTime]$Live.startedUtc).ToUniversalTime()
     if($Modified.ToUniversalTime() -lt $started.AddSeconds(-5) -or $Modified.ToUniversalTime() -gt $started.AddSeconds(30)){throw 'Emulator launch record is stale'}
 }
@@ -57,4 +65,13 @@ function Assert-LauncherOwnership($Live,$Launcher,$CurrentLauncher) {
 }
 function Test-CleanupOwnership($Owner,$Current) {
     $null -ne $Owner -and $null -ne $Current -and $Current.processId -eq $Owner.processId -and $Current.startedUtc -ceq $Owner.startedUtc -and $Current.commandLine -ceq $Owner.commandLine
+}
+
+function New-LauncherIdentity($Launcher,$Cim) {
+    if(!$Cim -or $Launcher.HasExited -or $Cim.ProcessId -ne $Launcher.Id){throw 'Launcher unavailable during registration'}
+    # CIM timestamps have microsecond precision; .NET retains 100 ns ticks.
+    $ticks=$Launcher.StartTime.ToUniversalTime().Ticks
+    $cimTicks=$Cim.CreationDate.ToUniversalTime().Ticks
+    if(($ticks-($ticks % 10)) -ne $cimTicks){throw 'Launcher identity changed during registration'}
+    [pscustomobject]@{processId=$Cim.ProcessId;startedUtc=$Cim.CreationDate.ToUniversalTime().ToString('o')}
 }

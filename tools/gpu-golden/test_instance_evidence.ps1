@@ -10,8 +10,8 @@ New-Item -ItemType Directory $root|Out-Null
 try {
  $config=Join-Path $root 'config.ini';'test-config'|Set-Content $config
  $config=(Resolve-Path $config).Path
- $live=[pscustomobject]@{processId=41;startedUtc='2026-11-15T00:00:00.0000000Z';commandLine='qemu.exe -avd fixture -port 5600 -gpu host -feature GuestAngle,Vulkan -read-only -no-snapshot'}
- $launch=@('-avd','fixture','-port','5600','-gpu','host','-feature','GuestAngle,Vulkan','-read-only','-no-snapshot')
+ $live=[pscustomobject]@{processId=41;startedUtc='2026-11-15T00:00:00.0000000Z';commandLine='qemu.exe -avd fixture -port 5600 -gpu host -feature GuestAngle,Vulkan -read-only -no-snapshot -no-snapshot-save -cores 4 -memory 4096'}
+ $launch=@('-avd','fixture','-port','5600','-gpu','host','-feature','GuestAngle,Vulkan','-read-only','-no-snapshot','-no-snapshot-save','-cores','4','-memory','4096')
  $boot='11111111-2222-3333-4444-555555555555'
  $directory=Join-Path $root 'first';New-Item -ItemType Directory $directory|Out-Null
  $raw=Join-Path $directory 'emulator-launch.local.txt';$launch|Set-Content $raw
@@ -30,6 +30,12 @@ try {
  Check tooLateLaunch {$bad=Clone $record;$bad.launchModifiedUtc='2026-11-15T00:00:31.0000000Z';Reject {Validate $bad}}
  Check duplicateRawOption {Reject {Validate $record $live 'emulator-5600' (Get-EvidenceHash $config) $boot ($launch+@('-port','5600'))}}
  Check duplicateProcessOption {$bad=Clone $live;$bad.commandLine+=' -port 5600';Reject {Assert-LaunchAssociation $bad $launch ([DateTime]::Parse($record.launchModifiedUtc)) 'emulator-5600' 'fixture'}}
+ Check missingReadonly {$bad=Clone $live;$bad.commandLine=$bad.commandLine.Replace(' -read-only','');Reject {Validate $record $bad}}
+ Check missingRawReadonly {Reject {Validate $record $live 'emulator-5600' (Get-EvidenceHash $config) $boot @($launch|Where-Object {$_ -ne '-read-only'})}}
+ Check missingSnapshotFlag {Reject {Validate $record $live 'emulator-5600' (Get-EvidenceHash $config) $boot @($launch|Where-Object {$_ -ne '-no-snapshot'})}}
+ Check duplicateReadonly {Reject {Validate $record $live 'emulator-5600' (Get-EvidenceHash $config) $boot ($launch+@('-read-only'))}}
+ Check coresMismatch {$bad=@($launch|ForEach-Object {if($_ -eq '4'){'2'}else{$_}});Reject {Validate $record $live 'emulator-5600' (Get-EvidenceHash $config) $boot $bad}}
+ Check memoryMismatch {$bad=@($launch|ForEach-Object {if($_ -eq '4096'){'2048'}else{$_}});Reject {Validate $record $live 'emulator-5600' (Get-EvidenceHash $config) $boot $bad}}
  Check physicalSerial {Reject {Assert-LaunchAssociation $live $launch ([DateTime]::Parse($record.launchModifiedUtc)) 'physical' 'fixture'}}
  $path=Join-Path $directory 'instance.local.json';$record|ConvertTo-Json|Set-Content $path
  Check incompleteRegistration {Reject {Read-InstanceEvidence $path $live 'emulator-5600' $config $boot 'fixture'}}
@@ -47,6 +53,9 @@ try {
   $null=Read-InstanceEvidence $path $live 'emulator-5600' $config $boot 'fixture'
   Reject {Read-InstanceEvidence $secondPath $live 'emulator-5600' $config $boot 'fixture'}
  }
+ Check launcherPrecision {$time=[DateTime]'2026-11-15T00:00:00Z';$net=[pscustomobject]@{Id=10;HasExited=$false;StartTime=$time.AddTicks(3)};$cim=[pscustomobject]@{ProcessId=10;CreationDate=$time};$id=New-LauncherIdentity $net $cim;if($id.startedUtc -cne $time.ToString('o')){throw 'CIM identity not retained'}}
+ Check launcherPrecisionDoesNotHideReuse {$time=[DateTime]'2026-11-15T00:00:00Z';$net=[pscustomobject]@{Id=10;HasExited=$false;StartTime=$time.AddTicks(3)};$cim=[pscustomobject]@{ProcessId=10;CreationDate=$time.AddTicks(10)};Reject {New-LauncherIdentity $net $cim}}
+ Check launcherExited {$net=[pscustomobject]@{Id=10;HasExited=$true};Reject {New-LauncherIdentity $net ([pscustomobject]@{ProcessId=10})}}
  Check cleanupUnattributed {if(Test-CleanupOwnership $null $live){throw 'Unattributed process must not be killed'}}
  $launcherIdentity=[pscustomobject]@{processId=10;startedUtc='2026-11-15T00:00:00.0000000Z'}
  $currentLauncher=[pscustomobject]@{ProcessId=10;CreationDate=[DateTime]$launcherIdentity.startedUtc}
