@@ -70,6 +70,7 @@ class PrivateComparisonAndroidTest {
                     if (phase.startsWith("PPG")) { source.appendBytes(byteArrayOf(1)); changed = true }
                 }
             }
+            assertTrue(changed)
             assertNoPrivateCopies()
         } finally { assertTrue(source.delete()) }
     }
