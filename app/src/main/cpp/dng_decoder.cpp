@@ -67,7 +67,7 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
                  , ProbeReport* probe = nullptr
 #endif
-                 , cinematic::OriginalRasterSink* original = nullptr, bool geometryOnly = false
+                 , cinematic::OriginalRasterSink* original = nullptr, bool geometryOnly = false, int previewQuality = -1
 ) {
     if (fd < 0 || longEdge < 1 || longEdge > 1024 || !signal || (wbMode != 0 && wbMode != 1)) fail("DNG_UNSUPPORTED");
     if (geometryOnly && !original) fail("DNG_UNSUPPORTED");
@@ -161,6 +161,8 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
     }
 
     auto& params = raw.imgdata.params;
+    if (previewQuality != -1 && previewQuality != 0 && previewQuality != 2) fail("DNG_UNSUPPORTED");
+    if (previewQuality >= 0) params.user_qual = previewQuality;
     params.half_size = 1;
     if (original) params.half_size = original->isHalfPreview() ? 1 : 0;
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
@@ -413,7 +415,7 @@ Java_dev_cinematic_p0_raw_original_NativeOriginalRaster_preflight24(JNIEnv* env,
 }
 
 namespace {
-jstring decodeRaster(JNIEnv* env, jint fd, jint outputFd, jobject signal, cinematic::OriginalRasterSink::Output mode) {
+jstring decodeRaster(JNIEnv* env, jint fd, jint outputFd, jobject signal, cinematic::OriginalRasterSink::Output mode, int previewQuality = -1) {
     try {
         struct stat source{}, target{};
         const int flags = fcntl(outputFd, F_GETFL);
@@ -421,7 +423,7 @@ jstring decodeRaster(JNIEnv* env, jint fd, jint outputFd, jobject signal, cinema
             fstat(fd, &source) || fstat(outputFd, &target) || !S_ISREG(target.st_mode) || target.st_size != 0 ||
             (source.st_dev == target.st_dev && source.st_ino == target.st_ino)) fail("ORIGINAL_RASTER_TARGET");
         cinematic::OriginalRasterSink sink(outputFd, mode);
-        decodeDng(env, fd, 1024, signal, 0, &sink);
+        decodeDng(env, fd, 1024, signal, 0, &sink, false, previewQuality);
         if (env->ExceptionCheck()) return nullptr;
         return env->NewStringUTF(sink.report().c_str());
     } catch (const std::bad_alloc&) {
@@ -443,5 +445,14 @@ Java_dev_cinematic_p0_raw_original_NativeOriginalRaster_decode24(JNIEnv* env, jo
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_cinematic_p0_raw_original_NativeOriginalRaster_decodeHalfPreview(JNIEnv* env, jobject, jint fd, jint outputFd, jobject signal) {
     return decodeRaster(env, fd, outputFd, signal, cinematic::OriginalRasterSink::Output::HalfPreview);
+}
+#endif
+
+#if defined(CINEMATIC_PREVIEW_TEST) && !defined(CINEMATIC_ENABLE_RAW_PROBE)
+// Debug-only JNI, declared solely in androidTest. Production preview/save never call this entry.
+extern "C" JNIEXPORT jstring JNICALL
+Java_dev_cinematic_p0_jpegrender_original_NativePreviewQualityTest_decode(JNIEnv* env, jobject,
+    jint fd, jint outputFd, jobject signal, jint quality) {
+    return decodeRaster(env, fd, outputFd, signal, cinematic::OriginalRasterSink::Output::Full, quality);
 }
 #endif

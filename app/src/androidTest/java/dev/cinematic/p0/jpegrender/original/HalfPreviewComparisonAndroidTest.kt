@@ -89,6 +89,128 @@ class HalfPreviewComparisonAndroidTest {
         } finally { persist() }
     }
 
+    @Test fun compareFullDemosaicCandidates() {
+        requireGpuInputSafetyFixture()
+        val args = InstrumentationRegistry.getArguments()
+        check(args.getString("demosaicComparison") == "true")
+        val run = checkNotNull(args.getString("halfPreviewRunId"))
+        require(run.matches(Regex("[A-Za-z0-9_-]{1,80}")))
+        val commit = checkNotNull(args.getString("halfPreviewSourceCommit"))
+        require(commit.matches(Regex("[a-f0-9]{40}")))
+        val out = File(checkNotNull(app.getExternalFilesDir("half-preview-review")), run)
+        check(!out.exists() && out.mkdirs())
+        val rows = JSONArray()
+        val manifest = JSONObject().put("status", "incomplete").put("sourceCommit", commit).put("runId", run)
+            .put("syntheticOnly", true).put("adopted", false).put("cases", rows)
+            .put("timing", "One warmup per method, three measured iterations in rotated order. JNI decode includes unpack/demosaic/RGB16 write; excludes source copying, bounded reduction and GPU. AVD only, not Pixel or selection-to-edit latency.")
+        fun persist() = File(out, "demosaic.json").writeText(manifest.toString(2))
+        persist()
+        val methods = listOf(-1, 0, 2)
+        fun method(q: Int) = when(q) { -1 -> "ahd"; 0 -> "bilinear"; else -> "ppg" }
+        try {
+            for (case in cases) {
+                val work = File(app.cacheDir, "demosaic-$run-${case.id}")
+                check(!work.exists() && work.mkdir())
+                val input = File(work, "synthetic.dng")
+                input.outputStream().use { stream -> writeSyntheticTrialDng(stream, case.width, case.height, case.orientation) { x, y -> sample(case, x, y) } }
+                val sourceHash = sha(input)
+                val geometry = ParcelFileDescriptor.open(input, ParcelFileDescriptor.MODE_READ_ONLY).use {
+                    Original24Preflight.inspect(it.fd, CancellationSignal())
+                }
+                val times = methods.associateWith { mutableListOf<Long>() }
+                val rasters = methods.associateWith { File(work, "${method(it)}.rgb16") }
+                for (iteration in 0..3) {
+                    for (i in methods.indices) {
+                        val q = methods[(i + iteration) % methods.size]
+                        val file = checkNotNull(rasters[q])
+                        if (file.exists()) check(file.delete())
+                        check(file.createNewFile())
+                        ParcelFileDescriptor.open(input, ParcelFileDescriptor.MODE_READ_ONLY).use { source ->
+                            ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_WRITE).use { target ->
+                                val start = android.os.SystemClock.elapsedRealtimeNanos()
+                                val report = if(q == -1) NativeOriginalRaster.decode24(source.fd, target.fd, CancellationSignal())
+                                    else NativePreviewQualityTest.decode(source.fd, target.fd, CancellationSignal(), q)
+                                val duration = android.os.SystemClock.elapsedRealtimeNanos() - start
+                                if(iteration > 0) checkNotNull(times[q]).add(duration)
+                                val r = JSONObject(report)
+                                check(r.getInt("halfSize") == 0 && r.getInt("width") == geometry.outputWidth && r.getInt("height") == geometry.outputHeight)
+                                check(file.length() == geometry.outputWidth.toLong() * geometry.outputHeight * 6)
+                            }
+                        }
+                    }
+                }
+                val inputs = methods.associateWith { q ->
+                    val raster = OriginalRasterFile(checkNotNull(rasters[q]), geometry.outputWidth, geometry.outputHeight, 2)
+                    try {
+                        val size = GpuPreviewInputSize.fit(raster.width, raster.height)
+                        OriginalFields.reduce(raster, size.width, size.height, 3, { false }) { rgb, target -> rgb.copyInto(target) }.reducedRgb()
+                    } finally { raster.closePending() }
+                }
+                val params = GpuRenderParams(case.strength, PhotoAdjustments(0.0, case.ev))
+                val pixels = methods.associateWith { preview(checkNotNull(inputs[it]), params) }
+                val reference = checkNotNull(inputs[-1])
+                val row = JSONObject().put("id", case.id).put("width", reference.width).put("height", reference.height)
+                    .put("sourceSha256", sourceHash).put("manualEv", case.ev).put("strength", case.strength)
+                val hashes = JSONObject()
+                for(q in methods) {
+                    val name = "${case.id}-${method(q)}.png"
+                    png(checkNotNull(pixels[q]), reference.width, reference.height, File(out, name))
+                    hashes.put(name, sha(File(out, name)))
+                    val samples = checkNotNull(times[q])
+                    row.put(method(q), JSONObject().put("file", name).put("decodeNanos", JSONArray(samples))
+                        .put("medianDecodeNanos", samples.sorted()[1]).put("baseEv", baseEv(checkNotNull(inputs[q])))
+                        .put("vsAhdRgb8", differences(checkNotNull(pixels[q]), checkNotNull(pixels[-1])))
+                        .put("vsAhdLinear", linearDifferences(checkNotNull(inputs[q]), reference)))
+                }
+                val save = File(out, "${case.id}-ahd-save.jpg")
+                row.put("saveBaseEv", fullSave(input, File(work, "save.rgb16"), geometry, case, save))
+                    .put("saveJpeg", save.name)
+                hashes.put(save.name, sha(save))
+                row.put("fileSha256", hashes)
+                check(sha(input) == sourceHash)
+                rows.put(row); check(work.deleteRecursively()); persist()
+            }
+            demosaicOverview(out, rows)
+            manifest.put("status", "complete").put("gl", glInfo)
+                .put("overviewSha256", sha(File(out, "00-demosaic-overview.png")))
+        } finally { persist() }
+    }
+
+    private fun demosaicOverview(directory: File, rows: JSONArray) {
+        val sheet = Bitmap.createBitmap(1080, 220 + rows.length() * 570, Bitmap.Config.ARGB_8888)
+        try {
+            val canvas = Canvas(sheet); canvas.drawColor(Color.rgb(20, 20, 20))
+            val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = 28f }
+            val filter = Paint(Paint.FILTER_BITMAP_FLAG)
+            canvas.drawText("原寸デモザイク比較・合成画像のみ・未採用", 20f, 42f, text)
+            canvas.drawText("現行 AHD               双線形 q=0                PPG q=2", 20f, 95f, text)
+            text.textSize = 22f
+            canvas.drawText("上：全体／下：中央160×80を2倍表示。保存JPEGはAHDのまま", 20f, 142f, text)
+            canvas.drawText("時間：AVD展開＋RGB16書込。Pixel／編集可能までの時間ではありません。", 20f, 175f, text)
+            for(i in 0 until rows.length()) {
+                val row = rows.getJSONObject(i); val top = 190 + i * 570
+                text.textSize = 26f; canvas.drawText(row.getString("id"), 20f, top + 30f, text)
+                listOf("ahd", "bilinear", "ppg").forEachIndexed { col, method ->
+                    val data = row.getJSONObject(method)
+                    val bmp = checkNotNull(BitmapFactory.decodeFile(File(directory, data.getString("file")).absolutePath))
+                    try {
+                        val left = 20 + col * 353
+                        val scale = min(333f / bmp.width, 265f / bmp.height)
+                        val w = bmp.width * scale; val h = bmp.height * scale
+                        canvas.drawBitmap(bmp, null, RectF(left+(333-w)/2, top+52f, left+(333+w)/2, top+52f+h), filter)
+                        canvas.drawBitmap(bmp, Rect(bmp.width/2-80,bmp.height/2-40,bmp.width/2+80,bmp.height/2+40),
+                            RectF(left.toFloat(),top+334f,left+320f,top+494f), null)
+                        text.textSize = 20f
+                        canvas.drawText("MAE %.3f / %.1f ms".format(java.util.Locale.ROOT,
+                            data.getJSONObject("vsAhdRgb8").getDouble("maeRgb8"), data.getLong("medianDecodeNanos")/1e6),
+                            left.toFloat(), top+530f, text)
+                    } finally { bmp.recycle() }
+                }
+            }
+            File(directory,"00-demosaic-overview.png").outputStream().use { check(sheet.compress(Bitmap.CompressFormat.PNG,100,it)) }
+        } finally { sheet.recycle() }
+    }
+
     /** Test-only decomposition. No JPEG, adoption, timing claim or product switch. */
     @Test fun separateLinearInputFromGpuStages() {
         requireGpuInputSafetyFixture()
@@ -411,4 +533,10 @@ class HalfPreviewComparisonAndroidTest {
         }
         return (64 + value.coerceIn(0.0, 1.0) * (4095 - 64)).toInt()
     }
+}
+
+/** Export exists only in debug cinematic_dng; absent from release and all product Kotlin. */
+internal object NativePreviewQualityTest {
+    init { System.loadLibrary("cinematic_dng") }
+    external fun decode(sourceFd: Int, outputFd: Int, signal: CancellationSignal, quality: Int): String
 }

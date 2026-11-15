@@ -25,6 +25,11 @@ target_compile_options(cinematic_dng PRIVATE -Wall -Wextra -Werror -fvisibility=
 target_link_options(cinematic_dng PRIVATE "-Wl,--exclude-libs,ALL")
 option(CINEMATIC_ENABLE_RAW_PROBE "Build the isolated full-resolution diagnostic JNI entry" OFF)
 set(dng_exports "${CMAKE_CURRENT_LIST_DIR}/dng.exports")
+# Isolated androidTest comparison only; no extra LibRaw and no release entry.
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_definitions(cinematic_dng PRIVATE CINEMATIC_PREVIEW_TEST)
+    set(dng_exports "${CMAKE_CURRENT_LIST_DIR}/preview_test.exports")
+endif()
 if(CINEMATIC_ENABLE_RAW_PROBE)
     target_compile_definitions(cinematic_dng PRIVATE CINEMATIC_ENABLE_RAW_PROBE)
     target_sources(cinematic_dng PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../../../../rawprobe/src/main/cpp/baseline_small.cpp")
