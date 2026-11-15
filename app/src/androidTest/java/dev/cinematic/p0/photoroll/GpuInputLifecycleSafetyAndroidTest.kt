@@ -201,19 +201,10 @@ class GpuInputLifecycleSafetyAndroidTest {
                 await("second explicit retry presents") { owners.last() !== failedRetry && saveReady() }
                 assertClosed(failedRetry)
 
-                val beforeLow = owners.last()
-                val lowReads = provider.opens.get()
-                val beforeLowSnapshot = snapshot(beforeLow)
-                scenario.onActivity { it.onTrimMemory(ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) }
-                instrumentation.waitForIdleSync()
-                queue.manualOriginalIo { Unit }.get(30, TimeUnit.SECONDS)
-                assertSame(beforeLow, owners.last())
-                assertTrue(saveReady())
-                assertEquals(lowReads, provider.opens.get())
-                assertEquals(beforeLowSnapshot.allocatedBytes, snapshot(beforeLow).allocatedBytes)
-                assertTrue(beforeLow.ledger.get().textureCount > 0)
-
-                for (level in listOf(ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN, ComponentCallbacks2.TRIM_MEMORY_COMPLETE)) {
+                // Reusable preview runtimes retire on every memory-pressure signal. Await the
+                // UI transition before checking ownership; an idle sync alone can race Compose.
+                for (level in listOf(ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW,
+                    ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN, ComponentCallbacks2.TRIM_MEMORY_COMPLETE)) {
                     val old = owners.last()
                     val count = owners.size
                     val reads = provider.opens.get()
