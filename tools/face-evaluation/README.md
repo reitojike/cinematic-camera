@@ -86,10 +86,10 @@ ML Kit の中断待ちはSDK完了までdrainしてからbitmapとdetectorを解
 
 ## 結果と正解ラベル
 
-JSONL schema=1、sampleは合成ID、detector版、geometry、寸法、phase、iteration、初期化/処理時間、
+JSONL schema=1、sampleは合成IDまたは非公開用opaque ID、detector版、geometry、寸法、phase、iteration、初期化/処理時間、
 status、boxes（x,y,width,heightの入力pixel座標）を保持する。FAILED/CANCELLED/NOT_RUNを成功0件にしない。
 例外message・写真名・パスは出力しない。runnerは同期で所有し、別sourceへの非同期公開は行わない。
-実写runnerを拡張する際は入力hashとrevisionの一致を検証し、旧結果の棄却を追加する必要がある。
+private runnerは入力hash・manifest hash・revisionを記録し、集計で人ラベルとの一致を要求する。
 
 host `evaluate.py` は画像を読まず、人のラベルと結果のJSONだけを読む。すべての入出力はGit checkout外に限定する。
 label形式は `authority: human`、`split: tuning または held-out`、`samples` の各IDに
