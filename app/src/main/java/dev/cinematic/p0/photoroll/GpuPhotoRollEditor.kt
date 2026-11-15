@@ -454,6 +454,7 @@ import kotlinx.coroutines.flow.StateFlow
             }
         },
         gpuSession = session.takeUnless { exportPaused }, gpuReady = ready && !exportPaused, gpuFailure = gpuFailure,
+        gpuPresentedValues = presented,
         modifier = modifier,
         info = { Text("顔保護には対応していません。色は暫定で、24MP 以下の対応 DNG のみ読み込めます。",
             style = CaptureDesign.Body, color = CaptureDesign.Muted) })

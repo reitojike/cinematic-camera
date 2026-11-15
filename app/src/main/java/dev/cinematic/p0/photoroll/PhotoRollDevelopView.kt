@@ -62,6 +62,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
     apply: (PhotoEditInputToken) -> Unit, cancel: (PhotoEditInputToken) -> Unit, close: (PhotoEditInputToken) -> Unit,
     modifier: Modifier = Modifier, statusOverlay: @Composable () -> Unit = {}, fillImageWidth: Boolean = false, viewportModifier: Modifier = Modifier,
     gpuSession: GpuPhotoRollSession? = null, gpuReady: Boolean = false,
+    gpuPresentedValues: PhotoEditValues? = state.displayedValues,
     gpuFailure: dev.cinematic.p0.gpu.GpuFailureHandling? = null,
     productMessages: ScreenMessages? = null, productFailureFallback: UiMessage? = null, productSave: DevelopSavePresentation? = null,
     onProductAction: (MessageAction) -> Unit = {}, memoryProblem: dev.cinematic.p0.UiMessage? = null, info: @Composable () -> Unit) {
@@ -75,6 +76,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
     val requested = session?.draft ?: state.requestedValues
     val unapplied = mode in setOf(PhotoRollPreviewMode.MANUAL_TRIAL, PhotoRollPreviewMode.STAGE_CLEAR,
         PhotoRollPreviewMode.PRIVATE_TRIAL) && state.displayedValues != requested
+    val captionUpdating = gpuPresentedValues != requested
     val saveLabel = productSave?.label ?: developSaveLabel(mode, savePhase, savePending, session != null)
     val saveTone = productSave?.tone ?: when {
         savePending || savePhase == PhotoRollSavePhase.SAVING -> CaptureChromeTone.WARNING
@@ -113,9 +115,9 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                 .then(viewportModifier).semantics { contentDescription = "現像画像の表示領域" }, contentAlignment = Alignment.Center) {
                 val updating = phase in setOf(PhotoRollPhase.CHECKING, PhotoRollPhase.RENDERING, PhotoRollPhase.PAUSED)
                 if (gpuSession != null) GpuPhotoRollImage(gpuSession, requested, comparing && compareEnabled,
-                    compareEnabled, { comparing = it }, Modifier.fillMaxSize(), updating = unapplied, header = if (productMessages != null) { before ->
+                    compareEnabled, { comparing = it }, Modifier.fillMaxSize(), updating = captionUpdating, header = if (productMessages != null) { before ->
                         Column(Modifier.fillMaxWidth()) {
-                            DevelopCaption(developCaption(before, unapplied), Modifier.fillMaxWidth())
+                            DevelopCaption(developCaption(before, captionUpdating), Modifier.fillMaxWidth())
                             productMessages.banner?.let { CaptureBanner(it, onProductAction, failureFallback = productFailureFallback) }
                         }
                     } else null)
@@ -126,7 +128,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                 else if (productMessages == null && phase != PhotoRollPhase.BLOCKED) Text(if (updating) "画像を準備中…" else "原本の確認待ち", color = CaptureDesign.Muted)
                 if (productMessages != null) {
                     if (gpuSession == null) Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
-                        DevelopCaption(developCaption(false, unapplied), Modifier.fillMaxWidth())
+                        DevelopCaption(developCaption(false, captionUpdating), Modifier.fillMaxWidth())
                         productMessages.banner?.let { CaptureBanner(it, onProductAction, failureFallback = productFailureFallback) }
                     }
                     if (!compact) productMessages.center?.let {
