@@ -183,7 +183,9 @@ class DevelopStableViewportAndroidTest {
                 while (!temperature.isClickable) temperature = requireNotNull(temperature.parent)
                 assertTrue(temperature.performAction(AccessibilityNodeInfo.ACTION_CLICK))
                 settle()
-                assertTrue("temperature selection uses the real button", temperature.refresh() && temperature.isSelected)
+                // Parameter changes can replace semantics nodes. The exact temperature ruler
+                // reached below verifies selection; a retained node's selected flag is not used.
+                captureStage("after-temperature-click")
                 var backward = 0
                 fun viewportRestored() = find("現像画像の表示領域")?.let {
                     Rect().also(it::getBoundsInScreen) == initial
