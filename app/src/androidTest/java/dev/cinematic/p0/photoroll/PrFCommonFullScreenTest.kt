@@ -71,7 +71,7 @@ class PrFCommonFullScreenTest {
                                     MessageDialog("前回の保存結果を確認できません",
                                         "保存先に JPEG がある可能性があります。保存し直す場合は、前回と同じ設定で別の JPEG を作ります。原本と前回の記録は保持します。",
                                         MessageControl(MessageAction.CLOSE, "今は保存しない"),
-                                        MessageControl(MessageAction.CONFIRM, "重複の可能性はあるが保存し直す")),
+                                        MessageControl(MessageAction.CONFIRM, "重複の可能性はあるが保存し直す"), confirmationLast = true),
                                     onDismissRequest = {}, onAction = {},
                                 ) {
                                     CaptureTextAction(MessageControl(MessageAction.RECHECK_SAVE, "もう一度確認"), {})

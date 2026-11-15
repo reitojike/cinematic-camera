@@ -68,13 +68,13 @@ class DevelopMessagesScreenshotAndroidTest {
             foreground = true, notificationsAllowed = false, canRequestNotifications = true)
         val cases = listOf(
             Case("19-source-changed", ready.copy(phase = PhotoRollPhase.BLOCKED, sourceInvalid = true,
-                message = "原本の内容が変わりました。Filesから選び直してください"),
+                message = "原本の内容が変わりました。Filesから選び直してください。"),
                 listOf("原本を読み込めません", "一覧に戻る")),
             Case("20-source-permission", ready.copy(phase = PhotoRollPhase.BLOCKED, sourceInvalid = true,
-                message = "原本の読み取り権限がありません。Filesから選び直してください"),
+                message = "原本の読み取り権限がありません。Filesから選び直してください。"),
                 listOf("原本を読み込めません", "一覧に戻る")),
-            Case("21-settings-kept", ready, listOf("調整設定をこの端末に保持しました。JPEGの保存とは別です"),
-                listOf(developOperationNotice("調整設定をこの端末に保持しました。JPEGの保存とは別です", CaptureChromeTone.ACCEPTED))),
+            Case("21-settings-kept", ready, listOf("調整設定をこの端末に保持しました。JPEGの保存とは別です。"),
+                listOf(developOperationNotice("調整設定をこの端末に保持しました。JPEGの保存とは別です。", CaptureChromeTone.ACCEPTED))),
             Case("01-preparing", DevelopMessageState(PhotoRollPhase.CHECKING), listOf("画像を準備しています。")),
             Case("02-ready", ready, listOf("未保存")),
             Case("03-editing", ready.copy(editing = true), listOf("調整中")),
@@ -199,7 +199,7 @@ class DevelopMessagesScreenshotAndroidTest {
                     if (recovery.value) MessageDialog("前回の保存結果を確認できません",
                         "保存先に JPEG がある可能性があります。保存し直す場合は、前回と同じ設定で別の JPEG を作ります。原本と前回の記録は保持します。",
                         MessageControl(MessageAction.CLOSE, "今は保存しない"),
-                        MessageControl(MessageAction.CONFIRM, "重複の可能性はあるが保存し直す"))
+                        MessageControl(MessageAction.CONFIRM, "重複の可能性はあるが保存し直す"), confirmationLast = true)
                     else MessageDialog("原本と現像について", "原本は読み取り専用です。コピー・上書き・公開は行いません。",
                         MessageControl(MessageAction.CLOSE, "閉じる")),
                     onDismissRequest = {}, onAction = {},

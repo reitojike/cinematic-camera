@@ -12,7 +12,7 @@ class DevelopMessagesTest {
         for (canLeave in listOf(false, true)) {
             val result = developMessages(DevelopMessageState(PhotoRollPhase.BLOCKED,
                 sourceInvalid = true, canLeave = canLeave, retryEnabled = true,
-                message = "原本の内容が変わりました。Filesから選び直してください"))
+                message = "原本の内容が変わりました。Filesから選び直してください。"))
             val card = requireNotNull(result.center)
             assertEquals("原本を読み込めません", card.title)
             assertEquals(MessageAction.BACK_TO_LIST, card.primary?.action)
@@ -25,7 +25,7 @@ class DevelopMessagesTest {
     }
 
     @Test fun operationNoticesUseExplicitToneAndRecoveryIsNotEmphasized() {
-        val accepted = developOperationNotice("調整設定をこの端末に保持しました。JPEGの保存とは別です", CaptureChromeTone.ACCEPTED)
+        val accepted = developOperationNotice("調整設定をこの端末に保持しました。JPEGの保存とは別です。", CaptureChromeTone.ACCEPTED)
         assertEquals(MessageSlot.TOAST, accepted.slot)
         assertEquals(CaptureChromeTone.ACCEPTED, accepted.tone)
         assertEquals(CaptureChromeTone.NORMAL, developOperationNotice("補足", CaptureChromeTone.NORMAL).tone)

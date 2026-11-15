@@ -320,7 +320,8 @@ import kotlinx.coroutines.flow.StateFlow
         MessageDialog("前回の保存結果を確認できません",
             "保存先に JPEG がある可能性があります。保存し直す場合は、前回と同じ設定で別の JPEG を作ります。原本と前回の記録は保持します。",
             MessageControl(MessageAction.CLOSE, "今は保存しない", enabled = !saving),
-            MessageControl(MessageAction.CONFIRM, "重複の可能性はあるが保存し直す", enabled = foreground && !saving && !savingRecipe)),
+            MessageControl(MessageAction.CONFIRM, "重複の可能性はあるが保存し直す", enabled = foreground && !saving && !savingRecipe),
+            confirmationLast = true),
         onDismissRequest = { if (!saving) recoveryChoices = false },
         onAction = { action -> when (action) {
             MessageAction.CONFIRM -> confirmRecovery()
@@ -445,7 +446,7 @@ import kotlinx.coroutines.flow.StateFlow
                 try {
                     withContext(NonCancellable + Dispatchers.IO) { write.get() }
                     if (editor.accepts(current)) {
-                        editor = next; noticeTone = CaptureChromeTone.ACCEPTED; notice = "調整設定をこの端末に保持しました。JPEGの保存とは別です"
+                        editor = next; noticeTone = CaptureChromeTone.ACCEPTED; notice = "調整設定をこの端末に保持しました。JPEGの保存とは別です。"
                     }
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (_: Exception) { noticeTone = CaptureChromeTone.FAILURE; notice = "調整設定の保持を確認できません。閉じる操作を再試行してください" }

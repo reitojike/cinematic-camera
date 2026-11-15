@@ -17,8 +17,8 @@ internal fun gpuPhotoRollProblemMessage(problem: Throwable?, notice: String? = n
                 "OSがメモリ不足と判断しているため現像を開始できません。原本は変更していません。時間をおいて再試行してください"
             else "現像用のメモリを確保できませんでした。原本は変更していません。時間をおいて再試行してください"
         is PhotoRollSourceFailure -> problem.userMessage
-        is dev.cinematic.p0.rawcapture.DngContentChanged -> "原本の内容が変わりました。Filesから選び直してください"
-        is SecurityException -> "原本の読み取り権限がありません。Filesから選び直してください"
+        is dev.cinematic.p0.rawcapture.DngContentChanged -> "原本の内容が変わりました。Filesから選び直してください。"
+        is SecurityException -> "原本の読み取り権限がありません。Filesから選び直してください。"
         else -> gpuFailurePolicy(problem)?.reason ?: "現像を完了できません。原本は変更していません。再試行してください"
     }
 

@@ -170,7 +170,10 @@ internal data class MessageDialog(
     val body: String,
     val close: MessageControl,
     val confirm: MessageControl? = null,
+    val confirmationLast: Boolean = false,
 ) {
+    fun actionsInDisplayOrder(): List<MessageControl> =
+        if (confirmationLast) listOfNotNull(close, confirm) else listOfNotNull(confirm, close)
     init { if (BuildConfig.DEBUG) require(title.isNotBlank() && body.isNotBlank()) }
 }
 
@@ -303,8 +306,7 @@ internal fun CaptureDialog(message: MessageDialog, onDismissRequest: () -> Unit,
                 Text(message.body, style = CaptureDesign.Body, color = CaptureDesign.Text)
                 content()
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    message.confirm?.let { CaptureTextAction(it, onAction) }
-                    CaptureTextAction(message.close, onAction)
+                    message.actionsInDisplayOrder().forEach { CaptureTextAction(it, onAction) }
                 }
             }
         }
