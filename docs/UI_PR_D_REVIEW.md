@@ -4,7 +4,7 @@
 
 ## 表示だけの変更
 
-画像の下に調整パネルを置き、パネル開閉で画像の高さが変わる方式。小画面は画像260dpで、問題カード・中央表示・一時通知・行内注記は画像外に置く。保存行、編集の入力、保存・復旧・比較の callback と有効条件は変更しない。
+画像の下に調整パネルを置き、パネル開閉で画像の高さが変わる方式。小画面は画像260dpで、一時通知・行内注記は画像外に置く。画像がない問題状態のカードは画像領域内の中央へ置く。保存行、編集の入力、保存・復旧・比較の callback と有効条件は変更しない。
 
 | 変更前 | 変更後 |
 | --- | --- |
@@ -27,7 +27,7 @@
 
 手動回帰で発見した「保存による意図的なプレビュー停止にも更新中と表示する」不備は `41e22b51` で表示条件のみ修正。独立レビュー、上記6試験・GPU回帰・CIに合格。手動回帰全体は修正後に繰り返したとは扱わず、影響箇所を実経路と同じpresented=nullの試験と画像で再確認した。save ownerや操作条件は変更していない。
 
-固定状態の空Surface画像は実写真やPixelの証拠ではない。本人の見た目承認は未了のためマージHOLD。最新文書のみのcommitは上記製品試験を継承し、CIを別途確認する。
+固定状態の空Surface画像は実写真やPixelの証拠ではない。修正後の compact-failed / saving を含む見た目は本人確認済み。固定 Surface 案の採用条件と最終検証・レビューは別途確認する。最新文書のみのcommitは上記製品試験を継承し、CIを別途確認する。
 
 確認画像: https://github.com/reitojike/cinematic-camera/blob/docs/pr440-layout-review/docs/ui-review/pr440/README.md
 手動回帰の範囲・証拠: https://github.com/reitojike/cinematic-camera/blob/docs/pr440-layout-review/docs/ui-review/pr440/manual/README.md
