@@ -27,6 +27,12 @@ class PreviewCompareActivity : Activity() {
         check(BuildConfig.DEBUG && BuildConfig.PRIVATE_PREVIEW_COMPARE && packageName.endsWith(".previewcompare"))
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(16, 16, 16, 16) }
+        val padding = (16 * resources.displayMetrics.density).toInt()
+        column.setOnApplyWindowInsetsListener { view, insets ->
+            val bars = insets.getInsets(android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout())
+            view.setPadding(padding + bars.left, padding + bars.top, padding + bars.right, padding + bars.bottom)
+            insets
+        }
         column.addView(TextView(this).apply { text = "PPG 比較（未採用・保存なし）\n同じ写真を AHD / PPG で比較します。原本と普段のアプリは変更しません。" })
         exposure = Spinner(this).apply {
             adapter = ArrayAdapter(this@PreviewCompareActivity, android.R.layout.simple_spinner_dropdown_item,
@@ -36,7 +42,7 @@ class PreviewCompareActivity : Activity() {
         column.addView(exposure)
         column.addView(Button(this).apply { text = "DNG を選ぶ"; setOnClickListener {
             cancelAndClear()
-            selectedEv = -exposure.selectedItemPosition.toDouble()
+            selectedEv = listOf(0.0, -1.0, -2.0)[exposure.selectedItemPosition]
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 addCategory(Intent.CATEGORY_OPENABLE); type = "*/*"
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -52,6 +58,7 @@ class PreviewCompareActivity : Activity() {
         image = CompareImageView(this).apply { setBackgroundColor(Color.BLACK) }
         column.addView(image, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(column)
+        column.requestApplyInsets()
     }
 
     @Deprecated("Legacy Activity result for standalone evaluation")
