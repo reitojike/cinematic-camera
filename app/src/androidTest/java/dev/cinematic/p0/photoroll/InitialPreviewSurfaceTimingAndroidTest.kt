@@ -223,7 +223,10 @@ class InitialPreviewSurfaceTimingAndroidTest {
                         times.bitmapReady.set(SystemClock.elapsedRealtimeNanos())
                         handoff.offer(InitialPreviewFrame(bitmap,InitialPreviewKind.HALF_GUIDE,identity))
                         if(capture) {
-                            await { times.composeRecord.get()!=0L }
+                            // A Compose draw record precedes accessibility publication; require both,
+                            // just as the product Surface fixture does, without relaxing the label gate.
+                            await { times.composeRecord.get()!=0L &&
+                                find("RAW基準の案内画像・調整は未反映")!=null }
                             assertNotNull(find("RAW基準の案内画像・調整は未反映"))
                             assertFalse("comparison disabled before exact",hasComparisonAction())
                             assertNoGuideValueWarnings()
