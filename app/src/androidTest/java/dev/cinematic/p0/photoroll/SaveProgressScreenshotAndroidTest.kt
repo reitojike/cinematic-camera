@@ -90,7 +90,7 @@ class SaveProgressScreenshotAndroidTest {
                 assertNull(expected.secondary)
                 scenario.onActivity { shown.value = case }
                 awaitVisible(case.name, expected.body, rendered)
-                assertCancelPresentation(enabled = case.stage != 4)
+                assertCancelPresentation(requireNotNull(expected.primary).label, enabled = case.stage != 4)
                 val bitmap = fixture.captureSoftware()
                 try { writeImage(case, bitmap) } finally { bitmap.recycle() }
             }
@@ -110,12 +110,12 @@ class SaveProgressScreenshotAndroidTest {
         fixture.failure(name)
         fail("Missing visible synthetic banner or cancellation: $name")
     }
-    private fun assertCancelPresentation(enabled: Boolean) {
+    private fun assertCancelPresentation(label: String, enabled: Boolean) {
         val root = requireNotNull(fixture.fixtureRoot())
         val matches = mutableListOf<AccessibilityNodeInfo>()
         fun visit(node: AccessibilityNodeInfo) {
-            if (node.isVisibleToUser && (node.text?.toString() == "\u4fdd\u5b58\u3092\u4e2d\u6b62" ||
-                node.contentDescription?.toString() == "\u4fdd\u5b58\u3092\u4e2d\u6b62")) matches += node
+            if (node.isVisibleToUser && (node.text?.toString() == label ||
+                node.contentDescription?.toString() == label)) matches += node
             for (index in 0 until node.childCount) node.getChild(index)?.let(::visit)
         }
         visit(root)
