@@ -13,7 +13,8 @@ import dev.cinematic.p0.gpu.preview.GpuPreviewRenderer
 import androidx.compose.ui.Modifier
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
-import dev.cinematic.p0.CaptureTheme
+import dev.cinematic.p0.*
+import java.io.File
 import dev.cinematic.p0.gpu.GpuSurfaceTeardownException
 import dev.cinematic.p0.gpu.gpuFailurePolicy
 import dev.cinematic.p0.photoedit.PhotoAdjustmentPolicy
@@ -113,6 +114,66 @@ class GpuDevelopLayoutAndroidTest {
             original.close(); replacement.close()
             assertTrue(original.awaitClosed(5_000))
             assertTrue(replacement.awaitClosed(5_000))
+        }
+    }
+
+    @Test fun productBannerKeepsCaptionAndInfoActionWorks() {
+        val args = InstrumentationRegistry.getArguments()
+        check(args.getString("isolated") == "true")
+        check(android.os.Build.HARDWARE in setOf("ranchu", "goldfish"))
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val gpu = GpuPhotoRollSession(instrumentation.targetContext.assets)
+        val original = SharedOriginalReference("content://synthetic/layout", OriginalFingerprint(100, "a".repeat(64)), OriginalGrant.USER_SELECTED)
+        val bound = checkNotNull(TrialStrengthEditor.empty(PhotoAdjustmentPolicy.defaults).bind(original))
+        val editor = bound.shown(bound.ticket, bound.requestedValues)
+        val banner = mutableStateOf(UiMessage(MessageSlot.BANNER, CaptureChromeTone.WARNING,
+            "別の写真のJPEGを保存中です。", "synthetic.other_save"))
+        val state = DevelopMessageState(PhotoRollPhase.DISPLAYED, PhotoRollSavePhase.READY)
+        fixture.content = { CaptureTheme {
+            PhotoRollDevelopView("SYNTHETIC / EMPTY GPU SURFACE", PhotoRollPreviewMode.MANUAL_TRIAL,
+                editor, { editor }, state.phase, null, null, null, null, null, true, state.savePhase,
+                false, false, false, {}, {}, {}, {}, { _, _, _ -> }, {}, {}, {}, {},
+                modifier = Modifier.fillMaxSize(), gpuSession = gpu, gpuReady = true,
+                productMessages = ScreenMessages(banner = banner.value), productSave = developSavePresentation(state),
+                info = { androidx.compose.material3.Text("合成の空GPU Surfaceです。写真は読み込んでいません。") })
+        } }
+        try {
+            ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
+                awaitSurface(gpu.renderer)
+                for (failed in listOf(false, true)) {
+                    if (failed) scenario.onActivity { banner.value = UiMessage(MessageSlot.BANNER,
+                        CaptureChromeTone.FAILURE, "保存したJPEGを開けませんでした。", "synthetic.open_failed") }
+                    val caption = bounds("現像結果 · 長押しで基準表示")
+                    val notification = bounds(banner.value.body)
+                    assertTrue("Banner must be below caption: $caption / $notification", notification.top >= caption.bottom)
+                    val image = fixture.captureSoftware()
+                    try {
+                        val root = File(requireNotNull(args.getString("additionalTestOutputDir")), "ui-pr-f-gpu-layout").apply { mkdirs() }
+                        File(root, if (failed) "failure.png" else "saving.png").outputStream().use { image.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                        File(root, if (failed) "failure-bounds.txt" else "saving-bounds.txt").writeText("Synthetic empty GPU Surface; real product UI. caption=$caption; banner=$notification")
+                    } finally { image.recycle() }
+                }
+                val infoNode = await("原本と現像について")
+                val action = checkNotNull(generateSequence(infoNode) { it.parent }.firstOrNull { it.isClickable })
+                assertTrue(action.isEnabled)
+                assertTrue(action.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+                instrumentation.waitForIdleSync()
+                // Dialog owns window focus, so inspect the active window directly.
+                fun find(node: AccessibilityNodeInfo?, text: String): AccessibilityNodeInfo? {
+                    if (node == null) return null
+                    if (node.text?.toString() == text) return node
+                    for (i in 0 until node.childCount) find(node.getChild(i), text)?.let { return it }
+                    return null
+                }
+                var close: AccessibilityNodeInfo? = null
+                repeat(100) { if (close == null) { close = find(fixture.automation.rootInActiveWindow, "閉じる"); SystemClock.sleep(30) } }
+                val closeAction = checkNotNull(generateSequence(checkNotNull(close)) { it.parent }.firstOrNull { it.isClickable })
+                assertTrue(closeAction.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+                instrumentation.waitForIdleSync()
+                assertNotNull(await("現像結果 · 長押しで基準表示"))
+            }
+        } finally {
+            gpu.close(); assertTrue(gpu.renderer.awaitClosed(5_000)); GpuPhotoRollRetiredOwners.releaseBeforeOpen()
         }
     }
 
