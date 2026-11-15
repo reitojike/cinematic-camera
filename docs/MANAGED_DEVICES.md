@@ -4,6 +4,8 @@ Issue #190、#192。タスクごとの手動AVD作成を止め、Google公式の
 [Gradle Managed Devices](https://developer.android.com/studio/test/managed-devices)を利用する。
 製品仕様、実機AC、必須CIは変更しない。
 
+> 2026-11-15以降のローカル非GPU試験では、[ATD基準snapshot・read-only運用](AVD_READ_ONLY_BASELINES.md)の成立済み範囲を優先する。GMDの定義・CIは維持し、GPU並列は別検証とする。
+
 ## 固定構成と再利用
 
 `app/build.gradle.kts` の `pixel9aapi37`（Pixel 9a / API 37 / Google APIs）と、同じprofileのATD `pixel9aapi37atd` を共通で使う。
