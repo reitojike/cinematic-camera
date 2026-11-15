@@ -13,7 +13,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -237,8 +237,12 @@ internal fun CaptureProblem(message: UiMessage, onAction: (MessageAction) -> Uni
     }
     Column(modifier.semantics { liveRegion = LiveRegionMode.Polite }
         .background(CaptureDesign.Scrim, RectangleShape)
+        .drawWithContent {
+            drawContent()
+            // Draw after the border so the full 3dp tone stripe remains visible.
+            drawRect(captureChromeColor(message.tone), size = Size(size.width, 3.dp.toPx()))
+        }
         .border(1.dp, CaptureDesign.Line, RectangleShape)
-        .drawBehind { drawRect(captureChromeColor(message.tone), size = Size(size.width, 3.dp.toPx())) }
         .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(requireNotNull(message.title), Modifier.semantics { heading() },

@@ -125,6 +125,8 @@ class DevelopMessagesScreenshotAndroidTest {
             "11" to listOf(false, false, false), "12" to listOf(true, true, false),
             "15" to listOf(false, false, false), "16" to listOf(true, false, true),
             "17" to listOf(false, false, false), "18" to listOf(false, false, false),
+            "19" to listOf(false, false, false), "20" to listOf(false, false, false),
+            "21" to listOf(true, true, false),
         )
         cases.forEach { case ->
             val snapshot = fixtureState(case.state)
