@@ -147,6 +147,7 @@ class PrDDevelopInteractionsAndroidTest {
         visible("現像調整パネル")
         val image = rect(visible("現像結果（表示用）"))
         val surface = surfaceBounds(scenario)
+        assertEquals("Native Surface stays at the closed size while panel is open", surfaceClosed, surface)
         val panel = rect(visible("現像調整パネル"))
         for (label in listOf("色温度", "明るさ", "STRENGTH")) {
             clickLabel(label)
@@ -175,6 +176,56 @@ class PrDDevelopInteractionsAndroidTest {
         captureEvidence("geometry-after-close")
     }
 
+    /** No face overlay or coordinate-based tap exists in this product path. The real hit-test
+     * region remains the visible image; the larger native Surface is a presentation detail.
+     * Empty GPU fixture proves geometry only, not black-frame absence or image sampling. */
+    @Test fun fixedNativeSurfaceSurvivesThreePanelCyclesWithVisibleTouchRegion() = withScreen { scenario, model ->
+        visible("現像結果")
+        val closedOverlay = rect(visible("現像結果（表示用）"))
+        val native = surfaceBounds(scenario)
+        assertTrue(native.width() > 0 && native.height() > 0)
+        assertEquals(native.left, closedOverlay.left)
+        assertEquals(native.top, closedOverlay.top)
+        assertEquals(native.right, closedOverlay.right)
+        assertEquals(native.bottom, closedOverlay.bottom)
+        repeat(3) { cycle ->
+            clickLabel("STRENGTH")
+            visible("現像調整パネル")
+            val openOverlay = rect(visible("現像結果（表示用）"))
+            assertEquals("Native bounds stay fixed while opening cycle $cycle", native, surfaceBounds(scenario))
+            assertEquals(native.left, openOverlay.left)
+            assertEquals(native.top, openOverlay.top)
+            assertEquals(native.right, openOverlay.right)
+            assertTrue("Only the visible overlay shrinks", openOverlay.height() in 1 until closedOverlay.height())
+            for (label in listOf("色温度", "明るさ", "STRENGTH")) {
+                clickLabel(label)
+                assertEquals(openOverlay, rect(visible("現像結果（表示用）")))
+                assertEquals(native, surfaceBounds(scenario))
+            }
+            performComparisonAction("RAWの基準表示に切り替える")
+            visible("基準表示（撮影時WB・調整なし）")
+            assertEquals(openOverlay, rect(visible("現像結果（表示用）")))
+            assertEquals(native, surfaceBounds(scenario))
+            performComparisonAction("現像結果へ戻す")
+            longPressAndRelease("現像結果") {
+                assertEquals(openOverlay, rect(visible("現像結果（表示用）")))
+                assertEquals(native, surfaceBounds(scenario))
+            }
+            // No persistence: model reproduces the existing successful close and its notice.
+            scenario.onActivity {
+                model.editor = model.editor.close(requireNotNull(model.editor.session).inputToken)
+                model.toast = true
+            }
+            visible("調整設定をこの端末に保持しました。JPEGの保存とは別です。")
+            assertEquals(closedOverlay, rect(visible("現像結果（表示用）")))
+            assertEquals(native, surfaceBounds(scenario))
+            scenario.onActivity { model.toast = false }
+            instrumentation.waitForIdleSync()
+            assertEquals(closedOverlay, rect(visible("現像結果（表示用）")))
+            assertEquals(native, surfaceBounds(scenario))
+        }
+        captureEvidence("fixed-surface-three-panel-cycles")
+    }
     private fun clickLabel(label: String) {
         visible(label)
         val clickable = rootNodes().filter { matches(it, label) && it.isVisibleToUser }.firstNotNullOfOrNull { candidate ->
