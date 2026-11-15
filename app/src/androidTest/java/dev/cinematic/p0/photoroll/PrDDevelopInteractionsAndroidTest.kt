@@ -48,6 +48,7 @@ class PrDDevelopInteractionsAndroidTest {
         var failure by mutableStateOf(false)
         var cancelled by mutableStateOf(false)
         var banner by mutableStateOf(false)
+        var toast by mutableStateOf(false)
     }
 
     private fun withScreen(block: (ActivityScenario<PhotoRollActivity>, Model) -> Unit) {
@@ -70,11 +71,12 @@ class PrDDevelopInteractionsAndroidTest {
                         val messages = developMessages(state, if (model.banner) listOf(UiMessage(
                             MessageSlot.BANNER, CaptureChromeTone.WARNING,
                             "別の写真のJPEGを保存中です。アプリを離れても続きます。", "fixture.other_save",
-                            primary = MessageControl(MessageAction.CANCEL_SAVE, "保存を取り消す"), inProgress = true)) else emptyList())
+                            primary = MessageControl(MessageAction.CANCEL_SAVE, "保存を取り消す"), inProgress = true)) else if (model.toast) listOf(developOperationNotice("調整設定をこの端末に保持しました。JPEGの保存とは別です。", CaptureChromeTone.ACCEPTED)) else emptyList())
                         PhotoRollDevelopView("SYNTHETIC.dng", PhotoRollPreviewMode.MANUAL_TRIAL,
                             model.editor, { model.editor }, state.phase, null, null, null, null, null,
-                            true, state.savePhase, false, false, false,
-                            {}, {}, {}, {}, { _, _, _ -> }, {}, {}, {}, {},
+                            true, state.savePhase, false, false, true,
+                            {}, { model.editor = model.editor.begin(.01, true) }, {}, {}, { _, _, _ -> }, {}, {}, {},
+                            { token -> model.editor = model.editor.close(token); model.toast = true },
                             modifier = Modifier.fillMaxSize().safeDrawingPadding(),
                             gpuSession = gpu.takeUnless { model.failure || model.cancelled },
                             gpuReady = !model.failure && !model.cancelled,
@@ -129,6 +131,70 @@ class PrDDevelopInteractionsAndroidTest {
         }
     }
 
+    @Test fun parameterAndComparisonKeepExactImageBoundsAndCloseRestoresThem() = withScreen { scenario, model ->
+        visible("現像結果")
+        val closed = rect(visible("現像結果（表示用）"))
+        val surfaceClosed = surfaceBounds(scenario)
+        clickLabel("STRENGTH")
+        visible("現像調整パネル")
+        val image = rect(visible("現像結果（表示用）"))
+        val surface = surfaceBounds(scenario)
+        val panel = rect(visible("現像調整パネル"))
+        for (label in listOf("色温度", "明るさ", "STRENGTH")) {
+            clickLabel(label)
+            assertEquals("image bounds after parameter $label", image, rect(visible("現像結果（表示用）")))
+            assertEquals("real SurfaceView bounds after parameter $label", surface, surfaceBounds(scenario))
+            assertEquals("panel bounds after parameter $label", panel, rect(visible("現像調整パネル")))
+        }
+        performComparisonAction("RAWの基準表示に切り替える")
+        visible("基準表示（撮影時WB・調整なし）")
+        assertEquals(image, rect(visible("現像結果（表示用）")))
+        assertEquals(surface, surfaceBounds(scenario))
+        performComparisonAction("現像結果へ戻す")
+        longPressAndRelease("現像結果") {
+            assertEquals(image, rect(visible("現像結果（表示用）")))
+            assertEquals(surface, surfaceBounds(scenario))
+        }
+        assertEquals(image, rect(visible("現像結果（表示用）")))
+        assertEquals(surface, surfaceBounds(scenario))
+        // Fixture simulates the existing successful close, not metadata persistence itself.
+        scenario.onActivity { model.editor = model.editor.close(requireNotNull(model.editor.session).inputToken); model.toast = true }
+        visible("調整設定をこの端末に保持しました。JPEGの保存とは別です。")
+        assertEquals("close plus completion notice restores image immediately", closed, rect(visible("現像結果（表示用）")))
+        assertEquals(surfaceClosed, surfaceBounds(scenario))
+        scenario.onActivity { model.toast = false }
+        assertEquals(closed, rect(visible("現像結果（表示用）")))
+        captureEvidence("geometry-after-close")
+    }
+
+    private fun clickLabel(label: String) {
+        visible(label)
+        val clickable = rootNodes().filter { matches(it, label) && it.isVisibleToUser }.firstNotNullOfOrNull { candidate ->
+            var node: AccessibilityNodeInfo? = candidate
+            while (node != null && !node.isClickable) node = node.parent
+            node?.takeIf { it.isEnabled }
+        }
+        check(requireNotNull(clickable).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+        instrumentation.waitForIdleSync()
+        SystemClock.sleep(150)
+    }
+
+    private fun surfaceBounds(scenario: ActivityScenario<PhotoRollActivity>): Rect {
+        fun find(view: View): List<SurfaceView> = when (view) {
+            is SurfaceView -> listOf(view)
+            is ViewGroup -> (0 until view.childCount).flatMap { find(view.getChildAt(it)) }
+            else -> emptyList()
+        }
+        var bounds = Rect()
+        instrumentation.waitForIdleSync()
+        scenario.onActivity { activity ->
+            val view = find(activity.window.decorView).single()
+            val point = IntArray(2); view.getLocationOnScreen(point)
+            bounds = Rect(point[0], point[1], point[0] + view.width, point[1] + view.height)
+        }
+        return bounds
+    }
+
     @Test fun captionTracksPresentedInputWithoutUnlockingDraft() = withScreen { scenario, model ->
         scenario.onActivity { model.presented = null }
         visible("現像結果 · 更新中")
@@ -165,7 +231,7 @@ class PrDDevelopInteractionsAndroidTest {
         longPressAndRelease(expectAfter = "現像結果")
     }
 
-    private fun longPressAndRelease(expectAfter: String) {
+    private fun longPressAndRelease(expectAfter: String, whileHeld: () -> Unit = {}) {
         val target = rect(visible("現像結果（表示用）"))
         assertTrue(target.width() > 0 && target.height() > 0)
         val down = SystemClock.uptimeMillis()
@@ -179,6 +245,7 @@ class PrDDevelopInteractionsAndroidTest {
         try {
             SystemClock.sleep(ViewConfiguration.getLongPressTimeout().toLong() + 150)
             visible("基準表示（撮影時WB・調整なし）")
+            whileHeld()
             captureEvidence(if (expectAfter == "現像結果") "long-press-from-after" else "long-press-while-latched")
         } finally { send(MotionEvent.ACTION_UP) }
         visible(expectAfter)

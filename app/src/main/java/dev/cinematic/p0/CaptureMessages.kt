@@ -263,7 +263,7 @@ internal fun CaptureCenter(message: UiMessage, onAction: (MessageAction) -> Unit
         "invalid_center_renderer", BuildConfig.DEBUG, ::reportMessageContract)) return
     Column(modifier.background(CaptureDesign.Scrim, RectangleShape).padding(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(message.body, style = CaptureDesign.Body, color = CaptureDesign.Muted)
+        Text(message.body, style = CaptureDesign.Body, color = if (message.tone == CaptureChromeTone.NORMAL) CaptureDesign.Muted else captureChromeColor(message.tone))
         MessageActions(message, onAction)
     }
 }

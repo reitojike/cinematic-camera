@@ -72,6 +72,8 @@ class DevelopMessagesTest {
         val result = developMessages(state(PhotoRollSavePhase.SAVING).copy(exportPaused = true), listOf(foreground))
         assertEquals("保存中 · プレビューを止めています", result.center?.body)
         assertEquals("preview.export_paused", result.center?.fact)
+        assertEquals(CaptureChromeTone.WARNING, result.center?.tone)
+        assertNull("Do not offer resume while JPEG is being saved", result.center?.primary)
         assertEquals("save.foreground_progress", result.banner?.fact)
         assertEquals(MessageAction.CANCEL_SAVE, result.banner?.primary?.action)
     }

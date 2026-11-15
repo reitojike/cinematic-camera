@@ -111,7 +111,7 @@ internal fun developMessages(
             if (writing) CaptureChromeTone.WARNING else CaptureChromeTone.NORMAL,
             if (writing) "保存中 · プレビューを止めています" else "保存のためプレビューを止めました",
             "preview.export_paused",
-            primary = resume)
+            primary = if (writing) null else resume)
     } else when (state.phase) {
         PhotoRollPhase.EMPTY, PhotoRollPhase.CHECKING, PhotoRollPhase.RENDERING ->
             candidates += UiMessage(MessageSlot.CENTER, CaptureChromeTone.NORMAL,

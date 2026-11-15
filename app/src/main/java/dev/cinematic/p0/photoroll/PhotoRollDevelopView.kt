@@ -91,6 +91,8 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
     BoxWithConstraints(modifier.fillMaxSize()) {
         // Expanded source details must not squeeze the editor or footer out of reach.
         val compact = captureNeedsFullScroll(maxWidth.value, maxHeight.value, LocalDensity.current.fontScale, 560f)
+        val problemInEmptyViewport = productMessages?.center?.slot == MessageSlot.PROBLEM &&
+            gpuSession == null && preview == null
         Column(Modifier.fillMaxSize().background(CaptureDesign.Ink).then(if (compact) Modifier.verticalScroll(rememberScrollState()) else Modifier)) {
             Row(Modifier.fillMaxWidth().heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = back, shape = RectangleShape, modifier = Modifier.semantics { contentDescription = "一覧へ戻る" }) { Text("‹") }
@@ -129,12 +131,17 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                     fillImageWidth = fillImageWidth, stableCaption = true)
                 else if (productMessages == null && phase != PhotoRollPhase.BLOCKED) Text(if (updating) "画像を準備中…" else "原本の確認待ち", color = CaptureDesign.Muted)
                 if (productMessages != null) {
-                    if (gpuSession == null) Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
+                    if (gpuSession == null) Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()
+                        .then(if (compact && problemInEmptyViewport) Modifier.fillMaxHeight() else Modifier)) {
                         DevelopCaption(developCaption(false, captionUpdating), Modifier.fillMaxWidth())
                         productMessages.banner?.let { CaptureBanner(it, onProductAction, failureFallback = productFailureFallback) }
+                        if (compact && problemInEmptyViewport) Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                            productMessages.center?.let { CaptureProblem(it, onProductAction,
+                                Modifier.verticalScroll(rememberScrollState()), failureFallback = productFailureFallback) }
+                        }
                     }
                     if (!compact) productMessages.center?.let {
-                        if (it.slot == MessageSlot.PROBLEM) CaptureProblem(it, onProductAction, Modifier.align(Alignment.Center), failureFallback = productFailureFallback)
+                        if (it.slot == MessageSlot.PROBLEM) CaptureProblem(it, onProductAction, Modifier.align(Alignment.Center).verticalScroll(rememberScrollState()), failureFallback = productFailureFallback)
                         else CaptureCenter(it, onProductAction, Modifier.align(Alignment.Center))
                     }
                 } else Column(Modifier.align(Alignment.TopCenter).fillMaxWidth().background(CaptureDesign.Ink.copy(alpha = .9f))) {
@@ -172,13 +179,18 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                 }
             }
             if (productMessages != null) {
-                // Compact displays keep the 260dp image free of problem/actions and toast overlays.
-                if (compact) productMessages.center?.let {
+                // With no image, the problem belongs in the empty 260dp viewport; its actions can scroll.
+                if (compact && !problemInEmptyViewport) productMessages.center?.let {
                     if (it.slot == MessageSlot.PROBLEM) CaptureProblem(it, onProductAction, failureFallback = productFailureFallback)
                     else CaptureCenter(it, onProductAction)
                 }
                 productMessages.inline.forEach { CaptureInlineNote(it, onProductAction) }
-                productMessages.toast?.let { CaptureToast(it) }
+                // The completion notice must not resize the image when an editor closes.
+                // Measure its normal two-line content even while hidden (no accessibility node).
+                val toast = productMessages.toast
+                CaptureToast(toast ?: developOperationNotice(
+                    "調整設定をこの端末に保持しました。JPEGの保存とは別です。", CaptureChromeTone.ACCEPTED),
+                    if (toast == null) Modifier.alpha(0f).clearAndSetSemantics {} else Modifier)
                 if (session != null) key(parameter) {
                     Box(Modifier.fillMaxWidth().semantics { contentDescription = "現像調整パネル" }) {
                         TrialStrengthEditorPane(state, readState, parameter, foreground, phase, change, reset, apply, close)

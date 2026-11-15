@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.unit.dp
 import dev.cinematic.p0.CaptureDesign
@@ -45,8 +47,10 @@ internal fun editValueLabel(parameter: PhotoEditParameter, value: Double): Strin
             displayLabel = if (parameter == PhotoEditParameter.TEMPERATURE) "色温度 · 相対" else title) {
             TextButton(onClick = { reset(token) }, enabled = foreground, shape = RectangleShape) { Text("RESET", style = CaptureDesign.Label) }
         }
-        if (parameter == PhotoEditParameter.TEMPERATURE) Text("相対調整です（K値ではありません）",
-            Modifier.padding(horizontal = 12.dp), style = CaptureDesign.Explanation, color = CaptureDesign.Muted)
+        // Reserve the same measured explanation row for every parameter, including wrapping/font scale.
+        Text("相対調整です（K値ではありません）",
+            Modifier.padding(horizontal = 12.dp).then(if (parameter == PhotoEditParameter.TEMPERATURE) Modifier
+                else Modifier.alpha(0f).clearAndSetSemantics {}), style = CaptureDesign.Explanation, color = CaptureDesign.Muted)
         PhotoEditBar(title, value,
             valueNow = { readState().session?.draft?.let { when (parameter) { PhotoEditParameter.STRENGTH -> it.strength
                 PhotoEditParameter.TEMPERATURE -> it.temperature; PhotoEditParameter.BRIGHTNESS -> it.brightness } } ?: Double.NaN },
