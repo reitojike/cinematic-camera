@@ -178,7 +178,7 @@ fun captureStatusChips(input: CaptureChromeInput): List<CaptureStatusChip> = bui
     val thermal = input.thermalSeverity?.takeIf { it in 0..6 }
     val thermalText = thermal?.let(ProbeControls::thermalName) ?: "—"
     add(CaptureStatusChip("thermal", "熱 $thermalText", thermalText.take(3), "OS熱状態: $thermalText。温度℃ではありません",
-        when (thermal) { in 3..6 -> CaptureChromeTone.FAILURE; 1, 2 -> CaptureChromeTone.WARNING; else -> CaptureChromeTone.NORMAL }))
+        when (thermal) { in 1..6 -> CaptureChromeTone.WARNING; else -> CaptureChromeTone.NORMAL }))
     if (input.mode == CaptureMode.CINE) {
         val audio = when {
             !input.audioWanted -> CaptureStatusChip("audio", "MIC OFF", "OFF", "音声収録要求: OFF")

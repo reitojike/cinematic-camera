@@ -141,11 +141,34 @@ class CaptureChromeModelTest {
             recordingSaveSucceeded = false, thermalSeverity = 4)
         val chips = captureStatusChips(input)
         assertEquals(CaptureChromeTone.RECORDING, chips.first { it.id == "operation" }.tone)
-        for (id in listOf("audio", "thermal")) {
-            assertEquals(CaptureChromeTone.FAILURE, chips.first { it.id == id }.tone)
-        }
+        assertEquals(CaptureChromeTone.FAILURE, chips.first { it.id == "audio" }.tone)
+        assertEquals(CaptureChromeTone.WARNING, chips.first { it.id == "thermal" }.tone)
         assertFalse(chips.any { it.id in setOf("failure", "save") })
         assertTrue(captureShutterModel(input).enabled)
+    }
+
+    @Test fun thermalChipsKeepSeverityTextButUseWarningEvenWhenRecordingIsRestricted() {
+        for (mode in CaptureMode.entries) for (severity in 0..6) {
+            val chip = captureStatusChips(ready(mode).copy(thermalSeverity = severity)).first { it.id == "thermal" }
+            assertEquals("熱 ${ProbeControls.thermalName(severity)}", chip.text)
+            assertEquals(if (severity == 0) CaptureChromeTone.NORMAL else CaptureChromeTone.WARNING, chip.tone)
+            assertTrue(chip.detail.contains(ProbeControls.thermalName(severity)))
+            assertEquals(severity >= 3, ProbeControls.shouldStopRecording(severity))
+        }
+        for (severity in listOf(null, -1, 7)) {
+            val chip = captureStatusChips(ready(CaptureMode.CINE).copy(thermalSeverity = severity)).first { it.id == "thermal" }
+            assertEquals("熱 —", chip.text)
+            assertEquals(CaptureChromeTone.NORMAL, chip.tone)
+        }
+        for (severity in 3..6) {
+            val input = ready(CaptureMode.CINE).copy(thermalSeverity = severity)
+            assertFalse(captureShutterModel(input).enabled)
+            assertTrue(captureShutterModel(input.copy(recordingStage = RecordingStage.RECORDING)).enabled)
+            assertEquals(CaptureChromeTone.WARNING, captureStatusChips(input).first { it.id == "thermal" }.tone)
+            assertEquals(CaptureChromeTone.FAILURE,
+                captureMessages(thermalWarning = true, thermalRejected = true).banner?.tone)
+            assertEquals(CaptureChromeTone.WARNING, captureMessages(thermalWarning = true).banner?.tone)
+        }
     }
 
     @Test fun savedFilesDoNotClaimThePreviewHasRecovered() {
