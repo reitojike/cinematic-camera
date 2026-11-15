@@ -226,7 +226,7 @@ class ForegroundExportOwnerTest {
             assertFalse(File(generation, "original-work").exists())
             assertEquals(beforeJpegs + 1, jpegCount())
             scenario.moveToState(Lifecycle.State.RESUMED)
-            action("保存したJPEGを照合して開く")
+            action("保存したJPEGを開く（開く前に照合します）")
             assertEquals(beforeJpegs + 1, jpegCount())
             DngContentVerifier.verify(requireNotNull(fingerprint), { requireNotNull(resolver.openInputStream(uri)) })
             DngContentVerifier.verify(requireNotNull(fingerprint), { requireNotNull(resolver.openInputStream(Uri.parse(copy.uri))) })
@@ -407,7 +407,7 @@ class ForegroundExportOwnerTest {
             } else {
                 assertEquals(ManualOriginalTrialSavePhase.PUBLISHED, f.handle.state.value.phase)
                 scenario.moveToState(Lifecycle.State.RESUMED)
-                action("保存したJPEGを照合して開く")
+                action("保存したJPEGを開く（開く前に照合します）")
                 assertEquals(f.beforeJpegs + 1, jpegCount())
             }
             f.verifyOriginal()
