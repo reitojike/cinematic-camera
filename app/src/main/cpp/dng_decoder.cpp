@@ -162,7 +162,7 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
 
     auto& params = raw.imgdata.params;
     params.half_size = 1;
-    if (original) params.half_size = 0;
+    if (original) params.half_size = original->isHalfPreview() ? 1 : 0;
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
     if (probe) params.half_size = 0;
 #endif
@@ -412,15 +412,15 @@ Java_dev_cinematic_p0_raw_original_NativeOriginalRaster_preflight24(JNIEnv* env,
     return nullptr;
 }
 
-extern "C" JNIEXPORT jstring JNICALL
-Java_dev_cinematic_p0_raw_original_NativeOriginalRaster_decode24(JNIEnv* env, jobject, jint fd, jint outputFd, jobject signal) {
+namespace {
+jstring decodeRaster(JNIEnv* env, jint fd, jint outputFd, jobject signal, cinematic::OriginalRasterSink::Output mode) {
     try {
         struct stat source{}, target{};
         const int flags = fcntl(outputFd, F_GETFL);
         if (fd < 0 || outputFd < 0 || flags < 0 || (flags & O_ACCMODE) == O_RDONLY ||
             fstat(fd, &source) || fstat(outputFd, &target) || !S_ISREG(target.st_mode) || target.st_size != 0 ||
             (source.st_dev == target.st_dev && source.st_ino == target.st_ino)) fail("ORIGINAL_RASTER_TARGET");
-        cinematic::OriginalRasterSink sink(outputFd);
+        cinematic::OriginalRasterSink sink(outputFd, mode);
         decodeDng(env, fd, 1024, signal, 0, &sink);
         if (env->ExceptionCheck()) return nullptr;
         return env->NewStringUTF(sink.report().c_str());
@@ -432,5 +432,16 @@ Java_dev_cinematic_p0_raw_original_NativeOriginalRaster_decode24(JNIEnv* env, jo
         if (!env->ExceptionCheck()) env->ThrowNew(env->FindClass("java/io/IOException"), "DNG_UNSUPPORTED");
     }
     return nullptr;
+}
+} // namespace
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_dev_cinematic_p0_raw_original_NativeOriginalRaster_decode24(JNIEnv* env, jobject, jint fd, jint outputFd, jobject signal) {
+    return decodeRaster(env, fd, outputFd, signal, cinematic::OriginalRasterSink::Output::Full);
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_dev_cinematic_p0_raw_original_NativeOriginalRaster_decodeHalfPreview(JNIEnv* env, jobject, jint fd, jint outputFd, jobject signal) {
+    return decodeRaster(env, fd, outputFd, signal, cinematic::OriginalRasterSink::Output::HalfPreview);
 }
 #endif
