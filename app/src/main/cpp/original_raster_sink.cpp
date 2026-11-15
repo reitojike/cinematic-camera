@@ -141,12 +141,22 @@ void OriginalRasterSink::applyCrop(LibRaw& raw) const {
 void OriginalRasterSink::validateProcessedGeometry(const LibRaw& raw) const {
     const auto& s = raw.imgdata.sizes;
     static constexpr int flips[]{0, 0, 1, 3, 2, 4, 6, 7, 5};
-    if (s.left_margin != left || s.top_margin != top || s.width != width || s.height != height ||
+    if (s.left_margin != left || s.top_margin != top || s.width != (isHalfPreview() ? (width + 1) / 2 : width) ||
+        s.height != (isHalfPreview() ? (height + 1) / 2 : height) ||
         s.flip != flips[orientation]) reject(); // Never accept cropbox's silent clamp.
 }
 
+unsigned OriginalRasterSink::outputWidth() const {
+    const unsigned full = orientation >= 5 ? height : width;
+    return isHalfPreview() ? (full + 1) / 2 : full;
+}
+unsigned OriginalRasterSink::outputHeight() const {
+    const unsigned full = orientation >= 5 ? width : height;
+    return isHalfPreview() ? (full + 1) / 2 : full;
+}
+
 void OriginalRasterSink::write(const libraw_processed_image_t& image, const std::function<void()>& checkpoint) const {
-    const unsigned w = orientation >= 5 ? height : width, h = orientation >= 5 ? width : height;
+    const unsigned w = outputWidth(), h = outputHeight();
     if (image.width != w || image.height != h || image.bits != 16 || image.colors != 3 || image.data_size != uint64_t(w) * h * 6) reject();
     const auto* values = reinterpret_cast<const uint16_t*>(image.data);
     std::vector<unsigned char> row(w * 6);
@@ -170,9 +180,11 @@ std::string OriginalRasterSink::report() const {
     std::ostringstream out;
     out << "{\"rawWidth\":" << rawWidth << ",\"rawHeight\":" << rawHeight << ",\"sourceWidth\":" << width
         << ",\"sourceHeight\":" << height << ",\"cropLeft\":" << left << ",\"cropTop\":" << top
-        << ",\"orientation\":" << orientation << ",\"width\":" << (orientation >= 5 ? height : width)
-        << ",\"height\":" << (orientation >= 5 ? width : height) << ",\"pixelsWritten\":" << uint64_t(width) * height
-        << ",\"bits\":16,\"channels\":3,\"halfSize\":0,\"color\":\"linear-sRGB-D65\",\"scope\":\"PRELIMINARY_ORIGINAL_NO_FACE_NO_VERIFIED_EV\"}";
+        << ",\"orientation\":" << orientation << ",\"width\":" << outputWidth()
+        << ",\"height\":" << outputHeight() << ",\"pixelsWritten\":" << uint64_t(outputWidth()) * outputHeight()
+        << ",\"bits\":16,\"channels\":3,\"halfSize\":" << (isHalfPreview() ? 1 : 0)
+        << ",\"color\":\"linear-sRGB-D65\",\"scope\":\""
+        << (isHalfPreview() ? "HALF_PREVIEW_CANDIDATE_NOT_SAVE_INPUT" : "PRELIMINARY_ORIGINAL_NO_FACE_NO_VERIFIED_EV") << "\"}";
     return out.str();
 }
 

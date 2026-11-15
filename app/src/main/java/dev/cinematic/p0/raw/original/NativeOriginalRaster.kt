@@ -6,6 +6,9 @@ import android.os.CancellationSignal
 internal object NativeOriginalRaster {
     init { System.loadLibrary("cinematic_dng") }
     external fun decode24(sourceFd: Int, outputFd: Int, signal: CancellationSignal): String
+    /** Unadopted half-size preview candidate. Never a source for full-resolution saving.
+     * Caller must validate the half-specific report and retain normal snapshot/cleanup ownership. */
+    external fun decodeHalfPreview(sourceFd: Int, outputFd: Int, signal: CancellationSignal): String
     /** Geometry admission only. Does not unpack samples, create an image or attest a completed raster. */
     external fun preflight24(sourceFd: Int, signal: CancellationSignal): IntArray
 }
