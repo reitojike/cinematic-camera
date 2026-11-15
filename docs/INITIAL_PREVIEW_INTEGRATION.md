@@ -55,3 +55,11 @@ exact presentedの同request値を観測したらoverlayを不可逆に外す。
 app/test APK build成功。新AVDで最初の試行はmain APK未導入によりinstrumentation開始前に失敗し、導入後の再試行は1件成功した。run復帰とfixture参照解放後、idleと診断専用GC要求を加えても、native heap標本はFULL/half交互6回で50.5→60.1→69.5→79.0→88.4→97.9 MBと増加した（decimal MB、約9,450,000 bytes/run）。GC待ちのみで説明できたとはしない。1536×1024×3×2=9,437,184 bytesとの近似は相関であり、RGB16漏れの証明ではない。
 
 独立静的監査ではLibRaw mem-imageのcustom-deleter/free、row bufferとchannel解放を確認したが、原因は未確定。FULL decodeのみとGPU表示のみを別instrumentationで切り分ける。GPU90/28は原因確認前には進めない。AVDは終了後停止しQEMU0/adb空を確認した。製品にGC追加やメモリgate緩和はしていない。
+
+### 経路分離と製品E2E（8d5f39df）
+
+全4task成功。decode-only / GPU-only は別instrumentation・開始前process無しを確認し、実行中PIDを記録して各4反復。FULL decode-onlyのGC要求後native heapは5,645,872→5,645,824→5,646,032→5,646,160 bytesで平坦。GPU-onlyはRAW decodeなし、64×48 ImageReader、shared linear inputの4新ownerで39,914,400→49,368,592→58,818,688→68,265,040 bytesと増えた。小Surfaceでも再現し、RAW RGB16の解放漏れとは本試験から言えない。
+
+既存main相当D1 `a467b0ef` / tree `3e8c7871` のAPKを保存済provenanceとSHA照合して比較した（main `f2c94cc0` と同tree）。同じGPU-only試験・別processで39,901,072→50,422,304→59,868,560→69,314,912 bytesと累積した。初回表示差分だけの回帰ではなく、既存GPU owner/context側を含む未解決問題。GL ledger 0はdriver/allocator全量解放の証明ではない。次は同一ownerでphotoのみ4回入替える限定診断を行う。製品GPU実装は変更していない。
+
+製品E2E4件は各method新processで成功。専用Contextのcache/noBackup＋private wrapped ContentProviderを使い、実base-file lookup→saved/cache→recipe/source/JPEG/sidecar不一致のmiss→embedded/half、原本/JPEG/journal不変を検証した。actual renderer callback→main handoff→Compose案内→exact GPU presented→案内除去、late拒否・背景復帰も成功。Reader mockによる試験とは区別する。端末共有MediaStore書込・実写真使用なし。

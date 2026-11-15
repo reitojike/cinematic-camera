@@ -103,6 +103,61 @@ class InitialPreviewAllocationIsolationAndroidTest {
         }
     }
 
+    @Test fun gpuOnlyFourPhotosOnOneOwner() {
+        requireGpuInputSafetyFixture()
+        val size = GpuPreviewInputSize.fit(1536, 1024)
+        val image = LinearSrgbImage(size.width, size.height,
+            FloatArray(size.width * size.height * 3) { i -> .05f + (i % 251) / 300f })
+        val samples = JSONArray().put(observe("baseline"))
+        gpuFourPhotos(image, samples)
+        samples.put(observe("owner-closed"))
+        write("gpu-same-owner.json", samples,
+            "One shared synthetic input and one owner/context; closePhoto acknowledged after each presentation")
+    }
+
+    private fun gpuFourPhotos(image: LinearSrgbImage, samples: JSONArray) {
+        ImageReader.newInstance(64, 48, PixelFormat.RGBA_8888, 2).use { reader ->
+            val owner = GpuPhotoRollSession(instrumentation.targetContext.assets)
+            try {
+                owner.renderer.attachSurface(reader.surface, 64, 48)
+                owner.renderer.setStarted(true)
+                owner.submit(PhotoAdjustmentPolicy.defaults)
+                repeat(4) { index ->
+                    val before = snapshot(owner).drawCount
+                    owner.renderer.openPhoto(image)
+                    val until = SystemClock.uptimeMillis() + 60_000
+                    while (snapshot(owner).drawCount <= before) {
+                        owner.failure.value?.let { throw AssertionError("Synthetic GPU isolation failed", it) }
+                        check(SystemClock.uptimeMillis() < until) { "New photo presentation timed out" }
+                        reader.acquireLatestImage()?.close()
+                        SystemClock.sleep(20)
+                    }
+                    owner.failure.value?.let { throw AssertionError("Synthetic GPU isolation failed", it) }
+                    reader.acquireLatestImage()?.close()
+                    owner.renderer.closePhoto()
+                    // snapshot is queued after closePhoto. Context/window stay alive deliberately.
+                    val closed = snapshot(owner)
+                    assertEquals(0L, closed.allocatedBytes)
+                    assertTrue(closed.drawCount > before)
+                    samples.put(observe("photo-closed-$index").put("drawCount", closed.drawCount)
+                        .put("ledgerBytes", closed.allocatedBytes).put("windowCount", closed.windowCount))
+                }
+            } finally {
+                owner.close()
+                assertTrue(owner.renderer.awaitClosed(10_000))
+                GpuPhotoRollRetiredOwners.releaseBeforeOpen()
+            }
+        }
+    }
+
+    private fun snapshot(owner: GpuPhotoRollSession): dev.cinematic.p0.gpu.preview.GpuPreviewSnapshot {
+        val ready = java.util.concurrent.CountDownLatch(1)
+        val result = java.util.concurrent.atomic.AtomicReference<dev.cinematic.p0.gpu.preview.GpuPreviewSnapshot>()
+        owner.renderer.snapshot { result.set(it); ready.countDown() }
+        check(ready.await(10, java.util.concurrent.TimeUnit.SECONDS)) { "GPU snapshot timed out" }
+        return checkNotNull(result.get())
+    }
+
     private fun observe(label: String): JSONObject {
         instrumentation.waitForIdleSync()
         SystemClock.sleep(1_000)
