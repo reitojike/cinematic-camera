@@ -105,10 +105,22 @@ class HalfPreviewComparisonAndroidTest {
             .put("timing", "One warmup per method, three measured iterations in rotated order. JNI decode includes unpack/demosaic/RGB16 write; excludes source copying, bounded reduction and GPU. AVD only, not Pixel or selection-to-edit latency.")
         fun persist() = File(out, "demosaic.json").writeText(manifest.toString(2))
         persist()
-        val methods = listOf(-1, 0, 2)
+        val large = args.getString("demosaicLargeComparison") == "true"
+        if (large) check(args.getString("halfPreview24Mp") == "true")
+        val methods = if (large) listOf(-1, 2) else listOf(-1, 0, 2)
+        val measuredCount = if (large) 4 else 3
+        val selectedCases = if (large) listOf(12, 24).flatMap { mp ->
+            cases.filter { it.kind == 1 || it.kind == 2 }.map { case ->
+                val odd = case.orientation == 6
+                case.copy(id = "${mp}MP-${case.id}", width = (if (mp == 12) 4000 else 6000) - if (odd) 1 else 0,
+                    height = (if (mp == 12) 3000 else 4000) - if (odd) 1 else 0)
+            }
+        } else cases
+        manifest.put("largeComparison", large).put("measuredRepetitions", measuredCount)
+            .put("timing", "One warmup per method; measured repetitions recorded, rotated order. JNI decode includes unpack/demosaic/RGB16 write; excludes source copying, bounded reduction and GPU. AVD only, not Pixel or selection-to-edit latency.")
         fun method(q: Int) = when(q) { -1 -> "ahd"; 0 -> "bilinear"; else -> "ppg" }
         try {
-            for (case in cases) {
+            for (case in selectedCases) {
                 val work = File(app.cacheDir, "demosaic-$run-${case.id}")
                 check(!work.exists() && work.mkdir())
                 val input = File(work, "synthetic.dng")
@@ -119,7 +131,7 @@ class HalfPreviewComparisonAndroidTest {
                 }
                 val times = methods.associateWith { mutableListOf<Long>() }
                 val rasters = methods.associateWith { File(work, "${method(it)}.rgb16") }
-                for (iteration in 0..3) {
+                for (iteration in 0..measuredCount) {
                     for (i in methods.indices) {
                         val q = methods[(i + iteration) % methods.size]
                         val file = checkNotNull(rasters[q])
@@ -151,21 +163,26 @@ class HalfPreviewComparisonAndroidTest {
                 val reference = checkNotNull(inputs[-1])
                 val row = JSONObject().put("id", case.id).put("width", reference.width).put("height", reference.height)
                     .put("sourceSha256", sourceHash).put("manualEv", case.ev).put("strength", case.strength)
+                    .put("rawWidth", case.width).put("rawHeight", case.height).put("orientation", case.orientation)
                 val hashes = JSONObject()
                 for(q in methods) {
                     val name = "${case.id}-${method(q)}.png"
                     png(checkNotNull(pixels[q]), reference.width, reference.height, File(out, name))
                     hashes.put(name, sha(File(out, name)))
                     val samples = checkNotNull(times[q])
+                    val sorted = samples.sorted()
+                    val median = (sorted[(sorted.size - 1) / 2] + sorted[sorted.size / 2]) / 2
                     row.put(method(q), JSONObject().put("file", name).put("decodeNanos", JSONArray(samples))
-                        .put("medianDecodeNanos", samples.sorted()[1]).put("baseEv", baseEv(checkNotNull(inputs[q])))
+                        .put("medianDecodeNanos", median).put("baseEv", baseEv(checkNotNull(inputs[q])))
                         .put("vsAhdRgb8", differences(checkNotNull(pixels[q]), checkNotNull(pixels[-1])))
                         .put("vsAhdLinear", linearDifferences(checkNotNull(inputs[q]), reference)))
                 }
-                val save = File(out, "${case.id}-ahd-save.jpg")
-                row.put("saveBaseEv", fullSave(input, File(work, "save.rgb16"), geometry, case, save))
-                    .put("saveJpeg", save.name)
-                hashes.put(save.name, sha(save))
+                if (!large) {
+                    val save = File(out, "${case.id}-ahd-save.jpg")
+                    row.put("saveBaseEv", fullSave(input, File(work, "save.rgb16"), geometry, case, save))
+                        .put("saveJpeg", save.name)
+                    hashes.put(save.name, sha(save))
+                } else row.put("saveJpeg", JSONObject.NULL) // Save path unchanged; no full JPEG workload in this preview experiment.
                 row.put("fileSha256", hashes)
                 check(sha(input) == sourceHash)
                 rows.put(row); check(work.deleteRecursively()); persist()
@@ -205,8 +222,12 @@ class HalfPreviewComparisonAndroidTest {
             val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = 28f }
             val filter = Paint(Paint.FILTER_BITMAP_FLAG)
             canvas.drawText("原寸デモザイク比較・合成画像のみ・未採用", 20f, 42f, text)
-            listOf("現行 AHD", "双線形 q=0", "PPG q=2").forEachIndexed { col, label ->
-                canvas.drawText(label, 20f + col * 353f, 95f, text)
+            val methods = if(rows.getJSONObject(0).has("bilinear")) listOf("ahd", "bilinear", "ppg") else listOf("ahd", "ppg")
+            val step = if(methods.size == 2) 520 else 353
+            val columnWidth = step - 20
+            methods.forEachIndexed { col, method ->
+                val label = when(method) { "ahd" -> "現行 AHD"; "bilinear" -> "双線形 q=0"; else -> "PPG q=2" }
+                canvas.drawText(label, 20f + col * step, 95f, text)
             }
             text.textSize = 22f
             canvas.drawText("上：全体／下：中央160×80を2倍表示。保存JPEGはAHDのまま", 20f, 142f, text)
@@ -214,14 +235,14 @@ class HalfPreviewComparisonAndroidTest {
             for(i in 0 until rows.length()) {
                 val row = rows.getJSONObject(i); val top = 190 + i * 570
                 text.textSize = 26f; canvas.drawText(row.getString("id"), 20f, top + 30f, text)
-                listOf("ahd", "bilinear", "ppg").forEachIndexed { col, method ->
+                methods.forEachIndexed { col, method ->
                     val data = row.getJSONObject(method)
                     val bmp = checkNotNull(BitmapFactory.decodeFile(File(directory, data.getString("file")).absolutePath))
                     try {
-                        val left = 20 + col * 353
-                        val scale = min(333f / bmp.width, 265f / bmp.height)
+                        val left = 20 + col * step
+                        val scale = min(columnWidth.toFloat() / bmp.width, 265f / bmp.height)
                         val w = bmp.width * scale; val h = bmp.height * scale
-                        canvas.drawBitmap(bmp, null, RectF(left+(333-w)/2, top+52f, left+(333+w)/2, top+52f+h), filter)
+                        canvas.drawBitmap(bmp, null, RectF(left+(columnWidth-w)/2, top+52f, left+(columnWidth+w)/2, top+52f+h), filter)
                         canvas.drawBitmap(bmp, Rect(bmp.width/2-80,bmp.height/2-40,bmp.width/2+80,bmp.height/2+40),
                             RectF(left.toFloat(),top+334f,left+320f,top+494f), null)
                         text.textSize = 20f
