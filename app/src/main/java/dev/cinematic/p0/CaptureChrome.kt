@@ -60,7 +60,8 @@ fun CaptureShutter(input: CaptureChromeInput, onClick: () -> Unit, modifier: Mod
         }
     }
 }
-/** Scrollable chip content leaves the existing 44dp settings action permanently reachable. */
+/** Wrap complete chips before the fixed settings action; never hide a chip under its edge. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CaptureStatusBar(
     input: CaptureChromeInput,
@@ -71,13 +72,13 @@ fun CaptureStatusBar(
     rotation: Float = 0f,
     horizontal: Boolean = false,
 ) {
-    Row(modifier.fillMaxWidth().height(44.dp).background(CaptureDesign.Ink.copy(alpha = .5f)).padding(horizontal = 8.dp),
+    Row(modifier.fillMaxWidth().heightIn(min = 44.dp).background(CaptureDesign.Ink.copy(alpha = .5f)).padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically) {
-        Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        FlowRow(Modifier.weight(1f).padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             captureStatusChips(input).forEach { chip -> StatusChip(chip, rotation, horizontal) }
         }
-        TextButton(onClick = onSettings, enabled = settingsEnabled, modifier = Modifier.size(44.dp), contentPadding = PaddingValues(8.dp)) {
+        TextButton(onClick = onSettings, enabled = settingsEnabled, modifier = Modifier.align(Alignment.Top).size(44.dp), contentPadding = PaddingValues(8.dp)) {
             Icon(painterResource(R.drawable.ic_settings), contentDescription = "撮影設定",
                 tint = if (settingsSelected) captureChromeColor(CaptureChromeTone.WARNING) else CaptureDesign.Text,
                 modifier = Modifier.size(24.dp).graphicsLayer { rotationZ = rotation })
