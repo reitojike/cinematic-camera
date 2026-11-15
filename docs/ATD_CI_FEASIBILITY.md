@@ -49,3 +49,7 @@ GMDの生成画像回収先は初回ログで確認する。既存試験は `add
 - GitHub hosted runner資源・Android加速: https://docs.github.com/en/actions/reference/runners/github-hosted-runners
 - public standard runner計算時間と保存課金の区別: https://docs.github.com/en/billing/concepts/product-billing/github-actions
 - repo実測制約: `docs/MANAGED_DEVICES.md`、#192
+
+## CI実走による運用変更
+
+GMDでの初回試行は、APK buildとKVM accel-checkまでは成功したが、snapshot作成で失敗した（容量不足の可能性というAGP診断であり、容量不足確定ではない）。使い捨てCI runnerではsnapshot再利用が不要なので、同じAPI37.0 ATDを2GiB userdata / 2GiB RAM・snapshot無しで直接起動する代替を試行する。`ANDROID_SERIAL=emulator-5554`を限定し、`connectedDebugAndroidTest`で同じ8件だけ実行する。ローカル基準AVDのread-only運用とは別である。これも実走成功まで採用済みとは扱わない。

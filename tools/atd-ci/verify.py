@@ -68,7 +68,7 @@ def main():
         print(','.join(f'{c}#{m}' for c, methods in spec['tests'].items() for m in methods))
         return
     build = Path(sys.argv[1])
-    paths = list((build / 'outputs/androidTest-results/managedDevice').rglob('TEST-*.xml'))
+    paths = list((build / 'outputs/androidTest-results/connected').rglob('TEST-*.xml'))
     count = verify_tests(paths, spec['tests'])
     pngs = list((build / 'outputs').rglob('*.png'))
     for suffix in spec['images']:

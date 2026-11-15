@@ -59,17 +59,42 @@ jobs:
           "$ANDROID_HOME/emulator/emulator" -accel-check | tee atd-evidence/acceleration.txt
       - name: Build before emulator boot
         run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon --max-workers=2
-      - name: Run only eight selected methods on one managed ATD
-        shell: bash
+      - name: Start one ATD without snapshot on the disposable runner
         run: |
-          set -euo pipefail
+          df -h > atd-evidence/disk-before-boot.txt
+          echo no | avdmanager create avd --name ci_atd --package 'system-images;android-37.0;google_atd;x86_64'
+          cat >> "$HOME/.android/avd/ci_atd.avd/config.ini" <<'EOF'
+          hw.ramSize=2048
+          hw.cpu.ncore=2
+          disk.dataPartition.size=2G
+          hw.lcd.width=1080
+          hw.lcd.height=2424
+          hw.lcd.density=420
+          EOF
+          sudo setfacl -m "u:$(id -u):rw" /dev/kvm
+          "$ANDROID_HOME/emulator/emulator" -accel-check | tee atd-evidence/acceleration-before-boot.txt
+          "$ANDROID_HOME/emulator/emulator" -avd ci_atd -port 5554 -no-snapshot -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -accel on > atd-evidence/emulator-boot.txt 2>&1 &
+          echo $! > atd-evidence/emulator.pid
+          timeout 180 bash -c 'until [ "$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; do sleep 2; done'
+          adb -s emulator-5554 shell getprop ro.build.fingerprint > atd-evidence/fingerprint.txt
+      - name: Run only eight selected methods on the selected ATD
+        env:
+          ANDROID_SERIAL: emulator-5554
+        run: |
           selection=$(python3 tools/atd-ci/verify.py --selection)
-          ./gradlew :app:pixel9aapi37atdDebugAndroidTest --rerun --no-daemon --max-workers=1 --console=plain \
-            -Pandroid.testoptions.manageddevices.emulator.gpu=swiftshader_indirect \
+          ./gradlew :app:connectedDebugAndroidTest --rerun --no-daemon --max-workers=1 --console=plain \
             -Pandroid.testInstrumentationRunnerArguments.class="$selection" \
             -Pandroid.testInstrumentationRunnerArguments.isolated=true \
             -Pandroid.testInstrumentationRunnerArguments.dngImportStorage=true \
             2>&1 | tee atd-evidence/gradle.txt
+      - name: Record emulator diagnostics and stop only the CI ATD
+        if: always()
+        run: |
+          mkdir -p atd-evidence
+          df -h > atd-evidence/disk-after.txt
+          getfacl /dev/kvm > atd-evidence/kvm-acl-after.txt || true
+          adb -s emulator-5554 logcat -d > atd-evidence/logcat.txt 2>&1 || true
+          adb -s emulator-5554 emu kill || true
       - name: Record installed image revisions
         if: always()
         run: |
@@ -87,7 +112,7 @@ jobs:
           path: |
             atd-evidence/
             app/build/outputs/androidTest-results/
-            app/build/outputs/managed_device_android_test_additional_output/
+            app/build/outputs/connected_android_test_additional_output/
             app/build/reports/androidTests/
           if-no-files-found: error
           retention-days: 7
