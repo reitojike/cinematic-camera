@@ -405,11 +405,21 @@ class ForegroundExportOwnerTest {
                 // Cancellation before admission leaves the durable core READY, but the failed
                 // delivery is conservatively UNCONFIRMED in the existing presentation owner.
                 // Neither state authorizes automatic publication or a retry.
-                action("保存結果をもう一度確認")
                 fun unconfirmed(node: AccessibilityNodeInfo?): Boolean = node != null &&
                     ((node.isVisibleToUser && node.text?.toString() == "保存未確認") ||
                         (0 until node.childCount).any { unconfirmed(node.getChild(it)) })
-                assertTrue(unconfirmed(instrumentation.uiAutomation.rootInActiveWindow))
+                fun revealHeader(node: AccessibilityNodeInfo?): Boolean {
+                    if (node == null) return false
+                    if (node.className == "android.widget.ScrollView" &&
+                        node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) return true
+                    return (0 until node.childCount).any { revealHeader(node.getChild(it)) }
+                }
+                await {
+                    instrumentation.waitForIdleSync()
+                    val root = instrumentation.uiAutomation.rootInActiveWindow
+                    if (unconfirmed(root)) true else { revealHeader(root); false }
+                }
+                action("保存結果をもう一度確認")
                 assertFalse(f.handle.hasUnreleasedResources)
                 assertEquals(f.beforeJpegs, jpegCount())
             } else {
