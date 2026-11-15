@@ -152,3 +152,11 @@ internal fun developOperationNotice(text: String, tone: CaptureChromeTone) = UiM
     if (tone == CaptureChromeTone.FAILURE) MessageSlot.BANNER else MessageSlot.TOAST,
     tone, text, "develop.operation_notice",
 )
+
+/** Caption is presentation only: never grants edit/save permission or submits a render. */
+internal fun developCaption(comparing: Boolean, updating: Boolean): UiMessage {
+    val label = if (comparing) "基準表示（撮影時WB・調整なし）" else "現像結果"
+    return UiMessage(MessageSlot.CAPTION,
+        if (updating) CaptureChromeTone.WARNING else CaptureChromeTone.NORMAL,
+        if (updating) "$label · 更新中" else label, "preview.caption")
+}

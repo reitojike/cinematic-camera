@@ -305,7 +305,12 @@ internal fun CaptureDialog(message: MessageDialog, onDismissRequest: () -> Unit,
                 Text(message.title, Modifier.semantics { heading() }, style = CaptureDesign.Title, color = CaptureDesign.Text)
                 Text(message.body, style = CaptureDesign.Body, color = CaptureDesign.Text)
                 content()
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (message.confirmationLast) {
+                    CaptureTextAction(message.close, onAction)
+                    message.confirm?.let { confirm ->
+                        Box(Modifier.padding(top = 12.dp)) { CaptureTextAction(confirm, onAction) }
+                    }
+                } else FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     message.actionsInDisplayOrder().forEach { CaptureTextAction(it, onAction) }
                 }
             }

@@ -66,7 +66,6 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
     productMessages: ScreenMessages? = null, productFailureFallback: UiMessage? = null, productSave: DevelopSavePresentation? = null,
     onProductAction: (MessageAction) -> Unit = {}, memoryProblem: dev.cinematic.p0.UiMessage? = null, info: @Composable () -> Unit) {
     var information by remember { mutableStateOf(false) }
-    var gpuCaptionHeight by remember(gpuSession) { mutableIntStateOf(0) }
     var parameter by remember { mutableStateOf(PhotoEditParameter.STRENGTH) }
     var comparing by remember(preview, comparison, foreground, gpuSession) { mutableStateOf(false) }
     val session = state.session
@@ -114,28 +113,30 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                 .then(viewportModifier).semantics { contentDescription = "現像画像の表示領域" }, contentAlignment = Alignment.Center) {
                 val updating = phase in setOf(PhotoRollPhase.CHECKING, PhotoRollPhase.RENDERING, PhotoRollPhase.PAUSED)
                 if (gpuSession != null) GpuPhotoRollImage(gpuSession, requested, comparing && compareEnabled,
-                    compareEnabled, { comparing = it }, Modifier.fillMaxSize(), onCaptionHeight = { gpuCaptionHeight = it })
+                    compareEnabled, { comparing = it }, Modifier.fillMaxSize(), updating = unapplied, header = if (productMessages != null) { before ->
+                        Column(Modifier.fillMaxWidth()) {
+                            DevelopCaption(developCaption(before, unapplied), Modifier.fillMaxWidth())
+                            productMessages.banner?.let { CaptureBanner(it, onProductAction, failureFallback = productFailureFallback) }
+                        }
+                    } else null)
                 else if (preview != null && phase != PhotoRollPhase.BLOCKED) PhotoRollComparisonImage(preview,
                     comparison.takeIf { compareEnabled }, foreground, "現像結果（表示用）", comparisonLabel,
                     Modifier.fillMaxSize(), comparing && compareEnabled, { comparing = it }, unapplied || updating,
                     fillImageWidth = fillImageWidth, stableCaption = true)
                 else if (productMessages == null && phase != PhotoRollPhase.BLOCKED) Text(if (updating) "画像を準備中…" else "原本の確認待ち", color = CaptureDesign.Muted)
                 if (productMessages != null) {
-                    // Temporary until PR-D owns the caption: use its measured height, not a fixed offset.
-                    Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()
-                        .padding(top = with(LocalDensity.current) { if (gpuSession != null) gpuCaptionHeight.toDp() else 0.dp })) {
+                    if (gpuSession == null) Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
+                        DevelopCaption(developCaption(false, unapplied), Modifier.fillMaxWidth())
                         productMessages.banner?.let { CaptureBanner(it, onProductAction, failureFallback = productFailureFallback) }
-                        productMessages.inline.forEach { CaptureInlineNote(it, onProductAction) }
                     }
-                    productMessages.center?.let {
+                    if (!compact) productMessages.center?.let {
                         if (it.slot == MessageSlot.PROBLEM) CaptureProblem(it, onProductAction, Modifier.align(Alignment.Center), failureFallback = productFailureFallback)
                         else CaptureCenter(it, onProductAction, Modifier.align(Alignment.Center))
                     }
-                    productMessages.toast?.let { CaptureToast(it, Modifier.align(Alignment.BottomCenter)) }
                 } else Column(Modifier.align(Alignment.TopCenter).fillMaxWidth().background(CaptureDesign.Ink.copy(alpha = .9f))) {
                     statusOverlay()
                 }
-                Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().verticalScroll(rememberScrollState()).background(CaptureDesign.Ink.copy(alpha = .9f))
+                if (productMessages == null) Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().verticalScroll(rememberScrollState()).background(CaptureDesign.Scrim)
                     .pointerInput(Unit) { detectTapGestures(onTap = {}) }) {
                     if (productMessages == null) {
                     if (phase == PhotoRollPhase.BLOCKED && memoryProblem != null) {
@@ -163,6 +164,20 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                         Box(Modifier.fillMaxWidth().semantics { contentDescription = "現像調整パネル" }) {
                             TrialStrengthEditorPane(state, readState, parameter, foreground, phase, change, reset, apply, close)
                         }
+                    }
+                }
+            }
+            if (productMessages != null) {
+                // Compact displays keep the 260dp image free of problem/actions and toast overlays.
+                if (compact) productMessages.center?.let {
+                    if (it.slot == MessageSlot.PROBLEM) CaptureProblem(it, onProductAction, failureFallback = productFailureFallback)
+                    else CaptureCenter(it, onProductAction)
+                }
+                productMessages.inline.forEach { CaptureInlineNote(it, onProductAction) }
+                productMessages.toast?.let { CaptureToast(it) }
+                if (session != null) key(parameter) {
+                    Box(Modifier.fillMaxWidth().semantics { contentDescription = "現像調整パネル" }) {
+                        TrialStrengthEditorPane(state, readState, parameter, foreground, phase, change, reset, apply, close)
                     }
                 }
             }
@@ -222,6 +237,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
         onDismissRequest = { information = false }, onAction = { information = false },
     ) {
         Text(name, style = CaptureDesign.Body, color = CaptureDesign.Text)
+        Text("画像を長押ししている間だけ基準表示に切り替わります。", style = CaptureDesign.Body, color = CaptureDesign.Muted)
         info()
     }
     if (information && productMessages == null) AlertDialog(onDismissRequest = { information = false },
