@@ -402,7 +402,15 @@ class ForegroundExportOwnerTest {
                 assertEquals(ManualOriginalTrialSavePhase.READY, f.handle.state.value.phase)
                 assertNull(f.journal().read())
                 assertNull(f.storage(CaptureJournalFile.MANUAL_REQUEST).read(ManualOriginalTrialRequestCodec.MAX_BYTES))
-                action("JPEGを保存") // Ready UI is not a publication receipt or an automatic retry.
+                // Cancellation before admission leaves the durable core READY, but the failed
+                // delivery is conservatively UNCONFIRMED in the existing presentation owner.
+                // Neither state authorizes automatic publication or a retry.
+                action("保存結果をもう一度確認")
+                fun unconfirmed(node: AccessibilityNodeInfo?): Boolean = node != null &&
+                    ((node.isVisibleToUser && node.text?.toString() == "保存未確認") ||
+                        (0 until node.childCount).any { unconfirmed(node.getChild(it)) })
+                assertTrue(unconfirmed(instrumentation.uiAutomation.rootInActiveWindow))
+                assertFalse(f.handle.hasUnreleasedResources)
                 assertEquals(f.beforeJpegs, jpegCount())
             } else {
                 assertEquals(ManualOriginalTrialSavePhase.PUBLISHED, f.handle.state.value.phase)
