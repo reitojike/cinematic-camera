@@ -1,5 +1,5 @@
 import unittest
-from run import allocation, backend
+from run import allocation, backend, DiagnosticFailure, failure_summary
 
 class CollectorTest(unittest.TestCase):
     def test_backend_must_be_observed_mesa_not_swiftshader(self):
@@ -54,3 +54,8 @@ class CollectorTest(unittest.TestCase):
         self.assertNotIn("chmod", workflow)
         self.assertNotIn("secrets.", workflow)
         self.assertNotIn("if: always()", workflow)
+
+    def test_failure_reporting_never_echoes_external_payload(self):
+        self.assertEqual(failure_summary(RuntimeError("/private/path credential")), "RuntimeError")
+        self.assertEqual(failure_summary(DiagnosticFailure("BOOT_EXIT")), "BOOT_EXIT")
+        with self.assertRaises(ValueError): DiagnosticFailure("/private/path")
