@@ -1,6 +1,9 @@
 package dev.cinematic.p0.jpegrender.original
 
 import android.graphics.Bitmap
+import dev.cinematic.p0.saveprogress.SaveProgressSink
+import dev.cinematic.p0.saveprogress.SaveProgressPhase
+import dev.cinematic.p0.saveprogress.bestEffort
 import dev.cinematic.p0.gpu.DevelopEngine
 import android.content.Context
 import android.os.CancellationSignal
@@ -41,7 +44,7 @@ internal data class Original24TrialJpeg(val request: Original24Request, val outp
 internal class Original24Attempt(context: Context, private val request: Original24Request, private val io: AutoRenderIo,
     private val scratchDirectory: File, private val trace: OriginalStageTrace? = null,
     private val developEngine: DevelopEngine = DevelopEngine.GPU,
-    private val saveTiming: SaveTiming? = null) : AutoCloseable {
+    private val saveTiming: SaveTiming? = null, private val progress: SaveProgressSink? = null) : AutoCloseable {
     init { require(developEngine == DevelopEngine.GPU) { "CPU rendering has been retired" } }
     private val context = context.applicationContext
     private val active = AtomicBoolean(false)
@@ -148,7 +151,8 @@ internal class Original24Attempt(context: Context, private val request: Original
                     dev.cinematic.p0.metrics.timingBestEffort { if (saveTiming != null) gpuTimings = GpuExportTimings() }
                     var gpuCompleted = false
                     try { measured(saveTiming, SaveTimingStage.GPU_RENDER) {
-                        gpu.render(source, ev, gains, request.strength, stop, gpuTimings) { y, row ->
+                        bestEffort { progress?.phase(SaveProgressPhase.DEVELOPING) }
+                        gpu.render(source, ev, gains, request.strength, stop, gpuTimings, progress) { y, row ->
                             packed.setPixels(row, 0, width, 0, y, width, 1)
                         }
                         gpuCompleted = true
@@ -159,6 +163,7 @@ internal class Original24Attempt(context: Context, private val request: Original
                 checkpoint()
                 // Crossing this boundary is irreversible evidence, even if openOutput/encode fails.
                 jpegOutputStarted = true
+                bestEffort { progress?.phase(SaveProgressPhase.ENCODING) }
                 originalStage(trace, OriginalStage.JPEG_ENCODE) { resources.output(io.openOutput()).use { output ->
                     val bounded = object : OutputStream() {
                         override fun write(value: Int) = write(byteArrayOf(value.toByte()), 0, 1)
@@ -176,6 +181,7 @@ internal class Original24Attempt(context: Context, private val request: Original
                     bounded.flush(); checkpoint()
                 } }
             } finally { bitmap?.recycle() }
+            bestEffort { progress?.phase(SaveProgressPhase.SAVING) }
             val fingerprint = OriginalFingerprint(encodedBytes, digest.digest().joinToString("") { "%02x".format(it) })
             val observed = originalStage(trace, OriginalStage.JPEG_INSPECT) {
                 AndroidJpegInspector().inspect({ resources.input(io.openOutputRead()) }, encodedBytes, stop)

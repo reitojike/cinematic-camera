@@ -6,6 +6,8 @@ import dev.cinematic.p0.gpu.EglContexts
 import dev.cinematic.p0.gpu.GlThread
 import dev.cinematic.p0.gpu.export.GpuExportRenderer
 import dev.cinematic.p0.raw.original.OriginalRaster
+import dev.cinematic.p0.saveprogress.SaveProgressSink
+import dev.cinematic.p0.saveprogress.SaveProgressPhase
 import dev.cinematic.p0.rawcapture.GpuSaveFailureReason
 import dev.cinematic.p0.rawcapture.GpuSaveRenderException
 import java.io.IOException
@@ -61,13 +63,23 @@ class Original24GpuOutputAndroidTest {
             val caller = Thread.currentThread()
             var next = 0
             val owner = Original24GpuOutput(assets)
-            owner.render(raster, ev, gains, strength, { false }) { y, row ->
+            val fractions = mutableListOf<Float>()
+            val progress = object : SaveProgressSink {
+                override fun phase(phase: SaveProgressPhase) = Unit
+                override fun developed(fraction: Float) { fractions += fraction }
+            }
+            owner.render(raster, ev, gains, strength, { false }, progress = progress) { y, row ->
                 assertNotEquals(caller, Thread.currentThread())
                 assertEquals(next++, y)
                 row.copyInto(actual, y * raster.width)
             }
             assertEquals(raster.height, next)
             assertArrayEquals(expected, actual)
+            // Real post-fence callback stream, including uneven tail bands and both quantile scans.
+            assertEquals((if (strength == 0.0) 5 else 8) * 3, fractions.size)
+            assertTrue(fractions.zipWithNext().all { (a, b) -> b > a })
+            assertTrue(fractions.dropLast(1).all { it < 1f })
+            assertEquals(1f, fractions.last(), 0f)
             assertFalse(owner.hasUnreleasedResources)
             owner.close()
         }
