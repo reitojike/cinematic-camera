@@ -1,0 +1,50 @@
+name: Android Emulator Mesa allocation diagnostic
+# Independent diagnostic, not required CI or host llvmpipe acceptance.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/initial-preview-mesa-allocation.yml'
+      - 'tools/initial-preview-allocation/**'
+      - 'app/src/androidTest/java/dev/cinematic/p0/photoroll/InitialPreviewMesaBackendAndroidTest.kt'
+permissions:
+  contents: read
+concurrency:
+  group: mesa-allocation-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  allocation:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: android-actions/setup-android@v4
+        with:
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+      - name: Validate diagnostic collector
+        run: python3 -B -m unittest discover -s tools/initial-preview-allocation -v
+      - name: Require existing KVM access (no permission changes)
+        run: |
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test -c /dev/kvm && test -r /dev/kvm && test -w /dev/kvm
+      - name: Install official SDK components
+        run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0' 'ndk;29.0.14206865' 'cmake;3.22.1' 'emulator' 'system-images;android-37.0;default;x86_64'
+      - name: Build unchanged product and diagnostic tests before boot
+        run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon --max-workers=2
+      - name: Run isolated Mesa lavapipe comparison
+        run: python3 -B tools/initial-preview-allocation/run.py
+      - name: Anonymous aggregate only (no APK, raw logs or device identifiers)
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-emulator-mesa-allocation-aggregate
+          path: allocation-evidence/aggregate.json
+          if-no-files-found: error
+          retention-days: 7
