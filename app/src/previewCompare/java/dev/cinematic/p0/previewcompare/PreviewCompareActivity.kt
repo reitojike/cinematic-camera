@@ -13,7 +13,10 @@ import java.util.concurrent.Executors
 /** Explicit private comparison only. No persistent grant, product state, JPEG export or network. */
 class PreviewCompareActivity : Activity() {
     private val generation = CompareGeneration()
-    companion object { private val executor = Executors.newSingleThreadExecutor() }
+    companion object {
+        private val executor = Executors.newSingleThreadExecutor()
+        @Volatile internal var createComparison: (android.content.Context) -> PrivatePhotoComparison = { PrivatePhotoComparison(it) }
+    }
     private var stop: ComparisonStop? = null
     private var pair: PrivatePhotoComparison.Pair? = null
     private lateinit var status: TextView
@@ -75,7 +78,7 @@ class PreviewCompareActivity : Activity() {
         status.text = "比較を準備しています。"
         executor.execute {
             try {
-                val result = PrivatePhotoComparison(applicationContext).compare(uri, cancellation, ev) { message ->
+                val result = createComparison(applicationContext).compare(uri, cancellation, ev) { message ->
                     runOnUiThread { if (generation.accepts(ticket) && !isDestroyed) status.text = message }
                 }
                 runOnUiThread {

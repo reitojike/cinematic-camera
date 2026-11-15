@@ -37,7 +37,11 @@ internal class ComparisonStop {
 }
 
 /** Read-only, single selected photo; never calls publication, export, EXIF writes or product state. */
-internal class PrivatePhotoComparison(private val context: Context) {
+internal class PrivatePhotoComparison(
+    private val context: Context,
+    private val openRead: (Uri) -> java.io.InputStream = { checkNotNull(context.contentResolver.openInputStream(it)) },
+    private val onGpuStage: (GpuStageTap.Point) -> Unit = {},
+) {
     class Pair(val ahd: Bitmap, val ppg: Bitmap) : AutoCloseable {
         override fun close() { ahd.recycle(); ppg.recycle() }
     }
@@ -64,7 +68,7 @@ internal class PrivatePhotoComparison(private val context: Context) {
             progress("原本を読み取っています。原本は変更しません。")
             stop.check()
             check(source.createNewFile())
-            val input = checkNotNull(context.contentResolver.openInputStream(uri))
+            val input = openRead(uri)
             input.use { from -> source.outputStream().buffered().use { to ->
                 val bytes = ByteArray(64 * 1024); var total = 0L
                 while (true) {
@@ -118,7 +122,7 @@ internal class PrivatePhotoComparison(private val context: Context) {
             stop.check()
             // The private snapshot and provider must still match the same selected original.
             DngContentVerifier.verify(fingerprint, { source.inputStream() }, stop::isStopped)
-            DngContentVerifier.verify(fingerprint, { checkNotNull(context.contentResolver.openInputStream(uri)) }, stop::isStopped)
+            DngContentVerifier.verify(fingerprint, { openRead(uri) }, stop::isStopped)
             stop.check()
             check(!source.exists() || source.delete()) { "COMPARE_CLEANUP" }
             check(work.delete()) { "COMPARE_CLEANUP" }
@@ -169,6 +173,8 @@ internal class PrivatePhotoComparison(private val context: Context) {
                     object : StageClearGpuPipeline {
                         override fun render(params: GpuRenderParams, tap: ((GpuStageTap.Point, GpuTexture) -> Unit)?,
                             consume: (GpuTexture, GpuDecisions) -> Unit) = connected.render(params, { point, image ->
+                            stop.check()
+                            onGpuStage(point)
                             stop.check()
                             if (point == GpuStageTap.Point.DISPLAY8) output = read(egl, image, stop)
                             tap?.invoke(point, image)
