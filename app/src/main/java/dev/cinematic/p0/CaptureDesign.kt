@@ -18,7 +18,7 @@ internal object CaptureDesign {
     val Disabled = Color(0xFF6B7177)
     val Amber = Color(0xFFE6A35C)
     val Accepted = Color(0xFF7CC4A5)
-    val Failed = Color(0xFFEF8A74)
+    val Failed = Color(0xFFFF6B6B)
     val Recording = Color(0xFFE5483B)
     val Inverted = Color(0xFFCFD3D6)
     val SwitchBackground = Color(0xFF0D0F10)
