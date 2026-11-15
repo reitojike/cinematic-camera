@@ -171,7 +171,7 @@ class GpuDevelopLayoutAndroidTest {
                 val closeAction = checkNotNull(generateSequence(checkNotNull(close)) { it.parent }.firstOrNull { it.isClickable })
                 assertTrue(closeAction.performAction(AccessibilityNodeInfo.ACTION_CLICK))
                 instrumentation.waitForIdleSync()
-                assertNotNull(await("現像結果 · 長押しで基準表示"))
+                assertNotNull(await("現像結果"))
             }
         } finally {
             gpu.close(); assertTrue(gpu.renderer.awaitClosed(5_000)); GpuPhotoRollRetiredOwners.releaseBeforeOpen()
