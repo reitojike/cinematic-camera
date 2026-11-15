@@ -121,4 +121,4 @@ PR-D は CPU 削除後、GPUリファクタリング前。PR-B/E は A 完了後
 
 ### 失敗色の区別（Issue #392）
 
-Failed は #FF6B6B（案 A）。WARNING の Amber #E6A35C は維持する。熱の SEVERE チップなど既存の FAILURE 用途も同じ Failed を使う。録画中の赤は変更せず、REC・経過時間・枠でも役割を区別する。色だけで状態を伝えず、見出し・本文・操作を維持する。
+Failed は #FF6B6B（案 A）。WARNING の Amber #E6A35C は維持する。熱チップは LIGHT〜SHUTDOWN の全段階を WARNING/Amber とし、SEVERE・CRITICAL などの深刻度は文字で示す。NONE・不明は NORMAL のまま。熱による操作失敗は既存の FAILURE バナーで伝え、チップは Amber のままにする。録画中の赤は変更せず、REC・経過時間・枠でも役割を区別する。色だけで状態を伝えず、見出し・本文・操作を維持する。
