@@ -10,7 +10,9 @@ namespace cinematic {
 /** Separate preliminary original-size entry. Never a completed/publishable result. */
 class OriginalRasterSink {
 public:
-    explicit OriginalRasterSink(int output) : outputFd(output) {}
+    enum class Output { Full, HalfPreview };
+    explicit OriginalRasterSink(int output, Output mode = Output::Full) : outputFd(output), mode(mode) {}
+    bool isHalfPreview() const { return mode == Output::HalfPreview; }
     void parse(const std::vector<unsigned char>&, const LibRaw&);
     void applyCrop(LibRaw&) const;
     void validateProcessedGeometry(const LibRaw&) const;
@@ -21,6 +23,9 @@ public:
 private:
     bool needsCropbox(const LibRaw&) const;
     int outputFd;
+    const Output mode;
+    unsigned outputWidth() const;
+    unsigned outputHeight() const;
     unsigned rawWidth = 0, rawHeight = 0, orientation = 1;
     unsigned left = 0, top = 0, width = 0, height = 0;
 };

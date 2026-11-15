@@ -1,7 +1,8 @@
 # half_size の crop・向き確認（ホスト合成試験のみ）
 
 #233 / #241 の縮小展開を製品へ接続する前に、既存の原本 geometry 検査を再利用できる範囲を確認する。
-Android 製品・JNI・画面・保存・基準画像は変更しない。本ツールの LibRaw ビルドはホスト試験専用であり、
+Android に明示の `decodeHalfPreview` JNI 境界を追加したが、製品呼び出し元はまだ接続しない。
+画面・保存・基準画像と製品プレビューの full 展開は変更しない。本ツールの LibRaw ビルドはホスト試験専用であり、
 アプリに組み込む際は既存の `raw` target を再利用する。ライブラリを追加同梱しない。
 
 ## 実行
@@ -35,7 +36,14 @@ LibRaw の `half_size=1` では `dcraw_process` 後の `sizes.width/height` 自�
 したがって、full 用 `validateProcessedGeometry` は half 結果を拒否する。これは full の保存契約にとって正しい。
 試験では **half 専用の後条件**（crop origin維持、各辺のceil半分、flip維持）を別に確認する。
 製品接続時も full の検査を緩めず、入力geometry・出力mode・それぞれの後条件を分ける必要がある。
-`OriginalRasterSink::write/report` は原寸専用のままとする。
+`OriginalRasterSink` の既定は Full のまま、明示の HalfPreview モードだけが half の後条件・書き込みを使う。
+レポートには `halfSize:1` と `HALF_PREVIEW_CANDIDATE_NOT_SAVE_INPUT` を付け、保存の入力とは区別する。
+full のレポート、寸法・crop・向きの条件、プリフライト契約は維持する。
+
+追加したホスト検査は、モード取り違え・寸法/margin/flip異常の拒否、RGB16 LE 書き込み一致、
+書き込み前の取消と行ごとの取消点、出力レポートである。
+`HalfPreviewNativeAndroidTest` は通常 debug の合成 AVD 専用試験（`isolated=true`, `gpuInputSafety=true`）で、
+JNI の half/full 分離、原本不変、取消・既存出力の保護を確認する。画質の承認試験ではない。
 
 これは crop/向きの限定した実現性確認であり、half と full の画素一致を要求・証明しない。
 GPU処理後の色/細部・自動調整値、full保存JPEGとの見た目、実機速度/ピークメモリ、取消/所有/世代の
