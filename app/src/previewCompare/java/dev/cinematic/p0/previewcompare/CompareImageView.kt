@@ -26,7 +26,7 @@ internal class CompareImageView(context: Context) : ImageView(context) {
     override fun setImageBitmap(bitmap: Bitmap?) {
         val next = bitmap?.let { (it.width.toLong() shl 32) or it.height.toLong() } ?: 0L
         val reset = next != shape
-        super.setImageBitmap(bitmap)
+        if (bitmap == null) super.setImageDrawable(null) else super.setImageBitmap(bitmap)
         shape = next
         if (reset) fit()
     }
