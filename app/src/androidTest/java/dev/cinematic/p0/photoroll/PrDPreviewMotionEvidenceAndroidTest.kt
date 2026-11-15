@@ -17,6 +17,7 @@ class PrDPreviewMotionEvidenceAndroidTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val input = File(context.filesDir, "prd-motion.mp4")
         val output = File(context.filesDir, "prd-motion-frames"); check(output.isDirectory || output.mkdirs())
+        check(output.listFiles().isNullOrEmpty()) { "Use a fresh empty evidence directory" }
         MediaMetadataRetriever().use { reader ->
             reader.setDataSource(input.path)
             val count = requireNotNull(reader.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT)).toInt()
