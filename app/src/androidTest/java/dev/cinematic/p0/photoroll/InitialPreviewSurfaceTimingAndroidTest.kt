@@ -91,6 +91,65 @@ class InitialPreviewSurfaceTimingAndroidTest {
         }
     }
 
+    /** Separate retention diagnostic. Forced GC here is observation only, never a product policy,
+     * performance sample, pass threshold or proof of a total memory cap. */
+    @Test fun postRunMemoryAfterFixtureReleaseAndDiagnosticGc() {
+        requireGpuInputSafetyFixture()
+        val context=instrumentation.targetContext
+        val root=File.createTempFile("initial-guide-retention-",".tmp",context.cacheDir.canonicalFile)
+        check(root.delete() && root.mkdir())
+        val input=File(root,"synthetic.dng")
+        input.outputStream().use { writeSyntheticTrialDng(it,1536,1024,1) }
+        val source=SharedOriginalReference("content://synthetic/initial-guide",
+            DngContentVerifier.identify(input.length(),{input.inputStream()}),OriginalGrant.USER_SELECTED)
+        val geometry=ParcelFileDescriptor.open(input,ParcelFileDescriptor.MODE_READ_ONLY).use {
+            Original24Preflight.inspect(it.fd,CancellationSignal())
+        }
+        val configured=InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")
+        val outputRoot=configured?.let(::File) ?: File(context.getExternalFilesDir(null),"additional_test_output")
+        val outputs=File(outputRoot,"initial-preview-surface").apply { check(isDirectory || mkdirs()) }
+        val results=JSONArray()
+        val report=JSONObject()
+            .put("purpose","post-run retention diagnosis only; not ABBA performance results")
+            .put("order","FULL, HALF+FULL repeated three times; capture disabled")
+            .put("inputWidth",1536).put("inputHeight",1024)
+            .put("interpretation","GC is requested, not guaranteed; samples have no threshold and do not prove a total cap. No weak-reference reachability measurement.")
+            .put("baseline",memorySample()).put("runs",results)
+        var success=false
+        try {
+            for((index,fallback) in listOf(false,true,false,true,false,true).withIndex()) {
+                val before=memorySample()
+                // Do not retain Times or any in-run exact/Bitmap locals in this diagnostic.
+                run(source,geometry,input,File(root,"run-$index"),fallback,false,outputs)
+                instrumentation.runOnMainSync { fixture.content=null }
+                instrumentation.waitForIdleSync()
+                val released=memorySample()
+                SystemClock.sleep(1_000)
+                instrumentation.waitForIdleSync()
+                val idle=memorySample()
+                // Diagnostic only: never included in the existing timing test or production code.
+                System.gc()
+                System.runFinalization()
+                System.gc()
+                SystemClock.sleep(1_000)
+                instrumentation.waitForIdleSync()
+                results.put(JSONObject().put("index",index).put("fallback",fallback)
+                    .put("beforeRun",before).put("afterReturnAndFixtureRelease",released)
+                    .put("afterOneSecondIdle",idle).put("afterDiagnosticGcAndOneSecondIdle",memorySample())
+                    .put("closedRendererOwnershipChecksPassed",true))
+                // Preserve completed observations if a later run fails; never overwrite timings.json.
+                File(outputs,"retention-diagnostic.json").writeText(report.toString(2))
+            }
+            DngContentVerifier.verify(source.fingerprint,{input.inputStream()})
+            success=true
+        } finally {
+            instrumentation.runOnMainSync { fixture.content=null }
+            instrumentation.waitForIdleSync()
+            GpuPhotoRollRetiredOwners.releaseBeforeOpen()
+            if(success) { assertTrue(input.delete()); assertTrue(root.delete()) }
+        }
+    }
+
     private fun run(source: SharedOriginalReference, geometry: Original24PreflightGeometry,
         input: File, scratch: File, fallback: Boolean, capture: Boolean, output: File): Times {
         val times=Times(fallback,capture)
