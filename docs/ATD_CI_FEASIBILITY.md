@@ -24,7 +24,7 @@ GitHub Actions の標準 Ubuntu runner で、既存 `pixel9aapi37atd` を使う�
 ## CI構成の最小案
 
 1. 現行と同じ標準 `ubuntu-26.04`、JDK25、SDK37.0/BuildTools36/NDK29/CMake3.22.1、既存Gradle wrapper。
-2. `/dev/kvm`が存在しrunnerから使用可能か検査し、`emulator -accel-check`を記録。使えなければskipでなく失敗。
+2. 本人の明示承認に基づき、使い捨てGitHub hosted runner内の`/dev/kvm`へ、そのjobの実行ユーザーだけread/write ACLを付与する。world-writable化・永続group/udev変更・本人PCの権限変更は行わない。その後runnerから使用可能か検査し、`emulator -accel-check`を記録。使えなければskipでなく失敗。
 3. APKを先にbuildし、その後1台のATDだけ起動。buildとbootのCPU負荷を重ねない。
 4. 既存GMD `:app:pixel9aapi37atdDebugAndroidTest` を使い、上記class/methodだけ指定。全connected試験や全androidTestは実行しない。
 5. GitHubのsoftware rendering用公式引数 `-Pandroid.testoptions.manageddevices.emulator.gpu=swiftshader_indirect`、`--max-workers=1`、shardなし、`--rerun`。ATDをGPU評価へ転用しない。
