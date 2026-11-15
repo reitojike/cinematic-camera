@@ -77,6 +77,13 @@ def summarize(rows, labels, threshold, expected_detectors=None):
         sample = samples[row["sample"]]
         if row["geometry"] != sample["geometry"] or [row["width"], row["height"]] != sample["size"]:
             raise ValueError("geometry mismatch")
+        if row["sample"].startswith("evaluation-"):
+            for field in ("input_sha256", "revision", "manifest_sha256"):
+                identity = sample.get(field)
+                if (not isinstance(identity, str) or len(identity) != 64
+                        or any(c not in "0123456789abcdef" for c in identity)
+                        or row.get(field) != identity):
+                    raise ValueError("private input identity mismatch")
         key = (row["detector"], sample["condition"])
         group = groups[key]
         if row["status"] not in group["states"]:

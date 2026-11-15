@@ -49,7 +49,8 @@ root製品CIは従来通り必須。本projectの検証は上記の独立コマ�
 本人はオフラインでも動くことを重視しつつ、ML Kit の利用・診断ログ通信を許容している。
 完全無通信は要件ではない。画像・顔検出結果の送信、製品への組込み・依存採用は別判断。
 接続状態の合成黒画像smokeは各方式11回成功済み。実写・Pixel・初回オフラインは未確認。
-写真入力のUI/ファイル読込経路は実装していない。[再開手順](EVALUATION_PLAN.md)を参照。
+評価専用のprivate RGBA入力runnerを追加した（製品UI・任意写真pickerなし）。
+[入力手順](PRIVATE_INPUT.md)、[公開素材候補](PUBLIC_DATA_CANDIDATES.md)、[再開手順](EVALUATION_PLAN.md)を参照。
 
 ML Kit flavor だけ INTERNET/ACCESS_NETWORK_STATE を持たせ、SDK の通常の診断通信を妨げない。
 baseline/YuNet は通信権限を持たず、全 flavor のカメラ・写真・連絡先等の権限は認めない。

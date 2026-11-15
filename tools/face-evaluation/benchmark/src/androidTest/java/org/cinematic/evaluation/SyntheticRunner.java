@@ -8,7 +8,7 @@ import android.os.SystemClock;
 import java.io.File;
 import java.io.FileWriter;
 
-/** Explicit synthetic-only entry point. Never opens a photo, camera, picker or external storage. */
+/** Default synthetic entry point; explicit hash-bound opt-in for staged private evaluation pixels. */
 public final class SyntheticRunner extends Instrumentation {
     private Bundle arguments;
     @Override public void onCreate(Bundle args) { super.onCreate(args); arguments = args; start(); }
@@ -18,6 +18,11 @@ public final class SyntheticRunner extends Instrumentation {
         bitmap.eraseColor(Color.BLACK);
         bitmap.setHasAlpha(false);
         try {
+            if ("true".equals(arguments.getString("datasetRunApproved"))) {
+                status.putString("result", PrivateDatasetRun.run(getTargetContext(), arguments));
+                finish(-1, status);
+                return;
+            }
             if (!"true".equals(arguments.getString("syntheticRunApproved"))) {
                 throw new IllegalStateException("Synthetic evaluation run not approved");
             }

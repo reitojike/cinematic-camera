@@ -17,6 +17,18 @@ class EvaluationTest(unittest.TestCase):
         return {"detector": detector, "sample": sample, "geometry": "test", "width": 640, "height": 480,
                 "status": status, "boxes": [], "phase": "warm", "sdk_ns": 1, "adapter_ns": 1, "total_ns": 2}
 
+    def test_private_pixel_identity_must_match_labels(self):
+        labels = self.coverage_labels()
+        sample = labels["samples"].pop("synthetic-front")
+        sample.update({field: "a" * 64 for field in ("input_sha256", "revision", "manifest_sha256")})
+        labels["samples"]["evaluation-0123456789abcdef"] = sample
+        row = self.coverage_row(sample="evaluation-0123456789abcdef")
+        row.update({field: "a" * 64 for field in ("input_sha256", "revision", "manifest_sha256")})
+        summarize([row], labels, .5, ["test-a"])
+        for field in ("input_sha256", "revision", "manifest_sha256"):
+            with self.assertRaisesRegex(ValueError, "private input identity"):
+                summarize([{**row, field: "b" * 64}], labels, .5, ["test-a"])
+
     def test_entire_missing_detector_remains_unscored(self):
         report = summarize([self.coverage_row()], self.coverage_labels(), .5, ["test-a", "test-b"])
         self.assertFalse(report["coverage_complete"])

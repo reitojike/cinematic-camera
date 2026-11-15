@@ -11,7 +11,7 @@ public final class Measurement {
 
     public static JSONObject run(Detector detector, Bitmap input, String sample, String phase,
                                  int iteration, long initializationNs) throws Exception {
-        if (!sample.matches("synthetic-[a-z0-9-]+")) throw new IllegalArgumentException("Synthetic IDs only");
+        if (!sample.matches("synthetic-[a-z0-9-]+|evaluation-[0-9a-f]{16}")) throw new IllegalArgumentException("Opaque evaluation IDs only");
         if (!phase.equals("first-call") && !phase.equals("warm")) throw new IllegalArgumentException("phase");
         JSONObject result = new JSONObject().put("schema", 1).put("sample", sample)
             .put("detector", detector.id()).put("phase", phase).put("iteration", iteration)
