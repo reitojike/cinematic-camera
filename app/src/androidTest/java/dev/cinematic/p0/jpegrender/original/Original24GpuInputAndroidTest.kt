@@ -26,6 +26,67 @@ import org.json.JSONObject
 /** Reuses the existing native input path. No EGL or user photos, no save/publication. */
 @RunWith(AndroidJUnit4::class)
 class Original24GpuInputAndroidTest {
+    @Test fun halfCandidateKeepsFullSourceGeometryAndReleasesAllTransientFiles() {
+        for (orientation in listOf(1, 6)) fixture(orientation = orientation, cropped = true) { input, root, source, geometry ->
+            val before = input.readBytes()
+            val scratch = File(root, "half-candidate")
+            Original24PreviewSession(source, scratch, {}, geometry, rasterMode = PreviewRasterMode.HALF_CANDIDATE) {
+                input.inputStream()
+            }.use { session ->
+                val result = session.loadGpuAsShotInput()
+                assertEquals((geometry.outputWidth + 1) / 2, result.width)
+                assertEquals((geometry.outputHeight + 1) / 2, result.height)
+                assertFalse(session.hasUnreleasedResources)
+                assertFalse(scratch.exists())
+            }
+            assertArrayEquals(before, input.readBytes())
+            // Omitting the candidate mode must still use full decode, including after a half load.
+            Original24PreviewSession(source, File(root, "full-after-half"), {}, geometry) { input.inputStream() }.use {
+                assertEquals(geometry.outputWidth, it.loadGpuAsShotInput().width)
+                assertFalse(it.hasUnreleasedResources)
+            }
+        }
+    }
+
+    @Test fun halfCandidateCancellationAfterDecodeCleansFilesAndCannotRestart() = fixture { input, root, source, geometry ->
+        val scratch = File(root, "half-cancel-after-decode")
+        Original24PreviewSession(source, scratch, { stage ->
+            if (stage == Original24MemoryStage.BOUNDED_PREVIEW) throw java.util.concurrent.CancellationException("synthetic after-decode cancellation")
+        }, geometry, rasterMode = PreviewRasterMode.HALF_CANDIDATE) { input.inputStream() }.use { session ->
+            assertThrows(java.util.concurrent.CancellationException::class.java) { session.loadGpuAsShotInput() }
+            assertFalse(session.hasUnreleasedResources)
+            assertFalse(scratch.exists())
+            assertThrows(IllegalStateException::class.java) { session.loadGpuAsShotInput() }
+        }
+        DngContentVerifier.verify(source.fingerprint, { input.inputStream() })
+    }
+
+    @Test fun halfCandidateRejectsSourceGeometryMismatchRatherThanWeakeningPreflight() = fixture(cropped = true) { input, root, source, geometry ->
+        val scratch = File(root, "half-mismatch")
+        Original24PreviewSession(source, scratch, {}, geometry.copy(cropLeft = geometry.cropLeft + 1),
+            rasterMode = PreviewRasterMode.HALF_CANDIDATE) { input.inputStream() }.use { session ->
+            val error = assertThrows(IOException::class.java) { session.loadGpuAsShotInput() }
+            assertTrue(error.message.orEmpty().contains("geometry differs"))
+            assertFalse(session.hasUnreleasedResources)
+            assertFalse(scratch.exists())
+        }
+        DngContentVerifier.verify(source.fingerprint, { input.inputStream() })
+    }
+
+    @Test fun halfCandidateRechecksOriginalAfterDecodeAndNeverRepairsIt() = fixture { input, root, source, geometry ->
+        val before = input.readBytes()
+        val changed = before.copyOf().also { it[it.lastIndex] = (it.last().toInt() xor 1).toByte() }
+        val scratch = File(root, "half-source-change")
+        Original24PreviewSession(source, scratch, { stage ->
+            if (stage == Original24MemoryStage.BOUNDED_PREVIEW) input.writeBytes(changed)
+        }, geometry, rasterMode = PreviewRasterMode.HALF_CANDIDATE) { input.inputStream() }.use { session ->
+            assertThrows(dev.cinematic.p0.rawcapture.DngContentChanged::class.java) { session.loadGpuAsShotInput() }
+            assertFalse(session.hasUnreleasedResources)
+            assertFalse(scratch.exists())
+        }
+        assertArrayEquals(changed, input.readBytes())
+    }
+
     @Test fun inputOnlyEntryLoadsNativeAsShotWithoutPreparingR7() = fixture { input, root, source, geometry ->
         fun session(name: String) = Original24PreviewSession(source, File(root, name), {}, geometry) { input.inputStream() }
         val diagnostic = session("gpu-input")
@@ -207,14 +268,14 @@ class Original24GpuInputAndroidTest {
         } finally { assertTrue(file.delete()) }
     }
 
-    private fun fixture(width: Int = 64, height: Int = 48, cropped: Boolean = false,
+    private fun fixture(width: Int = 64, height: Int = 48, cropped: Boolean = false, orientation: Int = 1,
         action: (File, File, SharedOriginalReference, Original24PreflightGeometry) -> Unit) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         requireGpuInputSafetyFixture()
         val root = File.createTempFile("gpu-input-synthetic-", ".tmp", context.cacheDir)
         assertTrue(root.delete() && root.mkdir())
         val input = File(root, "input.dng")
-        input.outputStream().use { writeSyntheticTrialDng(it, width, height, 1) }
+        input.outputStream().use { writeSyntheticTrialDng(it, width, height, orientation) }
         if (cropped) input.writeBytes(withIntegerCrop(input.readBytes()))
         val source = SharedOriginalReference("content://example.test/gpu-input/synthetic",
             DngContentVerifier.identify(input.length(), { input.inputStream() }), OriginalGrant.USER_SELECTED)
