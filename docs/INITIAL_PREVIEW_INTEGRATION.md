@@ -2,6 +2,12 @@
 
 Refs #233 / #241。最新ユーザー判断を基準に実装中。#442 の main `f2c94cc0` を統合済み。画面比較・実走・最終レビューは未完了で、採用/マージ済みを意味しない。exact は FULL AHD、原寸保存は不変。#438/#441 の PPG 判定には依存しない。
 
+## Half comparison build policy (2026-11-15)
+
+Half adoption is deferred to the next approved Pixel check. Normal builds skip the half candidate and start exact after cache/saved/embedded miss. Only a debug build with `-PinitialHalfGuide=true` enables the retained comparison path; release always has `INITIAL_HALF_GUIDE=false`, even with the property. No recipe, save, or user setting changes. The earlier half timing and screenshots describe the comparison-ON build, not the default product path.
+
+The product E2E runs against both settings: absent or invalid saved/embedded evidence produces no guide in the default build, and HALF_GUIDE in comparison builds; both complete exact. Saved/cache/embedded priority remains unchanged. Visual comparison evidence is in [ui-review/initial-preview-guide](ui-review/initial-preview-guide/README.md).
+
 ## 候補と根拠
 
 | 優先 | ローカル候補の実装 | 制約 |

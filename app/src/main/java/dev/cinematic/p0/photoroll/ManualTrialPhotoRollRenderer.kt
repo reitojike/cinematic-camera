@@ -92,7 +92,8 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
             maxSourceBytes, cancellation, deadline, admitted, beforeExactDecode = if (guide == null) null else { original, geometry, fd, signal, half ->
                 val current = values(original).also { selectedValues = it }
                 InitialPreviewGuide.load(app, original, geometry, current, fd, signal,
-                    initialCache, cacheGeneration, half)?.let(guide)
+                    initialCache, cacheGeneration,
+                    if (dev.cinematic.p0.BuildConfig.DEBUG && dev.cinematic.p0.BuildConfig.INITIAL_HALF_GUIDE) half else null)?.let(guide)
             }) { epoch != originalEpoch.get() },
             cancellation, awaitCancelledOwner = true)
         cancellation.throwIfCanceled()

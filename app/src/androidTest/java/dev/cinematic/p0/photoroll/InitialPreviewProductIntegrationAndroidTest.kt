@@ -29,6 +29,11 @@ import org.junit.Test
 /** Real Context/base-file lookup and product input; all rows and files are private synthetic data.
  * This verifies callback selection and exact input completion, not GPU presentation or save output. */
 class InitialPreviewProductIntegrationAndroidTest {
+    // The same product boundary is exercised in both default-OFF and comparison-ON APKs.
+    private fun halfCandidate(): InitialPreviewKind? =
+        if (dev.cinematic.p0.BuildConfig.DEBUG && dev.cinematic.p0.BuildConfig.INITIAL_HALF_GUIDE)
+            InitialPreviewKind.HALF_GUIDE else null
+
     @Test fun savedThenCacheAndRecipeMismatchFallsThroughToEmbedded() {
         InitialPreviewProductFixture(true).use { f ->
             f.publish()
@@ -45,14 +50,14 @@ class InitialPreviewProductIntegrationAndroidTest {
             f.publish()
             f.expect(InitialPreviewKind.SAVED_JPEG)
             f.provider.withChangedJpeg {
-                f.expect(InitialPreviewKind.HALF_GUIDE)
+                f.expect(halfCandidate())
             }
             f.expect(InitialPreviewKind.SAVED_CACHE)
             f.provider.withChangedOriginal {
                 val frames=mutableListOf<InitialPreviewFrame>()
                 try {
                     val exact=f.open { frames.add(it) }
-                    assertEquals(listOf(InitialPreviewKind.HALF_GUIDE),frames.map { it.kind })
+                    assertEquals(listOfNotNull(halfCandidate()),frames.map { it.kind })
                     assertNotEquals(f.source.fingerprint,exact.original.reference.fingerprint)
                     assertTrue(exact.input.width>0 && exact.input.height>0)
                 } finally { frames.forEach { it.bitmap.recycle() } }
@@ -62,7 +67,7 @@ class InitialPreviewProductIntegrationAndroidTest {
             f.verify()
         }
     }
-    @Test fun sidecarDoesNotRecoverOrUseWarmCacheAndFallsThroughToHalf() {
+    @Test fun sidecarDoesNotRecoverOrUseWarmCacheAndHonorsHalfBuildPolicy() {
         InitialPreviewProductFixture(false).use { f ->
             f.publish()
             f.expect(InitialPreviewKind.SAVED_JPEG)
@@ -70,7 +75,7 @@ class InitialPreviewProductIntegrationAndroidTest {
             val bytes=byteArrayOf(9,8,7)
             sidecar.writeBytes(bytes)
             val reads=f.provider.jpegReads.get()
-            f.expect(InitialPreviewKind.HALF_GUIDE)
+            f.expect(halfCandidate())
             assertEquals(reads,f.provider.jpegReads.get())
             assertArrayEquals(bytes,sidecar.readBytes())
             assertTrue(sidecar.delete())
@@ -142,11 +147,11 @@ internal class InitialPreviewProductFixture(embedded: Boolean) : AutoCloseable {
         renderer.openGpu(repository,provider.uri(1),false,CancellationSignal(),
             GpuInputRequestDeadline(nowMillis=SystemClock::elapsedRealtime),{ assertNull(it) },onGuide) { values }
 
-    fun expect(kind: InitialPreviewKind, values: PhotoEditValues=PhotoAdjustmentPolicy.defaults) {
+    fun expect(kind: InitialPreviewKind?, values: PhotoEditValues=PhotoAdjustmentPolicy.defaults) {
         val frames=mutableListOf<InitialPreviewFrame>()
         try {
             val exact=open(values) { frames.add(it) }
-            assertEquals(listOf(kind),frames.map { it.kind })
+            assertEquals(listOfNotNull(kind),frames.map { it.kind })
             assertEquals(source,exact.original.reference)
             assertEquals(geometry,exact.geometry)
             assertTrue(exact.input.width>0 && exact.input.height>0)

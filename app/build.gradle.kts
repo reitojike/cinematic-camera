@@ -4,6 +4,9 @@ plugins {
 }
 
 // Host-only shader regression tests. Nothing is added to an APK or a normal test run.
+// Comparison-only RAW half guide. Release never enables this experimental fallback.
+val initialHalfGuide = providers.gradleProperty("initialHalfGuide").orNull == "true"
+
 val gpuMesa = providers.gradleProperty("cinematicGpuMesa").orNull == "true"
 
 // Draft opt-in: default debug builds require no signing inputs and remain unchanged.
@@ -27,6 +30,7 @@ android {
     defaultConfig {
         applicationId = "dev.cinematic.p0"
         buildConfigField("boolean", "EDITOR_PREVIEW_DIAGNOSTIC", "false")
+        buildConfigField("boolean", "INITIAL_HALF_GUIDE", "false")
         minSdk = 33
         targetSdk = 37
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
@@ -52,6 +56,9 @@ android {
         }
     }
     buildTypes {
+        getByName("debug") {
+            buildConfigField("boolean", "INITIAL_HALF_GUIDE", initialHalfGuide.toString())
+        }
         getByName("release") {
             isDebuggable = false
             if (stableInternalSigning) signingConfig = signingConfigs.getByName("cinematicInternal")
