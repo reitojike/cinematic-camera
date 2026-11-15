@@ -69,3 +69,14 @@ app/test APK build成功。新AVDで最初の試行はmain APK未導入により
 same-owner診断はbaseline APKと候補APKを別processで各1件成功。各4回のpresentをdrawCount増分で確認し、closePhoto後ledger0、最後owner/thread解放を確認した。GC要求後native heapの生bytesはbaseline 42,903,552→43,150,000→44,244,944→44,416,256、owner終了後40,977,392。候補は23,808,992→24,039,808→24,000,224→24,171,664、owner終了後21,047,632。同AVD内でbaseline→候補の順なので絶対値差を性能改善と解釈しない。
 
 新owner毎の約9.45 MB増を同owner4photoでは再現せず、owner/context生成側へ限定できた。ただしdriver原因の断定や4反復による完全安定証明はしない。初回案内固有のnative/decode増とは分け、既存GPU全体の未解決事項として残す。製品のEGL/driver/GC動作は変更していない。
+
+### 公開前の回帰結果
+
+- `13309e1a` の全4task（lint/unit1399件・失敗0・skip12/app/test APK）は成功。`e00517d8` は文書のみ差分。
+- `e00517d8` clean provenanceでGPU90case採取・band28比較が成功。採用baseline `51b691ad` との全90case RGB8全画素が完全一致した。環境差ありの既存exact policyでpass、baseline更新なし。
+- 新規Android試験は35 method成功（複数の固定snapshotで段階的に実走、後段変更は試験/文書のみ）。旧entropy完全拒否の9pass/1fail、任意計測の初回skip、fixture型推論/構築失敗とは区別する。
+- 既存関連回帰22件成功：Original24GpuInput11、HalfPreviewNative2、admission2、files1、12MP実UI lifecycle1、surface1、concurrent2、product入力2。Concurrentは入口引数gpuExportBoundaries/gpuSaveSafetyの不足で2回失敗し、元ログを保持して正しい引数で再成功。製品処理前のharness失敗でありassert/gateは変更していない。
+- 各固定headとsource/APK hash・匿名成果・プロセス境界をローカル証拠に保持。boot安定/前後system_server一致/ANR・crashなし、終了後QEMU0/adb空を確認。ローカル生ログは公開しない。
+- 24MP opt-in、Pixel/実写真、host native CTestは未実施。実機品質・速度やメモリ完全安定の合格にはしない。
+- half採否と画面本人承認、最終remote CI/canonical reviewが未完了のためDraftを維持する。
+- GPU owner/contextの限定既存観測は [#276](https://github.com/reitojike/cinematic-camera/issues/276#issuecomment-6895266039) に本人の具体的承認後に記録した。最初の投稿拒否を別経路で迂回せず、新しい承認を得て同じ内容を再試行した。
