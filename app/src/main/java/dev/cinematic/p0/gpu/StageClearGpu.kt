@@ -5,7 +5,7 @@ import dev.cinematic.p0.gpu.diag.GpuStageTap
 import dev.cinematic.p0.gpu.look.StageClearFinishGpu
 import dev.cinematic.p0.gpu.look.StageClearGlowGpu
 import dev.cinematic.p0.gpu.look.StageClearMistGpu
-import dev.cinematic.p0.gpu.preview.present
+import dev.cinematic.p0.gpu.preview.GpuFramePresenter
 import dev.cinematic.p0.gpu.r7.R7Gpu
 import dev.cinematic.p0.gpu.resample.GpuResample
 import dev.cinematic.p0.raw.LinearSrgbImage
@@ -138,34 +138,36 @@ internal class DefaultStageClearGpu(
         target: GpuPreviewTarget, display: GpuDisplayOptions): GpuFrameStats {
         val source = requirePhoto(photo)
         requireParams(params)
-        require(display.rotationDegrees in setOf(0, 90, 180, 270))
-        val destination = requireNotNull(target as? StageClearGpuPreviewTarget) { "GPU preview needs window dimensions" }
-        egl.makeCurrent(destination.window)
+        val presenter = GpuFramePresenter(egl, ledger, target, display)
+        presenter.makeCurrent()
         val start = System.nanoTime()
-        var decisions = source.lastDecisions
-        fun show(image: GpuTexture) {
-            image.requireContext(egl)
-            require(image.memoryLedger === ledger) { "GPU frame belongs to another memory ledger" }
-            present(egl, image, destination.width, destination.height, display.rotationDegrees,
-                linearFiltering = destination.linearFiltering, viewportY = destination.viewportY)
-        }
-        if (display.showBefore) show(source.input)
-        else {
-            var consumed = false
-            source.pipeline().render(params) { image, current ->
-                check(!consumed) { "GPU pipeline emitted multiple frames" }
-                require(image.width == source.width && image.height == source.height && image.format == GpuTexture.Format.RGBA32F)
-                require(current.mistAutoStrength.isFinite() && current.mistAutoStrength in 0.0..1.0)
-                require(current.faceCutFactor == 1.0) { "Phase 0 does not implement face cut" }
-                show(image)
-                source.lastDecisions = current
-                decisions = current
-                consumed = true
-            }
-            check(consumed) { "GPU pipeline did not emit a frame" }
-        }
+        val decisions = renderPixels(source, params, display.showBefore, presenter::present)
         // The renderer times the whole submitted frame with its existing nonblocking GPU query.
         return GpuFrameStats(null, System.nanoTime() - start, decisions)
+    }
+
+    /** Consume is synchronous: no output texture may escape its pipeline-owned lifetime. */
+    private fun renderPixels(source: Photo, params: GpuRenderParams, showBefore: Boolean,
+        consume: (GpuTexture) -> Unit): GpuDecisions {
+        if (showBefore) {
+            consume(source.input)
+            return source.lastDecisions
+        }
+        var consumed = false
+        var decisions = source.lastDecisions
+        source.pipeline().render(params) { image, current ->
+            check(!consumed) { "GPU pipeline emitted multiple frames" }
+            require(image.width == source.width && image.height == source.height && image.format == GpuTexture.Format.RGBA32F)
+            require(current.mistAutoStrength.isFinite() && current.mistAutoStrength in 0.0..1.0)
+            require(current.faceCutFactor == 1.0) { "Phase 0 does not implement face cut" }
+            consume(image)
+            // Failed present submission must not publish its decision; swap remains renderer-owned.
+            source.lastDecisions = current
+            decisions = current
+            consumed = true
+        }
+        check(consumed) { "GPU pipeline did not emit a frame" }
+        return decisions
     }
 
     override fun renderForTest(photo: StageClearGpuPhoto, params: GpuRenderParams,
