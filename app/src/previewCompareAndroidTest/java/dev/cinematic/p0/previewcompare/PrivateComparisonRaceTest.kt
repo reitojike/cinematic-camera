@@ -44,6 +44,19 @@ class PrivateComparisonRaceTest {
         }
         fail("Comparison condition was not reached")
     }
+    private fun drainOrAbort() {
+        // Scenario.close() has already sent Activity cancellation. Do not mutate fixtures while a worker owns them.
+        val executor = PreviewCompareActivity::class.java.getDeclaredField("executor").apply { isAccessible = true }
+            .get(null) as java.util.concurrent.ExecutorService
+        try {
+            executor.submit {}.get(30, TimeUnit.SECONDS)
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+        } catch (error: Exception) {
+            // Emulator-only test failure: do not let JUnit continue with an unknown live worker.
+            android.os.Process.killProcess(android.os.Process.myPid())
+            throw AssertionError("Comparison worker did not drain; test process aborted", error)
+        }
+    }
     private fun assertReleased() {
         assertTrue(app.cacheDir.listFiles().orEmpty().none { it.name.startsWith("private-compare-") })
         val open = File("/proc/self/fd").listFiles().orEmpty().count {
@@ -106,8 +119,9 @@ class PrivateComparisonRaceTest {
             assertArrayEquals(beforeB, second.readBytes())
         } finally {
             resume.countDown()
+            drainOrAbort()
             PreviewCompareActivity.createComparison = { PrivatePhotoComparison(it) }
-            first.delete(); second.delete()
+            assertTrue(first.delete()); assertTrue(second.delete())
         }
     }
     @Test fun permissionLossDuringFinalVerificationPublishesNoImage() {
@@ -133,6 +147,7 @@ class PrivateComparisonRaceTest {
             }
             assertArrayEquals(original, file.readBytes())
         } finally {
+            drainOrAbort()
             PreviewCompareActivity.createComparison = { PrivatePhotoComparison(it) }
             assertTrue(file.delete())
         }
