@@ -1,6 +1,6 @@
-# ATD の準備済み snapshot と task 別 read-only 運用
+# ATD snapshot・GPU cold boot の task 別 read-only 運用
 
-Issue #192 / #290。2026-11-15 の本人指示に基づく、ローカル非GPU試験の運用。
+Issue #192 / #290。2026-11-15 の本人指示に基づく、ローカル試験の運用。ATD の非GPU試験と AOSP のGPU試験は下記の範囲を分ける。
 既存 GMD の定義・必須 CI・製品コードを変えず、毎taskでAVDを作らずに、準備済み基準を共有する。
 本書の成立済み範囲では、[MANAGED_DEVICES](MANAGED_DEVICES.md) のローカル GMD 固定2枠より本書を優先する。
 GMD による自動管理そのものは廃止しない。GitHub runner の ATD 検証は別作業（#430）。
@@ -110,9 +110,33 @@ Emulator/image/AVD設定の更新でsnapshotは無効化され得る。基準を
 別候補のhost/-Vulkan/-GuestAngleではsnapshot保存・復帰は成功したが、
 製品最小試験が `eglCreateContext(ES 3.2) failed: EGL 0x3005` で失敗した。
 この候補のGPU90は未実施で、不採用。製品の要求・期待値・goldenを緩めていない。
-GPUのread-only cold boot/並列は別途段階検証中であり、本書のATD成立範囲に含めない。
-同じAVDの共有 `emu-launch-params.txt` が後起動で上書きされるため、instance別の証拠帰属には未解決の課題がある。
-端末別の起動記録・serialとの照合を修正し、両instanceの正規採取を実証するまではGPU並列運用は未完成とする。
+### GPU read-only 2台の成立条件と実証
+
+2026-11-15、`b82a9cd9` の instance 別起動証跡を使い、同一AOSP基準の cold boot 2台を実証した。
+ATDのsnapshot方式とは別で、GPUにはsnapshotを使わない。
+
+- `start_gpu_instance.ps1` と `capture_android.ps1 -InstanceRecord` をセットで導入する。
+  [具体的な起動・採取手順](../tools/gpu-golden/README.md)に従い、
+  同一AVDの起動登録は全担当がwrapperを使う。基準変更は全instance停止後のみ。
+- wrapperは共有 `emu-launch-params.txt` の書換え前に実原本をmutex内で保全する。
+  serial、QEMU PID/開始時刻/引数、config hash、boot UUIDを私有記録へ紐付け、
+  採取開始・build後・instrumentation後・pull後の照合に使う。欠損・不一致は停止する。
+  従来の共有原本だけの採取を、先に起動したinstanceへ無理に使わない。
+- 別worktree・console port 5620/5622で各起動・登録。2台目が共有原本を上書きした後でも、
+  **両方**で90条件と帯28件の実走・pull・runtime再照合に成功した。
+  同一sourceから各worktreeで作ったAPKのhashは異なり、APKのバイト同一を主張しない。個別のAPK証跡で採取した。
+  既存goldenとの比較は両方 `pass`、`environmentChanged=true`、全画素差0。基準画像は変更していない。
+- run IDは `golden-20261115-010325-b82a9cd9` と `golden-20261115-010400-b82a9cd9`。
+  system image、emulator版、GPU/driver等の環境証跡は各runのhost metadataで追跡する。
+- 各system_serverが実走前後で不変、ANR 0、boot 1回。guest markerは互いに不可視。
+  両停止後にadb一覧空・QEMU process 0を確認した。個別PIDや個人pathは公開文書に含めない。
+- 観測時の空きRAMは9,927MiB、CPU標本66%、システムドライブ空き22.15GB、開発ドライブ空き1.48TB。
+  他のホスト作業も含む一時点の値であり、速度比較・長時間負荷・3台のGPU実走の保証ではない。
+  GPUはまず同時2台までとし、負荷を監視する。性能比較は単独実行を維持する。
+
+実証headから後続mainには #425 の表示変更と #430 の非GPU ATD CI変更が追加されている。
+この記録は上記実証headの結果であり、後続の製品変更に必要なGPU回帰を省略する根拠にはしない。
+起動証跡の小変更のレビュー・CIが完了してから通常運用へ適用する。
 
 ## 公式根拠
 

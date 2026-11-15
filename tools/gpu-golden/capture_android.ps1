@@ -2,10 +2,12 @@ param(
     [Parameter(Mandatory=$true)][ValidatePattern('^emulator-[0-9]+$')][string]$Serial,
     [Parameter(Mandatory=$true)][string]$AvdConfig,
     [Parameter(Mandatory=$true)][string]$SdkRoot,
-    [string]$Python = 'python'
+    [string]$Python = 'python',
+    [string]$InstanceRecord
 )
 # Run only after acquiring the shared AVD lane. Never starts/stops an AVD or touches a physical device.
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'instance_evidence.ps1')
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 Set-Location $repo
 function Run-Checked([string]$File, [string[]]$Arguments) {
@@ -43,6 +45,18 @@ if ($command -notmatch "(?:^|\s)-avd\s+$([Regex]::Escape($avdName))(?:\s|$)" -or
     $command -notmatch '-gpu\s+host\b' -or $command -notmatch '-feature\s+GuestAngle,Vulkan\b') {
     throw 'Running process does not match the required AVD and host/GuestAngle/Vulkan flags'
 }
+$started = $process.CreationDate.ToUniversalTime()
+$instanceHash = $null
+if ($InstanceRecord) {
+    $InstanceRecord = (Resolve-Path -LiteralPath $InstanceRecord).Path
+    $live = Get-LiveGpuProcess $Serial
+    $bootId = (Run-Checked $adb @('-s',$Serial,'shell','cat','/proc/sys/kernel/random/boot_id')).Trim()
+    $registered = Read-InstanceEvidence $InstanceRecord $live $Serial $AvdConfig $bootId $avdName
+    $instanceHash = Hash $InstanceRecord
+    $launchPath = Join-Path (Split-Path -Parent $InstanceRecord) 'emulator-launch.local.txt'
+    Copy-Item -LiteralPath $InstanceRecord -Destination (Join-Path $output 'runtime-instance.local.json')
+    Copy-Item -LiteralPath $launchPath -Destination (Join-Path $output 'runtime-emulator-launch.local.txt')
+} else {
 # This is emulator-generated in its actual AVD directory, not a caller-supplied launch note.
 $launchPath = Join-Path $avdDirectory 'emu-launch-params.txt'
 $launch = Get-Content -LiteralPath $launchPath
@@ -59,6 +73,7 @@ $started = $process.CreationDate.ToUniversalTime()
 $launchModified = (Get-Item -LiteralPath $launchPath).LastWriteTimeUtc
 if ($launchModified -lt $started.AddSeconds(-5) -or $launchModified -gt $started.AddSeconds(30)) {
     throw 'Emulator-generated launch record is stale; actual config association is unverified'
+}
 }
 # PID and local paths stay in run evidence only. Published metadata keeps hashes and versions.
 [ordered]@{ processId=$process.ProcessId; processStartedUtc=$started.ToString('o'); avdName=$avdName;
@@ -87,6 +102,16 @@ $hostData = [ordered]@{
     appApkSha256=$null; testApkSha256=$null; environment=$environment
     instrumentationPassed=$false; phase='build_pending'; capturedUtc=[DateTime]::UtcNow.ToString('o')
 }
+function Assert-CurrentRuntime {
+    $now = Get-LiveGpuProcess $Serial
+    if ($now.processId -ne $process.ProcessId -or $now.startedUtc -cne $started.ToString('o') -or $now.commandLine -cne $command) { throw 'AVD process changed during capture' }
+    if ((Hash $AvdConfig) -ne $environment.avdConfigSha256) { throw 'AVD config changed during capture' }
+    if ($InstanceRecord) {
+        if ((Hash $InstanceRecord) -cne $instanceHash) { throw 'Instance evidence changed during capture' }
+        $boot = (Run-Checked $adb @('-s',$Serial,'shell','cat','/proc/sys/kernel/random/boot_id')).Trim()
+        $null = Read-InstanceEvidence $InstanceRecord $now $Serial $AvdConfig $boot $avdName
+    }
+}
 $hostPath = Join-Path $output 'host.json'
 function Save-Host { $hostData | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 $hostPath }
 # Preserve identity even if build/install/instrumentation/pull fails. Never upgrade an uncertain run to success.
@@ -102,24 +127,21 @@ try {
     $hostData.appApkSha256 = Hash $app
     $hostData.testApkSha256 = Hash $test
     $hostData.phase = 'install_pending'; Save-Host
-    # The same process must still own the serial after the build.
-    $current = Get-CimInstance Win32_Process -Filter "ProcessId=$($process.ProcessId)"
-    if (!$current -or $current.CreationDate -ne $process.CreationDate -or $current.CommandLine -ne $command) {
-        throw 'AVD process changed during build'
-    }
-    if ((Hash $AvdConfig) -ne $environment.avdConfigSha256) { throw 'AVD config changed during build' }
+    Assert-CurrentRuntime
     Run-Checked $adb @('-s',$Serial,'install','-r','-t',$app) | Out-File (Join-Path $output 'install-app.txt')
     Run-Checked $adb @('-s',$Serial,'install','-r','-t',$test) | Out-File (Join-Path $output 'install-test.txt')
     $hostData.phase = 'instrumentation_pending'; Save-Host
     $selector = 'dev.cinematic.p0.gpu.golden.GpuGoldenAndroidTest#captureNinetyFullFramesAndCompareBothBandSizes'
     & $adb -s $Serial shell am instrument -w -r -e isolated true -e gpuGolden true -e gpuGoldenRunId $runId -e class $selector dev.cinematic.p0.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | Tee-Object -FilePath (Join-Path $output 'instrumentation.txt')
     $exitCode = $LASTEXITCODE
+    Assert-CurrentRuntime
     $raw = Get-Content -LiteralPath (Join-Path $output 'instrumentation.txt') -Raw
     $passed = $exitCode -eq 0 -and $raw -match 'OK \(1 test\)' -and $raw -notmatch 'FAILURES!!!|INSTRUMENTATION_FAILED|INSTRUMENTATION_STATUS_CODE: -2|INSTRUMENTATION_STATUS_CODE: -3|INSTRUMENTATION_STATUS_CODE: -4|shortMsg='
     $hostData.instrumentationPassed = $passed
     $hostData.phase = 'pull_pending'; Save-Host
     & $adb -s $Serial pull "/sdcard/Android/data/dev.cinematic.p0/files/gpu-golden/$runId" $output 2>&1 | Out-File (Join-Path $output 'pull.txt')
     $pullExit = $LASTEXITCODE
+    Assert-CurrentRuntime
     $directory = Join-Path $output $runId
     if ($pullExit -ne 0 -or !(Test-Path -LiteralPath (Join-Path $directory 'capture.json'))) { throw 'Candidate retrieval failed; retain host/instrumentation evidence' }
     if (!$passed) { throw "GPU candidate failed; stop and inspect $output. No automatic rerun." }

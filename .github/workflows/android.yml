@@ -37,6 +37,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
+      - name: GPU golden tooling unit tests (no emulator)
+        run: python3 -B -m unittest discover -s tools/gpu-golden -v
+      - name: GPU instance evidence unit tests (no emulator)
+        shell: pwsh
+        run: ./tools/gpu-golden/test_instance_evidence.ps1
       - name: Preview timing summary unit tests
         run: python3 -B -m unittest discover -s tools/preview-timing -v
       - name: lint・unit・debug build

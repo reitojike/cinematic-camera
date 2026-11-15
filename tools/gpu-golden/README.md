@@ -89,3 +89,43 @@ system image（API/ABI/revision/build）、emulator版、ホストGPUドライ�
 これは画像比較の合格のみであり、他の必要安全試験・CI・レビューの成功を代替しない。PRで別々に照合する。
 過去に出力されたHOLDレポートは変更しない。
 本人承認と #428 の実証記録: https://github.com/reitojike/cinematic-camera/pull/428#issuecomment-6885931885
+
+### Windows: 同一 AVD の read-only 並列起動（#192 / #290 / #429）
+
+PowerShell 7 で、担当間の起動枠・容量確認後に、各 worktree から次を実行する。
+実機は対象外。GPU は検証対象の AOSP + `host` / `GuestAngle,Vulkan` の通常起動であり、snapshot は使わない。
+
+```powershell
+pwsh -NoProfile -File tools/gpu-golden/start_gpu_instance.ps1 `
+  -AvdConfig <基準AVDのconfig.ini> -AvdHome <AVD登録ディレクトリ> `
+  -SdkRoot <AndroidSDK> -Port 5620
+# 表示された INSTANCE_RECORD を、この serial の採取にだけ渡す
+pwsh -NoProfile -File tools/gpu-golden/capture_android.ps1 `
+  -Serial emulator-5620 -AvdConfig <同じconfig.ini> -SdkRoot <同じAndroidSDK> `
+  -InstanceRecord <表示されたinstance.local.json>
+```
+
+- もう一台は別 worktree・別の偶数 port（例 5622）。各操作で `ANDROID_SERIAL` / `-s` を指定する。
+- wrapper は AVD ごとの名前付き mutex で、起動から emulator 自身が書いた launch 原本の保全までを排他する。boot 待ちは排他の外。並列起動は全担当がこの wrapper を使い、基準更新は全 instance 停止後に行う。
+- 原本は書き換えない。私有の `build/gpu-launch/<serial>-<UUID>/` に原本、PID・開始時刻・実コマンド、config の hash、guest boot UUID を保存し、完成時に digest ファイルを atomic rename する。完成前の記録は採取に使えない。
+- 採取は開始時・build 後・instrumentation 後・pull 後に live process/config/boot と照合する。未登録、別 serial、曖昧な process/引数、PID 再利用、再起動、記録や config の変更は停止する。共有 launch ファイルが後の正規起動で上書きされても、保全した原本で照合する。
+- digest は欠損・偶発的改変の検出であり、署名でも認証境界でもない。書き込み権限を持つ攻撃者の再計算を防ぐものではない。
+- ローカル証拠には個人パス・PID を含むため公開しない。公開する baseline のメタデータには追加しない。`-InstanceRecord` を省略した従来の逐次採取では、共有原本と時刻の既存 gate をそのまま使う。
+- 登録成功は boot 安定や GPU 正常の保証ではない。別途 system_server/ANR gate、最小 compute、既存 golden との全画素比較を実行する。両 instance の正規採取を実証するまでは並列準備完了としない。速度測定は単独で行う。
+- read-only でも一時差分やログの容量は必要。通常は同時 2 台から始め、RAM・ディスク空き・CPU 負荷を確認する。登録失敗時は同一 PID/開始時刻/引数の自分の instance だけ停止する。自動再試行はしない。
+
+AVD を起動しない単体試験:
+
+```powershell
+pwsh -NoProfile -File tools/gpu-golden/test_instance_evidence.ps1
+```
+
+#### instance 別採取の実証（2026-11-15）
+
+`b82a9cd9` で、同じ AOSP 基準を read-only cold boot した 2 台について、
+後起動による共有 launch 原本の上書き後にも、それぞれ保全済み `-InstanceRecord` から正規採取できた。
+run ID は `golden-20261115-010325-b82a9cd9` と `golden-20261115-010400-b82a9cd9`。
+両方90条件・帯28件・pull後のruntime照合成功、既存golden比較 `pass` / `environmentChanged=true` / 全画素差0。
+基準更新なし。boot安定・guest隔離・終了確認と負荷の範囲は
+[AVD運用記録](../../docs/AVD_READ_ONLY_BASELINES.md#gpu-read-only-2台の成立条件と実証)を参照。
+並列時の所要時間は性能比較値として使わない。後続mainへの同期後の全画素実走を意味しない。
