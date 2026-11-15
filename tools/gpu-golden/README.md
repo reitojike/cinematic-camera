@@ -119,3 +119,13 @@ AVD を起動しない単体試験:
 ```powershell
 pwsh -NoProfile -File tools/gpu-golden/test_instance_evidence.ps1
 ```
+
+#### instance 別採取の実証（2026-11-15）
+
+`b82a9cd9` で、同じ AOSP 基準を read-only cold boot した 2 台について、
+後起動による共有 launch 原本の上書き後にも、それぞれ保全済み `-InstanceRecord` から正規採取できた。
+run ID は `golden-20261115-010325-b82a9cd9` と `golden-20261115-010400-b82a9cd9`。
+両方90条件・帯28件・pull後のruntime照合成功、既存golden比較 `pass` / `environmentChanged=true` / 全画素差0。
+基準更新なし。boot安定・guest隔離・終了確認と負荷の範囲は
+[AVD運用記録](../../docs/AVD_READ_ONLY_BASELINES.md#gpu-read-only-2台の成立条件と実証)を参照。
+並列時の所要時間は性能比較値として使わない。後続mainへの同期後の全画素実走を意味しない。
