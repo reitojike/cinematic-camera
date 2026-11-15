@@ -45,7 +45,12 @@ class CollectorTest(unittest.TestCase):
         self.assertIn('test "$hosted" = true && test "$character" = true && test "$readable" = true && test "$writable" = true', workflow)
         self.assertIn("allocation-evidence/aggregate.json", workflow)
         self.assertNotIn("pull_request_target", workflow)
-        self.assertNotIn("setfacl", workflow)
+        acl = 'sudo setfacl --no-mask -m "u:$(id -u):rw" /dev/kvm'
+        self.assertEqual(workflow.count("setfacl"), 1)
+        self.assertIn(acl, workflow)
+        self.assertLess(workflow.index('if [ "$hosted" != true ] || [ "$character" != true ]; then exit 1; fi'), workflow.index(acl))
+        self.assertLess(workflow.index(acl), workflow.index('if [ -r /dev/kvm ]'))
+        self.assertNotIn("udev", workflow)
         self.assertNotIn("chmod", workflow)
         self.assertNotIn("secrets.", workflow)
         self.assertNotIn("if: always()", workflow)

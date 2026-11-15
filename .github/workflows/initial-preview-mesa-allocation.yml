@@ -31,13 +31,15 @@ jobs:
           cache-provider: basic
       - name: Validate diagnostic collector
         run: python3 -B -m unittest discover -s tools/initial-preview-allocation -v
-      - name: Require existing KVM access (no permission changes)
+      - name: Allow approved runner-only KVM access
         env:
           DIAGNOSTIC_RUNNER_ENVIRONMENT: ${{ runner.environment }}
         run: |
           hosted=false; character=false; readable=false; writable=false
           if [ "$DIAGNOSTIC_RUNNER_ENVIRONMENT" = github-hosted ]; then hosted=true; fi
           if [ -c /dev/kvm ]; then character=true; fi
+          if [ "$hosted" != true ] || [ "$character" != true ]; then exit 1; fi
+          sudo setfacl --no-mask -m "u:$(id -u):rw" /dev/kvm
           if [ -r /dev/kvm ]; then readable=true; fi
           if [ -w /dev/kvm ]; then writable=true; fi
           printf 'hosted=%s kvm_character=%s kvm_readable=%s kvm_writable=%s\n' "$hosted" "$character" "$readable" "$writable"
