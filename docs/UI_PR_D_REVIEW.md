@@ -19,14 +19,18 @@
 
 通常、比較、未反映、編集中、準備中、保存中、取消後、失敗、小画面・拡大文字、再保存確認。合成入力・空GPU Surfaceの画像はその旨を明示し、実写真の見え方やGPU画質・速度の証拠にしない。
 
-## 検証状況
+## 検証状況（2026-11-15）
 
-lint／単体 1,385件（失敗0、skip12）、8状態配置、INFO開閉・再保存ダイアログ、短画面スクロール・caption遷移・比較保持／長押しの計6 instrumentation試験が成功。
-GPU90条件・帯28条件も成功し、承認済み基準との全画素差は0（Google APIs→AOSPの環境差あり）。製品コードが同じ6678bd40で採取し、以後の追加は試験だけです。
+製品head `41e22b51`：lint・単体1385件（失敗0、skip12）・APK/testAPK、CI #1217成功。配置8状態・INFO／確認ダイアログ・短画面／caption遷移／比較の計6 Android試験を再実行して成功。GPU90条件・帯28件と基準全画素比較に合格（差0、Google APIs→AOSPの環境差あり）。基準は更新していない。
 
-合成入力の自動操作回帰と目視採取であり、実写真の画質・保存試験や手動回帰の代替とはしません。追加試験の独立レビューはOK。最終CI、手動回帰、本人の見た目承認は別のマージ条件として残します。
+実製品 `53b9f98d` の手動回帰では非個人の合成DNGを使い、Files選択、GPU表示、INFO開閉、比較／長押し、強さ変更、保存、取消、同設定で再保存、一覧復帰、短画面・fontScale1.3のスクロールを確認。JPEG2枚の復号に成功、原本SHA-256不変。専用Downloadsルートでの既存原本条件による拒否と一覧復帰、内部ストレージDownloadでの読み込み成功も確認。
+
+手動回帰で発見した「保存による意図的なプレビュー停止にも更新中と表示する」不備は `41e22b51` で表示条件のみ修正。独立レビュー、上記6試験・GPU回帰・CIに合格。手動回帰全体は修正後に繰り返したとは扱わず、影響箇所を実経路と同じpresented=nullの試験と画像で再確認した。save ownerや操作条件は変更していない。
+
+固定状態の空Surface画像は実写真やPixelの証拠ではない。本人の見た目承認は未了のためマージHOLD。最新文書のみのcommitは上記製品試験を継承し、CIを別途確認する。
 
 確認画像: https://github.com/reitojike/cinematic-camera/blob/docs/pr440-layout-review/docs/ui-review/pr440/README.md
+手動回帰の範囲・証拠: https://github.com/reitojike/cinematic-camera/blob/docs/pr440-layout-review/docs/ui-review/pr440/manual/README.md
 
 ## 残る旧引数
 
