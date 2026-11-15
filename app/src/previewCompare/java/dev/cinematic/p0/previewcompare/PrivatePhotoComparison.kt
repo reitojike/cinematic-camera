@@ -50,8 +50,9 @@ internal class PrivatePhotoComparison(private val context: Context) {
         check(!memory.lowMemory) { "COMPARE_MEMORY" }
         check(context.cacheDir.usableSpace >= 512L * 1024 * 1024) { "COMPARE_STORAGE" }
         check(!cleanupBlocked) { "COMPARE_CLEANUP" }
-        clearAbandoned(context.cacheDir)
-        val work = File(context.cacheDir, "private-compare-${UUID.randomUUID()}")
+        val privateCache = context.cacheDir.canonicalFile
+        clearAbandoned(privateCache)
+        val work = File(privateCache, "private-compare-${UUID.randomUUID()}")
         check(work.mkdir())
         val source = File(work, "source.dng")
         val rasterFile = File(work, "raster.rgb16")
@@ -70,6 +71,7 @@ internal class PrivatePhotoComparison(private val context: Context) {
                     stop.check()
                     val n = from.read(bytes)
                     if (n < 0) break
+                    check(n > 0) { "COMPARE_READ" }
                     total += n
                     check(total <= 64L * 1024 * 1024) { "COMPARE_LIMIT" }
                     to.write(bytes, 0, n)
