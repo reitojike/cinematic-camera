@@ -8,8 +8,10 @@ import dev.cinematic.p0.BuildConfig
 internal fun requireGpuInputSafetyFixture() {
     val instrumentation = InstrumentationRegistry.getInstrumentation()
     val arguments = InstrumentationRegistry.getArguments()
-    check(BuildConfig.BUILD_TYPE == "debug" && instrumentation.targetContext.packageName == "dev.cinematic.p0") {
-        "GPU input safety fixtures require the ordinary debug app"
+    check(BuildConfig.BUILD_TYPE == "debug" &&
+        BuildConfig.APPLICATION_ID in setOf("dev.cinematic.p0", "dev.cinematic.p0.initialpreviewcompare") &&
+        instrumentation.targetContext.packageName == BuildConfig.APPLICATION_ID) {
+        "GPU input safety fixtures require the matching ordinary or isolated-comparison debug app"
     }
     check(arguments.getString("isolated") == "true" && arguments.getString("gpuInputSafety") == "true") {
         "Explicit isolated=true and gpuInputSafety=true are required"

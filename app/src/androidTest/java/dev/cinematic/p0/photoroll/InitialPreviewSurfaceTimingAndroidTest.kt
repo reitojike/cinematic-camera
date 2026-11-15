@@ -21,6 +21,10 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionOnScreen
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.math.roundToInt
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
@@ -42,6 +46,7 @@ import org.junit.Test
  * visual run holds HALF for capture and is explicitly excluded from performance comparisons. */
 class InitialPreviewSurfaceTimingAndroidTest {
     private val instrumentation=InstrumentationRegistry.getInstrumentation()
+    private val viewportLayout=AtomicReference<Rect?>()
     @get:Rule val fixture=SyntheticFixtureRule()
     private class Times(val fallback: Boolean, val captureHold: Boolean) {
         val start=AtomicLong(); val halfStart=AtomicLong(); val halfLinear=AtomicLong()
@@ -91,6 +96,35 @@ class InitialPreviewSurfaceTimingAndroidTest {
                 .put("visualRunNotPerformance",visual.json()).toString(2).let {
                     File(outputs,"timings.json").writeText(it)
                 }
+            DngContentVerifier.verify(source.fingerprint,{input.inputStream()})
+            success=true
+        } finally {
+            GpuPhotoRollRetiredOwners.releaseBeforeOpen()
+            if(success) { assertTrue(input.delete()); assertTrue(root.delete()) }
+        }
+    }
+
+    /** Artifact-only capture for visual review. Never replaces the strict UI assertions above. */
+    @Test fun captureSyntheticComparisonWithoutParameterNodeAssertions() {
+        org.junit.Assume.assumeTrue(InstrumentationRegistry.getArguments()
+            .getString("initialVisualCapture")=="true")
+        requireGpuInputSafetyFixture()
+        val context=instrumentation.targetContext
+        val root=File.createTempFile("initial-guide-visual-",".tmp",context.cacheDir.canonicalFile)
+        check(root.delete() && root.mkdir())
+        val input=File(root,"synthetic.dng")
+        input.outputStream().use { writeSyntheticTrialDng(it,1536,1024,1) }
+        val source=SharedOriginalReference("content://synthetic/initial-guide",
+            DngContentVerifier.identify(input.length(),{input.inputStream()}),OriginalGrant.USER_SELECTED)
+        val geometry=ParcelFileDescriptor.open(input,ParcelFileDescriptor.MODE_READ_ONLY).use {
+            Original24Preflight.inspect(it.fd,CancellationSignal())
+        }
+        val configured=InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")
+        val outputRoot=configured?.let(::File) ?: File(context.getExternalFilesDir(null),"additional_test_output")
+        val outputs=File(outputRoot,"initial-preview-visual-only").apply { check(isDirectory || mkdirs()) }
+        var success=false
+        try {
+            run(source,geometry,input,File(root,"visual"),true,true,outputs,verifyParameterNodes=false)
             DngContentVerifier.verify(source.fingerprint,{input.inputStream()})
             success=true
         } finally {
@@ -173,7 +207,9 @@ class InitialPreviewSurfaceTimingAndroidTest {
         }
     }
     private fun run(source: SharedOriginalReference, geometry: Original24PreflightGeometry,
-        input: File, scratch: File, fallback: Boolean, capture: Boolean, output: File): Times {
+        input: File, scratch: File, fallback: Boolean, capture: Boolean, output: File,
+        verifyParameterNodes: Boolean = true): Times {
+        viewportLayout.set(null)
         val times=Times(fallback,capture)
         val owner=GpuPhotoRollSession(instrumentation.targetContext.assets)
         owner.presentedForDiagnostics={ times.presented.compareAndSet(0,SystemClock.elapsedRealtimeNanos()); Unit }
@@ -191,6 +227,8 @@ class InitialPreviewSurfaceTimingAndroidTest {
         var guideViewport: Rect?=null
         val saveCalls=AtomicInteger()
         val evidence=JSONObject().put("scope","View boundary and real GPU, not full Editor/save-owner E2E")
+            .put("parameterNodeAssertions",verifyParameterNodes)
+            .put("purpose",if(verifyParameterNodes) "strict UI validation" else "visual artifacts only; not strict UI pass or performance evidence")
             .put("settings","same source; camera WB linear AS_SHOT; half clamp+sRGB vs FULL GPU before; exact uses unchanged defaults")
         val valueBounds=mutableListOf<Rect>()
         fixture.content={
@@ -205,7 +243,11 @@ class InitialPreviewSurfaceTimingAndroidTest {
                     null,null,null,null,null,true,null,false,false,exact,
                     {saveCalls.incrementAndGet()},{},{},{},{_,_,_->},{},{},{},{},
                     modifier=Modifier.fillMaxSize().safeDrawingPadding(),
-                    viewportModifier=Modifier.drawWithContent {
+                    viewportModifier=Modifier.onGloballyPositioned { layout ->
+                        val origin=layout.positionOnScreen()
+                        viewportLayout.set(Rect(origin.x.roundToInt(),origin.y.roundToInt(),
+                            origin.x.roundToInt()+layout.size.width,origin.y.roundToInt()+layout.size.height))
+                    }.drawWithContent {
                         drawContent()
                         if(visible!=null) times.composeRecord.compareAndSet(0,SystemClock.elapsedRealtimeNanos())
                     },gpuSession=owner,gpuReady=exact,gpuPresentedValues=presented,initialGuide=visible,info={})
@@ -235,11 +277,12 @@ class InitialPreviewSurfaceTimingAndroidTest {
                             val saveBounds=Rect().also { save.getBoundsInScreen(it) }
                             tap(saveBounds)
                             assertEquals("View disabled tap never invokes callback",0,saveCalls.get())
+                            guideCapture=screen(File(output,"guide.png"))
+                            recordNodeKinds(File(output,"guide-nodes.local.json"))
                             guideViewport=imageBounds()
                             valueBounds.clear()
-                            valueBounds.addAll(parameterButtonBounds(enabled = false))
-                            guideCapture=screen(File(output,"guide.png"))
-                            assertBlackLetterbox(checkNotNull(guideCapture),checkNotNull(guideViewport))
+                            if(verifyParameterNodes) valueBounds.addAll(parameterButtonBounds(enabled = false))
+                            if(verifyParameterNodes) assertBlackLetterbox(checkNotNull(guideCapture),checkNotNull(guideViewport))
                         }
                     }
                 times.start.set(SystemClock.elapsedRealtimeNanos())
@@ -271,10 +314,10 @@ class InitialPreviewSurfaceTimingAndroidTest {
                         assertFalse("guide and exact display differ",requireNotNull(guideCapture).sameAs(exactCapture))
                         assertNotNull(find(developCaption(false,false).body))
                         val viewport=imageBounds()
-                        assertEquals("same image viewport",guideViewport,viewport)
-                        assertEquals("three parameter button positions/sizes unchanged",valueBounds,
+                        if(verifyParameterNodes) assertEquals("same image viewport",guideViewport,viewport)
+                        if(verifyParameterNodes) assertEquals("three parameter button positions/sizes unchanged",valueBounds,
                             parameterButtonBounds(enabled = true))
-                        assertBlackLetterbox(exactCapture,viewport)
+                        if(verifyParameterNodes) assertBlackLetterbox(exactCapture,viewport)
                         val draws=drawCount(owner)
                         val down=SystemClock.uptimeMillis()
                         touch(MotionEvent.ACTION_DOWN,viewport,down)
@@ -283,8 +326,21 @@ class InitialPreviewSurfaceTimingAndroidTest {
                             await { find(developCaption(true,false).body)!=null && drawCount(owner)>draws }
                             val baseline=screen(File(output,"baseline.png"))
                             try {
-                                assertEquals(viewport,imageBounds())
-                                assertBlackLetterbox(baseline,viewport)
+                                val baselineViewport=imageBounds()
+                                if(verifyParameterNodes) {
+                                    assertEquals(viewport,baselineViewport)
+                                    assertBlackLetterbox(baseline,viewport)
+                                }
+                                // All three PNGs exist before artifact-only spatial checks. Record any
+                                // mismatch rather than misreporting this capture as a strict UI pass.
+                                evidence.put("sameMeasuredViewport",guideViewport==viewport && viewport==baselineViewport)
+                                    .put("guideLetterboxBlack",letterboxBlack(requireNotNull(guideCapture),checkNotNull(guideViewport)))
+                                    .put("exactLetterboxBlack",letterboxBlack(exactCapture,viewport))
+                                    .put("baselineLetterboxBlack",letterboxBlack(baseline,baselineViewport))
+                                    .put("viewportMeaning","mixed layout/semantic observation, not a rendered-pixel bounds proof; excludes overlay-clipped accessibility bottom")
+                                    .put("guideMeasuredViewport",rectJson(checkNotNull(guideViewport)))
+                                    .put("exactMeasuredViewport",rectJson(viewport))
+                                    .put("baselineMeasuredViewport",rectJson(baselineViewport))
                                 evidence.put("viewport",JSONArray(listOf(viewport.left,viewport.top,viewport.right,viewport.bottom)))
                                     .put("guideVsBaseline",pixelDifference(requireNotNull(guideCapture),baseline,viewport))
                                     .put("exactVsBaseline",pixelDifference(exactCapture,baseline,viewport))
@@ -325,6 +381,21 @@ class InitialPreviewSurfaceTimingAndroidTest {
                 .put("javaUsedBytes",runtime.totalMemory()-runtime.freeMemory())
         }
     }
+    private fun recordNodeKinds(file: File) {
+        val records=JSONArray()
+        val known=setOf("STRENGTH","色温度","明るさ","50","+0","+0.0")
+        fun walk(node: AccessibilityNodeInfo?) {
+            if(node==null) return
+            val bounds=Rect().also { node.getBoundsInScreen(it) }
+            records.put(JSONObject().put("class",node.className?.toString())
+                .put("label",node.text?.toString()?.takeIf { it in known } ?: "other")
+                .put("enabled",node.isEnabled).put("clickable",node.isClickable)
+                .put("bounds",JSONArray(listOf(bounds.left,bounds.top,bounds.right,bounds.bottom))))
+            for(i in 0 until node.childCount) walk(node.getChild(i))
+        }
+        fixture.automation.clearCache(); walk(fixture.fixtureRoot())
+        file.writeText(records.toString(2))
+    }
     private fun parameterButtonBounds(enabled: Boolean): List<Rect> {
         fixture.automation.clearCache()
         val root=checkNotNull(fixture.fixtureRoot())
@@ -336,22 +407,30 @@ class InitialPreviewSurfaceTimingAndroidTest {
         val bounds=labels.map { (label,value) ->
             val matches=mutableListOf<AccessibilityNodeInfo>()
             fun walk(node: AccessibilityNodeInfo) {
-                if(node.className?.toString()=="android.widget.Button") {
-                    val tokens=texts(node).split(Regex("\\s+")).filter { it.isNotBlank() }
-                    if(label in tokens && value in tokens) matches.add(node)
-                }
+                // Match the visible key label, then its clickable ancestor, as DevelopViewAndroidTest
+                // does. Compose selected keys need not map to android.widget.Button.
+                if(node.text?.toString()==label) matches.add(actionNode(node))
                 for(i in 0 until node.childCount) node.getChild(i)?.let(::walk)
             }
             walk(root)
             assertEquals("one parameter button: $label",1,matches.size)
             val node=matches.single()
+            val tokens=texts(node).split(Regex("\\s+")).filter { it.isNotBlank() }
+            assertTrue("parameter value: $label",value in tokens)
             assertEquals("parameter enabled state: $label",enabled,node.isEnabled)
             Rect().also { node.getBoundsInScreen(it); assertFalse(it.isEmpty) }
         }
         assertEquals(3,bounds.distinct().size)
         return bounds
     }
-    private fun imageBounds(): Rect = Rect().also { checkNotNull(find("現像結果（表示用）")).getBoundsInScreen(it) }
+    private fun imageBounds(): Rect {
+        val visible=Rect().also { checkNotNull(find("現像結果（表示用）")).getBoundsInScreen(it) }
+        val layout=checkNotNull(viewportLayout.get())
+        // Accessibility reports the visible region clipped by the loading/status overlay.
+        // Its top excludes the caption; the actual Compose layout supplies the unclipped bottom.
+        check(visible.top>=layout.top && visible.top<layout.bottom)
+        return Rect(layout.left,visible.top,layout.right,layout.bottom)
+    }
     private fun assertNoGuideValueWarnings() {
         fixture.automation.clearCache()
         fun walk(node: AccessibilityNodeInfo?) {
@@ -381,6 +460,11 @@ class InitialPreviewSurfaceTimingAndroidTest {
         for(y in listOf(rect.top+rect.height()/8,rect.bottom-rect.height()/8))
             assertEquals("image letterbox is pure black",Color.BLACK,bitmap.getPixel(rect.centerX(),y))
     }
+    private fun rectJson(rect: Rect)=JSONArray(listOf(rect.left,rect.top,rect.right,rect.bottom))
+    private fun letterboxBlack(bitmap: Bitmap,rect: Rect): Boolean =
+        listOf(rect.top+rect.height()/8,rect.bottom-rect.height()/8).all { y ->
+            bitmap.getPixel(rect.centerX(),y)==Color.BLACK
+        }
     private fun peakRgb(bitmap: Bitmap,rect: Rect): Int {
         var peak=0
         for(y in rect.top.coerceAtLeast(0) until rect.bottom.coerceAtMost(bitmap.height))
