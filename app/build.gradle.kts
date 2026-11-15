@@ -3,6 +3,9 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Explicit private evaluation app. Default builds and the installed product stay unchanged.
+val previewCompare = providers.gradleProperty("cinematicPreviewCompare").orNull == "true"
+
 // Host-only shader regression tests. Nothing is added to an APK or a normal test run.
 val gpuMesa = providers.gradleProperty("cinematicGpuMesa").orNull == "true"
 
@@ -11,6 +14,7 @@ val cinematicSigningMode = providers.environmentVariable("CINEMATIC_SIGNING_MODE
 require(cinematicSigningMode in setOf("ephemeral_debug", "stable_internal")) {
     "CINEMATIC_SIGNING_MODE must be ephemeral_debug or stable_internal"
 }
+require(!previewCompare || cinematicSigningMode == "ephemeral_debug") { "Comparison builds must not use product signing credentials" }
 val stableInternalSigning = cinematicSigningMode == "stable_internal"
 fun requiredSigningInput(name: String): String = providers.environmentVariable(name).orNull
     ?.takeIf { it.isNotBlank() } ?: throw GradleException("Stable internal signing requires environment input: $name")
@@ -25,8 +29,10 @@ android {
         cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" }
     }
     defaultConfig {
-        applicationId = "dev.cinematic.p0"
+        applicationId = if (previewCompare) "dev.cinematic.p0.previewcompare" else "dev.cinematic.p0"
         buildConfigField("boolean", "EDITOR_PREVIEW_DIAGNOSTIC", "false")
+        buildConfigField("boolean", "PRIVATE_PREVIEW_COMPARE", previewCompare.toString())
+        externalNativeBuild.cmake.arguments += "-DCINEMATIC_PRIVATE_PREVIEW_COMPARE=${if (previewCompare) "ON" else "OFF"}"
         minSdk = 33
         targetSdk = 37
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
@@ -35,6 +41,12 @@ android {
         versionName = providers.environmentVariable("CINEMATIC_VERSION_NAME").orNull ?: "0.0.10-p05"
     }
     buildFeatures { compose = true; buildConfig = true }
+    if (previewCompare) {
+        lint.lintConfig = file("src/previewCompare/lint.xml")
+        sourceSets.getByName("main").manifest.srcFile("src/previewCompare/AndroidManifest.xml")
+        sourceSets.getByName("debug").kotlin.srcDir("src/previewCompare/java")
+        sourceSets.getByName("androidTest").kotlin.srcDir("src/previewCompareAndroidTest/java")
+    }
     // Legacy CPU trial safety fixtures stay executable in tests, never in an app APK.
     sourceSets.getByName("test").kotlin.srcDir("src/testSupport/java")
     sourceSets.getByName("androidTest").kotlin.srcDir("src/testSupport/java")
@@ -114,6 +126,9 @@ if (gpuMesa) {
         }
     }
 }
+// Evaluation is opt-in, separate-ID and Debug-only. No publishable Release variant.
+if (previewCompare) androidComponents.beforeVariants(androidComponents.selector().withBuildType("release")) { it.enable = false }
+
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2026.09.00"))
     implementation("androidx.activity:activity-compose:1.13.0")

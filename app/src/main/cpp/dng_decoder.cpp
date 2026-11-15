@@ -456,3 +456,10 @@ Java_dev_cinematic_p0_jpegrender_original_NativePreviewQualityTest_decode(JNIEnv
     return decodeRaster(env, fd, outputFd, signal, cinematic::OriginalRasterSink::Output::Full, quality);
 }
 #endif
+#if defined(CINEMATIC_PRIVATE_PREVIEW_COMPARE) && !defined(CINEMATIC_ENABLE_RAW_PROBE)
+extern "C" JNIEXPORT jstring JNICALL
+Java_dev_cinematic_p0_previewcompare_NativeCompareDecoder_decodePpg(JNIEnv* env, jobject,
+    jint fd, jint outputFd, jobject signal) {
+    return decodeRaster(env, fd, outputFd, signal, cinematic::OriginalRasterSink::Output::Full, 2);
+}
+#endif
