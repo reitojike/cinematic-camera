@@ -89,6 +89,111 @@ class HalfPreviewComparisonAndroidTest {
         } finally { persist() }
     }
 
+    /** Test-only decomposition. No JPEG, adoption, timing claim or product switch. */
+    @Test fun separateLinearInputFromGpuStages() {
+        requireGpuInputSafetyFixture()
+        val args = InstrumentationRegistry.getArguments()
+        check(args.getString("halfPreviewDecomposition") == "true")
+        val run = checkNotNull(args.getString("halfPreviewRunId"))
+        require(run.matches(Regex("[A-Za-z0-9_-]{1,80}")))
+        val commit = checkNotNull(args.getString("halfPreviewSourceCommit"))
+        require(commit.matches(Regex("[a-f0-9]{40}")))
+        val out = File(checkNotNull(app.getExternalFilesDir("half-preview-review")), run)
+        check(!out.exists() && out.mkdirs())
+        val rows = JSONArray()
+        val result = JSONObject().put("status", "incomplete").put("syntheticOnly", true)
+            .put("sourceCommit", commit).put("runId", run).put("cases", rows)
+            .put("conditions", "Both inputs use full-input photo analysis; local GPU quantiles remain input-dependent. Strength zero disables look mixing, not R7. All metrics are linear RGB, no clipping or resampling.")
+        fun persist() = File(out, "decomposition.json").writeText(result.toString(2))
+        persist()
+        try {
+            for (case in cases) {
+                val work = File(app.cacheDir, "decomposition-$run-${case.id}")
+                check(!work.exists() && work.mkdir())
+                val sourceFile = File(work, "synthetic.dng")
+                sourceFile.outputStream().use { stream -> writeSyntheticTrialDng(stream, case.width, case.height, case.orientation) { x, y -> sample(case, x, y) } }
+                val source = SharedOriginalReference("content://example.test/decomposition/${case.id}",
+                    DngContentVerifier.identify(sourceFile.length(), { sourceFile.inputStream() }), OriginalGrant.USER_SELECTED)
+                val geometry = ParcelFileDescriptor.open(sourceFile, ParcelFileDescriptor.MODE_READ_ONLY).use {
+                    Original24Preflight.inspect(it.fd, CancellationSignal())
+                }
+                fun load(mode: PreviewRasterMode) = Original24PreviewSession(source, File(work, mode.name), {}, geometry,
+                    rasterMode = mode) { sourceFile.inputStream() }.use { session ->
+                    session.loadGpuAsShotInput().also { assertFalse(session.hasUnreleasedResources) }
+                }
+                val full = load(PreviewRasterMode.FULL)
+                val half = load(PreviewRasterMode.HALF_CANDIDATE)
+                assertEquals(full.width, half.width); assertEquals(full.height, half.height)
+                val prepared = R7PreviewInputs.prepare(R7PreviewInputs.AsShotInput(full,
+                    R7PreviewInputs.Source.LIBRAW_PRELIMINARY_AS_SHOT), emptyList()).exposure
+                val fixed = GpuPhotoAnalysis(prepared.externalBaseEv, prepared.centralP97)
+                val row = JSONObject().put("id", case.id).put("width", full.width).put("height", full.height)
+                    .put("sourceSha256", sha(sourceFile)).put("fixedBaseEv", fixed.meteredBaseEv)
+                    .put("manualEv", case.ev).put("fixedCentralP97", fixed.centralP97)
+                    .put("inputLinear", linearDifferences(half, full))
+                for (strength in listOf(0.0, case.strength)) {
+                    val params = GpuRenderParams(strength, PhotoAdjustments(0.0, case.ev))
+                    val fullStages = stageSamples(full, params, fixed)
+                    val halfStages = stageSamples(half, params, fixed)
+                    val stages = JSONObject()
+                    for (point in fullStages.keys) stages.put(point.name,
+                        linearDifferences(checkNotNull(halfStages[point]), checkNotNull(fullStages[point])))
+                    row.put("strength$strength", stages)
+                }
+                DngContentVerifier.verify(source.fingerprint, { sourceFile.inputStream() })
+                rows.put(row)
+                check(work.deleteRecursively())
+                persist()
+            }
+            result.put("status", "complete").put("gl", glInfo)
+        } finally { persist() }
+    }
+
+    private fun linearDifferences(actual: LinearSrgbImage, reference: LinearSrgbImage): JSONObject {
+        check(actual.width == reference.width && actual.height == reference.height)
+        var sum = 0.0; var maximum = 0.0; var chroma = 0.0
+        for (p in 0 until actual.width * actual.height) {
+            for (c in 0..2) {
+                val delta = abs(actual[p * 3 + c].toDouble() - reference[p * 3 + c])
+                check(delta.isFinite()); sum += delta; maximum = max(maximum, delta)
+            }
+            // Color-difference error relative to green, not a perceptual metric or neutral-color assumption.
+            for (c in 0..2 step 2) chroma += abs((actual[p * 3 + c].toDouble() - actual[p * 3 + 1]) -
+                (reference[p * 3 + c].toDouble() - reference[p * 3 + 1]))
+        }
+        val count = actual.width.toDouble() * actual.height
+        return JSONObject().put("maeLinearRgb", sum / (count * 3)).put("maxLinearRgb", maximum)
+            .put("maeRgBgDifference", chroma / (count * 2))
+    }
+
+    private fun stageSamples(input: LinearSrgbImage, params: GpuRenderParams, fixed: GpuPhotoAnalysis)
+        : Map<GpuStageTap.Point, LinearSrgbImage> = GlThread().use { thread -> thread.call {
+        EglContexts(thread, app.assets).use { egl ->
+            GlCapabilities.inspect(egl).requireSupported()
+            glInfo = JSONObject().put("renderer", GLES32.glGetString(GLES32.GL_RENDERER))
+                .put("version", GLES32.glGetString(GLES32.GL_VERSION))
+            val ledger = GpuMemoryLedger(GpuMemoryLedger.PREVIEW_BUDGET)
+            val stages = linkedMapOf<GpuStageTap.Point, LinearSrgbImage>()
+            DefaultStageClearGpu(egl, ledger) { texture, _ ->
+                val connected = ConnectedStageClearGpuPipeline(texture, fixed, GpuFrameMode.FULL_RECOMPUTE)
+                object : StageClearGpuPipeline {
+                    override fun render(params: GpuRenderParams, tap: ((GpuStageTap.Point, GpuTexture) -> Unit)?,
+                        consume: (GpuTexture, GpuDecisions) -> Unit) = connected.render(params, { point, image ->
+                        if (point == GpuStageTap.Point.R7_FINAL || point == GpuStageTap.Point.SHOULDER)
+                            stages[point] = GpuStageTap.readRgb(egl, image)
+                        tap?.invoke(point, image)
+                    }, consume)
+                    override fun close() = connected.close()
+                }
+            }.use { engine -> engine.openPhoto(input) { false }.use { photo ->
+                engine.renderForTest(photo, params, GpuStageTap.Point.SHOULDER)
+            } }
+            assertEquals(setOf(GpuStageTap.Point.R7_FINAL, GpuStageTap.Point.SHOULDER), stages.keys)
+            assertEquals(0, ledger.textureCount); assertEquals(0L, ledger.allocatedBytes)
+            stages
+        }
+    } }
+
     private fun capture(case: Case, work: File, out: File): JSONObject {
         val input = File(work, "synthetic.dng")
         input.outputStream().use { stream -> writeSyntheticTrialDng(stream, case.width, case.height, case.orientation) { x, y ->
