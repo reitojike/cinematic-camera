@@ -158,6 +158,20 @@ class InitialPreviewSurfaceTimingAndroidTest {
         }
     }
 
+    /** Android may expose the label as a child of the actionable Compose node. */
+    private fun actionNode(label: AccessibilityNodeInfo): AccessibilityNodeInfo {
+        val labelBounds=Rect().also { label.getBoundsInScreen(it) }
+        var current=label
+        while(true) {
+            check(current.refresh()) { "Stale action node" }
+            if(current.isClickable) {
+                val bounds=Rect().also { current.getBoundsInScreen(it) }
+                check(bounds.contains(labelBounds)) { "Action node does not contain label" }
+                return current
+            }
+            current=checkNotNull(current.parent) { "No actionable ancestor for save label" }
+        }
+    }
     private fun run(source: SharedOriginalReference, geometry: Original24PreflightGeometry,
         input: File, scratch: File, fallback: Boolean, capture: Boolean, output: File): Times {
         val times=Times(fallback,capture)
@@ -213,7 +227,7 @@ class InitialPreviewSurfaceTimingAndroidTest {
                             assertNotNull(find("RAW基準の案内画像・調整は未反映"))
                             assertFalse("comparison disabled before exact",hasComparisonAction())
                             assertNoGuideValueWarnings()
-                            val save=checkNotNull(find("JPEGを保存"))
+                            val save=actionNode(checkNotNull(find("JPEGを保存")))
                             assertFalse("guide save control disabled",save.isEnabled)
                             val saveBounds=Rect().also { save.getBoundsInScreen(it) }
                             tap(saveBounds)

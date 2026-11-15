@@ -74,7 +74,7 @@ class InitialPreviewProductSurfaceAndroidTest {
                         await { drawRecorded.get() && containsLabel(frame.label) }
                         // View gate only: production Editor canSave is independently guarded by
                         // ready/presented/metadata/save-owner; this fixture does not prove that gate.
-                        val save=checkNotNull(findLabel("JPEGを保存"))
+                        val save=actionNode(checkNotNull(findLabel("JPEGを保存")))
                         assertFalse(save.isEnabled)
                         val bounds=Rect().also { save.getBoundsInScreen(it) }
                         val down=SystemClock.uptimeMillis()
@@ -124,6 +124,20 @@ class InitialPreviewProductSurfaceAndroidTest {
                 GpuPhotoRollRetiredOwners.releaseBeforeOpen()
                 allocations.forEach { if(!it.isRecycled) it.recycle() }
             }
+        }
+    }
+    /** Android may expose the label as a child of the actionable Compose node. */
+    private fun actionNode(label: AccessibilityNodeInfo): AccessibilityNodeInfo {
+        val labelBounds=Rect().also { label.getBoundsInScreen(it) }
+        var current=label
+        while(true) {
+            check(current.refresh()) { "Stale action node" }
+            if(current.isClickable) {
+                val bounds=Rect().also { current.getBoundsInScreen(it) }
+                check(bounds.contains(labelBounds)) { "Action node does not contain label" }
+                return current
+            }
+            current=checkNotNull(current.parent) { "No actionable ancestor for save label" }
         }
     }
     private fun findLabel(label: String): AccessibilityNodeInfo? {
