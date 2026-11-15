@@ -53,7 +53,7 @@ try {
   $null=Read-InstanceEvidence $path $live 'emulator-5600' $config $boot 'fixture'
   Reject {Read-InstanceEvidence $secondPath $live 'emulator-5600' $config $boot 'fixture'}
  }
- Check launcherPrecision {$time=[DateTime]'2026-11-15T00:00:00Z';$net=[pscustomobject]@{Id=10;HasExited=$false;StartTime=$time.AddTicks(3)};$cim=[pscustomobject]@{ProcessId=10;CreationDate=$time};$id=New-LauncherIdentity $net $cim;if($id.startedUtc -cne $time.ToString('o')){throw 'CIM identity not retained'}}
+ Check launcherPrecision {$time=[DateTime]'2026-11-15T00:00:00Z';$net=[pscustomobject]@{Id=10;HasExited=$false;StartTime=$time.AddTicks(3)};$cim=[pscustomobject]@{ProcessId=10;CreationDate=$time};$id=New-LauncherIdentity $net $cim;if($id.startedUtc -cne $time.ToUniversalTime().ToString('o')){throw 'CIM identity not retained'}}
  Check launcherPrecisionDoesNotHideReuse {$time=[DateTime]'2026-11-15T00:00:00Z';$net=[pscustomobject]@{Id=10;HasExited=$false;StartTime=$time.AddTicks(3)};$cim=[pscustomobject]@{ProcessId=10;CreationDate=$time.AddTicks(10)};Reject {New-LauncherIdentity $net $cim}}
  Check launcherExited {$net=[pscustomobject]@{Id=10;HasExited=$true};Reject {New-LauncherIdentity $net ([pscustomobject]@{ProcessId=10})}}
  Check cleanupUnattributed {if(Test-CleanupOwnership $null $live){throw 'Unattributed process must not be killed'}}
