@@ -45,7 +45,7 @@ internal object SaveRecoveryColdUiProbe {
                 val expected = if (boundary == "b-cursor") old.copy(generation = old.generation + 1) else old
                 await("cold metadata and controls") {
                     AndroidManualOriginalTrialSaves.knownPrepared(old.source)?.request == expected &&
-                        action(if (boundary == "b-cursor") "JPEGを保存" else "保存結果を確認・保存し直す") != null
+                        action(if (boundary == "b-cursor") "JPEGを保存" else "保存結果を確認") != null
                 }
                 val handle = requireNotNull(AndroidManualOriginalTrialSaves.knownPrepared(old.source))
                 assertEquals(old.strength, handle.appliedStrength, 0.0) // draft is deliberately .35
@@ -66,12 +66,12 @@ internal object SaveRecoveryColdUiProbe {
                 }
                 assertFalse(sawForegroundOwner.get())
                 if (boundary == "intent" || unknown != null) {
-                    click("保存結果を確認・保存し直す"); click("もう一度確認")
+                    click("保存結果を確認"); click("もう一度確認")
                     val positive = boundary in setOf("unknown-complete", "unknown-public")
                     await("recheck result through product owner") {
                         if (positive) handle.state.value.phase == ManualOriginalTrialSavePhase.PUBLISHED &&
                             action("保存したJPEGを照合して開く") != null
-                        else action("保存結果を確認・保存し直す") != null
+                        else action("保存結果を確認") != null
                     }
                     assertArrayEquals(before, intent(app, expected))
                     if (unknown == null) {
@@ -97,7 +97,7 @@ internal object SaveRecoveryColdUiProbe {
                 }
                 if (publishExplicitly) {
                     if (boundary == "intent" || boundary == "unknown-partial") {
-                        click("保存結果を確認・保存し直す")
+                        click("保存結果を確認")
                         click("重複の可能性はあるが保存し直す")
                     } else click("JPEGを保存")
                     await("explicit FGS publication", 180_000) {

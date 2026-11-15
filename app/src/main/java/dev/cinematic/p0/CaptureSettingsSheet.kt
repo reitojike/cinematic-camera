@@ -83,7 +83,7 @@ private data class SettingsChange(val epoch: Int, val section: String, val targe
     val compact = captureNeedsFullScroll(maxWidth.value, maxHeight.value, 1f, 240f, minWidthDp = 0f)
     Column(if (compact) Modifier.fillMaxSize().verticalScroll(rememberScrollState()) else Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("撮影設定", Modifier.weight(1f), color = CaptureDesign.Text, fontSize = 15.sp)
+            Text("撮影設定", Modifier.weight(1f), color = CaptureDesign.Text, style = CaptureDesign.Title)
             Text("${probe.mode} · ID ${probe.selectedId ?: "—"}", style = CaptureDesign.Label, color = CaptureDesign.Muted)
             CaptureTextAction(MessageControl(MessageAction.CLOSE, "×", description = "閉じる"),
                 onAction = { close() }, modifier = Modifier.size(44.dp))
@@ -206,7 +206,7 @@ private data class SettingsChange(val epoch: Int, val section: String, val targe
 @Composable internal fun CaptureResetDialog(dismiss: () -> Unit, reset: () -> Unit) {
     CaptureDialog(MessageDialog("撮影制御をリセット", "露出だけのAUTOとは別の操作です。",
         close = MessageControl(MessageAction.CLOSE, "取消"),
-        confirm = MessageControl(MessageAction.CONFIRM, "全リセット")),
+        confirm = MessageControl(MessageAction.CONFIRM, "全リセット", emphasis = true)),
         onDismissRequest = dismiss,
         onAction = { if (it == MessageAction.CONFIRM) reset() else dismiss() }) {
         listOf("露出 AUTO", "EV 0.0", "FOCUS AF", "WB 標準", "照明対策 既定", "ロック 解除").chunked(3).forEach { row ->

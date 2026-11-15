@@ -22,6 +22,7 @@ internal data class DevelopMessageState(
     val retryEnabled: Boolean = false,
     val rechecking: Boolean = false,
     val justPublished: Boolean = false,
+    val sourceInvalid: Boolean = false,
 )
 
 internal data class DevelopSavePresentation(
@@ -68,7 +69,7 @@ internal fun developMessages(
     val presentation = developSavePresentation(state)
     candidates += UiMessage(MessageSlot.CHIP, presentation.tone, presentation.label, "save.summary")
     val resume = MessageControl(MessageAction.RESUME_PREVIEW, "プレビューを再開", state.canResumePreview)
-    val recover = MessageControl(MessageAction.RECHECK_SAVE, "保存結果を確認・保存し直す", state.canRecover)
+    val recover = MessageControl(MessageAction.RECHECK_SAVE, "保存結果を確認", state.canRecover)
     val retry = MessageControl(MessageAction.RETRY, "再試行", state.retryEnabled)
     val uncertain = state.savePhase in setOf(PhotoRollSavePhase.HOLD, PhotoRollSavePhase.UNCONFIRMED)
 
@@ -90,7 +91,8 @@ internal fun developMessages(
         state.phase == PhotoRollPhase.BLOCKED -> candidates += UiMessage(
             MessageSlot.PROBLEM, CaptureChromeTone.FAILURE,
             state.gpuFailure?.reason ?: state.message ?: "画像を表示できません。再試行してください。",
-            "develop.failure", title = state.gpuFailure?.title ?: "画像を表示できません", primary = retry)
+            "develop.failure", title = if (state.sourceInvalid) "原本を読み込めません" else state.gpuFailure?.title ?: "画像を表示できません",
+            primary = if (state.sourceInvalid) MessageControl(MessageAction.BACK_TO_LIST, "一覧に戻る", state.canLeave) else retry)
         state.savePhase == PhotoRollSavePhase.GPU_FAILED -> candidates += UiMessage(
             MessageSlot.PROBLEM, CaptureChromeTone.FAILURE,
             state.saveFailureMessage ?: "JPEGの保存に失敗しました。再試行してください。",
@@ -143,4 +145,10 @@ internal fun developFailureFallback(canLeave: Boolean) = UiMessage(
     "画面の表示を確認できません。一覧に戻ってください。", "develop.invalid_failure",
     title = "現像を続けられません",
     primary = MessageControl(MessageAction.BACK_TO_LIST, "一覧に戻る", canLeave),
+)
+
+/** Tone comes from the operation, never from matching user-facing text. */
+internal fun developOperationNotice(text: String, tone: CaptureChromeTone) = UiMessage(
+    if (tone == CaptureChromeTone.FAILURE) MessageSlot.BANNER else MessageSlot.TOAST,
+    tone, text, "develop.operation_notice",
 )

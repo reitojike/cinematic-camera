@@ -52,7 +52,7 @@ internal fun libraryAccessActions(access: CameraRollAccess, permissionEnabled: B
     settingsEnabled: Boolean, shownBannerFact: String? = null): List<MessageControl> {
     if ((access.images && access.videos) || shownBannerFact == "library.access_limited") return emptyList()
     return listOf(
-        MessageControl(MessageAction.CHOOSE_AGAIN, if (access.selected) "選び直す" else "アクセス許可・選び直す", permissionEnabled),
+        MessageControl(MessageAction.CHOOSE_AGAIN, if (access.selected) "選び直す" else "アクセスを許可", permissionEnabled),
         MessageControl(MessageAction.OPEN_SETTINGS, "設定", settingsEnabled),
     )
 }

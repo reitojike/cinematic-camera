@@ -7,6 +7,13 @@ import org.junit.Test
 import java.io.IOException
 
 class GpuPhotoRollProblemMessageTest {
+    @Test fun sourceClassificationUsesOnlyExistingExceptionTypes() {
+        for (failure in listOf(PhotoRollSourceFailure("source"), SecurityException(),
+            dev.cinematic.p0.rawcapture.DngContentChanged())) assertTrue(gpuPhotoRollSourceInvalid(failure))
+        for (failure in listOf(null, IOException("source changed"), Original24MemoryUnavailable(),
+            IOException(SecurityException()))) assertFalse(gpuPhotoRollSourceInvalid(failure))
+    }
+
     @Test fun memoryRetryPreservesExportOwnerAndUsablePreview() {
         for (hasInput in listOf(true, false)) for (failed in listOf(true, false))
             assertFalse(gpuMemoryRetryNeedsReopen(true, hasInput, failed))

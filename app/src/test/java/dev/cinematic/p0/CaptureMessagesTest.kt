@@ -4,6 +4,19 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CaptureMessagesTest {
+    @Test fun recoveryCanPlaceUnemphasizedRiskyConfirmationLastWithoutChangingControls() {
+        val close = MessageControl(MessageAction.CLOSE, "close", enabled = false)
+        val confirm = MessageControl(MessageAction.CONFIRM, "confirm", enabled = false)
+        val normal = MessageDialog("title", "body", close, confirm)
+        assertEquals(listOf(confirm, close), normal.actionsInDisplayOrder())
+        val recovery = normal.copy(confirmationLast = true)
+        assertEquals(listOf(close, confirm), recovery.actionsInDisplayOrder())
+        assertSame(confirm, recovery.actionsInDisplayOrder().last())
+        assertFalse(recovery.actionsInDisplayOrder().last().emphasis)
+        assertFalse(recovery.actionsInDisplayOrder().last().enabled)
+        assertEquals(listOf(close), MessageDialog("title", "body", close).actionsInDisplayOrder())
+    }
+
     private fun message(slot: MessageSlot, tone: CaptureChromeTone = CaptureChromeTone.NORMAL,
         fact: String = slot.name, progress: Boolean = false) = UiMessage(
         slot, tone, "利用者向けの説明", fact,

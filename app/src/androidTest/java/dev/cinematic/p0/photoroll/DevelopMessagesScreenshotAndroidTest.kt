@@ -67,6 +67,14 @@ class DevelopMessagesScreenshotAndroidTest {
             supported = true, active = true, held = false, stopping = false,
             foreground = true, notificationsAllowed = false, canRequestNotifications = true)
         val cases = listOf(
+            Case("19-source-changed", ready.copy(phase = PhotoRollPhase.BLOCKED, sourceInvalid = true,
+                message = "原本の内容が変わりました。Filesから選び直してください。"),
+                listOf("原本を読み込めません", "一覧に戻る")),
+            Case("20-source-permission", ready.copy(phase = PhotoRollPhase.BLOCKED, sourceInvalid = true,
+                message = "原本の読み取り権限がありません。Filesから選び直してください。"),
+                listOf("原本を読み込めません", "一覧に戻る")),
+            Case("21-settings-kept", ready, listOf("調整設定をこの端末に保持しました。JPEGの保存とは別です。"),
+                listOf(developOperationNotice("調整設定をこの端末に保持しました。JPEGの保存とは別です。", CaptureChromeTone.ACCEPTED))),
             Case("01-preparing", DevelopMessageState(PhotoRollPhase.CHECKING), listOf("画像を準備しています。")),
             Case("02-ready", ready, listOf("未保存")),
             Case("03-editing", ready.copy(editing = true), listOf("調整中")),
@@ -81,9 +89,9 @@ class DevelopMessagesScreenshotAndroidTest {
             Case("08-low-memory", ready.copy(phase = PhotoRollPhase.BLOCKED, memoryProblem = memory),
                 listOf("処理を続けられません", "原本は変更していません。")),
             Case("09-unconfirmed", ready.copy(savePhase = PhotoRollSavePhase.UNCONFIRMED, exportPaused = true,
-                canRecover = true), listOf("保存未確認", "保存結果を確認・保存し直す")),
+                canRecover = true), listOf("保存未確認", "保存結果を確認")),
             Case("10-hold", ready.copy(savePhase = PhotoRollSavePhase.HOLD, exportPaused = true,
-                canRecover = true), listOf("保存結果を確認できません", "保存結果を確認・保存し直す")),
+                canRecover = true), listOf("保存結果を確認できません", "保存結果を確認")),
             Case("11-rechecking", ready.copy(savePhase = PhotoRollSavePhase.HOLD, exportPaused = true,
                 saving = true, rechecking = true), listOf("保存結果を確認しています。")),
             Case("12-published-feedback", ready.copy(savePhase = PhotoRollSavePhase.PUBLISHED, justPublished = true),
@@ -117,6 +125,8 @@ class DevelopMessagesScreenshotAndroidTest {
             "11" to listOf(false, false, false), "12" to listOf(true, true, false),
             "15" to listOf(false, false, false), "16" to listOf(true, false, true),
             "17" to listOf(false, false, false), "18" to listOf(false, false, false),
+            "19" to listOf(false, false, false), "20" to listOf(false, false, false),
+            "21" to listOf(true, true, false),
         )
         cases.forEach { case ->
             val snapshot = fixtureState(case.state)
@@ -189,7 +199,7 @@ class DevelopMessagesScreenshotAndroidTest {
                     if (recovery.value) MessageDialog("前回の保存結果を確認できません",
                         "保存先に JPEG がある可能性があります。保存し直す場合は、前回と同じ設定で別の JPEG を作ります。原本と前回の記録は保持します。",
                         MessageControl(MessageAction.CLOSE, "今は保存しない"),
-                        MessageControl(MessageAction.CONFIRM, "重複の可能性はあるが保存し直す"))
+                        MessageControl(MessageAction.CONFIRM, "重複の可能性はあるが保存し直す"), confirmationLast = true)
                     else MessageDialog("原本と現像について", "原本は読み取り専用です。コピー・上書き・公開は行いません。",
                         MessageControl(MessageAction.CLOSE, "閉じる")),
                     onDismissRequest = {}, onAction = {},
