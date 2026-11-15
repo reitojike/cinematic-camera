@@ -1,7 +1,7 @@
 # 実写 AHD / PPG 比較版
 
 ## 現在地
-ローカル検証完了、GitHub CI の最終状態は PR #441 を参照。#438 上の積み重ね Draft であり、main への採用変更ではない。
+記載した範囲のローカル検証が完了。GitHub CI の最終状態は PR #441 を参照。#438 上の積み重ね Draft であり、main への採用変更ではない。
 実写アクセス、Pixel操作、比較APKの配布/公開はまだ行っていない。本人が接続時に明示承認してから開始する。
 
 ## 安全境界
@@ -29,8 +29,9 @@ AHD/PPGを同じ拡大位置で切り替える。ピンチで最大6倍に拡大
 - opt-in比較版app/testAPKと限定manifest用lint成功。
 - 通常Debug/Releaseのarm64-v8a・x86_64とも比較専用JNIなし。通常Debug APKに比較Activityなし。
 - 比較APKの権限はAndroidXの署名限定内部receiver用だけ。通信/カメラ/マイク/共有ストレージ権限なし。
-- AOSP AVD合成8試験成功：世代、正常AHD/PPG表示、原本不変、取消、原本変更検知、読取不能、cleanup失敗後の再開禁止、Activity再生成/背景化。
+- AOSP AVD合成8試験成功：世代、正常AHD/PPG表示、原本不変、開始前の取消、原本変更検知、読取不能、cleanup失敗後の再開禁止、Activity再生成/背景化。
   cleanup故障試験は合成の削除障害を作る小試験であり、全種類のOS/native故障の網羅ではない。
+  処理中のnative/GPU取消・実処理中の連続選択、権限喪失、OOM、native所有者の解放失敗の故障注入/接続試験は未実施。開始前取消を処理中取消の実証とは扱わない。
 - 実操作：FilesのDownloadsから合成DNGを選択→AHD完了→PPG切替を確認。写真の実物は使っていない。
 - 修正版の縦横UI領域を確認し、system bars/cutoutとの重なりを除去。
 - GPU90/帯28回帰成功。919af45fの通常製品出力は採用済み51b691adと全画素差0。
