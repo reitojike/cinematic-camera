@@ -1,0 +1,12 @@
+{
+  "realPhotosUsed": false,
+  "renderFlags": "host GuestAngle Vulkan read-only no-snapshot",
+  "sourceDimensions": "01-04:2050x1538;05:2051x1539 orientation6",
+  "emulator": "37.2.13.0",
+  "gpu": "RTX3070 driver32.0.16.2114",
+  "sourceCommit": "934056534fd5f4c1176e37386a27c21cd648672f",
+  "systemImage": "AOSP API37 default x86_64 revision6",
+  "appSha256": "1b20cdc620a3793312ea20c3a6cba9001612010e6e587d14cdd930322783b022",
+  "repetitions": "warmup1 measured3 rotated AHD/bilinear/PPG",
+  "testSha256": "31470365855fd0abcc8ac467448be174b2ca6a8e4c3027b922c996d1ad4cf716"
+}

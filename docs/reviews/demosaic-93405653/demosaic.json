@@ -1,0 +1,412 @@
+{
+  "status": "complete",
+  "sourceCommit": "934056534fd5f4c1176e37386a27c21cd648672f",
+  "runId": "demosaic-20261115-93405653",
+  "syntheticOnly": true,
+  "adopted": false,
+  "cases": [
+    {
+      "id": "01-gradients-colors",
+      "width": 1023,
+      "height": 768,
+      "sourceSha256": "f63355ff9c590515fcf32bde3826384b0762e88d330fd5c4c53f4057ee709a3e",
+      "manualEv": 0,
+      "strength": 0.5,
+      "ahd": {
+        "file": "01-gradients-colors-ahd.png",
+        "decodeNanos": [
+          1070725600,
+          1072154000,
+          1072033100
+        ],
+        "medianDecodeNanos": 1072033100,
+        "baseEv": -0.22088101863539567,
+        "vsAhdRgb8": {
+          "maeRgb8": 0,
+          "maxRgb8": 0,
+          "p99Rgb8": 0,
+          "changedPixelPercent": 0
+        },
+        "vsAhdLinear": {
+          "maeLinearRgb": 0,
+          "maxLinearRgb": 0,
+          "maeRgBgDifference": 0
+        }
+      },
+      "bilinear": {
+        "file": "01-gradients-colors-bilinear.png",
+        "decodeNanos": [
+          429372800,
+          423496600,
+          433187200
+        ],
+        "medianDecodeNanos": 429372800,
+        "baseEv": -0.22087162824616624,
+        "vsAhdRgb8": {
+          "maeRgb8": 0.005620723362658847,
+          "maxRgb8": 3,
+          "p99Rgb8": 0,
+          "changedPixelPercent": 1.6435779162593678
+        },
+        "vsAhdLinear": {
+          "maeLinearRgb": 2.246640649515766E-5,
+          "maxLinearRgb": 2.695322036743164E-4,
+          "maeRgBgDifference": 3.176421685918929E-5
+        }
+      },
+      "ppg": {
+        "file": "01-gradients-colors-ppg.png",
+        "decodeNanos": [
+          506608700,
+          526983900,
+          512548100
+        ],
+        "medianDecodeNanos": 512548100,
+        "baseEv": -0.22089401219206917,
+        "vsAhdRgb8": {
+          "maeRgb8": 0.001593556533072662,
+          "maxRgb8": 2,
+          "p99Rgb8": 0,
+          "changedPixelPercent": 0.47679415118931245
+        },
+        "vsAhdLinear": {
+          "maeLinearRgb": 6.225759324140319E-6,
+          "maxLinearRgb": 3.7384405732154846E-4,
+          "maeRgBgDifference": 8.978693151845203E-6
+        }
+      },
+      "saveBaseEv": -0.22015905418017678,
+      "saveJpeg": "01-gradients-colors-ahd-save.jpg",
+      "fileSha256": {
+        "01-gradients-colors-ahd.png": "d8fc53b938f852373286bec61823cef0260190a7f51736f219e98ed017b55bf7",
+        "01-gradients-colors-bilinear.png": "02f97dd119e337b04b07114852f87d12b30930e232e244105f60f613f6470c22",
+        "01-gradients-colors-ppg.png": "a5812701d89e3f7ecc0fe0a7d4bd4c13c3faa337ff78e1e10de49e1fec1be22a",
+        "01-gradients-colors-ahd-save.jpg": "cacf5c32def16b4aa2b57627e036474d234fdc82961137f1db2c888942cf02ff"
+      }
+    },
+    {
+      "id": "02-fine-detail",
+      "width": 1023,
+      "height": 768,
+      "sourceSha256": "b1f4ab5990b830cfa85be9c082c4ddbf537e0e842d2560829e4bd93ce2f814a2",
+      "manualEv": 0,
+      "strength": 0.5,
+      "ahd": {
+        "file": "02-fine-detail-ahd.png",
+        "decodeNanos": [
+          1095662400,
+          1078013700,
+          1087762500
+        ],
+        "medianDecodeNanos": 1087762500,
+        "baseEv": -0.33651909294318094,
+        "vsAhdRgb8": {
+          "maeRgb8": 0,
+          "maxRgb8": 0,
+          "p99Rgb8": 0,
+          "changedPixelPercent": 0
+        },
+        "vsAhdLinear": {
+          "maeLinearRgb": 0,
+          "maxLinearRgb": 0,
+          "maeRgBgDifference": 0
+        }
+      },
+      "bilinear": {
+        "file": "02-fine-detail-bilinear.png",
+        "decodeNanos": [
+          422876000,
+          428989600,
+          443783200
+        ],
+        "medianDecodeNanos": 428989600,
+        "baseEv": -0.33651909294318094,
+        "vsAhdRgb8": {
+          "maeRgb8": 27.737927833441947,
+          "maxRgb8": 212,
+          "p99Rgb8": 199,
+          "changedPixelPercent": 98.40300688334962
+        },
+        "vsAhdLinear": {
+          "maeLinearRgb": 0.10019374824822419,
+          "maxLinearRgb": 0.5945779383182526,
+          "maeRgBgDifference": 0.1444804914942655
+        }
+      },
+      "ppg": {
+        "file": "02-fine-detail-ppg.png",
+        "decodeNanos": [
+          503752700,
+          514732600,
+          516413000
+        ],
+        "medianDecodeNanos": 514732600,
+        "baseEv": -0.33651909294318094,
+        "vsAhdRgb8": {
+          "maeRgb8": 11.766200733816662,
+          "maxRgb8": 160,
+          "p99Rgb8": 95,
+          "changedPixelPercent": 93.28504297002281
+        },
+        "vsAhdLinear": {
+          "maeLinearRgb": 0.027278184475781987,
+          "maxLinearRgb": 0.4023002851754427,
+          "maeRgBgDifference": 0.0502959792494223
+        }
+      },
+      "saveBaseEv": -0.33651909294318094,
+      "saveJpeg": "02-fine-detail-ahd-save.jpg",
+      "fileSha256": {
+        "02-fine-detail-ahd.png": "8564314ea74831315711a6bad3ba987235ee7392e04e900fabd9ad9b3f9667b4",
+        "02-fine-detail-bilinear.png": "317e387fbf43a76744c4c737977f59a41073734ae2126c36c42082185a7e4a46",
+        "02-fine-detail-ppg.png": "695183f3b3442b6b8bfe547e4a7193317a39eab01b7532bdd4ef1c6d4617aa98",
+        "02-fine-detail-ahd-save.jpg": "a1718b21948c172cffe5dddeb4f08bfe0b69db1b5dd6fc3dd2fd6994cdf7e940"
+      }
+    },
+    {
+      "id": "03-stage-lights",
+      "width": 1023,
+      "height": 768,
+      "sourceSha256": "490cb4787e70477ee1e8afc5aca47e988d8e830e31fd57305cba4122814d7c7e",
+      "manualEv": -2,
+      "strength": 0.5,
+      "ahd": {
+        "file": "03-stage-lights-ahd.png",
+        "decodeNanos": [
+          1062572700,
+          1062866300,
+          1071133400
+        ],
+        "medianDecodeNanos": 1062866300,
+        "baseEv": -0.7177489237294342,
+        "vsAhdRgb8": {
+          "maeRgb8": 0,
+          "maxRgb8": 0,
+          "p99Rgb8": 0,
+          "changedPixelPercent": 0
+        },
+        "vsAhdLinear": {
+          "maeLinearRgb": 0,
+          "maxLinearRgb": 0,
+          "maeRgBgDifference": 0
+        }
+      },
+      "bilinear": {
+        "file": "03-stage-lights-bilinear.png",
+        "decodeNanos": [
+          444394200,
+          428227000,
+          423310000
+        ],
+        "medianDecodeNanos": 428227000,
+        "baseEv": -0.7177489237294342,
+        "vsAhdRgb8": {
+          "maeRgb8": 0.27872899017052244,
+          "maxRgb8": 201,
+          "p99Rgb8": 3,
+          "changedPixelPercent": 16.54855001629195
+        },
+        "vsAhdLinear": {
+          "maeLinearRgb": 8.282373833183772E-4,
+          "maxLinearRgb": 0.5506866574287415,
+          "maeRgBgDifference": 0.0011036333239177842
+        }
+      },
+      "ppg": {
+        "file": "03-stage-lights-ppg.png",
+        "decodeNanos": [
+          512792800,
+          514597100,
+          507698900
+        ],
+        "medianDecodeNanos": 512792800,
+        "baseEv": -0.7177489237294342,
+        "vsAhdRgb8": {
+          "maeRgb8": 0.004677572091886608,
+          "maxRgb8": 155,
+          "p99Rgb8": 0,
+          "changedPixelPercent": 0.517651311502118
+        },
+        "vsAhdLinear": {
+          "maeLinearRgb": 1.717720827987298E-5,
+          "maxLinearRgb": 0.3373655378818512,
+          "maeRgBgDifference": 2.7442876777798387E-5
+        }
+      },
+      "saveBaseEv": -0.7177489237294342,
+      "saveJpeg": "03-stage-lights-ahd-save.jpg",
+      "fileSha256": {
+        "03-stage-lights-ahd.png": "d1bb560ee0e0bef25e9888b540738437048670abf197fdd7ab6fc646428171ab",
+        "03-stage-lights-bilinear.png": "e1cdecdfc4c3382db059b55b47097b12760f8f166cabcb304ae20d498fa497ec",
+        "03-stage-lights-ppg.png": "77c7e2cbb8b8ad2cdefd5bc2b0cba9154512461e1626b978326841ce3574f8e4",
+        "03-stage-lights-ahd-save.jpg": "6b574558b1de2dd8697fdfeb2da7d282a0aeabb75f9221d1f4b79eaa5f31f5eb"
+      }
+    },
+    {
+      "id": "04-color-edges",
+      "width": 1023,
+      "height": 768,
+      "sourceSha256": "61261d39b4fc96e097255222e67b3dad23cbe6366ec97acf5812da024ccef3af",
+      "manualEv": 0,
+      "strength": 1,
+      "ahd": {
+        "file": "04-color-edges-ahd.png",
+        "decodeNanos": [
+          1047587100,
+          1061296200,
+          1080535800
+        ],
+        "medianDecodeNanos": 1061296200,
+        "baseEv": -0.32862748421207133,
+        "vsAhdRgb8": {
+          "maeRgb8": 0,
+          "maxRgb8": 0,
+          "p99Rgb8": 0,
+          "changedPixelPercent": 0
+        },
+        "vsAhdLinear": {
+          "maeLinearRgb": 0,
+          "maxLinearRgb": 0,
+          "maeRgBgDifference": 0
+        }
+      },
+      "bilinear": {
+        "file": "04-color-edges-bilinear.png",
+        "decodeNanos": [
+          419882200,
+          422411900,
+          420623100
+        ],
+        "medianDecodeNanos": 420623100,
+        "baseEv": -0.32862748421207133,
+        "vsAhdRgb8": {
+          "maeRgb8": 0.2546618741175193,
+          "maxRgb8": 188,
+          "p99Rgb8": 1,
+          "changedPixelPercent": 6.14702977354187
+        },
+        "vsAhdLinear": {
+          "maeLinearRgb": 5.496984473932259E-4,
+          "maxLinearRgb": 0.34707409143447876,
+          "maeRgBgDifference": 7.703450279737496E-4
+        }
+      },
+      "ppg": {
+        "file": "04-color-edges-ppg.png",
+        "decodeNanos": [
+          506447500,
+          623030300,
+          504182900
+        ],
+        "medianDecodeNanos": 506447500,
+        "baseEv": -0.32862748421207133,
+        "vsAhdRgb8": {
+          "maeRgb8": 0.0012019557130444228,
+          "maxRgb8": 138,
+          "p99Rgb8": 0,
+          "changedPixelPercent": 0.04989410231345715
+        },
+        "vsAhdLinear": {
+          "maeLinearRgb": 2.825825602055267E-6,
+          "maxLinearRgb": 0.30648890882730484,
+          "maeRgBgDifference": 4.3616152209799405E-6
+        }
+      },
+      "saveBaseEv": -0.32862748421207133,
+      "saveJpeg": "04-color-edges-ahd-save.jpg",
+      "fileSha256": {
+        "04-color-edges-ahd.png": "c387c638b803fbd437ca9daef04865f13f9e27d3c7963227fdc7021149e1c1a5",
+        "04-color-edges-bilinear.png": "44c33ce52d8f63d0809c13519d1c5b18907ba47882c4ef7cfd32b85e812a608d",
+        "04-color-edges-ppg.png": "da82f8002c90f53fe9c38642e2f91631819df51cfb293469129d2613e5f7c3f5",
+        "04-color-edges-ahd-save.jpg": "13c19699e2a61f35857651d0b50e5394a6acc464888bd261d3cddfbf7009c148"
+      }
+    },
+    {
+      "id": "05-odd-portrait",
+      "width": 768,
+      "height": 1023,
+      "sourceSha256": "fcd09c4a31189bbc4bc85ae381b12b40fc988486d6b69a9a923786a7acbd2806",
+      "manualEv": 0,
+      "strength": 0.5,
+      "ahd": {
+        "file": "05-odd-portrait-ahd.png",
+        "decodeNanos": [
+          1086588300,
+          1095307700,
+          1145355700
+        ],
+        "medianDecodeNanos": 1095307700,
+        "baseEv": -0.33651909294318094,
+        "vsAhdRgb8": {
+          "maeRgb8": 0,
+          "maxRgb8": 0,
+          "p99Rgb8": 0,
+          "changedPixelPercent": 0
+        },
+        "vsAhdLinear": {
+          "maeLinearRgb": 0,
+          "maxLinearRgb": 0,
+          "maeRgBgDifference": 0
+        }
+      },
+      "bilinear": {
+        "file": "05-odd-portrait-bilinear.png",
+        "decodeNanos": [
+          447966500,
+          452340800,
+          455926400
+        ],
+        "medianDecodeNanos": 452340800,
+        "baseEv": -0.33651909294318094,
+        "vsAhdRgb8": {
+          "maeRgb8": 27.76714388508743,
+          "maxRgb8": 212,
+          "p99Rgb8": 200,
+          "changedPixelPercent": 98.53843373248615
+        },
+        "vsAhdLinear": {
+          "maeLinearRgb": 0.10023553487596085,
+          "maxLinearRgb": 0.5945779383182526,
+          "maeRgBgDifference": 0.14454652822473846
+        }
+      },
+      "ppg": {
+        "file": "05-odd-portrait-ppg.png",
+        "decodeNanos": [
+          536321700,
+          532785900,
+          531080900
+        ],
+        "medianDecodeNanos": 532785900,
+        "baseEv": -0.33651909294318094,
+        "vsAhdRgb8": {
+          "maeRgb8": 11.691577654909308,
+          "maxRgb8": 132,
+          "p99Rgb8": 95,
+          "changedPixelPercent": 93.198619257087
+        },
+        "vsAhdLinear": {
+          "maeLinearRgb": 0.027132094423696542,
+          "maxLinearRgb": 0.3830205500125885,
+          "maeRgBgDifference": 0.050066019647899765
+        }
+      },
+      "saveBaseEv": -0.33651909294318094,
+      "saveJpeg": "05-odd-portrait-ahd-save.jpg",
+      "fileSha256": {
+        "05-odd-portrait-ahd.png": "5162f5f1e3069123e7fe721cc0e38599a332b73fad0b2d3296b3e120bd472781",
+        "05-odd-portrait-bilinear.png": "37b8bc1d85fe83e2636459b811ed03fcbddbc99dced51e7ef62fb688ad91e40b",
+        "05-odd-portrait-ppg.png": "d62afbc5576a8008c21f33ec52124184ed1f0cfc99efaccc527a100659202d86",
+        "05-odd-portrait-ahd-save.jpg": "bd18137fa38a5554b99326d481f96babafbfe988cf62be07b87ee9958f1a503d"
+      }
+    }
+  ],
+  "timing": "One warmup per method, three measured iterations in rotated order. JNI decode includes unpack\/demosaic\/RGB16 write; excludes source copying, bounded reduction and GPU. AVD only, not Pixel or selection-to-edit latency.",
+  "gl": {
+    "vendor": "Google Inc. (NVIDIA)",
+    "renderer": "ANGLE (NVIDIA, Vulkan 1.3.0 (NVIDIA Goldfish GFXStream (NVIDIA GeForce RTX 3070) (0x00002484)), gfxstream (NVIDIA)-26.0.65.35)",
+    "version": "OpenGL ES 3.2 (ANGLE 2.1 git hash: 8d8796935e4faeaf19e67ac0a5949e71a5252e7f)"
+  },
+  "overviewSha256": "c470fce88cf63a97913be2798b75ae960e61d8f6b8111970f37fc96c3ab58b7c",
+  "overviewSourceCommit": "599b342257d0c0196496bc317fdfec54c427fd01"
+}
