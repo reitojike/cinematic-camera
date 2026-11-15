@@ -1,5 +1,13 @@
 package dev.cinematic.p0.photoroll
 
+import android.graphics.Rect
+import android.graphics.Color
+import android.view.MotionEvent
+import android.view.ViewConfiguration
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import dev.cinematic.p0.gpu.preview.GpuPreviewSnapshot
 import android.graphics.Bitmap
 import android.os.Debug
 import android.os.CancellationSignal
@@ -166,6 +174,11 @@ class InitialPreviewSurfaceTimingAndroidTest {
         }
         val allocated=mutableListOf<Bitmap>() // Test-owned references; recycled only after Activity destruction.
         var guideCapture: Bitmap?=null
+        var guideViewport: Rect?=null
+        val saveCalls=AtomicInteger()
+        val evidence=JSONObject().put("scope","View boundary and real GPU, not full Editor/save-owner E2E")
+            .put("settings","same source; camera WB linear AS_SHOT; half clamp+sRGB vs FULL GPU before; exact uses unchanged defaults")
+        val valueBounds=mutableListOf<Rect>()
         fixture.content={
             val presented by owner.presented.collectAsState()
             val exact=presented==values
@@ -176,7 +189,7 @@ class InitialPreviewSurfaceTimingAndroidTest {
                 PhotoRollDevelopView("SYNTHETIC INITIAL PREVIEW",PhotoRollPreviewMode.MANUAL_TRIAL,
                     editor,{editor},if(exact) PhotoRollPhase.DISPLAYED else PhotoRollPhase.CHECKING,
                     null,null,null,null,null,true,null,false,false,exact,
-                    {},{},{},{},{_,_,_->},{},{},{},{},
+                    {saveCalls.incrementAndGet()},{},{},{},{_,_,_->},{},{},{},{},
                     modifier=Modifier.fillMaxSize().safeDrawingPadding(),
                     viewportModifier=Modifier.drawWithContent {
                         drawContent()
@@ -199,7 +212,17 @@ class InitialPreviewSurfaceTimingAndroidTest {
                             await { times.composeRecord.get()!=0L }
                             assertNotNull(find("RAW基準の案内画像・調整は未反映"))
                             assertFalse("comparison disabled before exact",hasComparisonAction())
+                            assertNoGuideValueWarnings()
+                            val save=checkNotNull(find("JPEGを保存"))
+                            assertFalse("guide save control disabled",save.isEnabled)
+                            val saveBounds=Rect().also { save.getBoundsInScreen(it) }
+                            tap(saveBounds)
+                            assertEquals("View disabled tap never invokes callback",0,saveCalls.get())
+                            guideViewport=imageBounds()
+                            valueBounds.clear()
+                            valueBounds.addAll(parameterButtonBounds(enabled = false))
                             guideCapture=screen(File(output,"guide.png"))
+                            assertBlackLetterbox(checkNotNull(guideCapture),checkNotNull(guideViewport))
                         }
                     }
                 times.start.set(SystemClock.elapsedRealtimeNanos())
@@ -227,8 +250,38 @@ class InitialPreviewSurfaceTimingAndroidTest {
                     await { hasComparisonAction() }
                     assertNull(find("RAW基準の案内画像・調整は未反映"))
                     val exactCapture=screen(File(output,"exact.png"))
-                    try { assertFalse("guide and exact display differ",requireNotNull(guideCapture).sameAs(exactCapture)) }
-                    finally { exactCapture.recycle() }
+                    try {
+                        assertFalse("guide and exact display differ",requireNotNull(guideCapture).sameAs(exactCapture))
+                        assertNotNull(find(developCaption(false,false).body))
+                        val viewport=imageBounds()
+                        assertEquals("same image viewport",guideViewport,viewport)
+                        assertEquals("three parameter button positions/sizes unchanged",valueBounds,
+                            parameterButtonBounds(enabled = true))
+                        assertBlackLetterbox(exactCapture,viewport)
+                        val draws=drawCount(owner)
+                        val down=SystemClock.uptimeMillis()
+                        touch(MotionEvent.ACTION_DOWN,viewport,down)
+                        try {
+                            SystemClock.sleep(ViewConfiguration.getLongPressTimeout().toLong()+100)
+                            await { find(developCaption(true,false).body)!=null && drawCount(owner)>draws }
+                            val baseline=screen(File(output,"baseline.png"))
+                            try {
+                                assertEquals(viewport,imageBounds())
+                                assertBlackLetterbox(baseline,viewport)
+                                evidence.put("viewport",JSONArray(listOf(viewport.left,viewport.top,viewport.right,viewport.bottom)))
+                                    .put("guideVsBaseline",pixelDifference(requireNotNull(guideCapture),baseline,viewport))
+                                    .put("exactVsBaseline",pixelDifference(exactCapture,baseline,viewport))
+                                    .put("valueRegionPeakRgb",JSONArray(valueBounds.map { bounds -> JSONObject()
+                                        .put("guide",peakRgb(requireNotNull(guideCapture),bounds))
+                                        .put("exact",peakRgb(exactCapture,bounds)) }))
+                                    .put("valueDimmingMeaning","observed button-region maxima including labels, not a text-color proof")
+                                    .put("saveCallbackCount",saveCalls.get())
+                                File(output,"visual-evidence.json").writeText(evidence.toString(2))
+                            } finally { baseline.recycle() }
+                        } finally { touch(MotionEvent.ACTION_UP,viewport,down) }
+                        await { find(developCaption(false,false).body)!=null }
+                        assertEquals(values,owner.presented.value)
+                    } finally { exactCapture.recycle() }
                     // Real surface lifecycle, not a source/editor retry simulation.
                     scenario.moveToState(Lifecycle.State.CREATED)
                     await { !owner.renderer.surfaceAttached.value }
@@ -254,6 +307,86 @@ class InitialPreviewSurfaceTimingAndroidTest {
             return JSONObject().put("pssKb",Debug.getPss()).put("nativeHeapBytes",Debug.getNativeHeapAllocatedSize())
                 .put("javaUsedBytes",runtime.totalMemory()-runtime.freeMemory())
         }
+    }
+    private fun parameterButtonBounds(enabled: Boolean): List<Rect> {
+        fixture.automation.clearCache()
+        val root=checkNotNull(fixture.fixtureRoot())
+        fun texts(node: AccessibilityNodeInfo): String = buildString {
+            append(node.text?.toString().orEmpty()); append("\n")
+            for(i in 0 until node.childCount) node.getChild(i)?.let { append(texts(it)) }
+        }
+        val labels=listOf("STRENGTH" to "50", "色温度" to "+0", "明るさ" to "+0.0")
+        val bounds=labels.map { (label,value) ->
+            val matches=mutableListOf<AccessibilityNodeInfo>()
+            fun walk(node: AccessibilityNodeInfo) {
+                if(node.className?.toString()=="android.widget.Button") {
+                    val tokens=texts(node).split(Regex("\\s+")).filter { it.isNotBlank() }
+                    if(label in tokens && value in tokens) matches.add(node)
+                }
+                for(i in 0 until node.childCount) node.getChild(i)?.let(::walk)
+            }
+            walk(root)
+            assertEquals("one parameter button: $label",1,matches.size)
+            val node=matches.single()
+            assertEquals("parameter enabled state: $label",enabled,node.isEnabled)
+            Rect().also { node.getBoundsInScreen(it); assertFalse(it.isEmpty) }
+        }
+        assertEquals(3,bounds.distinct().size)
+        return bounds
+    }
+    private fun imageBounds(): Rect = Rect().also { checkNotNull(find("現像結果（表示用）")).getBoundsInScreen(it) }
+    private fun assertNoGuideValueWarnings() {
+        fixture.automation.clearCache()
+        fun walk(node: AccessibilityNodeInfo?) {
+            if(node==null) return
+            val text=node.text?.toString().orEmpty()
+            assertFalse("guide omits unreflected value text",text.contains("指定") && text.contains("未反映"))
+            assertFalse("guide omits no displayed value text",text.contains("表示中の値なし"))
+            for(i in 0 until node.childCount) walk(node.getChild(i))
+        }
+        walk(fixture.fixtureRoot())
+    }
+    private fun touch(action: Int,rect: Rect,down: Long) {
+        val event=MotionEvent.obtain(down,SystemClock.uptimeMillis(),action,rect.exactCenterX(),rect.exactCenterY(),0)
+        try { assertTrue(fixture.automation.injectInputEvent(event,true)) } finally { event.recycle() }
+    }
+    private fun tap(rect: Rect) {
+        val down=SystemClock.uptimeMillis(); touch(MotionEvent.ACTION_DOWN,rect,down)
+        touch(MotionEvent.ACTION_UP,rect,down); instrumentation.waitForIdleSync()
+    }
+    private fun drawCount(owner: GpuPhotoRollSession): Long {
+        val queue=LinkedBlockingQueue<GpuPreviewSnapshot>()
+        owner.renderer.snapshot { queue.offer(it) }
+        return checkNotNull(queue.poll(10,TimeUnit.SECONDS)).drawCount
+    }
+    private fun assertBlackLetterbox(bitmap: Bitmap,rect: Rect) {
+        // Portrait fixture, 3:2 landscape input: both points are in image letterbox, not caption/UI.
+        for(y in listOf(rect.top+rect.height()/8,rect.bottom-rect.height()/8))
+            assertEquals("image letterbox is pure black",Color.BLACK,bitmap.getPixel(rect.centerX(),y))
+    }
+    private fun peakRgb(bitmap: Bitmap,rect: Rect): Int {
+        var peak=0
+        for(y in rect.top.coerceAtLeast(0) until rect.bottom.coerceAtMost(bitmap.height))
+            for(x in rect.left.coerceAtLeast(0) until rect.right.coerceAtMost(bitmap.width)) {
+                val p=bitmap.getPixel(x,y); peak=maxOf(peak,Color.red(p),Color.green(p),Color.blue(p))
+            }
+        return peak
+    }
+    private fun pixelDifference(a: Bitmap,b: Bitmap,rect: Rect): JSONObject {
+        // Crop mathematically to centered 3:2 Fit image; never edit the captured PNGs.
+        val height=minOf(rect.height(),rect.width()*2/3)
+        val top=rect.centerY()-height/2
+        var total=0L; var changed=0L; var maximum=0
+        for(y in top until top+height) for(x in rect.left until rect.right) {
+            val p=a.getPixel(x,y); val q=b.getPixel(x,y)
+            val d=intArrayOf(kotlin.math.abs(Color.red(p)-Color.red(q)),
+                kotlin.math.abs(Color.green(p)-Color.green(q)),kotlin.math.abs(Color.blue(p)-Color.blue(q)))
+            if(d.any { it!=0 }) changed++
+            total+=d.sum(); maximum=maxOf(maximum,d.max())
+        }
+        return JSONObject().put("changedPixels",changed).put("maxChannelDelta",maximum)
+            .put("meanChannelDelta",total.toDouble()/(rect.width().toLong()*height*3))
+            .put("meaning","screen-space same-position comparison, no equality threshold; resampling/demosaic can differ")
     }
     private fun screen(file: File): Bitmap {
         instrumentation.waitForIdleSync()
