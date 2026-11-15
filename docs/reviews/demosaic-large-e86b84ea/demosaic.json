@@ -1,0 +1,378 @@
+{
+  "status": "complete",
+  "sourceCommit": "e86b84eafe4b662113fbaac6a67c2645fef7a3b3",
+  "runId": "demosaic-large-20261115-e86b84ea",
+  "syntheticOnly": true,
+  "adopted": false,
+  "cases": [
+    {
+      "id": "12MP-02-fine-detail",
+      "width": 1024,
+      "height": 768,
+      "sourceSha256": "d401fcb8c619ebdb26a0816a836093d297496650a70a3b495a58efbaa5953c01",
+      "manualEv": 0,
+      "strength": 0.5,
+      "rawWidth": 4000,
+      "rawHeight": 3000,
+      "orientation": 1,
+      "ahd": {
+        "file": "12MP-02-fine-detail-ahd.png",
+        "decodeNanos": [
+          4021432200,
+          4022016000,
+          4058784700,
+          4007035700
+        ],
+        "medianDecodeNanos": 4021724100,
+        "baseEv": -0.33651909294318094,
+        "vsAhdRgb8": {
+          "maeRgb8": 0,
+          "maxRgb8": 0,
+          "p99Rgb8": 0,
+          "changedPixelPercent": 0
+        },
+        "vsAhdLinear": {
+          "maeLinearRgb": 0,
+          "maxLinearRgb": 0,
+          "maeRgBgDifference": 0
+        }
+      },
+      "ppg": {
+        "file": "12MP-02-fine-detail-ppg.png",
+        "decodeNanos": [
+          1932649100,
+          1901323500,
+          1924509200,
+          1903858600
+        ],
+        "medianDecodeNanos": 1914183900,
+        "baseEv": -0.33651909294318094,
+        "vsAhdRgb8": {
+          "maeRgb8": 9.590948316786024,
+          "maxRgb8": 103,
+          "p99Rgb8": 44,
+          "changedPixelPercent": 94.43079630533855
+        },
+        "vsAhdLinear": {
+          "maeLinearRgb": 0.022947689858942983,
+          "maxLinearRgb": 0.17843517661094666,
+          "maeRgBgDifference": 0.04515173428799102
+        }
+      },
+      "saveJpeg": null,
+      "fileSha256": {
+        "12MP-02-fine-detail-ahd.png": "4eda1f6cb8e5ab5d5473c14ecd7bf28da8472c90a253bac3636c056128c14aeb",
+        "12MP-02-fine-detail-ppg.png": "7d6d780b5a3fde4bd8886026155470ca5eeb3f1d3ec5bb858900a5fd0b756ef3"
+      }
+    },
+    {
+      "id": "12MP-03-stage-lights",
+      "width": 1024,
+      "height": 768,
+      "sourceSha256": "5f7bec9ae6152a034ea990688ef6d6024ec6d988a65ee07d9ed7488ad40b4113",
+      "manualEv": -2,
+      "strength": 0.5,
+      "rawWidth": 4000,
+      "rawHeight": 3000,
+      "orientation": 1,
+      "ahd": {
+        "file": "12MP-03-stage-lights-ahd.png",
+        "decodeNanos": [
+          4028550800,
+          4010534000,
+          4030957100,
+          3969942200
+        ],
+        "medianDecodeNanos": 4019542400,
+        "baseEv": -0.7177489237294342,
+        "vsAhdRgb8": {
+          "maeRgb8": 0,
+          "maxRgb8": 0,
+          "p99Rgb8": 0,
+          "changedPixelPercent": 0
+        },
+        "vsAhdLinear": {
+          "maeLinearRgb": 0,
+          "maxLinearRgb": 0,
+          "maeRgBgDifference": 0
+        }
+      },
+      "ppg": {
+        "file": "12MP-03-stage-lights-ppg.png",
+        "decodeNanos": [
+          1958324800,
+          1952434500,
+          1957030700,
+          1917617800
+        ],
+        "medianDecodeNanos": 1954732600,
+        "baseEv": -0.7177489237294342,
+        "vsAhdRgb8": {
+          "maeRgb8": 0.001094394259982639,
+          "maxRgb8": 33,
+          "p99Rgb8": 0,
+          "changedPixelPercent": 0.19048055013020834
+        },
+        "vsAhdLinear": {
+          "maeLinearRgb": 4.541796152995264E-6,
+          "maxLinearRgb": 0.11780345439910889,
+          "maeRgBgDifference": 6.945001805351107E-6
+        }
+      },
+      "saveJpeg": null,
+      "fileSha256": {
+        "12MP-03-stage-lights-ahd.png": "c37fc9451ed8b278ace4815b78f539ac864967996d161be077851720aba2fc5b",
+        "12MP-03-stage-lights-ppg.png": "f936e3ea32e2754efd139c79f5f0beb0e02871f105c1a114a302485b1d608a4b"
+      }
+    },
+    {
+      "id": "12MP-05-odd-portrait",
+      "width": 767,
+      "height": 1024,
+      "sourceSha256": "d8e51899938cd6f3d0e69a2d33cf6a44e87cf4d0ce8a867b18b9c938cf28e0eb",
+      "manualEv": 0,
+      "strength": 0.5,
+      "rawWidth": 3999,
+      "rawHeight": 2999,
+      "orientation": 6,
+      "ahd": {
+        "file": "12MP-05-odd-portrait-ahd.png",
+        "decodeNanos": [
+          4281966200,
+          4264333700,
+          4276262800,
+          4259221900
+        ],
+        "medianDecodeNanos": 4270298250,
+        "baseEv": -0.33651909294318094,
+        "vsAhdRgb8": {
+          "maeRgb8": 0,
+          "maxRgb8": 0,
+          "p99Rgb8": 0,
+          "changedPixelPercent": 0
+        },
+        "vsAhdLinear": {
+          "maeLinearRgb": 0,
+          "maxLinearRgb": 0,
+          "maeRgBgDifference": 0
+        }
+      },
+      "ppg": {
+        "file": "12MP-05-odd-portrait-ppg.png",
+        "decodeNanos": [
+          2124120400,
+          2135069000,
+          2114236000,
+          2120601200
+        ],
+        "medianDecodeNanos": 2122360800,
+        "baseEv": -0.33651909294318094,
+        "vsAhdRgb8": {
+          "maeRgb8": 9.583741613700566,
+          "maxRgb8": 99,
+          "p99Rgb8": 44,
+          "changedPixelPercent": 94.3873757333768
+        },
+        "vsAhdLinear": {
+          "maeLinearRgb": 0.023018013948322025,
+          "maxLinearRgb": 0.47222478687763214,
+          "maeRgBgDifference": 0.045248735418239164
+        }
+      },
+      "saveJpeg": null,
+      "fileSha256": {
+        "12MP-05-odd-portrait-ahd.png": "3dd444665d2479d713815f4e1083b30ad29d7bc255d30d84d04f540a9a5f5e87",
+        "12MP-05-odd-portrait-ppg.png": "3611f06865f0cff483837c388259c1dd52776e81377e276241ae0abee8f3e9b0"
+      }
+    },
+    {
+      "id": "24MP-02-fine-detail",
+      "width": 1024,
+      "height": 682,
+      "sourceSha256": "9f6ea5695bb56dcb9db33f7775d48cdfa1bce7a4f62451277bfb02813e026d8c",
+      "manualEv": 0,
+      "strength": 0.5,
+      "rawWidth": 6000,
+      "rawHeight": 4000,
+      "orientation": 1,
+      "ahd": {
+        "file": "24MP-02-fine-detail-ahd.png",
+        "decodeNanos": [
+          8101304300,
+          8267644300,
+          8128837600,
+          8120505300
+        ],
+        "medianDecodeNanos": 8124671450,
+        "baseEv": -0.33651869638847615,
+        "vsAhdRgb8": {
+          "maeRgb8": 0,
+          "maxRgb8": 0,
+          "p99Rgb8": 0,
+          "changedPixelPercent": 0
+        },
+        "vsAhdLinear": {
+          "maeLinearRgb": 0,
+          "maxLinearRgb": 0,
+          "maeRgBgDifference": 0
+        }
+      },
+      "ppg": {
+        "file": "24MP-02-fine-detail-ppg.png",
+        "decodeNanos": [
+          3983068500,
+          3821369700,
+          3849344000,
+          3864769000
+        ],
+        "medianDecodeNanos": 3857056500,
+        "baseEv": -0.33651909294318094,
+        "vsAhdRgb8": {
+          "maeRgb8": 8.975018423906402,
+          "maxRgb8": 97,
+          "p99Rgb8": 31,
+          "changedPixelPercent": 96.32314195381231
+        },
+        "vsAhdLinear": {
+          "maeLinearRgb": 0.02208801278371745,
+          "maxLinearRgb": 0.1449911892414093,
+          "maeRgBgDifference": 0.044996644297471605
+        }
+      },
+      "saveJpeg": null,
+      "fileSha256": {
+        "24MP-02-fine-detail-ahd.png": "d769d0c2fd20773e99daced8d504064d3c6bf3592c33a1d74e010944293d7fd5",
+        "24MP-02-fine-detail-ppg.png": "9db7f386845c5f1be5a9048f381fcd8306d09a09ce9ed73f567a3aca0a226867"
+      }
+    },
+    {
+      "id": "24MP-03-stage-lights",
+      "width": 1024,
+      "height": 682,
+      "sourceSha256": "4375868a1815a891466f474bb6c9647de77fbef526940d83d63132c9fc0b0b52",
+      "manualEv": -2,
+      "strength": 0.5,
+      "rawWidth": 6000,
+      "rawHeight": 4000,
+      "orientation": 1,
+      "ahd": {
+        "file": "24MP-03-stage-lights-ahd.png",
+        "decodeNanos": [
+          8017535400,
+          8130278900,
+          8054532300,
+          8210166000
+        ],
+        "medianDecodeNanos": 8092405600,
+        "baseEv": -0.7177489237294342,
+        "vsAhdRgb8": {
+          "maeRgb8": 0,
+          "maxRgb8": 0,
+          "p99Rgb8": 0,
+          "changedPixelPercent": 0
+        },
+        "vsAhdLinear": {
+          "maeLinearRgb": 0,
+          "maxLinearRgb": 0,
+          "maeRgBgDifference": 0
+        }
+      },
+      "ppg": {
+        "file": "24MP-03-stage-lights-ppg.png",
+        "decodeNanos": [
+          3884782100,
+          3905918800,
+          3904899200,
+          3922809000
+        ],
+        "medianDecodeNanos": 3905409000,
+        "baseEv": -0.7177489237294342,
+        "vsAhdRgb8": {
+          "maeRgb8": 5.021230449657869E-4,
+          "maxRgb8": 18,
+          "p99Rgb8": 0,
+          "changedPixelPercent": 0.11068662939882698
+        },
+        "vsAhdLinear": {
+          "maeLinearRgb": 2.2770968310433162E-6,
+          "maxLinearRgb": 0.0826399028301239,
+          "maeRgBgDifference": 3.3860877529497184E-6
+        }
+      },
+      "saveJpeg": null,
+      "fileSha256": {
+        "24MP-03-stage-lights-ahd.png": "16fc957abb077dd7bcbd26eada0c0a5bade68df18cb2d0d9adf2e962ef48aac3",
+        "24MP-03-stage-lights-ppg.png": "8f365181b022d67e5be982b4b0bca32d348c89a76db833f4445528592be9e755"
+      }
+    },
+    {
+      "id": "24MP-05-odd-portrait",
+      "width": 682,
+      "height": 1024,
+      "sourceSha256": "9487b4b00f9e627298065144816669fe9925496adfdbba80aefef1605ba87f8a",
+      "manualEv": 0,
+      "strength": 0.5,
+      "rawWidth": 5999,
+      "rawHeight": 3999,
+      "orientation": 6,
+      "ahd": {
+        "file": "24MP-05-odd-portrait-ahd.png",
+        "decodeNanos": [
+          8506654000,
+          8559516600,
+          8598400200,
+          8570040300
+        ],
+        "medianDecodeNanos": 8564778450,
+        "baseEv": -0.33651909294318094,
+        "vsAhdRgb8": {
+          "maeRgb8": 0,
+          "maxRgb8": 0,
+          "p99Rgb8": 0,
+          "changedPixelPercent": 0
+        },
+        "vsAhdLinear": {
+          "maeLinearRgb": 0,
+          "maxLinearRgb": 0,
+          "maeRgBgDifference": 0
+        }
+      },
+      "ppg": {
+        "file": "24MP-05-odd-portrait-ppg.png",
+        "decodeNanos": [
+          4333392700,
+          4258729000,
+          4229342500,
+          4269113300
+        ],
+        "medianDecodeNanos": 4263921150,
+        "baseEv": -0.33651909294318094,
+        "vsAhdRgb8": {
+          "maeRgb8": 8.935312996395405,
+          "maxRgb8": 85,
+          "p99Rgb8": 31,
+          "changedPixelPercent": 96.14200536107037
+        },
+        "vsAhdLinear": {
+          "maeLinearRgb": 0.021993654765667742,
+          "maxLinearRgb": 0.19264209270477295,
+          "maeRgBgDifference": 0.044747150922754754
+        }
+      },
+      "saveJpeg": null,
+      "fileSha256": {
+        "24MP-05-odd-portrait-ahd.png": "999632e4d5b1a33fe61a1608d658e5150097e5e6d55cc8f67a38e683364686c1",
+        "24MP-05-odd-portrait-ppg.png": "afe6a3c6846797ed7cca0d8b218113b9db5f803975549052103aef35611685f8"
+      }
+    }
+  ],
+  "timing": "One warmup per method; measured repetitions recorded, rotated order. JNI decode includes unpack\/demosaic\/RGB16 write; excludes source copying, bounded reduction and GPU. AVD only, not Pixel or selection-to-edit latency.",
+  "largeComparison": true,
+  "measuredRepetitions": 4,
+  "gl": {
+    "vendor": "Google Inc. (NVIDIA)",
+    "renderer": "ANGLE (NVIDIA, Vulkan 1.3.0 (NVIDIA Goldfish GFXStream (NVIDIA GeForce RTX 3070) (0x00002484)), gfxstream (NVIDIA)-26.0.65.35)",
+    "version": "OpenGL ES 3.2 (ANGLE 2.1 git hash: 8d8796935e4faeaf19e67ac0a5949e71a5252e7f)"
+  },
+  "overviewSha256": "3841911ab5c656a2c073a1c532e1af64742acf0a02af347f8ac38b5941dbb1fe"
+}
