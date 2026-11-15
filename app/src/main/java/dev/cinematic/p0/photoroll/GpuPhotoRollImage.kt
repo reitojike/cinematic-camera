@@ -1,5 +1,8 @@
 package dev.cinematic.p0.photoroll
 
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -18,14 +21,14 @@ import dev.cinematic.p0.photoedit.PhotoEditValues
 /** Matches the existing stable-caption/Fit image region. AS_SHOT is already physically oriented. */
 @Composable internal fun GpuPhotoRollImage(session: GpuPhotoRollSession, values: PhotoEditValues,
     comparing: Boolean, enabled: Boolean, onComparisonChange: (Boolean) -> Unit, modifier: Modifier = Modifier,
-    updating: Boolean = false, header: (@Composable (Boolean) -> Unit)? = null) {
+    updating: Boolean = false, initialGuide: InitialPreviewFrame? = null, header: (@Composable (Boolean) -> Unit)? = null) {
     var holding by remember(session, enabled) { mutableStateOf(false) }
     val before = enabled && (holding || comparing)
     val caption = if (before) "撮影時WBのRAW基準表示（R7・ルック・手動調整なし、暫定色）"
         else "現像結果 · 長押しで基準表示"
     SideEffect { session.submit(values, before) }
     Column(modifier.background(CaptureDesign.Ink)) {
-        if (header != null) header(before) else Text(caption, Modifier.fillMaxWidth().background(CaptureDesign.Scrim).padding(8.dp),
+        if (header != null) header(before) else Text(initialGuide?.label ?: caption, Modifier.fillMaxWidth().background(CaptureDesign.Scrim).padding(8.dp),
             color = CaptureDesign.Muted, style = CaptureDesign.Explanation, maxLines = 1,
             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
         BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
@@ -41,6 +44,10 @@ import dev.cinematic.p0.photoedit.PhotoEditValues
                 val surface = measurables.single().measure(Constraints.fixed(bounds.maxWidth, surfaceHeight))
                 layout(bounds.maxWidth, bounds.maxHeight) { surface.place(0, 0) }
             }
+            initialGuide?.let { guide ->
+                Image(guide.bitmap.asImageBitmap(), guide.label,
+                    Modifier.fillMaxSize().background(CaptureDesign.Ink), contentScale = ContentScale.Fit)
+            }
             // SurfaceView is below Compose; the same press/release and accessibility operations
             // remain in the Compose hit-test tree above it.
             Box(Modifier.fillMaxSize().pointerInput(session, enabled) {
@@ -49,7 +56,7 @@ import dev.cinematic.p0.photoedit.PhotoEditValues
                 })
             }.semantics {
                 contentDescription = "現像結果（表示用）"
-                stateDescription = if (header != null) developCaption(before, updating).body else caption
+                stateDescription = initialGuide?.label ?: if (header != null) developCaption(before, updating).body else caption
                 if (enabled) customActions = listOf(CustomAccessibilityAction(
                     if (before) "現像結果へ戻す" else "RAWの基準表示に切り替える") {
                     onComparisonChange(!before); true

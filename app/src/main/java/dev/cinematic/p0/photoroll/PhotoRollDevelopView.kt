@@ -63,6 +63,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
     modifier: Modifier = Modifier, statusOverlay: @Composable () -> Unit = {}, fillImageWidth: Boolean = false, viewportModifier: Modifier = Modifier,
     gpuSession: GpuPhotoRollSession? = null, gpuReady: Boolean = false,
     gpuPresentedValues: PhotoEditValues? = state.displayedValues,
+    initialGuide: InitialPreviewFrame? = null,
     gpuFailure: dev.cinematic.p0.gpu.GpuFailureHandling? = null,
     productMessages: ScreenMessages? = null, productFailureFallback: UiMessage? = null, productSave: DevelopSavePresentation? = null,
     onProductAction: (MessageAction) -> Unit = {}, memoryProblem: dev.cinematic.p0.UiMessage? = null, info: @Composable () -> Unit) {
@@ -119,9 +120,13 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                 .then(viewportModifier).semantics { contentDescription = "現像画像の表示領域" }, contentAlignment = Alignment.Center) {
                 val updating = phase in setOf(PhotoRollPhase.CHECKING, PhotoRollPhase.RENDERING, PhotoRollPhase.PAUSED)
                 if (gpuSession != null) GpuPhotoRollImage(gpuSession, requested, comparing && compareEnabled,
-                    compareEnabled, { comparing = it }, Modifier.fillMaxSize(), updating = captionUpdating, header = if (productMessages != null) { before ->
+                    compareEnabled, { comparing = it }, Modifier.fillMaxSize(), updating = captionUpdating, initialGuide = initialGuide, header = if (productMessages != null) { before ->
                         Column(Modifier.fillMaxWidth()) {
-                            DevelopCaption(developCaption(before, captionUpdating), Modifier.fillMaxWidth())
+                            if (initialGuide != null) Text(initialGuide.label,
+                                Modifier.fillMaxWidth().background(CaptureDesign.Scrim).padding(8.dp),
+                                color = CaptureDesign.Muted, style = CaptureDesign.Explanation, maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                            else DevelopCaption(developCaption(before, captionUpdating), Modifier.fillMaxWidth())
                             productMessages.banner?.let { CaptureBanner(it, onProductAction, failureFallback = productFailureFallback) }
                         }
                     } else null)

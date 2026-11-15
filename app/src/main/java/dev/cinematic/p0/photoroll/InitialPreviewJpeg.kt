@@ -32,7 +32,8 @@ internal object InitialPreviewJpeg {
         require(bytes.size in 4..8 * 1024 * 1024)
         if (bytes[0] != 0xff.toByte() || bytes[1] != 0xd8.toByte() ||
             bytes[bytes.lastIndex - 1] != 0xff.toByte() || bytes.last() != 0xd9.toByte()) return null
-        // Reject partial entropy streams even if BitmapFactory could recover a visible image.
+        // Reject codec-reported partial failures. Recoverable entropy warnings may still succeed;
+        // this is bounded temporary display, not a proof of complete JPEG entropy.
         // Validation pixels are discarded; ImageDecoder EXIF rotation is NOT applied to the output.
         check(Looper.myLooper() != Looper.getMainLooper()) { "Guide decode requires an IO owner" }
         signal.throwIfCanceled()

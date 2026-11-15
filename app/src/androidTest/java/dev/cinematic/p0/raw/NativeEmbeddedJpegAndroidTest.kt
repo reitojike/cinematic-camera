@@ -126,6 +126,47 @@ class NativeEmbeddedJpegAndroidTest {
         }
     }
 
+    @Test fun directSliceRejectsBrokenEnvelopeWithoutRepairingSource() {
+        val (valid, jpeg) = fixture(1)
+        val jpegOffset = syntheticTrialDng().size + 2 + 11 * 12 + 4
+        for (position in listOf(jpegOffset, jpegOffset + jpeg.size - 1)) {
+            val malformed = valid.copyOf().apply { this[position] = 0 }
+            withSource(malformed) { file, descriptor ->
+                val result = NativeEmbeddedJpeg.extract(descriptor.fd, fingerprint(malformed), CancellationSignal())
+                assertEquals(NativeEmbeddedJpegResult.Status.INVALID, result.status)
+                assertNull(result.jpeg)
+                assertArrayEquals(malformed, file.readBytes())
+            }
+        }
+    }
+
+    @Test fun directSliceDoesNotClaimEntropyCompleteness() {
+        val (valid, jpeg) = fixture(1)
+        var at = 2
+        while (at + 4 < jpeg.size && (jpeg[at + 1].toInt() and 0xff) != 0xda) {
+            val size = ((jpeg[at + 2].toInt() and 0xff) shl 8) or (jpeg[at + 3].toInt() and 0xff)
+            at += 2 + size
+        }
+        check(at + 4 < jpeg.size)
+        val scanSize = ((jpeg[at + 2].toInt() and 0xff) shl 8) or (jpeg[at + 3].toInt() and 0xff)
+        val scanEnd = at + 2 + scanSize
+        val shortened = jpeg.copyOf(scanEnd + 4).apply {
+            this[scanEnd] = 0; this[scanEnd + 1] = 0
+            this[scanEnd + 2] = 0xff.toByte(); this[scanEnd + 3] = 0xd9.toByte()
+        }
+        val thumbnailIfd = syntheticTrialDng().size
+        val jpegOffset = thumbnailIfd + 2 + 11 * 12 + 4
+        val source = valid.copyOf()
+        shortened.copyInto(source, jpegOffset)
+        ByteBuffer.wrap(source).order(ByteOrder.LITTLE_ENDIAN)
+            .putInt(thumbnailIfd + 2 + 10 * 12 + 8, shortened.size)
+        withSource(source) { _, descriptor ->
+            val result = NativeEmbeddedJpeg.extract(descriptor.fd, fingerprint(source), CancellationSignal())
+            assertEquals(NativeEmbeddedJpegResult.Status.FOUND, result.status)
+            assertArrayEquals(shortened, result.jpeg)
+        }
+    }
+
     private fun fingerprint(bytes: ByteArray) = OriginalFingerprint(bytes.size.toLong(),
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) })
 

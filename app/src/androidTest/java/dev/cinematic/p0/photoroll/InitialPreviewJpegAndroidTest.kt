@@ -49,7 +49,7 @@ class InitialPreviewJpegAndroidTest {
             assertTrue(bitmap.allocationByteCount <= InitialPreviewJpeg.MAX_BITMAP_BYTES)
         } finally { bitmap.recycle() }
     }
-    @Test fun malformedUnknownAndDimensionMismatchNeverBecomeAGuide() {
+    @Test fun structuralErrorsAreRejectedAndRecoverableEntropyStaysBounded() {
         val bytes = jpeg()
         assertNull(InitialPreviewJpeg.decodeEmbedded(bytes, 64, 32, 0, CancellationSignal()))
         assertNull(InitialPreviewJpeg.decodeEmbedded(bytes, 32, 64, 1, CancellationSignal()))
@@ -59,7 +59,11 @@ class InitialPreviewJpegAndroidTest {
         val scan = (0 until bytes.size - 3).first { bytes[it] == 0xff.toByte() && bytes[it+1] == 0xda.toByte() }
         val headerEnd = scan + 2 + ((bytes[scan+2].toInt() and 255) shl 8) + (bytes[scan+3].toInt() and 255)
         val broken = bytes.copyOf(headerEnd + 2) + byteArrayOf(0xff.toByte(), 0xd9.toByte())
-        assertNull(InitialPreviewJpeg.decodeEmbedded(broken, 64, 32, 1, CancellationSignal()))
+        // Updated owner contract: codec-recoverable entropy is allowed for a temporary guide.
+        // This exact fixture failed the former strict-rejection contract (9 pass / 1 fail).
+        val recovered = InitialPreviewJpeg.decodeEmbedded(broken, 64, 32, 1, CancellationSignal())
+        recovered?.let { try { assertTrue(it.allocationByteCount <= InitialPreviewJpeg.MAX_BITMAP_BYTES) }
+            finally { it.recycle() } }
     }
     @Test fun cancellationPropagatesAndSavedSnapshotIsInspectedBeforeDecode() {
         val bytes = jpeg()

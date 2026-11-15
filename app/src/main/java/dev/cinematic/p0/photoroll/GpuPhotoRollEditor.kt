@@ -56,12 +56,21 @@ import kotlinx.coroutines.flow.StateFlow
         if (active && !exportPaused) createSession(context.assets) else null
     }
     val cancellation = remember(session) { CancellationSignal() }
+    var initialGuide by remember(session) { mutableStateOf<InitialPreviewFrame?>(null) }
+    var exactPresented by remember(session) { mutableStateOf(false) }
+    val guideHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
+    val guideHandoff = remember(session) { InitialPreviewHandoff(
+        post = { block -> guideHandler.post { block() } },
+        eligible = { !cancellation.isCanceled && session?.presented?.value == null },
+        publish = { initialGuide = it }) }
     DisposableEffect(session) {
-        onDispose { cancellation.cancel(); session?.close(); renderer.discardTransientInputs() }
+        onDispose { guideHandoff.close(); cancellation.cancel(); session?.close(); renderer.discardTransientInputs() }
     }
     // UI_HIDDEN and more severe trims release only this preview owner, never foreground export.
     LaunchedEffect(trimEpoch) {
         if (trimEpoch != observedTrim) {
+            renderer.clearInitialPreviewCache()
+            initialGuide = null
             observedTrim = trimEpoch
             if (foreground) trimBlocked = true
         }
@@ -70,6 +79,7 @@ import kotlinx.coroutines.flow.StateFlow
     LaunchedEffect(session) {
         // Background/trim must not discard the retained save or implicitly reopen its preview.
         if (exportPaused) { input = null; return@LaunchedEffect }
+        initialGuide = null
         input = null; save = null; saveState = null; error = null; notice = null; metadataRestored = false
         editor = editor.suspendForLifecycle()
         if (session == null) return@LaunchedEffect
@@ -104,7 +114,7 @@ import kotlinx.coroutines.flow.StateFlow
                     loading = async(Dispatchers.IO) {
                         gpuPhotoRollInputResult {
                             renderer.openGpu(repository, Uri.parse(source), fromFiles, cancellation, deadline,
-                                { admitted.complete(GpuInputAdmissionResult(it)) }) { original ->
+                                { admitted.complete(GpuInputAdmissionResult(it)) }, guide = guideHandoff::offer) { original ->
                                 if (restore) recipes.read(original.reference) ?: PhotoAdjustmentPolicy.defaults
                                 else {
                                     PhotoEditRestoration.requireMatches(original.reference, identity, contract)
@@ -169,6 +179,9 @@ import kotlinx.coroutines.flow.StateFlow
     }
     val ticket = editor.ticket
     LaunchedEffect(presented, ticket) {
+        if (presented != null && input?.values == presented) {
+            guideHandoff.close(); exactPresented = true; initialGuide = null
+        }
         editor = gpuPresentedEditor(editor, presented, error != null || failure != null)
     }
     // The image is already submitted above. A queued metadata read must not delay photo B's
@@ -365,6 +378,8 @@ import kotlinx.coroutines.flow.StateFlow
             }
         }
     val retryAction = { if (foreground && !savingRecipe && !saving) {
+            renderer.clearInitialPreviewCache()
+            initialGuide = null
             if (problem is dev.cinematic.p0.jpegrender.original.Original24MemoryUnavailable) {
                 try {
                     renderer.releaseUnusedMemoryForRetry()
@@ -455,6 +470,7 @@ import kotlinx.coroutines.flow.StateFlow
         },
         gpuSession = session.takeUnless { exportPaused }, gpuReady = ready && !exportPaused, gpuFailure = gpuFailure,
         gpuPresentedValues = presented,
+        initialGuide = initialGuide.takeIf { active && !exportPaused && problem == null && !exactPresented && presented == null },
         modifier = modifier,
         info = { Text("顔保護には対応していません。色は暫定で、24MP 以下の対応 DNG のみ読み込めます。",
             style = CaptureDesign.Body, color = CaptureDesign.Muted) })

@@ -47,6 +47,7 @@ internal object GpuPhotoRollInputs {
     fun open(context: Context, resources: () -> PhotoRollResources, repository: PhotoRollRepository,
         uri: Uri, fromFiles: Boolean, maxSourceBytes: Long, cancellation: CancellationSignal,
         deadline: GpuInputRequestDeadline, admitted: (Throwable?) -> Unit,
+        beforeExactDecode: ((PhotoRollOriginal, Original24PreflightGeometry, Int, CancellationSignal, () -> LinearSrgbImage) -> Unit)? = null,
         stale: () -> Boolean): CompletableFuture<Input> {
         val app = context.applicationContext
         // Capture the initial restore future, not a barrier enqueued after an active export.
@@ -73,7 +74,7 @@ internal object GpuPhotoRollInputs {
                     admitted(null)
                     val original = repository.check(uri, fromFiles, owner::stopped, maxSourceBytes, owner.readers)
                     val geometry = owner.inspect(original.reference)
-                    val image = owner.load(original, geometry) { readers, stop ->
+                    val image = owner.load(original, geometry, beforeExactDecode) { readers, stop ->
                         repository.verifyPreview(original, stop, readers)
                     }
                     repository.verifyPreview(original, owner::stopped, readers = owner.readers)
@@ -135,13 +136,18 @@ internal object GpuPhotoRollInputs {
         }
 
         fun load(original: PhotoRollOriginal, geometry: Original24PreflightGeometry,
+            guide: ((PhotoRollOriginal, Original24PreflightGeometry, Int, CancellationSignal, () -> LinearSrgbImage) -> Unit)?,
             checkSource: (DngIoResources, () -> Boolean) -> Unit): LinearSrgbImage {
             if (stopped()) throw DngVerificationStopped()
             val source = original.reference
             val parent = checkedDirectory("manual-original24-previews")
             val current = Original24PreviewSession(source, File(parent, UUID.randomUUID().toString()),
                 { stage -> Original24Resources.requireAvailable(app, stage, geometry.outputWidth.toLong() * geometry.outputHeight) }, geometry,
-                checkSource) { this.original(source) }.also { session = it }
+                checkSource, beforeExactDecode = if (guide == null) null else { fd, cancellation, half ->
+                    if (stopped()) throw DngVerificationStopped()
+                    guide.invoke(original, geometry, fd, cancellation, half)
+                    if (stopped()) throw DngVerificationStopped()
+                }) { this.original(source) }.also { session = it }
             if (stopped()) current.requestStop()
             return current.loadGpuAsShotInput(::stopped)
         }

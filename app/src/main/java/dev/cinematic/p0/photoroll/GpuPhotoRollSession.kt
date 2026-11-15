@@ -22,13 +22,18 @@ internal class GpuPhotoRollSession(assets: AssetManager,
     val failure = mutableFailure.asStateFlow()
     private val mutablePresented = MutableStateFlow<PhotoEditValues?>(null)
     val presented = mutablePresented.asStateFlow()
+    /** Optional local diagnostic observation; never carries pixels or changes frame readiness. */
+    @Volatile internal var presentedForDiagnostics: (() -> Unit)? = null
     val renderer = GpuPreviewRenderer(assets,
         onError = { if (!closed.get()) mutableFailure.value = it },
         engineFactory = engineFactory,
         recoverContextOnSubmit = false,
         onPresented = { params, display ->
-            if (!closed.get() && !display.showBefore) mutablePresented.value = PhotoEditValues(params.strength,
-                params.adjustments.warmth, params.adjustments.exposureEv)
+            if (!closed.get() && !display.showBefore) {
+                mutablePresented.value = PhotoEditValues(params.strength,
+                    params.adjustments.warmth, params.adjustments.exposureEv)
+                if (dev.cinematic.p0.BuildConfig.DEBUG) runCatching { presentedForDiagnostics?.invoke() }
+            }
         })
 
     fun submit(values: PhotoEditValues, before: Boolean = false) {

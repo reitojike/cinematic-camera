@@ -72,6 +72,11 @@ Fixture fixture(Bytes jpeg = Bytes(std::begin(syntheticJpeg), std::end(synthetic
     b.resize(std::max<size_t>(b.size(), 4096));
     return {b,thumbIfd,jpegOffset};
 }
+Fixture largeSource(Fixture f) {
+    // Metadata-only synthetic RAW backing; never unpacked by this test.
+    patch(f.bytes,8,256,5000); patch(f.bytes,8,257,4000);
+    return f;
+}
 Result run(const Fixture& f) { return extract(f.bytes.data(), f.bytes.size()); }
 Bytes withExif(unsigned orientation) {
     Bytes jpeg(std::begin(syntheticJpeg), std::end(syntheticJpeg));
@@ -136,16 +141,32 @@ int main() {
         require(run(absentFixture).status == Status::Absent, "absent");
         auto corrupt = fixture(); corrupt.bytes[corrupt.jpegOffset] = 0;
         require(run(corrupt).status == Status::Invalid, "do not repair SOI");
+        auto noEoi = fixture(); noEoi.bytes[noEoi.jpegOffset + sizeof(syntheticJpeg) - 1] = 0;
+        require(run(noEoi).status == Status::Invalid, "missing final EOI");
+        require(run(fixture(sizedJpeg(33,8),1,33,8)).status == Status::Invalid, "thumbnail exceeds original width");
+        require(run(fixture(sizedJpeg(16,25),1,16,25)).status == Status::Invalid, "thumbnail exceeds original height");
+        // Container validation deliberately does not promise entropy completeness.
+        Bytes shortEntropy(std::begin(syntheticJpeg),std::end(syntheticJpeg));
+        for (size_t i = 2; i + 4 < shortEntropy.size(); ++i) {
+            if (shortEntropy[i] == 255 && shortEntropy[i+1] == 0xda) {
+                const size_t end = i + 2 + size_t(shortEntropy[i+2]) * 256 + shortEntropy[i+3];
+                shortEntropy.resize(end + 4);
+                shortEntropy[end] = 0; shortEntropy[end+1] = 0;
+                shortEntropy[end+2] = 255; shortEntropy[end+3] = 217;
+                break;
+            }
+        }
+        require(run(fixture(shortEntropy)).status == Status::Found, "entropy completeness not asserted");
         auto mismatch = fixture(); patch(mismatch.bytes,mismatch.thumbIfd,256,17);
         require(run(mismatch).status == Status::Invalid, "JPEG versus TIFF dimensions");
         auto outside = fixture(); patch(outside.bytes,outside.thumbIfd,273,0xfffffff0);
         require(run(outside).status != Status::Found, "out of bounds offset");
         auto truncated = fixture(); patch(truncated.bytes,truncated.thumbIfd,279,0xffffffff);
         require(run(truncated).status != Status::Found, "out of bounds length");
-        require(run(fixture(sizedJpeg(4096,8),1,4096,8)).status == Status::Found, "dimension exact limit");
-        require(run(fixture(sizedJpeg(4097,8),1,4097,8)).status == Status::Unsupported, "dimension over limit");
-        require(run(fixture(sizedJpeg(2000,2000),1,2000,2000)).status == Status::Found, "pixels exact limit");
-        require(run(fixture(sizedJpeg(2001,2000),1,2001,2000)).status == Status::Unsupported, "pixels over limit");
+        require(run(largeSource(fixture(sizedJpeg(4096,8),1,4096,8))).status == Status::Found, "dimension exact limit");
+        require(run(largeSource(fixture(sizedJpeg(4097,8),1,4097,8))).status == Status::Absent, "dimension over limit");
+        require(run(largeSource(fixture(sizedJpeg(2000,2000),1,2000,2000))).status == Status::Found, "pixels exact limit");
+        require(run(largeSource(fixture(sizedJpeg(2001,2000),1,2001,2000))).status == Status::Absent, "pixels over limit");
         auto multiple = fixture(); addThumbnail(multiple,sizedJpeg(32,16),32,16,3);
         require(run(multiple).width == 32 && run(multiple).orientation == 3, "largest valid candidate");
         auto tied = fixture(); addThumbnail(tied,withExif(3),16,8,3);
@@ -161,10 +182,10 @@ int main() {
         large.bytes.resize(maxInput);
         require(run(large).status == Status::Found, "input exact limit");
         Bytes jpeg(std::begin(syntheticJpeg), std::end(syntheticJpeg));
-        jpeg.resize(maxJpeg);
+        jpeg.resize(maxJpeg); jpeg[maxJpeg-2] = 255; jpeg[maxJpeg-1] = 217;
         require(run(fixture(jpeg)).status == Status::Found, "JPEG exact limit");
         jpeg.push_back(0);
-        require(run(fixture(jpeg)).status == Status::Unsupported, "JPEG over limit");
+        require(run(fixture(jpeg)).status == Status::Absent, "JPEG over limit");
         auto nonJpeg = fixture(); patch(nonJpeg.bytes,nonJpeg.thumbIfd,259,1);
         require(run(nonJpeg).status != Status::Found, "non-JPEG not decoded");
         require(extract(nullptr,0).status == Status::Invalid, "empty input");
