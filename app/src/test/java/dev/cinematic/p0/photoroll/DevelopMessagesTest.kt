@@ -5,6 +5,18 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DevelopMessagesTest {
+    @Test fun captionHasShortLabelAndOnlyPendingValuesUseWarning() {
+        for (before in listOf(false, true)) for (pending in listOf(false, true)) {
+            val caption = developCaption(before, pending)
+            val label = if (before) "基準表示（撮影時WB・調整なし）" else "現像結果"
+            assertEquals(MessageSlot.CAPTION, caption.slot)
+            assertEquals(if (pending) "$label · 更新中" else label, caption.body)
+            assertEquals(if (pending) CaptureChromeTone.WARNING else CaptureChromeTone.NORMAL, caption.tone)
+            assertNull(caption.primary)
+            assertNull(caption.secondary)
+        }
+    }
+
     private fun state(phase: PhotoRollSavePhase? = PhotoRollSavePhase.READY) =
         DevelopMessageState(PhotoRollPhase.DISPLAYED, savePhase = phase)
 
@@ -60,6 +72,8 @@ class DevelopMessagesTest {
         val result = developMessages(state(PhotoRollSavePhase.SAVING).copy(exportPaused = true), listOf(foreground))
         assertEquals("保存中 · プレビューを止めています", result.center?.body)
         assertEquals("preview.export_paused", result.center?.fact)
+        assertEquals(CaptureChromeTone.WARNING, result.center?.tone)
+        assertNull("Do not offer resume while JPEG is being saved", result.center?.primary)
         assertEquals("save.foreground_progress", result.banner?.fact)
         assertEquals(MessageAction.CANCEL_SAVE, result.banner?.primary?.action)
     }

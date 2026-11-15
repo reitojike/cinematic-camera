@@ -144,7 +144,7 @@ class GpuDevelopLayoutAndroidTest {
                 for (failed in listOf(false, true)) {
                     if (failed) scenario.onActivity { banner.value = UiMessage(MessageSlot.BANNER,
                         CaptureChromeTone.FAILURE, "保存したJPEGを開けませんでした。", "synthetic.open_failed") }
-                    val caption = bounds("現像結果 · 長押しで基準表示")
+                    val caption = bounds("現像結果")
                     val notification = bounds(banner.value.body)
                     assertTrue("Banner must be below caption: $caption / $notification", notification.top >= caption.bottom)
                     val image = fixture.captureSoftware()
@@ -171,7 +171,7 @@ class GpuDevelopLayoutAndroidTest {
                 val closeAction = checkNotNull(generateSequence(checkNotNull(close)) { it.parent }.firstOrNull { it.isClickable })
                 assertTrue(closeAction.performAction(AccessibilityNodeInfo.ACTION_CLICK))
                 instrumentation.waitForIdleSync()
-                assertNotNull(await("現像結果 · 長押しで基準表示"))
+                assertNotNull(await("現像結果"))
             }
         } finally {
             gpu.close(); assertTrue(gpu.renderer.awaitClosed(5_000)); GpuPhotoRollRetiredOwners.releaseBeforeOpen()

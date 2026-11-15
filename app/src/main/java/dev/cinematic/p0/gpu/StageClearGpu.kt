@@ -66,6 +66,7 @@ internal data class StageClearGpuPreviewTarget(
     val width: Int,
     val height: Int,
     val linearFiltering: Boolean = false,
+    val viewportY: Int = 0,
 ) : GpuPreviewTarget {
     init { require(width > 0 && height > 0) }
 }
@@ -146,7 +147,7 @@ internal class DefaultStageClearGpu(
             image.requireContext(egl)
             require(image.memoryLedger === ledger) { "GPU frame belongs to another memory ledger" }
             present(egl, image, destination.width, destination.height, display.rotationDegrees,
-                linearFiltering = destination.linearFiltering)
+                linearFiltering = destination.linearFiltering, viewportY = destination.viewportY)
         }
         if (display.showBefore) show(source.input)
         else {
