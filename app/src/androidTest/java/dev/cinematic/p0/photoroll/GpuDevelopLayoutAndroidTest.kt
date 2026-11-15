@@ -5,6 +5,7 @@ import android.graphics.Rect
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.SideEffect
@@ -130,10 +131,10 @@ class GpuDevelopLayoutAndroidTest {
             "別の写真のJPEGを保存中です。", "synthetic.other_save"))
         val state = DevelopMessageState(PhotoRollPhase.DISPLAYED, PhotoRollSavePhase.READY)
         fixture.content = { CaptureTheme {
-            PhotoRollDevelopView("SYNTHETIC / EMPTY GPU SURFACE", PhotoRollPreviewMode.MANUAL_TRIAL,
+            PhotoRollDevelopView("SYNTHETIC", PhotoRollPreviewMode.MANUAL_TRIAL,
                 editor, { editor }, state.phase, null, null, null, null, null, true, state.savePhase,
                 false, false, false, {}, {}, {}, {}, { _, _, _ -> }, {}, {}, {}, {},
-                modifier = Modifier.fillMaxSize(), gpuSession = gpu, gpuReady = true,
+                modifier = Modifier.fillMaxSize().safeDrawingPadding(), gpuSession = gpu, gpuReady = true,
                 productMessages = ScreenMessages(banner = banner.value), productSave = developSavePresentation(state),
                 info = { androidx.compose.material3.Text("合成の空GPU Surfaceです。写真は読み込んでいません。") })
         } }
