@@ -124,6 +124,7 @@ ATDのsnapshot方式とは別で、GPUにはsnapshotを使わない。
   従来の共有原本だけの採取を、先に起動したinstanceへ無理に使わない。
 - 別worktree・console port 5620/5622で各起動・登録。2台目が共有原本を上書きした後でも、
   **両方**で90条件と帯28件の実走・pull・runtime再照合に成功した。
+  同一sourceから各worktreeで作ったAPKのhashは異なり、APKのバイト同一を主張しない。個別のAPK証跡で採取した。
   既存goldenとの比較は両方 `pass`、`environmentChanged=true`、全画素差0。基準画像は変更していない。
 - run IDは `golden-20261115-010325-b82a9cd9` と `golden-20261115-010400-b82a9cd9`。
   system image、emulator版、GPU/driver等の環境証跡は各runのhost metadataで追跡する。
