@@ -118,6 +118,14 @@ class PrDDevelopInteractionsAndroidTest {
                 model.failure = failure
                 model.cancelled = !failure
             }
+            // State changes reuse the scroll container; reset its previous offset before seeking
+            // actions which may now live above the old card (e.g. cancellation banner).
+            repeat(8) {
+                instrumentation.waitForIdleSync()
+                rootNodes().filter { it.isScrollable }.maxByOrNull { rect(it).height() }
+                    ?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
+                SystemClock.sleep(100)
+            }
             val action = if (failure) "一覧に戻る" else "プレビューを再開"
             scrollUntilVisible(action, forward = true)
             visible(action)
