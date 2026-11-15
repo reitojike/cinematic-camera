@@ -176,6 +176,28 @@ class HalfPreviewComparisonAndroidTest {
         } finally { persist() }
     }
 
+    @Test fun redrawDemosaicOverviewOnly() {
+        requireGpuInputSafetyFixture()
+        val args = InstrumentationRegistry.getArguments()
+        check(args.getString("demosaicComparison") == "true")
+        val run = checkNotNull(args.getString("halfPreviewRunId"))
+        require(run.matches(Regex("[A-Za-z0-9_-]{1,80}")))
+        val commit = checkNotNull(args.getString("halfPreviewSourceCommit"))
+        require(commit.matches(Regex("[a-f0-9]{40}")))
+        val out = File(checkNotNull(app.getExternalFilesDir("half-preview-review")), run)
+        val file = File(out, "demosaic.json")
+        val manifest = JSONObject(file.readText())
+        check(manifest.getString("status") == "complete")
+        val rows = manifest.getJSONArray("cases")
+        for(i in 0 until rows.length()) {
+            val hashes = rows.getJSONObject(i).getJSONObject("fileSha256")
+            for(name in hashes.keys()) check(sha(File(out, name)) == hashes.getString(name))
+        }
+        demosaicOverview(out, rows)
+        manifest.put("overviewSourceCommit", commit).put("overviewSha256", sha(File(out, "00-demosaic-overview.png")))
+        file.writeText(manifest.toString(2))
+    }
+
     private fun demosaicOverview(directory: File, rows: JSONArray) {
         val sheet = Bitmap.createBitmap(1080, 220 + rows.length() * 570, Bitmap.Config.ARGB_8888)
         try {
@@ -183,7 +205,9 @@ class HalfPreviewComparisonAndroidTest {
             val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = 28f }
             val filter = Paint(Paint.FILTER_BITMAP_FLAG)
             canvas.drawText("原寸デモザイク比較・合成画像のみ・未採用", 20f, 42f, text)
-            canvas.drawText("現行 AHD               双線形 q=0                PPG q=2", 20f, 95f, text)
+            listOf("現行 AHD", "双線形 q=0", "PPG q=2").forEachIndexed { col, label ->
+                canvas.drawText(label, 20f + col * 353f, 95f, text)
+            }
             text.textSize = 22f
             canvas.drawText("上：全体／下：中央160×80を2倍表示。保存JPEGはAHDのまま", 20f, 142f, text)
             canvas.drawText("時間：AVD展開＋RGB16書込。Pixel／編集可能までの時間ではありません。", 20f, 175f, text)
