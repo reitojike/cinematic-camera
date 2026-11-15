@@ -1,0 +1,269 @@
+{
+  "schema": 1,
+  "status": "complete",
+  "syntheticOnly": true,
+  "adopted": false,
+  "caseCount": 5,
+  "sourceCommit": "ec2642aef5749be3dbc0b2d354b31edb0561b107",
+  "runId": "half-20261115-051738-ec2642ae",
+  "android": {
+    "sdk": 37,
+    "fingerprint": "Android\/sdk_phone64_x86_64\/emu64x:17\/CE2A.260420.051.A3\/16571990:userdebug\/test-keys",
+    "hardware": "ranchu"
+  },
+  "comparison": "DISPLAY8 current full \/ explicit half \/ full GPU export JPEG95; display-size JPEG uses Android bilinear scaling",
+  "cases": [
+    {
+      "id": "01-gradients-colors",
+      "rawWidth": 2050,
+      "rawHeight": 1538,
+      "orientation": 1,
+      "strength": 0.5,
+      "manualEv": 0,
+      "fullWidth": 1023,
+      "fullHeight": 768,
+      "halfWidth": 1023,
+      "halfHeight": 768,
+      "fullBaseEv": -0.22088101863539567,
+      "halfBaseEv": -0.22224217338363128,
+      "saveBaseEv": -0.22015905418017678,
+      "fullPreview": "01-gradients-colors-full-preview.png",
+      "halfPreview": "01-gradients-colors-half-preview.png",
+      "fullSaveJpeg": "01-gradients-colors-full-save.jpg",
+      "saveDisplay": "01-gradients-colors-save-display.png",
+      "sourceSha256": "f63355ff9c590515fcf32bde3826384b0762e88d330fd5c4c53f4057ee709a3e",
+      "gl": {
+        "vendor": "Google Inc. (NVIDIA)",
+        "renderer": "ANGLE (NVIDIA, Vulkan 1.3.0 (NVIDIA Goldfish GFXStream (NVIDIA GeForce RTX 3070) (0x00002484)), gfxstream (NVIDIA)-26.0.65.35)",
+        "version": "OpenGL ES 3.2 (ANGLE 2.1 git hash: 8d8796935e4faeaf19e67ac0a5949e71a5252e7f)"
+      },
+      "fileSha256": {
+        "01-gradients-colors-full-preview.png": "d8fc53b938f852373286bec61823cef0260190a7f51736f219e98ed017b55bf7",
+        "01-gradients-colors-half-preview.png": "fee50e1a68b5b1a36771e0859ff47b1081dab5270d938e763340008a82d3c7ac",
+        "01-gradients-colors-full-save.jpg": "cacf5c32def16b4aa2b57627e036474d234fdc82961137f1db2c888942cf02ff",
+        "01-gradients-colors-save-display.png": "2892c92f32cd6c0ac6fc1c776acd0c60c959603f07a3a3e5d03d630d8c30637b"
+      },
+      "halfResizedForMetrics": false,
+      "halfVsCurrent": {
+        "maeRgb8": 0.11380649573693928,
+        "maxRgb8": 21,
+        "p99Rgb8": 2,
+        "changedPixelPercent": 24.840898908439232
+      },
+      "currentVsSave": {
+        "maeRgb8": 0.3717836123330075,
+        "maxRgb8": 13,
+        "p99Rgb8": 2,
+        "changedPixelPercent": 76.93785129521017
+      },
+      "halfVsSave": {
+        "maeRgb8": 0.38823890789616594,
+        "maxRgb8": 17,
+        "p99Rgb8": 2,
+        "changedPixelPercent": 77.59385691593353
+      }
+    },
+    {
+      "id": "02-fine-detail",
+      "rawWidth": 2050,
+      "rawHeight": 1538,
+      "orientation": 1,
+      "strength": 0.5,
+      "manualEv": 0,
+      "fullWidth": 1023,
+      "fullHeight": 768,
+      "halfWidth": 1023,
+      "halfHeight": 768,
+      "fullBaseEv": -0.33651909294318094,
+      "halfBaseEv": -0.33651909294318094,
+      "saveBaseEv": -0.33651909294318094,
+      "fullPreview": "02-fine-detail-full-preview.png",
+      "halfPreview": "02-fine-detail-half-preview.png",
+      "fullSaveJpeg": "02-fine-detail-full-save.jpg",
+      "saveDisplay": "02-fine-detail-save-display.png",
+      "sourceSha256": "b1f4ab5990b830cfa85be9c082c4ddbf537e0e842d2560829e4bd93ce2f814a2",
+      "gl": {
+        "vendor": "Google Inc. (NVIDIA)",
+        "renderer": "ANGLE (NVIDIA, Vulkan 1.3.0 (NVIDIA Goldfish GFXStream (NVIDIA GeForce RTX 3070) (0x00002484)), gfxstream (NVIDIA)-26.0.65.35)",
+        "version": "OpenGL ES 3.2 (ANGLE 2.1 git hash: 8d8796935e4faeaf19e67ac0a5949e71a5252e7f)"
+      },
+      "fileSha256": {
+        "02-fine-detail-full-preview.png": "8564314ea74831315711a6bad3ba987235ee7392e04e900fabd9ad9b3f9667b4",
+        "02-fine-detail-half-preview.png": "4addc04bbbd08b464926a666fee0aed747a2a64439fe7150cc43db81583350d1",
+        "02-fine-detail-full-save.jpg": "a1718b21948c172cffe5dddeb4f08bfe0b69db1b5dd6fc3dd2fd6994cdf7e940",
+        "02-fine-detail-save-display.png": "2789f76e10999da80dca2b3ae109c2d6576ca63fec1a10984176e742d00ba280"
+      },
+      "halfResizedForMetrics": false,
+      "halfVsCurrent": {
+        "maeRgb8": 46.53945325228087,
+        "maxRgb8": 255,
+        "p99Rgb8": 216,
+        "changedPixelPercent": 93.06026494786576
+      },
+      "currentVsSave": {
+        "maeRgb8": 19.61559309492777,
+        "maxRgb8": 150,
+        "p99Rgb8": 98,
+        "changedPixelPercent": 99.91586734278266
+      },
+      "halfVsSave": {
+        "maeRgb8": 43.812616674133814,
+        "maxRgb8": 252,
+        "p99Rgb8": 210,
+        "changedPixelPercent": 99.91739471326164
+      }
+    },
+    {
+      "id": "03-stage-lights",
+      "rawWidth": 2050,
+      "rawHeight": 1538,
+      "orientation": 1,
+      "strength": 0.5,
+      "manualEv": -2,
+      "fullWidth": 1023,
+      "fullHeight": 768,
+      "halfWidth": 1023,
+      "halfHeight": 768,
+      "fullBaseEv": -0.7177489237294342,
+      "halfBaseEv": -0.7177489237294342,
+      "saveBaseEv": -0.7177489237294342,
+      "fullPreview": "03-stage-lights-full-preview.png",
+      "halfPreview": "03-stage-lights-half-preview.png",
+      "fullSaveJpeg": "03-stage-lights-full-save.jpg",
+      "saveDisplay": "03-stage-lights-save-display.png",
+      "sourceSha256": "490cb4787e70477ee1e8afc5aca47e988d8e830e31fd57305cba4122814d7c7e",
+      "gl": {
+        "vendor": "Google Inc. (NVIDIA)",
+        "renderer": "ANGLE (NVIDIA, Vulkan 1.3.0 (NVIDIA Goldfish GFXStream (NVIDIA GeForce RTX 3070) (0x00002484)), gfxstream (NVIDIA)-26.0.65.35)",
+        "version": "OpenGL ES 3.2 (ANGLE 2.1 git hash: 8d8796935e4faeaf19e67ac0a5949e71a5252e7f)"
+      },
+      "fileSha256": {
+        "03-stage-lights-full-preview.png": "d1bb560ee0e0bef25e9888b540738437048670abf197fdd7ab6fc646428171ab",
+        "03-stage-lights-half-preview.png": "b7a1357a581261349f88d1fcf0b402b6e35dae4c0aa4aadeca5838ce5fcba7c7",
+        "03-stage-lights-full-save.jpg": "6b574558b1de2dd8697fdfeb2da7d282a0aeabb75f9221d1f4b79eaa5f31f5eb",
+        "03-stage-lights-save-display.png": "75abda61ddeb853afa248d61b19fa188029ee673776f181f370e8dab8aadb7a7"
+      },
+      "halfResizedForMetrics": false,
+      "halfVsCurrent": {
+        "maeRgb8": 0.38644891454871294,
+        "maxRgb8": 236,
+        "p99Rgb8": 2,
+        "changedPixelPercent": 17.002306329423266
+      },
+      "currentVsSave": {
+        "maeRgb8": 0.16896960193331162,
+        "maxRgb8": 109,
+        "p99Rgb8": 2,
+        "changedPixelPercent": 15.050199576409254
+      },
+      "halfVsSave": {
+        "maeRgb8": 0.39049050654393397,
+        "maxRgb8": 241,
+        "p99Rgb8": 3,
+        "changedPixelPercent": 17.676131272401435
+      }
+    },
+    {
+      "id": "04-color-edges",
+      "rawWidth": 2050,
+      "rawHeight": 1538,
+      "orientation": 1,
+      "strength": 1,
+      "manualEv": 0,
+      "fullWidth": 1023,
+      "fullHeight": 768,
+      "halfWidth": 1023,
+      "halfHeight": 768,
+      "fullBaseEv": -0.32862748421207133,
+      "halfBaseEv": -0.32862748421207133,
+      "saveBaseEv": -0.32862748421207133,
+      "fullPreview": "04-color-edges-full-preview.png",
+      "halfPreview": "04-color-edges-half-preview.png",
+      "fullSaveJpeg": "04-color-edges-full-save.jpg",
+      "saveDisplay": "04-color-edges-save-display.png",
+      "sourceSha256": "61261d39b4fc96e097255222e67b3dad23cbe6366ec97acf5812da024ccef3af",
+      "gl": {
+        "vendor": "Google Inc. (NVIDIA)",
+        "renderer": "ANGLE (NVIDIA, Vulkan 1.3.0 (NVIDIA Goldfish GFXStream (NVIDIA GeForce RTX 3070) (0x00002484)), gfxstream (NVIDIA)-26.0.65.35)",
+        "version": "OpenGL ES 3.2 (ANGLE 2.1 git hash: 8d8796935e4faeaf19e67ac0a5949e71a5252e7f)"
+      },
+      "fileSha256": {
+        "04-color-edges-full-preview.png": "c387c638b803fbd437ca9daef04865f13f9e27d3c7963227fdc7021149e1c1a5",
+        "04-color-edges-half-preview.png": "e9ff5bcd4b28125949b568a35237344b373fd2edb6090a40919078709eb7b3f5",
+        "04-color-edges-full-save.jpg": "13c19699e2a61f35857651d0b50e5394a6acc464888bd261d3cddfbf7009c148",
+        "04-color-edges-save-display.png": "ca2873186385eaebd91038e443aaa9844ed699713ec97bae392928c7afd8ea35"
+      },
+      "halfResizedForMetrics": false,
+      "halfVsCurrent": {
+        "maeRgb8": 0.3473427147822309,
+        "maxRgb8": 208,
+        "p99Rgb8": 2,
+        "changedPixelPercent": 10.038133349625285
+      },
+      "currentVsSave": {
+        "maeRgb8": 0.5442199209840339,
+        "maxRgb8": 115,
+        "p99Rgb8": 4,
+        "changedPixelPercent": 73.77403062886934
+      },
+      "halfVsSave": {
+        "maeRgb8": 0.6649560117302052,
+        "maxRgb8": 165,
+        "p99Rgb8": 5,
+        "changedPixelPercent": 73.72642758227435
+      }
+    },
+    {
+      "id": "05-odd-portrait",
+      "rawWidth": 2051,
+      "rawHeight": 1539,
+      "orientation": 6,
+      "strength": 0.5,
+      "manualEv": 0,
+      "fullWidth": 768,
+      "fullHeight": 1023,
+      "halfWidth": 768,
+      "halfHeight": 1023,
+      "fullBaseEv": -0.33651909294318094,
+      "halfBaseEv": -0.33651909294318094,
+      "saveBaseEv": -0.33651909294318094,
+      "fullPreview": "05-odd-portrait-full-preview.png",
+      "halfPreview": "05-odd-portrait-half-preview.png",
+      "fullSaveJpeg": "05-odd-portrait-full-save.jpg",
+      "saveDisplay": "05-odd-portrait-save-display.png",
+      "sourceSha256": "fcd09c4a31189bbc4bc85ae381b12b40fc988486d6b69a9a923786a7acbd2806",
+      "gl": {
+        "vendor": "Google Inc. (NVIDIA)",
+        "renderer": "ANGLE (NVIDIA, Vulkan 1.3.0 (NVIDIA Goldfish GFXStream (NVIDIA GeForce RTX 3070) (0x00002484)), gfxstream (NVIDIA)-26.0.65.35)",
+        "version": "OpenGL ES 3.2 (ANGLE 2.1 git hash: 8d8796935e4faeaf19e67ac0a5949e71a5252e7f)"
+      },
+      "fileSha256": {
+        "05-odd-portrait-full-preview.png": "5162f5f1e3069123e7fe721cc0e38599a332b73fad0b2d3296b3e120bd472781",
+        "05-odd-portrait-half-preview.png": "67a9d09f07c423d8243319f01da8b6e91dc851a0d299935610485b08f5bde83f",
+        "05-odd-portrait-full-save.jpg": "bd18137fa38a5554b99326d481f96babafbfe988cf62be07b87ee9958f1a503d",
+        "05-odd-portrait-save-display.png": "1d3043495a4db429e6d04ed3663c2121701c80219a833d7414826dadcb61a12c"
+      },
+      "halfResizedForMetrics": false,
+      "halfVsCurrent": {
+        "maeRgb8": 50.550510990279136,
+        "maxRgb8": 255,
+        "p99Rgb8": 215,
+        "changedPixelPercent": 93.0192805066797
+      },
+      "currentVsSave": {
+        "maeRgb8": 19.403406969561203,
+        "maxRgb8": 152,
+        "p99Rgb8": 95,
+        "changedPixelPercent": 99.90924873737374
+      },
+      "halfVsSave": {
+        "maeRgb8": 48.86146283059085,
+        "maxRgb8": 246,
+        "p99Rgb8": 205,
+        "changedPixelPercent": 99.9261770935158
+      }
+    }
+  ],
+  "overview": "00-overview.png",
+  "overviewSha256": "62a1bc082a46fc8962e39b7d3eeacd0105a963bcd00321cb0274c44e6be4fc17"
+}

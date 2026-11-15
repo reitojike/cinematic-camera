@@ -1,0 +1,7 @@
+{
+  "sourceCommit": "ec2642aef5749be3dbc0b2d354b31edb0561b107",
+  "appApkSha256": "097f57a90ea4793a45e86c671a18e2d0c24803a56446c3e29616803e42df134e",
+  "testApkSha256": "25bde76ba97b9c09fe0f13cd22f7240d205328ed980ec2a67f0a28af94754177",
+  "syntheticOnly": true,
+  "productionChanged": false
+}
