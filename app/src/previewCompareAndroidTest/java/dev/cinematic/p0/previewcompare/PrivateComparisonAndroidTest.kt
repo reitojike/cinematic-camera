@@ -74,4 +74,43 @@ class PrivateComparisonAndroidTest {
             assertNoPrivateCopies()
         } finally { assertTrue(source.delete()) }
     }
+    @Test fun cleanupFailureBlocksRetryWithoutDeletingUnknownFiles() {
+        val source = fixture()
+        val original = source.readBytes()
+        var extra: File? = null
+        try {
+            val failure = assertThrows(IllegalStateException::class.java) {
+                PrivatePhotoComparison(app).compare(Uri.fromFile(source), ComparisonStop(), 0.0) { phase ->
+                    if (phase.startsWith("PPG")) {
+                        val directory = app.cacheDir.listFiles()!!.single { it.name.startsWith("private-compare-") }
+                        extra = File(directory, "test-owned-cleanup-obstacle").also { it.writeText("synthetic") }
+                    }
+                }
+            }
+            assertEquals("COMPARE_CLEANUP", failure.message)
+            assertNotNull(extra)
+            assertTrue(PrivatePhotoComparison.cleanupBlocked)
+            assertTrue(extra!!.exists())
+            val retry = assertThrows(IllegalStateException::class.java) {
+                PrivatePhotoComparison(app).compare(Uri.fromFile(source), ComparisonStop(), 0.0) {}
+            }
+            assertEquals("COMPARE_CLEANUP", retry.message)
+            assertTrue(extra!!.exists())
+            assertArrayEquals(original, source.readBytes())
+        } finally {
+            // Test-only obstacle, not an unresolved raster owner. Clear only what this test created.
+            extra?.let { assertTrue(it.delete()); assertTrue(it.parentFile!!.delete()) }
+            PrivatePhotoComparison::class.java.getDeclaredField("cleanupBlocked").apply { isAccessible = true }.setBoolean(null, false)
+            assertTrue(source.delete())
+        }
+        assertNoPrivateCopies()
+    }
+    @Test fun unavailableSourceLeavesNoPrivateCopy() {
+        val source = File(app.cacheDir, "missing-synthetic-source.dng")
+        assertFalse(source.exists())
+        assertThrows(java.io.FileNotFoundException::class.java) {
+            PrivatePhotoComparison(app).compare(Uri.fromFile(source), ComparisonStop(), 0.0) {}
+        }
+        assertNoPrivateCopies()
+    }
 }
