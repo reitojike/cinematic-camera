@@ -17,3 +17,37 @@
 - GPU出力・境界取消/再試行・journal・observer・readbackの12件、FGSの6件、保存ライフサイクル1件が成功。実機での確認は別。
 - FGSの旧試験期待による取消後の未確認表示は、進捗変更前のauthority同一な #443 APK対照でも再現。raw READY・intent/journalなし・JPEG不増・原本照合・資源解放の検査は維持し、保守的な未確認表示と再確認操作を検証した。
 - この記録は本人の画面承認を代行しない。公開・マージは未実施。
+
+## GitHub 上での変更前後比較
+
+以下は同じ合成 fixture の変更前・変更後です。本人の見た目確認待ちです。
+
+### 通常
+
+|工程|変更前|変更後|
+|---|---|---|
+|保存の準備中|![変更前](normal-1-before.png)|![変更後](normal-1-after.png)|
+|画像を現像中|![変更前](normal-2-before.png)|![変更後](normal-2-after.png)|
+|JPEGを作成中|![変更前](normal-3-before.png)|![変更後](normal-3-after.png)|
+|保存しています|![変更前](normal-4-before.png)|![変更後](normal-4-after.png)|
+|取消中|![変更前](normal-5-before.png)|![変更後](normal-5-after.png)|
+
+### 短画面
+
+|工程|変更前|変更後|
+|---|---|---|
+|保存の準備中|![変更前](short-1-before.png)|![変更後](short-1-after.png)|
+|画像を現像中|![変更前](short-2-before.png)|![変更後](short-2-after.png)|
+|JPEGを作成中|![変更前](short-3-before.png)|![変更後](short-3-after.png)|
+|保存しています|![変更前](short-4-before.png)|![変更後](short-4-after.png)|
+|取消中|![変更前](short-5-before.png)|![変更後](short-5-after.png)|
+
+### 文字2倍
+
+|工程|変更前|変更後|
+|---|---|---|
+|保存の準備中|![変更前](large-text-1-before.png)|![変更後](large-text-1-after.png)|
+|画像を現像中|![変更前](large-text-2-before.png)|![変更後](large-text-2-after.png)|
+|JPEGを作成中|![変更前](large-text-3-before.png)|![変更後](large-text-3-after.png)|
+|保存しています|![変更前](large-text-4-before.png)|![変更後](large-text-4-after.png)|
+|取消中|![変更前](large-text-5-before.png)|![変更後](large-text-5-after.png)|
