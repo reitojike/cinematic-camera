@@ -38,7 +38,11 @@ class GpuPreviewOwnerEditorAndroidTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     @get:Rule val fixture = SyntheticFixtureRule()
 
-    @Test fun tenEditorOpenBackCyclesKeepOneContextAndRetireEachPhoto() {
+    @Test fun tenEditorOpenBackCyclesKeepOneContextAndRetireEachPhoto() = editorCycles(10)
+
+    @Test fun fortyEditorOpenBackCyclesMeasureSecondHalfStability() = editorCycles(40)
+
+    private fun editorCycles(rounds: Int) {
         requireGpuInputSafetyFixture()
         InitialPreviewProductFixture(false).use { product ->
             val publications = MutableStateFlow(GpuInputPublication())
@@ -83,7 +87,7 @@ class GpuPreviewOwnerEditorAndroidTest {
             try {
                 ActivityScenario.launch(PhotoRollActivity::class.java).use {
                     val device = UiDevice.getInstance(instrumentation)
-                    repeat(10) { index ->
+                    repeat(rounds) { index ->
                         await { device.findObject(By.text("OWNER_OPEN")) != null }
                         val start = SystemClock.elapsedRealtimeNanos()
                         device.findObject(By.text("OWNER_OPEN")).click()
@@ -114,7 +118,8 @@ class GpuPreviewOwnerEditorAndroidTest {
             }
             val dir = File(checkNotNull(instrumentation.targetContext.getExternalFilesDir(null)), "additional_test_output/owner-reuse")
             check(dir.mkdirs() || dir.isDirectory)
-            File(dir, "ten-editor-cycles.json").writeText(JSONObject().put("samples", samples)
+            File(dir, if (rounds == 10) "ten-editor-cycles.json" else "forty-editor-cycles.json").writeText(JSONObject().put("samples", samples)
+                .put("predeclaredSecondHalfCriteria", "For 40 cycles: cycles21..40 OLS bytes/cycle <=0.0005*cycle21 native; endpoint increase <=0.01*cycle21 native. Report all samples and monotonicity; no zero-leak or Pixel claim.")
                 .put("scope", "Actual Editor/Surface/Back; synthetic launcher/private256x192 source; presented callback not scanout").toString())
         }
     }
