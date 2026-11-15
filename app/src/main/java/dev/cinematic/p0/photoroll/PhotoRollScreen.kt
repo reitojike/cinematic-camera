@@ -53,7 +53,7 @@ import java.util.Locale
 @Composable
 internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRollRenderer, foreground: Boolean,
     gpuPublications: kotlinx.coroutines.flow.StateFlow<dev.cinematic.p0.gpu.preview.GpuInputPublication>? = null,
-    gpuTrimEpoch: Int = 0, importConditions: (() -> dev.cinematic.p0.rawcapture.AutoDevelopConditions)? = null, close: () -> Unit) {
+    gpuTrimEpoch: Int = 0, gpuOwner: GpuPhotoRollOwner? = null, importConditions: (() -> dev.cinematic.p0.rawcapture.AutoDevelopConditions)? = null, close: () -> Unit) {
     var selectedUri by rememberSaveable { mutableStateOf<String?>(null) }
     DisposableEffect(selectedUri, foreground) {
         dev.cinematic.p0.diagnostics.PreviewPresentationTrace.invalidate()
@@ -643,7 +643,8 @@ internal fun PhotoRollScreen(repository: PhotoRollRepository, renderer: PhotoRol
                 key(selectedUri) {
                     GpuPhotoRollEditor(repository, gpuRenderer, checkNotNull(selectedUri), fromFiles,
                         listing.items.firstOrNull { it.uri == selectedUri }?.name ?: "DNG（名前未取得）",
-                        foreground, gpuPublications, gpuTrimEpoch, ::backToList, Modifier.weight(1f))
+                        foreground, gpuPublications, gpuTrimEpoch, ::backToList, Modifier.weight(1f),
+                        createSession = { assets -> gpuOwner?.open() ?: GpuPhotoRollSession(assets) })
                 }
             } else {
                 val owner = jpegSave
