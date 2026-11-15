@@ -25,7 +25,7 @@ import org.junit.Test
 class PrDDevelopLayoutAndroidTest {
     @get:Rule val fixture = SyntheticFixtureRule()
 
-    @Test fun panelAndMessagesRemainOutsideCompactImageAndCaptionsStayVisible() {
+    @Test fun panelStaysBelowImageAndEmptyViewportHostsCompactProblem() {
         val args = InstrumentationRegistry.getArguments()
         check(args.getString("isolated") == "true")
         check(Build.HARDWARE in setOf("ranchu", "goldfish"))
@@ -79,7 +79,10 @@ class PrDDevelopLayoutAndroidTest {
                     }
                     if (compact && failed) {
                         val problem = bounds("原本を読み込めません")
-                        assertTrue("compact problem must be below image", problem.top >= image.bottom)
+                        assertTrue("empty viewport contains the problem", image.contains(problem))
+                        val action = bounds("一覧に戻る")
+                        assertTrue("compact return action is inside viewport", image.contains(action))
+                        assertTrue("problem remains below caption", problem.top >= bounds("現像結果").bottom)
                     }
                     val bitmap = fixture.captureSoftware()
                     try { File(output, "$name.png").outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) } }
