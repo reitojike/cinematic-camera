@@ -47,6 +47,15 @@ try {
   $null=Read-InstanceEvidence $path $live 'emulator-5600' $config $boot 'fixture'
   Reject {Read-InstanceEvidence $secondPath $live 'emulator-5600' $config $boot 'fixture'}
  }
+ Check cleanupUnattributed {if(Test-CleanupOwnership $null $live){throw 'Unattributed process must not be killed'}}
+ $launcherIdentity=[pscustomobject]@{processId=10;startedUtc='2026-11-15T00:00:00.0000000Z'}
+ $currentLauncher=[pscustomobject]@{ProcessId=10;CreationDate=[DateTime]$launcherIdentity.startedUtc}
+ Check cleanupOldProcess {$owner=$null;$candidate=Clone $live;$candidate.startedUtc='2026-11-14T23:59:59Z';try{Assert-LauncherOwnership $candidate $launcherIdentity $currentLauncher;$owner=$candidate}catch{};if(Test-CleanupOwnership $owner $candidate){throw 'Old process must not be killed'}}
+ Check cleanupOtherLauncher {$owner=$null;$candidate=Clone $live;$candidate|Add-Member parentProcessId 99;try{Assert-LauncherOwnership $candidate $launcherIdentity $currentLauncher;$owner=$candidate}catch{};if(Test-CleanupOwnership $owner $candidate){throw 'Other launcher must not be killed'}}
+ Check cleanupOtherAvd {$owner=$null;$candidate=Clone $live;$candidate|Add-Member parentProcessId 10;$candidate.commandLine=$candidate.commandLine.Replace('fixture','other');try{Assert-LauncherOwnership $candidate $launcherIdentity $currentLauncher;Assert-LaunchAssociation $candidate $launch ([DateTime]$record.launchModifiedUtc) 'emulator-5600' 'fixture';$owner=$candidate}catch{};if(Test-CleanupOwnership $owner $candidate){throw 'Other AVD must not be killed'}}
+ Check cleanupVerifiedChild {$candidate=Clone $live;$candidate|Add-Member parentProcessId 10;Assert-LauncherOwnership $candidate $launcherIdentity $currentLauncher;if(!(Test-CleanupOwnership $candidate $candidate)){throw 'Verified child should be eligible'}}
+ Check cleanupLauncherGone {Reject {Assert-LauncherOwnership $live $launcherIdentity $null}}
+ Check cleanupLauncherReused {$bad=Clone $currentLauncher;$bad.CreationDate=[DateTime]'2026-11-15T00:01:00Z';Reject {Assert-LauncherOwnership $live $launcherIdentity $bad}}
  # Exercise live-process ambiguity/PID mapping without querying Windows processes.
  function Get-CimInstance {param($ClassName) $script:fakeProcesses}
  $script:fakeProcesses=@()

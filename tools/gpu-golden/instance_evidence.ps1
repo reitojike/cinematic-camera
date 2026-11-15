@@ -26,7 +26,7 @@ function Get-LiveGpuProcess([string]$Serial) {
     $port=$Matches[1]
     $items=@(Get-CimInstance Win32_Process | Where-Object {$_.Name -like 'qemu-system-*' -and $_.CommandLine -match "(?:^|\s)-port\s+$port(?:\s|$)"})
     if($items.Count -ne 1){throw 'Cannot map serial to exactly one running QEMU process'}
-    [pscustomobject]@{processId=$items[0].ProcessId;startedUtc=$items[0].CreationDate.ToUniversalTime().ToString('o');commandLine=$items[0].CommandLine}
+    [pscustomobject]@{processId=$items[0].ProcessId;parentProcessId=$items[0].ParentProcessId;startedUtc=$items[0].CreationDate.ToUniversalTime().ToString('o');commandLine=$items[0].CommandLine}
 }
 function Assert-InstanceEvidence($Record,$Live,[string]$Serial,[string]$ConfigPath,[string]$ConfigHash,[string]$BootId,[string]$AvdName,[string[]]$Launch,[string]$LaunchHash) {
     if($Record.schema -ne 1 -or $Record.serial -ne $Serial -or $Record.avdName -ne $AvdName){throw 'Wrong instance evidence identity'}
@@ -46,4 +46,15 @@ function Read-InstanceEvidence([string]$Path,$Live,[string]$Serial,[string]$Conf
     $launchPath=Join-Path $directory 'emulator-launch.local.txt'
     Assert-InstanceEvidence $record $Live $Serial $ConfigPath (Get-EvidenceHash $ConfigPath) $BootId $AvdName (Get-Content -LiteralPath $launchPath) (Get-EvidenceHash $launchPath)
     $record
+}
+
+# Ownership for cleanup is stricter than serial discovery. Never infer it from timing alone.
+function Assert-LauncherOwnership($Live,$Launcher,$CurrentLauncher) {
+    if(!$Live -or !$Launcher -or !$CurrentLauncher){throw 'Missing launcher ownership evidence'}
+    if($CurrentLauncher.ProcessId -ne $Launcher.processId -or $CurrentLauncher.CreationDate.ToUniversalTime() -ne ([DateTime]$Launcher.startedUtc).ToUniversalTime()){throw 'Launcher exited or PID was reused'}
+    if(([DateTime]$Live.startedUtc).ToUniversalTime() -lt ([DateTime]$Launcher.startedUtc).ToUniversalTime()){throw 'Selected process predates launcher'}
+    if($Live.processId -ne $Launcher.processId -and $Live.parentProcessId -ne $Launcher.processId){throw 'QEMU is not this launcher or its direct child'}
+}
+function Test-CleanupOwnership($Owner,$Current) {
+    $null -ne $Owner -and $null -ne $Current -and $Current.processId -eq $Owner.processId -and $Current.startedUtc -ceq $Owner.startedUtc -and $Current.commandLine -ceq $Owner.commandLine
 }

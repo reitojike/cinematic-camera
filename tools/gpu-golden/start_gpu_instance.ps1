@@ -22,7 +22,7 @@ if($paths.Count -ne 1 -or (Resolve-Path -LiteralPath (($paths[0] -split '=',2)[1
 $configHash=Get-EvidenceHash $AvdConfig
 $key=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($AvdConfig.ToLowerInvariant())))
 $mutex=[Threading.Mutex]::new($false,"Global\CinematicGpuLaunch-$key")
-$owned=$false;$live=$null
+$owned=$false;$live=$null;$cleanupOwner=$null
 $repo=(Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $output=Join-Path $repo ("build/gpu-launch/$Serial-"+[Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $output | Out-Null
@@ -38,10 +38,11 @@ try {
     $emulator=Join-Path $SdkRoot 'emulator/emulator.exe'
     $arguments="-avd $avdName -port $Port -cores $Cores -memory $MemoryMiB -gpu host -feature GuestAngle,Vulkan -read-only -no-snapshot -no-snapshot-save -no-window -no-audio -no-boot-anim"
     $launcher=Start-Process $emulator -ArgumentList $arguments -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $output 'emulator.stdout.local.txt') -RedirectStandardError (Join-Path $output 'emulator.stderr.local.txt')
+    $launcherIdentity=[pscustomobject]@{processId=$launcher.Id;startedUtc=$launcher.StartTime.ToUniversalTime().ToString('o')}
     $until=[DateTime]::UtcNow.AddSeconds(60)
     do {Start-Sleep -Milliseconds 250;try {$live=Get-LiveGpuProcess $Serial}catch {$live=$null}}while(!$live -and [DateTime]::UtcNow -lt $until)
     if(!$live){throw 'New QEMU process did not appear'}
-    if([DateTime]::Parse($live.startedUtc).ToUniversalTime() -lt $launcher.StartTime.ToUniversalTime().AddSeconds(-2)){throw 'Selected process predates this launch'}
+    Assert-LauncherOwnership $live $launcherIdentity (Get-CimInstance Win32_Process -Filter "ProcessId=$($launcherIdentity.processId)")
     $launchPath=Join-Path (Split-Path -Parent $AvdConfig) 'emu-launch-params.txt'
     $modified=(Get-Item -LiteralPath $launchPath).LastWriteTimeUtc
     $originalHash=Get-EvidenceHash $launchPath
@@ -50,6 +51,7 @@ try {
     if((Get-EvidenceHash $copy) -cne $originalHash -or (Get-EvidenceHash $launchPath) -cne $originalHash -or (Get-Item $launchPath).LastWriteTimeUtc -ne $modified){throw 'Launch record changed while registering'}
     Assert-LaunchAssociation $live (Get-Content -LiteralPath $copy) $modified $Serial $avdName
     if((Get-EvidenceHash $AvdConfig) -cne $configHash){throw 'Config changed during launch'}
+    $cleanupOwner=$live
     # Original bytes and runtime association are now preserved. A second cooperating launch may proceed.
     $mutex.ReleaseMutex();$owned=$false
     $until=[DateTime]::UtcNow.AddMinutes(6);$boot=''
@@ -73,6 +75,6 @@ try {
 } catch {
     $_|Out-String|Set-Content -LiteralPath (Join-Path $output 'failure.local.txt')
     # Do not stop a replacement process if this port was reassigned.
-    if($live){try {$current=Get-LiveGpuProcess $Serial;if($current.processId -eq $live.processId -and $current.startedUtc -ceq $live.startedUtc -and $current.commandLine -ceq $live.commandLine){& $adb -s $Serial emu kill | Out-Null}}catch {}}
+    if($cleanupOwner){try {$current=Get-LiveGpuProcess $Serial;if(Test-CleanupOwnership $cleanupOwner $current){& $adb -s $Serial emu kill | Out-Null}}catch {}}
     throw
 } finally {if($owned){$mutex.ReleaseMutex()};$mutex.Dispose()}
