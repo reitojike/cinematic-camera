@@ -5,19 +5,22 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 
 /** Display-only projection. Camera guards and recovery eligibility remain owned by the caller. */
 internal fun captureMessages(
     waitingForConnection: Boolean = false,
+    cameraPermissionMissing: Boolean = false,
     controlRecovery: Boolean = false,
     captureRecovery: Boolean = false,
     canReconnect: Boolean = false,
     diagnosticsEnabled: Boolean = true,
     thermalWarning: Boolean = false,
+    thermalRejected: Boolean = false,
     microphoneWarning: Boolean = false,
     captureFailed: Boolean = false,
     recordingFailed: Boolean = false,
-    notice: String? = null,
+    notice: CaptureNotice? = null,
     phase: String? = null,
 ): ScreenMessages = screenMessages(buildList {
     if (captureRecovery) add(UiMessage(MessageSlot.PROBLEM, CaptureChromeTone.FAILURE,
@@ -28,6 +31,10 @@ internal fun captureMessages(
         "再接続して設定を確認してください。", "controls.recovery",
         title = "設定状態を確認できません",
         primary = if (canReconnect) MessageControl(MessageAction.RECONNECT, "再接続") else null))
+    if (cameraPermissionMissing) add(UiMessage(MessageSlot.PROBLEM, CaptureChromeTone.FAILURE,
+        "カメラの許可が必要です。", "camera.permission",
+        title = "カメラを使えません",
+        primary = MessageControl(MessageAction.GRANT_ACCESS, "カメラを許可")))
     if (waitingForConnection) add(UiMessage(MessageSlot.CENTER, CaptureChromeTone.NORMAL,
         "接続待ち・プレビュー停止中", "preview.connection"))
     val diagnostics = MessageControl(MessageAction.OPEN_DIAGNOSTICS, "詳細は診断へ", enabled = diagnosticsEnabled)
@@ -37,20 +44,22 @@ internal fun captureMessages(
         "録画を完了できませんでした。診断を確認してください。", "recording.failure", primary = diagnostics))
     if (phase != null) add(UiMessage(MessageSlot.BANNER, CaptureChromeTone.WARNING,
         phase, "capture.processing", inProgress = true))
-    if (thermalWarning) add(UiMessage(MessageSlot.BANNER, CaptureChromeTone.WARNING,
+    if (thermalRejected) add(UiMessage(MessageSlot.BANNER, CaptureChromeTone.FAILURE,
+        "端末が熱いため録画を開始できませんでした。温度が下がるまでお待ちください。", "recording.thermal"))
+    else if (thermalWarning) add(UiMessage(MessageSlot.BANNER, CaptureChromeTone.WARNING,
         "端末が熱いため録画を開始できません。温度が下がるまでお待ちください。", "recording.thermal"))
     if (microphoneWarning) add(UiMessage(MessageSlot.BANNER, CaptureChromeTone.WARNING,
         "マイクが許可されていません。権限を許可するか、設定で音声をOFFにしてください。", "recording.microphone"))
     if (notice != null) add(UiMessage(MessageSlot.TOAST,
-        if (notice == "保存しました" || notice.startsWith("設定API受付完了")) CaptureChromeTone.ACCEPTED else CaptureChromeTone.NORMAL,
-        notice, "capture.notice"))
+        notice.tone,
+        notice.text, "capture.notice"))
 }, failureFallback = captureFailureFallback(diagnosticsEnabled))
 
 /** Shared by the actual preview and synthetic visual regression. Does not own any state or action. */
 @Composable
 internal fun BoxScope.CaptureMessageOverlay(messages: ScreenMessages, horizontal: Boolean,
     captureRecovery: Boolean, onAction: (MessageAction) -> Unit, rotation: Modifier = Modifier,
-    failureFallback: UiMessage? = null) {
+    failureFallback: UiMessage? = null, statusBarHeight: Dp = 44.dp) {
     if (horizontal && messages.center != null && messages.banner != null) {
         // Both describe different facts. Stack in the existing central area instead of overlapping.
         Column(Modifier.align(Alignment.Center).widthIn(max = 220.dp).then(rotation),
@@ -67,7 +76,7 @@ internal fun BoxScope.CaptureMessageOverlay(messages: ScreenMessages, horizontal
         }
         messages.banner?.let { message ->
             CaptureBanner(message, onAction, Modifier.align(if (horizontal) Alignment.Center else Alignment.TopCenter)
-                .padding(top = if (horizontal) 0.dp else 48.dp)
+                .padding(top = if (horizontal) 0.dp else statusBarHeight + 4.dp)
                 .widthIn(max = if (horizontal) 220.dp else 380.dp).then(rotation), failureFallback = failureFallback)
         }
     }
