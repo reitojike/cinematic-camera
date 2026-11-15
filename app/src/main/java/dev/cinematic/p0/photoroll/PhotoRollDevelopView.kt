@@ -122,11 +122,8 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                 if (gpuSession != null) GpuPhotoRollImage(gpuSession, requested, comparing && compareEnabled,
                     compareEnabled, { comparing = it }, Modifier.fillMaxSize(), updating = captionUpdating, initialGuide = initialGuide, header = if (productMessages != null) { before ->
                         Column(Modifier.fillMaxWidth()) {
-                            if (initialGuide != null) Text(initialGuide.label,
-                                Modifier.fillMaxWidth().background(CaptureDesign.Scrim).padding(8.dp),
-                                color = CaptureDesign.Muted, style = CaptureDesign.Explanation, maxLines = 1,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                            else DevelopCaption(developCaption(before, captionUpdating), Modifier.fillMaxWidth())
+                            DevelopCaption(if (initialGuide != null) developCaption(false, false).copy(body = initialGuide.label)
+                                else developCaption(before, captionUpdating), Modifier.fillMaxWidth())
                             productMessages.banner?.let { CaptureBanner(it, onProductAction, failureFallback = productFailureFallback) }
                         }
                     } else null)
@@ -208,7 +205,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                     val value = when (key) { PhotoEditParameter.STRENGTH -> requested.strength; PhotoEditParameter.TEMPERATURE -> requested.temperature; PhotoEditParameter.BRIGHTNESS -> requested.brightness }
                     val displayed = state.displayedValues?.let { when (key) { PhotoEditParameter.STRENGTH -> it.strength; PhotoEditParameter.TEMPERATURE -> it.temperature; PhotoEditParameter.BRIGHTNESS -> it.brightness } }
                     val dirty = supported && value != displayed
-                    val keyEnabled = supported && foreground && (session != null || beginEnabled)
+                    val keyEnabled = initialGuide == null && supported && foreground && (session != null || beginEnabled)
                     TextButton(onClick = { parameter = key; if (session == null) begin() }, enabled = keyEnabled,
                         modifier = Modifier.weight(1f).heightIn(min = 72.dp).captureControlSurface(session != null && parameter == key)
                             .semantics { selected = session != null && parameter == key }, shape = RectangleShape, contentPadding = PaddingValues(4.dp),
@@ -216,9 +213,9 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(when (key) { PhotoEditParameter.STRENGTH -> "STRENGTH"; PhotoEditParameter.TEMPERATURE -> "色温度"; PhotoEditParameter.BRIGHTNESS -> "明るさ" }, style = CaptureDesign.Label)
                             Text(if (supported && value != null) editValueLabel(key, value) else "—", style = CaptureDesign.Value, color = if (!keyEnabled) CaptureDesign.Disabled else if (dirty) CaptureDesign.Amber else CaptureDesign.Text)
-                            Text(when { !supported -> "未対応"; dirty -> "指定 · 未反映"; key == PhotoEditParameter.TEMPERATURE -> "相対"; key == PhotoEditParameter.BRIGHTNESS -> "EV"; else -> "表示中" },
+                            Text(when { initialGuide != null -> " "; !supported -> "未対応"; dirty -> "指定 · 未反映"; key == PhotoEditParameter.TEMPERATURE -> "相対"; key == PhotoEditParameter.BRIGHTNESS -> "EV"; else -> "表示中" },
                                 style = CaptureDesign.Label, color = if (!keyEnabled) CaptureDesign.Disabled else if (dirty) CaptureDesign.Amber else CaptureDesign.Muted)
-                            Text(if (supported && dirty) displayed?.let { "表示中 ${editValueLabel(key, it)}" } ?: "表示中の値なし" else " ",
+                            Text(if (initialGuide == null && supported && dirty) displayed?.let { "表示中 ${editValueLabel(key, it)}" } ?: "表示中の値なし" else " ",
                                 style = CaptureDesign.Label, color = if (keyEnabled) CaptureDesign.Muted else CaptureDesign.Disabled)
                         }
                     }

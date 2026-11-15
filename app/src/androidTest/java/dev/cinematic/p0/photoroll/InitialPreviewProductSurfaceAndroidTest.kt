@@ -1,5 +1,8 @@
 package dev.cinematic.p0.photoroll
 
+import android.graphics.Rect
+import android.view.MotionEvent
+import java.util.concurrent.atomic.AtomicInteger
 import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
@@ -34,6 +37,8 @@ class InitialPreviewProductSurfaceAndroidTest {
             val owner=GpuPhotoRollSession(instrumentation.targetContext.assets)
             val values=PhotoAdjustmentPolicy.defaults
             val guide=mutableStateOf<InitialPreviewFrame?>(null)
+            val saveCalls=AtomicInteger()
+            val bound=checkNotNull(TrialStrengthEditor.empty(values).bind(product.source))
             val drawRecorded=AtomicBoolean()
             val presented=AtomicBoolean()
             val allocations=CopyOnWriteArrayList<Bitmap>()
@@ -46,10 +51,14 @@ class InitialPreviewProductSurfaceAndroidTest {
                 LaunchedEffect(exact) { if(exact) { handoff.close(); guide.value=null } }
                 val visible=guide.value.takeUnless { exact }
                 CaptureTheme {
-                    GpuPhotoRollImage(owner,values,false,exact,{},Modifier.fillMaxSize().drawWithContent {
-                        drawContent()
-                        if(visible!=null) drawRecorded.set(true)
-                    },initialGuide=visible)
+                    val editor=if(exact) bound.shown(bound.ticket,values) else bound
+                    PhotoRollDevelopView("SYNTHETIC PRODUCT INPUT",PhotoRollPreviewMode.MANUAL_TRIAL,
+                        editor,{editor},if(exact) PhotoRollPhase.DISPLAYED else PhotoRollPhase.CHECKING,
+                        null,null,null,null,null,true,null,false,false,exact,
+                        {saveCalls.incrementAndGet()},{},{},{},{_,_,_->},{},{},{},{},
+                        modifier=Modifier.fillMaxSize(),viewportModifier=Modifier.drawWithContent {
+                            drawContent(); if(visible!=null) drawRecorded.set(true)
+                        },gpuSession=owner,gpuReady=exact,gpuPresentedValues=current,initialGuide=visible,info={})
                 }
             }
             try {
@@ -63,6 +72,21 @@ class InitialPreviewProductSurfaceAndroidTest {
                         handoff.offer(frame)
                         // Real callback executes on input IO. FULL cannot start before it returns.
                         await { drawRecorded.get() && containsLabel(frame.label) }
+                        // View gate only: production Editor canSave is independently guarded by
+                        // ready/presented/metadata/save-owner; this fixture does not prove that gate.
+                        val save=checkNotNull(findLabel("JPEGを保存"))
+                        assertFalse(save.isEnabled)
+                        val bounds=Rect().also { save.getBoundsInScreen(it) }
+                        val down=SystemClock.uptimeMillis()
+                        for(action in listOf(MotionEvent.ACTION_DOWN,MotionEvent.ACTION_UP)) {
+                            val event=MotionEvent.obtain(down,SystemClock.uptimeMillis(),action,
+                                bounds.exactCenterX(),bounds.exactCenterY(),0)
+                            try { assertTrue(fixture.automation.injectInputEvent(event,true)) } finally { event.recycle() }
+                        }
+                        instrumentation.waitForIdleSync()
+                        assertEquals(0,saveCalls.get())
+                        assertFalse(containsLabel("指定 · 未反映"))
+                        assertFalse(containsLabel("表示中の値なし"))
                         assertFalse(presented.get())
                         assertFalse(frame.bitmap.isRecycled)
                     }
@@ -101,6 +125,16 @@ class InitialPreviewProductSurfaceAndroidTest {
                 allocations.forEach { if(!it.isRecycled) it.recycle() }
             }
         }
+    }
+    private fun findLabel(label: String): AccessibilityNodeInfo? {
+        fun walk(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+            if(node==null) return null
+            if(node.text?.toString()==label || node.contentDescription?.toString()==label) return node
+            for(i in 0 until node.childCount) walk(node.getChild(i))?.let { return it }
+            return null
+        }
+        fixture.automation.clearCache()
+        return walk(fixture.fixtureRoot())
     }
     private fun containsLabel(label: String): Boolean {
         fun walk(node: AccessibilityNodeInfo?): Boolean {
