@@ -64,9 +64,10 @@ class PrivateComparisonAndroidTest {
     @Test fun changedOriginalRejectsResultAndCleansCopies() {
         val source = fixture()
         try {
-            assertThrows(Exception::class.java) {
+            var changed = false
+            assertThrows(dev.cinematic.p0.rawcapture.DngContentChanged::class.java) {
                 PrivatePhotoComparison(app).compare(Uri.fromFile(source), ComparisonStop(), 0.0) { phase ->
-                    if (phase.startsWith("PPG")) source.appendBytes(byteArrayOf(1))
+                    if (phase.startsWith("PPG")) { source.appendBytes(byteArrayOf(1)); changed = true }
                 }
             }
             assertNoPrivateCopies()
