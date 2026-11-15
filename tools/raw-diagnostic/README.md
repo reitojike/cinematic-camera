@@ -1,5 +1,7 @@
 # RAW4 comparison (standard-library Python)
 
+> #290: この独立診断variantは退役対象です。以下は過去版の再現・既存記録の解釈用に保持する手順で、現行ビルド入口ではありません。通常GPU性能試験とメモリ再実行手順は別に保持します。
+
 Run locally against the two **private**, completed schema-2 TIMING reports:
 
 ```sh

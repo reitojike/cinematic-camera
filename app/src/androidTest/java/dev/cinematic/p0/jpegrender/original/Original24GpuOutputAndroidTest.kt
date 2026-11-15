@@ -1,6 +1,5 @@
 package dev.cinematic.p0.jpegrender.original
 
-import android.os.Build
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.gpu.EglContexts
@@ -15,7 +14,6 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.math.pow
 import org.junit.Assert.*
-import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -27,9 +25,7 @@ class Original24GpuOutputAndroidTest {
     private val assets get() = app.assets
 
     @Before fun requireOptInEmulator() {
-        assumeTrue(app.packageName in setOf("dev.cinematic.p0.original24probe", "dev.cinematic.p0.gpudiagnostic"))
-        assumeTrue(InstrumentationRegistry.getArguments().getString("gpuExportSave") == "true")
-        assumeTrue("Physical devices are excluded", Build.HARDWARE in setOf("ranchu", "goldfish"))
+        requireGpuSaveSafetyFixture()
     }
 
     private val raster = object : OriginalRaster {

@@ -25,15 +25,12 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /** #345: actual factory cancellation and same-generation explicit retry. Small synthetic DNG,
- * real CPU/GPU producer and JPEG publication; no pixel oracle, performance or device-quality gate.
+ * real GPU producer and JPEG publication; no pixel oracle, performance or device-quality gate.
  * The CPU checkpoint is identified from its real renderer stack; no product test hook is added.
  */
 @RunWith(AndroidJUnit4::class)
 class Original24CancellationRetryInstrumentationTest {
-    @Test fun diagnosticCpuSaveCancellationRequiresExplicitRetryBeforePublication() = runCase(DevelopEngine.CPU)
-    @Test fun gpuSaveCancellationRequiresExplicitRetryBeforePublication() = runCase(DevelopEngine.GPU)
-    @Test fun diagnosticCpuSaveCancellationAfterJpegEntryRemainsHeld() = runCase(DevelopEngine.CPU, afterJpegEntry = true)
-    @Test fun gpuSaveCancellationAfterJpegEntryRemainsHeld() = runCase(DevelopEngine.GPU, afterJpegEntry = true)
+    @get:org.junit.Rule val isolatedUi = dev.cinematic.p0.photoroll.SyntheticFixtureRule()
 
     @Test fun normalGpuSaveCancellationRequiresExplicitRetryBeforePublication() = runCase(DevelopEngine.GPU, ordinary = true)
     @Test fun normalGpuSaveCancellationAfterJpegEntryRemainsHeld() = runCase(DevelopEngine.GPU, afterJpegEntry = true, ordinary = true)
@@ -42,14 +39,15 @@ class Original24CancellationRetryInstrumentationTest {
     @Test fun normalGpuConfirmedCancellationCanChangeRecipeThroughOrdinaryUi() =
         runCase(DevelopEngine.GPU, ordinary = true, newGeneration = true, editThroughUi = true)
 
-    private fun runCase(engine: DevelopEngine, afterJpegEntry: Boolean = false, ordinary: Boolean = false,
+    private fun runCase(engine: DevelopEngine, afterJpegEntry: Boolean = false, ordinary: Boolean = true,
         newGeneration: Boolean = false, editThroughUi: Boolean = false) {
-        val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
+        val installed = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
         val args = InstrumentationRegistry.getArguments()
         assumeTrue(args.getString("isolated") == "true" && args.getString("saveCancellationRetry") == "true")
         assumeTrue("Physical devices are excluded", Build.HARDWARE in setOf("ranchu", "goldfish"))
-        // Diagnostic CPU/GPU stay selectable; the ordinary build is fixed GPU without a setting UI.
-        assumeTrue(app.packageName == if (ordinary) "dev.cinematic.p0" else "dev.cinematic.p0.gpudiagnostic")
+        // The ordinary build is fixed GPU without a setting UI.
+        check(ordinary && installed.packageName == "dev.cinematic.p0")
+        val app = isolatedGpuSaveSafetyApp()
         val setting = DevelopEngineSetting(app)
         if (engine == DevelopEngine.GPU) {
             val capabilities = GlThread().use { thread -> thread.call {
@@ -141,7 +139,7 @@ class Original24CancellationRetryInstrumentationTest {
 
             if (newGeneration) {
                 val next = if (editThroughUi) dev.cinematic.p0.photoroll.ConfirmedCancellationEditProbe.publish(app,
-                    reference, sourceName, save) else AndroidManualOriginalTrialSaves.prepare(app, reference, .35, ALLOWED,
+                    reference, sourceName, save, isolatedUi) else AndroidManualOriginalTrialSaves.prepare(app, reference, .35, ALLOWED,
                         PhotoAdjustments(-10.0, -.2)).get(30, TimeUnit.SECONDS)
                 // Closing the UI publishes foreground=false; subsequent factory-only assertions
                 // use the same explicit fixture admission as this test's initial cancellation.
@@ -260,7 +258,7 @@ class Original24CancellationRetryInstrumentationTest {
         } catch (error: Throwable) { failure = error; throw error }
         finally {
             stopped.set(true)
-            try {
+            preserveSafetyCleanup(failure, {
                 if (!success) {
                     handle?.requestStop()
                     AndroidManualOriginalTrialSaves.discardPreview(app).get(60, TimeUnit.SECONDS)
@@ -281,15 +279,12 @@ class Original24CancellationRetryInstrumentationTest {
                             arrayOf(app.packageName, row.name)) == 1)
                     }
                 }
-            } catch (cleanup: Throwable) {
-                if (failure == null) throw cleanup
-                if (cleanup !== failure) failure.addSuppressed(cleanup)
-            } finally {
+            }, {
                 val editor = preferences.edit()
                 if (hadEngine) editor.putString(ENGINE_KEY, oldEngine) else editor.remove(ENGINE_KEY)
                 check(editor.commit())
                 check(preferences.contains(ENGINE_KEY) == hadEngine && preferences.getString(ENGINE_KEY, null) == oldEngine)
-            }
+            })
         }
     }
 
@@ -303,9 +298,7 @@ class Original24CancellationRetryInstrumentationTest {
                 sawGpu.set(true)
                 glThread.compareAndSet(null, Thread.currentThread())
             }
-            val selected = if (engine == DevelopEngine.GPU) currentGpu else Thread.currentThread().stackTrace.any {
-                it.className == "dev.cinematic.p0.raw.original.OriginalStageClear24" && it.methodName == "render"
-            }
+            val selected = currentGpu
             if (selected) seen.set(true)
             return selected
         }

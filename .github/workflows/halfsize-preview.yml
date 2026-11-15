@@ -1,0 +1,24 @@
+name: Half-size preview geometry
+on:
+  pull_request:
+    paths: ['tools/halfsize-preview/**', 'app/src/main/cpp/original_raster_sink.*', 'third_party/libraw/**', '.github/workflows/halfsize-preview.yml']
+  push:
+    branches: [main]
+    paths: ['tools/halfsize-preview/**', 'app/src/main/cpp/original_raster_sink.*', 'third_party/libraw/**', '.github/workflows/halfsize-preview.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Configure with address and undefined behavior sanitizers
+        run: >-
+          cmake -S tools/halfsize-preview -B build/halfsize-preview
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS='-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer'
+          -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined'
+      - run: cmake --build build/halfsize-preview --parallel 2
+      - run: ctest --test-dir build/halfsize-preview --output-on-failure

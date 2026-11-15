@@ -247,7 +247,24 @@ class GpuInputLifecycleSafetyAndroidTest {
                             saveReady() && owners.last().session.presented.value != null
                     }
                     assertClosed(retired)
-                    val live = snapshot(owners.last())
+                    val current = owners.last()
+                    var redrawAfter: Long? = null
+                    var verified: GpuPreviewSnapshot? = null
+                    // presented survives resize. Observe the same owner's natural redraw on GL,
+                    // not the window-destruction interval between resize and the next frame.
+                    // Do not request a frame here: that could hide a broken resize scheduler.
+                    await("Activity recreation $iteration owns a naturally redrawn surface") {
+                        assertSame("Recreated owner must not be silently replaced", current, owners.last())
+                        val observed = snapshot(current)
+                        if (observed.windowCount == 0) redrawAfter = observed.drawCount
+                        val ready = observed.surfaceAttached && observed.windowCount == 1 &&
+                            observed.allocatedBytes > 0L && observed.drawCount > 0L &&
+                            (redrawAfter == null || observed.drawCount > checkNotNull(redrawAfter)) &&
+                            current.session.presented.value != null
+                        if (ready) verified = observed
+                        ready
+                    }
+                    val live = checkNotNull(verified)
                     assertEquals(1, live.windowCount)
                     assertTrue(live.allocatedBytes > 0L)
                     owners.dropLast(1).forEach(::assertClosed)

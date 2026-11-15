@@ -10,8 +10,6 @@ import androidx.test.filters.SdkSuppress
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.jpegrender.JpegFrame
 import dev.cinematic.p0.jpegrender.JpegGenerationRecipe
-import dev.cinematic.p0.jpegrender.JpegGenerationRequest
-import dev.cinematic.p0.jpegrender.TrialPreparedFoundation
 import dev.cinematic.p0.testing.writeSyntheticTrialDng
 import java.io.File
 import java.nio.ByteBuffer
@@ -23,247 +21,42 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/** Real queue/codec/RAW decode with generated pixels only. No camera capture or performance claim. */
+/** Historical class name retained for test selection; now tests fresh readback, not CPU cache reuse.
+ * Isolated legacy queue/codec/RAW decode with generated pixels only. No product enrollment. */
 @RunWith(AndroidJUnit4::class)
 @SdkSuppress(minSdkVersion = 29)
 class PrivateTrialReuseInstrumentationTest {
-    private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
+    private val legacyHolder = lazy { LegacyCpuFixture.create() }
+    private val legacy by legacyHolder
+    @org.junit.After fun closeLegacyFixture() { if (legacyHolder.isInitialized()) legacy.close() }
+    private val context get() = legacy.app
     private val allowed = AutoDevelopConditions(true, false, false, false, true, true, true, true)
 
     @Before fun isolatedOnly() {
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
         check(Build.HARDWARE in setOf("ranchu", "goldfish"))
-        PrivateTrialReuseRegistry.invalidateAll()
-        DevelopExecution.updateConditions(allowed)
+        legacy.execution.updateConditions(allowed)
     }
 
-    @Test fun strengthChangeReusesComparisonWithoutDecodeAndMatchesUncachedBytesAndPixels() {
-        val session = PrivateTrialReuseRegistry.openSession()
-        try {
+    @Test fun freshSourceValidationRejectsUpdatedSyntheticBytesBeforeComparisonDecode() {
             Fixture().use { f ->
-                val first = f.ready(.5, session)
-                val firstCounter = DecodeCounter()
-                val firstBefore = f.read(first, firstCounter).use { pixels(requireNotNull(it.comparisonBitmap)) }
-                assertEquals(1, firstCounter.loads)
-
-                val changed = f.ready(.75, session)
-                val cachedBytes = f.output(changed).readBytes()
-                val hit = DecodeCounter()
-                val cached = f.read(changed, hit).use {
-                    pixels(it.bitmap) to pixels(requireNotNull(it.comparisonBitmap))
-                }
-                assertEquals("A comparison hit must never create/load another native frame", 0, hit.factories)
-                assertEquals(0, hit.loads)
-                assertEquals(firstBefore, cached.second)
-
-                // Return through another generation, then render .75 without any session binding.
-                f.ready(.5, null)
-                val uncached = f.ready(.75, null)
-                val miss = DecodeCounter()
-                val uncachedPixels = f.read(uncached, miss).use {
-                    pixels(it.bitmap) to pixels(requireNotNull(it.comparisonBitmap))
-                }
-                assertEquals(1, miss.loads)
-                assertTrue(uncached.request.generation > changed.request.generation)
-                assertArrayEquals(cachedBytes, f.output(uncached).readBytes())
-                assertEquals(cached, uncachedPixels)
-                f.assertOriginalAndUnpublished(uncached)
-            }
-        } finally { session.close() }
-    }
-
-    @Test fun unknownObservationDuringStrengthReadbackStopsOnlyThatAttemptAndPreservesOriginal() {
-        val session = PrivateTrialReuseRegistry.openSession()
-        try {
-            Fixture().use { f ->
-                val first = f.ready(.5, session)
-                f.read(first).close()
-                val changed = f.ready(.75, session)
-                assertNotNull(changed.comparisonCopy(requireNotNull(PrivateTrialReuseRegistry.forRequest(changed.request))))
-
-                var injected = false
-                try {
-                    val stopped = assertThrows(java.util.concurrent.CancellationException::class.java) {
-                        f.read(changed, shouldStop = {
-                            if (!injected) {
-                                injected = true
-                                // One unknown observation after admission, while the private JPEG is read back.
-                                DevelopExecution.updateConditions(AutoDevelopConditions())
-                            }
-                            false // Cancellation is from the admitted slot, not a caller-requested stop.
-                        }, includeCoordinatorStop = true)
-                    }
-                    assertTrue(injected)
-                    assertEquals("Private trial validation cancelled", stopped.message)
-                    // The global unknown observation also invalidates trial reuse; the next
-                    // read validates its encoded JPEG and source without retaining stale pixels.
-                    assertNull(PrivateTrialReuseRegistry.forRequest(changed.request))
-                    f.assertOriginalAndUnpublished(changed)
-                } finally { DevelopExecution.updateConditions(allowed) }
-
-                // The failed read closed its owner and released admission: the same generated JPEG
-                // can be inspected again without modifying the DNG or publishing a result.
-                f.read(changed).close()
-                f.assertOriginalAndUnpublished(changed)
-            }
-        } finally { session.close() }
-    }
-
-    @Test fun cachedComparisonCannotBypassFreshJpegValidationOrCancellation() {
-        val session = PrivateTrialReuseRegistry.openSession()
-        try {
-            Fixture().use { f ->
-                val record = f.ready(.5, session)
+                val record = f.ready(.5)
                 f.read(record).close()
-                val cancelledLease = requireNotNull(PrivateTrialReuseRegistry.forRequest(record.request))
-                assertNotNull(record.comparisonCopy(cancelledLease))
-                assertThrows(java.util.concurrent.CancellationException::class.java) { f.read(record, shouldStop = { true }) }
-                assertNotNull(record.comparisonCopy(cancelledLease))
-                val resumed = DecodeCounter()
-                f.read(record, resumed).close()
-                assertEquals("Normal cancellation with confirmed close preserves the verified entry", 0, resumed.loads)
-
-                val recovered = f.ready(.75, session)
-                f.read(recovered).close()
-                val corruptLease = requireNotNull(PrivateTrialReuseRegistry.forRequest(recovered.request))
-                assertNotNull(recovered.comparisonCopy(corruptLease))
-                // This test's private output only. The generated DNG is never changed here.
-                f.output(recovered).writeBytes("synthetic corrupt JPEG".toByteArray())
-                assertThrows(java.io.IOException::class.java) { f.read(recovered) }
-                assertNull(recovered.comparisonCopy(corruptLease))
-                f.assertOriginalAndUnpublished(recovered)
-            }
-        } finally { session.close() }
-    }
-
-    @Test fun globalInvalidationAndSourceGrantChangesDoNotRetainComparisonPixels() {
-        val session = PrivateTrialReuseRegistry.openSession()
-        try {
-            Fixture().use { f ->
-                val record = f.ready(.5, session)
-                f.read(record).close()
-                val lease = requireNotNull(PrivateTrialReuseRegistry.forRequest(record.request))
-                assertNotNull(record.comparisonCopy(lease))
-                PrivateTrialReuseRegistry.invalidateAll() // Same entry point used by lifecycle/capture invalidation.
-                assertNull(record.comparisonCopy(lease))
-                assertNull(PrivateTrialReuseRegistry.forRequest(record.request))
-
-                val next = PrivateTrialReuseRegistry.openSession()
-                try {
-                    val restored = f.ready(.75, next)
-                    f.read(restored).close()
-                    val previous = requireNotNull(PrivateTrialReuseRegistry.forRequest(restored.request))
-                    assertNotNull(restored.comparisonCopy(previous))
-                    val changedSource = restored.request.source.copy(grant = OriginalGrant.USER_SELECTED)
-                    val changed = restored.request.copy(source = changedSource,
-                        captureId = ManualDevelopRequests.identity(changedSource))
-                    PrivateTrialReuseRegistry.bind(next, changed)
-                    assertNull(restored.comparisonCopy(previous))
-                    assertNull(restored.comparisonCopy(PrivateTrialReuseRegistry.forRequest(changed)))
-                    f.assertOriginalAndUnpublished(record)
-                } finally { next.close() }
-            }
-        } finally { session.close() }
-    }
-
-    @Test fun freshSourceValidationRejectsUpdatedSyntheticBytesBeforeComparisonReuse() {
-        val session = PrivateTrialReuseRegistry.openSession()
-        try {
-            Fixture().use { f ->
-                val record = f.ready(.5, session)
-                f.read(record).close()
-                val lease = requireNotNull(PrivateTrialReuseRegistry.forRequest(record.request))
-                assertNotNull(record.comparisonCopy(lease))
                 f.changeOwnSyntheticSource()
                 val counter = DecodeCounter()
                 assertThrows(DngContentChanged::class.java) { f.read(record, counter) }
                 assertEquals(0, counter.loads)
-                assertNull(record.comparisonCopy(lease))
             }
-        } finally { session.close() }
     }
 
-    @Test fun comparisonCloseFailureDropsTheCandidateAndDoesNotCommitReusablePixels() {
-        val session = PrivateTrialReuseRegistry.openSession()
-        try {
+    @Test fun actualInspectionAndEveryPrivateReadbackStopReleaseBeforeFreshRetry() {
             Fixture().use { f ->
-                val record = f.ready(.5, session)
-                val counter = DecodeCounter().apply { closeFailures = 1 }
-                f.read(record, counter).use { assertNull(it.comparisonBitmap) }
-                assertEquals(1, counter.loads)
-                assertNull(PrivateTrialReuseRegistry.forRequest(record.request))
-                f.assertOriginalAndUnpublished(record)
-            }
-        } finally { session.close() }
-    }
-
-    @Test fun runnerPreverificationFailureInvalidatesAnExistingVerifiedEntryBeforeHolding() {
-        val session = PrivateTrialReuseRegistry.openSession()
-        try {
-            Fixture().use { f ->
-                val first = f.ready(.5, session)
-                f.read(first).close()
-                val pending = f.prepared(.75, session)
-                val lease = requireNotNull(PrivateTrialReuseRegistry.forRequest(pending.request))
-                assertNotNull(first.comparisonCopy(lease))
-                f.changeOwnSyntheticSource()
-                val backend = f.backend(pending.request)
-                val runner = f.runner(pending.request, backend)
-                val held = runner.advance()
-                assertEquals(AutoRunStatus.HELD, held.status)
-                assertEquals(AutoJobReason.SOURCE_CHANGED, requireNotNull(held.record).reason)
-                assertNull(held.record?.attemptId)
-                assertNull(first.comparisonCopy(lease))
-                assertNull(PrivateTrialReuseRegistry.forRequest(pending.request))
-                assertFalse(runner.hasUnreleasedResources)
-                assertFalse(backend.hasUnreleasedResources)
-            }
-        } finally { session.close() }
-    }
-
-    @Test fun runnerIndependentFinalInspectionFailureInvalidatesTheJustCommittedFoundation() {
-        val session = PrivateTrialReuseRegistry.openSession()
-        try {
-            Fixture().use { f ->
-                val pending = f.prepared(.5, session)
-                val actual = f.backend(pending.request)
-                var sawCommittedFoundation = false
-                val fault = object : AutoDevelopBackend by actual {
-                    override fun inspect(request: AutoDevelopRequest, attemptId: String,
-                        shouldStop: () -> Boolean): JpegInspection {
-                        val lease = requireNotNull(PrivateTrialReuseRegistry.forRequest(request))
-                        sawCommittedFoundation = lease.load(JpegGenerationRequest(request.captureId,
-                            request.generation, request.source, JpegGenerationRecipe.trial(.5))) != null
-                        check(sawCommittedFoundation) { "Inject only after the attempt committed a verified foundation" }
-                        // Corrupt this fixture's closed output after attempt completion, before independent inspection.
-                        f.output(attemptId).writeBytes("synthetic final inspection fault".toByteArray())
-                        return actual.inspect(request, attemptId, shouldStop)
-                    }
-                }
-                val runner = f.runner(pending.request, fault)
-                val held = runner.advance()
-                assertTrue(sawCommittedFoundation)
-                assertEquals(AutoRunStatus.HELD, held.status)
-                assertEquals(AutoJobReason.INVALID_OUTPUT, requireNotNull(held.record).reason)
-                assertNull(PrivateTrialReuseRegistry.forRequest(pending.request))
-                assertFalse(runner.hasUnreleasedResources)
-                assertFalse(actual.hasUnreleasedResources)
-                f.assertOriginalAndUnpublished(requireNotNull(held.record))
-            }
-        } finally { session.close() }
-    }
-
-    @Test fun actualInspectionAndEveryPrivateReadbackStopKeepVerifiedPixelsAfterPositiveClose() {
-        val session = PrivateTrialReuseRegistry.openSession()
-        try {
-            Fixture().use { f ->
-                val record = f.ready(.5, session)
-                f.read(record).close()
-                val lease = requireNotNull(PrivateTrialReuseRegistry.forRequest(record.request))
-                val before = requireNotNull(record.comparisonCopy(lease))
+                val record = f.ready(.5)
+                val baseline = f.read(record).use { pixels(it.bitmap) }
                 val backend = f.backend(record.request)
                 var inspectionChecks = 0
                 backend.inspect(record.request, requireNotNull(record.attemptId)) { inspectionChecks++; false }
+                backend.releaseResources()
                 assertTrue(inspectionChecks > 0)
                 // Interrupt each actual snapshot/EXIF/codec/post-codec checkpoint, including stop=true at entry.
                 for (stopAt in 1..inspectionChecks) {
@@ -271,33 +64,30 @@ class PrivateTrialReuseInstrumentationTest {
                     assertThrows(java.util.concurrent.CancellationException::class.java) {
                         backend.inspect(record.request, requireNotNull(record.attemptId)) { ++checks >= stopAt }
                     }
+                    backend.releaseResources()
                     assertFalse(backend.hasUnreleasedResources)
-                    assertArrayEquals(before, record.comparisonCopy(lease))
+                    backend.inspect(record.request, requireNotNull(record.attemptId)) { false }
+                    backend.releaseResources()
                 }
                 var readbackChecks = 0
                 f.read(record, shouldStop = { readbackChecks++; false }).close()
                 assertTrue(readbackChecks > inspectionChecks)
-                // Include the later comparison, post-original-hash and pre-commit checkpoints, not only entry.
+                // Include comparison and post-original-hash checkpoints, not only entry.
                 for (stopAt in 1..readbackChecks) {
                     var checks = 0
                     assertThrows(java.util.concurrent.CancellationException::class.java) {
                         f.read(record, shouldStop = { ++checks >= stopAt })
                     }
-                    assertArrayEquals(before, record.comparisonCopy(lease))
+                    f.read(record).use { assertEquals(baseline, pixels(it.bitmap)) }
                 }
                 f.assertOriginalAndUnpublished(record)
             }
-        } finally { session.close() }
     }
 
     @Test fun actualCorruptJpegRemainsAnIoFailureWhenStopIsRequestedAfterItsLastPoll() {
-        val session = PrivateTrialReuseRegistry.openSession()
-        try {
             Fixture().use { f ->
-                val record = f.ready(.5, session)
+                val record = f.ready(.5)
                 f.read(record).close()
-                val lease = requireNotNull(PrivateTrialReuseRegistry.forRequest(record.request))
-                assertNotNull(record.comparisonCopy(lease))
                 f.output(record).writeBytes("synthetic corrupt JPEG without markers".toByteArray())
                 val backend = f.backend(record.request)
                 var checks = 0
@@ -313,27 +103,20 @@ class PrivateTrialReuseInstrumentationTest {
                 }
                 assertTrue(stopRequested)
                 assertEquals(5, checks)
-                assertFalse(backend.hasUnreleasedResources)
-                assertNull(record.comparisonCopy(lease))
-                assertNull(PrivateTrialReuseRegistry.forRequest(record.request))
+                backend.releaseResources()
+                    assertFalse(backend.hasUnreleasedResources)
                 f.assertOriginalAndUnpublished(record)
             }
-        } finally { session.close() }
     }
 
-    @Test fun runnerRejectsAnotherValidJpegAndInvalidatesTheProducingAttemptFoundation() {
-        val session = PrivateTrialReuseRegistry.openSession()
-        try {
+    @Test fun runnerRejectsAnotherValidJpegWithoutPublishing() {
             Fixture().use { f ->
-                val pending = f.prepared(.5, session)
+                val pending = f.prepared(.5)
                 val actual = f.backend(pending.request)
                 var replacedWithValidJpeg = false
                 val fault = object : AutoDevelopBackend by actual {
                     override fun inspect(request: AutoDevelopRequest, attemptId: String,
                         shouldStop: () -> Boolean): JpegInspection {
-                        val lease = requireNotNull(PrivateTrialReuseRegistry.forRequest(request))
-                        assertNotNull(lease.load(JpegGenerationRequest(request.captureId, request.generation,
-                            request.source, JpegGenerationRecipe.trial(.5))))
                         f.replaceWithDifferentValidJpeg(attemptId)
                         replacedWithValidJpeg = true
                         return actual.inspect(request, attemptId, shouldStop)
@@ -344,67 +127,23 @@ class PrivateTrialReuseInstrumentationTest {
                 assertTrue(replacedWithValidJpeg)
                 assertEquals(AutoRunStatus.HELD, held.status)
                 assertEquals(AutoJobReason.INVALID_OUTPUT, requireNotNull(held.record).reason)
-                assertNull(PrivateTrialReuseRegistry.forRequest(pending.request))
                 assertFalse(runner.hasUnreleasedResources)
                 assertFalse(actual.hasUnreleasedResources)
                 f.assertOriginalAndUnpublished(requireNotNull(held.record))
             }
-        } finally { session.close() }
     }
 
-    @Test fun rejectedOldAttemptInspectionCannotInvalidateANewerBindingOfTheSameRequest() {
-        val session = PrivateTrialReuseRegistry.openSession()
-        try {
+    @Test fun runnerRejectsForeignAttemptAndSameGeometryLengthJpegWithAnotherHash() {
             Fixture().use { f ->
-                val pending = f.prepared(.5, session)
-                val generation = JpegGenerationRequest(pending.request.captureId, pending.request.generation,
-                    pending.request.source, JpegGenerationRecipe.trial(.5))
-                val actual = f.backend(pending.request)
-                var rebound: PrivateTrialReuseLease? = null
-                var verified: TrialPreparedFoundation? = null
-                val fault = object : AutoDevelopBackend by actual {
-                    override fun inspect(request: AutoDevelopRequest, attemptId: String,
-                        shouldStop: () -> Boolean): JpegInspection {
-                        val previous = requireNotNull(PrivateTrialReuseRegistry.forRequest(request))
-                        verified = requireNotNull(previous.load(generation))
-                        // Same immutable request, new authority: the old producer must retain its old lease.
-                        rebound = requireNotNull(PrivateTrialReuseRegistry.bind(session, request))
-                        assertSame(verified, rebound!!.load(generation))
-                        f.replaceWithDifferentValidJpeg(attemptId)
-                        return actual.inspect(request, attemptId, shouldStop)
-                    }
-                }
-                val runner = f.runner(pending.request, fault)
-                val held = runner.advance()
-                assertEquals(AutoRunStatus.HELD, held.status)
-                assertEquals(AutoJobReason.INVALID_OUTPUT, requireNotNull(held.record).reason)
-                assertSame(verified, requireNotNull(rebound).load(generation))
-                assertNotNull(PrivateTrialReuseRegistry.forRequest(pending.request))
-                val foreignAttempt = if (held.record?.attemptId == "a".repeat(32)) "b".repeat(32) else "a".repeat(32)
-                assertThrows(java.io.IOException::class.java) {
-                    actual.inspect(pending.request, foreignAttempt) { false }
-                }
-                assertSame(verified, requireNotNull(rebound).load(generation))
-                assertFalse(actual.hasUnreleasedResources)
-                assertFalse(runner.hasUnreleasedResources)
-                f.assertOriginalAndUnpublished(requireNotNull(held.record))
-            }
-        } finally { session.close() }
-    }
-
-    @Test fun runnerRejectsSameGeometryAndLengthJpegWithAnotherHashAndInvalidatesProducingLease() {
-        val session = PrivateTrialReuseRegistry.openSession()
-        try {
-            Fixture().use { f ->
-                val pending = f.prepared(.5, session)
+                val pending = f.prepared(.5)
                 val actual = f.backend(pending.request)
                 var checkedValidReplacement = false
                 val fault = object : AutoDevelopBackend by actual {
                     override fun inspect(request: AutoDevelopRequest, attemptId: String,
                         shouldStop: () -> Boolean): JpegInspection {
-                        val lease = requireNotNull(PrivateTrialReuseRegistry.forRequest(request))
-                        assertNotNull(lease.load(JpegGenerationRequest(request.captureId, request.generation,
-                            request.source, JpegGenerationRecipe.trial(.5))))
+                        val foreign = if (attemptId == "a".repeat(32)) "b".repeat(32) else "a".repeat(32)
+                        val rejected = assertThrows(java.io.IOException::class.java) { actual.inspect(request, foreign) { false } }
+                        assertEquals("Private inspection belongs to another attempt", rejected.message)
                         f.replaceWithSameGeometryAndLengthJpeg(attemptId)
                         checkedValidReplacement = true
                         return actual.inspect(request, attemptId, shouldStop)
@@ -415,21 +154,90 @@ class PrivateTrialReuseInstrumentationTest {
                 assertTrue(checkedValidReplacement)
                 assertEquals(AutoRunStatus.HELD, held.status)
                 assertEquals(AutoJobReason.INVALID_OUTPUT, requireNotNull(held.record).reason)
-                assertNull(PrivateTrialReuseRegistry.forRequest(pending.request))
                 assertFalse(runner.hasUnreleasedResources)
                 assertFalse(actual.hasUnreleasedResources)
                 f.assertOriginalAndUnpublished(requireNotNull(held.record))
             }
-        } finally { session.close() }
+    }
+    @Test fun comparisonCloseFailureHoldsAdmissionUntilExplicitRelease() {
+        Fixture().use { f ->
+            val record = f.ready(.5)
+            val counter = DecodeCounter().apply { failClose = true }
+            val backend = f.readBackend(record, counter)
+            val slot = f.acquireReadSlot()
+            var released = false
+            var primary: Throwable? = null
+            try {
+                assertThrows(java.io.IOException::class.java) { backend.privatePreview(record) { false } }
+                assertEquals(1, counter.loads)
+                assertTrue(counter.closeCalls > 0)
+                assertTrue(backend.hasUnreleasedResources)
+                assertThrows(java.io.IOException::class.java) { backend.releaseResources() }
+                assertTrue(backend.hasUnreleasedResources)
+                assertNull(legacy.execution.tryStartObserved(allowed))
+                counter.failClose = false
+                backend.releaseResources()
+                assertFalse(backend.hasUnreleasedResources)
+                assertTrue(legacy.execution.completeAfterResourcesClosed(slot))
+                released = true
+                f.read(record).close()
+                f.assertOriginalAndUnpublished(record)
+            } catch (failure: Throwable) { primary = failure; throw failure }
+            finally {
+                counter.failClose = false
+                dev.cinematic.p0.jpegrender.original.preserveSafetyCleanup(primary, {
+                    backend.releaseResources()
+                    check(!backend.hasUnreleasedResources)
+                    if (!released) check(legacy.execution.completeAfterResourcesClosed(slot))
+                })
+            }
+        }
+    }
+    @Test fun unknownObservationDuringFreshReadbackStopsOnlyThatAttemptAndPreservesOriginal() {
+        Fixture().use { f ->
+            val record = f.ready(.5)
+            val baseline = f.read(record).use { pixels(it.bitmap) }
+            val counter = DecodeCounter().apply {
+                onLoad = { legacy.execution.updateConditions(AutoDevelopConditions()) }
+            }
+            val backend = f.readBackend(record, counter)
+            val slot = f.acquireReadSlot()
+            val callerStop = false
+            var released = false
+            var primary: Throwable? = null
+            try {
+                assertFalse(legacy.execution.shouldStop(slot))
+                assertThrows(java.util.concurrent.CancellationException::class.java) {
+                    backend.privatePreview(record) {
+                        callerStop || legacy.execution.shouldStop(slot)
+                    }.use { fail("Unknown observations must cancel the active readback") }
+                }
+                assertFalse(callerStop)
+                assertEquals(1, counter.loads)
+                assertTrue(counter.closeCalls > 0)
+                assertTrue(legacy.execution.shouldStop(slot))
+                backend.releaseResources()
+                assertFalse(backend.hasUnreleasedResources)
+                assertTrue(legacy.execution.completeAfterResourcesClosed(slot))
+                released = true
+                legacy.execution.updateConditions(allowed)
+                f.read(record).use { assertEquals(baseline, pixels(it.bitmap)) }
+                f.assertOriginalAndUnpublished(record)
+            } catch (failure: Throwable) { primary = failure; throw failure }
+            finally {
+                dev.cinematic.p0.jpegrender.original.preserveSafetyCleanup(primary, {
+                    backend.releaseResources()
+                    check(!backend.hasUnreleasedResources)
+                    if (!released) check(legacy.execution.completeAfterResourcesClosed(slot))
+                }, { legacy.execution.updateConditions(allowed) })
+            }
+        }
     }
 
-    /** Tiny native inputs may be half-sized before physical orientation. Use only inspected output geometry. */
-    private fun AutoDevelopRecord.comparisonCopy(lease: PrivateTrialReuseLease?): IntArray? {
-        val output = requireNotNull(observed).output
-        return lease?.comparisonCopy(output.width, output.height)
+    private class DecodeCounter {
+        var factories = 0; var loads = 0; var failClose = false; var closeCalls = 0
+        var onLoad: () -> Unit = {}
     }
-
-    private class DecodeCounter { var factories = 0; var loads = 0; var closeFailures = 0 }
 
     private inner class Fixture : AutoCloseable {
         private val resolver = context.contentResolver
@@ -459,14 +267,14 @@ class PrivateTrialReuseInstrumentationTest {
                 throw failure
             }
         }
-        fun prepared(strength: Double, session: PrivateTrialReuseSession?): AutoDevelopRecord {
-            val handle = AndroidAutoDevelopQueue.preparePrivateTrial(context, source,
-                JpegGenerationRecipe.trial(strength), reuseSession = session).get(60, TimeUnit.SECONDS)
+        fun prepared(strength: Double): AutoDevelopRecord {
+            val handle = legacy.preparePrivateTrial( source,
+                JpegGenerationRecipe.trial(strength)).get(60, TimeUnit.SECONDS)
             latest = handle
             return requireNotNull(journal(handle.request.generation).read())
         }
-        fun ready(strength: Double, session: PrivateTrialReuseSession?): AutoDevelopRecord {
-            prepared(strength, session)
+        fun ready(strength: Double): AutoDevelopRecord {
+            prepared(strength)
             val handle = requireNotNull(latest)
             var status = handle.status().get(60, TimeUnit.SECONDS)
             if (status.phase in setOf(PrivateTrialPhase.PREPARED, PrivateTrialPhase.RUNNING))
@@ -482,54 +290,57 @@ class PrivateTrialReuseInstrumentationTest {
         private fun journal(generation: Long) = AutoDevelopJournal(ManualDevelopRequests.identity(source), generation,
             AndroidAtomicJournalStorage(File(directory, "renders"), generation.toString(), CaptureJournalFile.AUTO_DEVELOP))
         fun backend(request: AutoDevelopRequest) = AndroidAutoDevelopBackend(context, request,
-            AutoRendererCatalog(listOf(BoundedJpegRendererAdapter.privateTrial(PrivateTrialReuseRegistry::forRequest))))
+            AutoRendererCatalog(listOf(BoundedJpegRendererAdapter.privateTrial())))
         fun runner(request: AutoDevelopRequest, backend: AutoDevelopBackend): AutoDevelopRunner {
             // The queue's prepared job is disabled and has no start intent. This isolated fault harness alone
             // advances it, synchronously, under the same coordinator; it never constructs a publication owner.
             assertEquals(PrivateTrialPhase.PREPARED, latest!!.status().get(60, TimeUnit.SECONDS).phase)
-            return AutoDevelopRunner(journal(request.generation), DevelopExecution.coordinator, backend,
-                interactive = true, observations = { allowed }, allowPublication = { false }) { true }
+            return legacy.runner(journal(request.generation), backend) { allowed }
         }
-        fun read(record: AutoDevelopRecord, counter: DecodeCounter = DecodeCounter(),
-            shouldStop: () -> Boolean = { false }, includeCoordinatorStop: Boolean = false): PrivateTrialPreview {
-            // The real backend is tested directly solely to observe comparison-frame factory/load counts.
-            // Its reads still hold the same process-wide admission slot and use the queue's actual JPEG.
-            val backend = AndroidAutoDevelopBackend(context, record.request,
-                AutoRendererCatalog(listOf(BoundedJpegRendererAdapter.privateTrial(PrivateTrialReuseRegistry::forRequest)))) { io, source ->
+        fun readBackend(record: AutoDevelopRecord, counter: DecodeCounter) = AndroidAutoDevelopBackend(context, record.request,
+            AutoRendererCatalog(listOf(BoundedJpegRendererAdapter.privateTrial()))) { io, source ->
                 counter.factories++
                 val actual = AndroidOwnedJpegFrames(io, source)
                 object : OwnedJpegFrameSource {
                     override val contract get() = actual.contract
                     override fun load(source: SharedOriginalReference, longEdge: Int, shouldStop: () -> Boolean): JpegFrame {
                         counter.loads++
+                        counter.onLoad()
                         return actual.load(source, longEdge, shouldStop)
                     }
                     override fun requestStop() = actual.requestStop()
                     override fun close() {
+                        counter.closeCalls++
+                        if (counter.failClose) throw java.io.IOException("Synthetic unacknowledged comparison close")
                         actual.close()
-                        if (counter.closeFailures > 0) {
-                            counter.closeFailures--
-                            throw java.io.IOException("Synthetic comparison close failure after actual FD closure")
-                        }
                     }
                 }
             }
-            // Completing the previous read wakes the real queue, whose READY reconciliation may
-            // briefly acquire this slot too. Wait for actual admission; never release another owner.
+        fun acquireReadSlot(): AutoDevelopCoordinator.Attempt {
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60)
-            var admitted = DevelopExecution.tryStartObserved(allowed)
+            var admitted = legacy.execution.tryStartObserved(allowed)
             while (admitted == null && System.nanoTime() < deadline) {
                 Thread.sleep(20)
-                admitted = DevelopExecution.tryStartObserved(allowed)
+                admitted = legacy.execution.tryStartObserved(allowed)
             }
-            val slot = checkNotNull(admitted) { "Timed out after 60 seconds waiting for real readback admission" }
-            try { return backend.privatePreview(record) {
-                shouldStop() || (includeCoordinatorStop && DevelopExecution.shouldStop(slot))
-            } }
+            return checkNotNull(admitted) { "Timed out waiting for isolated readback admission" }
+        }
+        fun read(record: AutoDevelopRecord, counter: DecodeCounter = DecodeCounter(),
+            shouldStop: () -> Boolean = { false }): PrivateTrialPreview {
+            val backend = readBackend(record, counter)
+            val slot = acquireReadSlot()
+            var primary: Throwable? = null
+            var delivery: PrivateTrialPreview? = null
+            try { return backend.privatePreview(record, shouldStop).also { delivery = it } }
+            catch (failure: Throwable) { primary = failure; throw failure }
             finally {
-                backend.releaseResources()
-                check(!backend.hasUnreleasedResources)
-                check(DevelopExecution.completeAfterResourcesClosed(slot))
+                dev.cinematic.p0.jpegrender.original.preserveSafetyCleanup(primary, {
+                    try {
+                        backend.releaseResources()
+                        check(!backend.hasUnreleasedResources)
+                        check(legacy.execution.completeAfterResourcesClosed(slot))
+                    } catch (cleanup: Throwable) { delivery?.close(); throw cleanup }
+                })
             }
         }
         fun output(record: AutoDevelopRecord): File = output(requireNotNull(record.attemptId))
@@ -599,18 +410,18 @@ class PrivateTrialReuseInstrumentationTest {
         override fun close() {
             latest?.let { previous ->
                 val recipe = requireNotNull(JpegGenerationRecipe.fromTrialSnapshot(previous.request.recipe))
-                val fenced = AndroidAutoDevelopQueue.preparePrivateTrial(context, source, recipe).get(60, TimeUnit.SECONDS)
+                val fenced = legacy.preparePrivateTrial( source, recipe).get(60, TimeUnit.SECONDS)
                 fenced.requestStop()
                 fenced.status().get(60, TimeUnit.SECONDS)
             }
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60)
-            var slot = DevelopExecution.tryStartObserved(allowed)
+            var slot = legacy.execution.tryStartObserved(allowed)
             while (slot == null && System.nanoTime() < deadline) {
                 Thread.sleep(20)
-                slot = DevelopExecution.tryStartObserved(allowed)
+                slot = legacy.execution.tryStartObserved(allowed)
             }
             check(slot != null) { "Keep synthetic artifacts until all native/FD owners acknowledge close" }
-            check(DevelopExecution.completeAfterResourcesClosed(slot))
+            check(legacy.execution.completeAfterResourcesClosed(slot))
             DngContentVerifier.verify(requireNotNull(cleanupFingerprint), { resolver.openInputStream(uri)!! })
             check(resolver.delete(uri, null, null) == 1)
             check(directory.canonicalFile.parentFile == root)

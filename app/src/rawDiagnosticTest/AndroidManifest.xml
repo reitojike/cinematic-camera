@@ -1,9 +1,0 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <instrumentation android:name="androidx.test.runner.AndroidJUnitRunner" android:targetPackage="dev.cinematic.p0.rawdiagnostic" />
-    <application>
-        <!-- Synthetic fixture only, packaged solely in the instrumentation APK. -->
-        <provider android:name="dev.cinematic.p0.rawdiagnostic.SyntheticDiagnosticProvider"
-            android:authorities="dev.cinematic.p0.rawdiagnostic.test.synthetic"
-            android:exported="true" android:grantUriPermissions="true" />
-    </application>
-</manifest>

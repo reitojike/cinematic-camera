@@ -4,7 +4,10 @@ package dev.cinematic.p0.gpu
  * Ledger counts real storage, including idle entries, not the number of active leases.
  * Fragment writes use normal context ordering; imageStore users add a pre-write memory barrier.
  */
-internal class GpuTexturePool(private val egl: EglContexts, private val ledger: GpuMemoryLedger) : AutoCloseable {
+internal class GpuTexturePool(private val egl: EglContexts, private val ledger: GpuMemoryLedger,
+    private val maxIdleBytes: Long = ledger.budgetBytes,
+) : AutoCloseable {
+    init { require(maxIdleBytes in 0..ledger.budgetBytes) }
     private val idle = mutableListOf<GpuTexture.Storage>()
     private val active = mutableSetOf<GpuTexture.Storage>()
     private var closed = false
@@ -38,6 +41,15 @@ internal class GpuTexturePool(private val egl: EglContexts, private val ledger: 
         check(!closed && storage in active) { "Foreign or closed texture lease" }
         // Validate the current context before transferring ownership, including context-loss cleanup.
         egl.releaseResource { }
+        // Destroy before removing the active lease: failed cleanup remains retryable.
+        if (storage.byteSize > maxIdleBytes) {
+            storage.destroy()
+            active.remove(storage)
+            return
+        }
+        while (idleBytes > maxIdleBytes - storage.byteSize && idle.isNotEmpty()) {
+            idle.first().destroy(); idle.removeAt(0)
+        }
         idle += storage
         active.remove(storage)
     }
