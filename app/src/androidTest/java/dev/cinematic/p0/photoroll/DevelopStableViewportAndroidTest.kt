@@ -147,10 +147,56 @@ class DevelopStableViewportAndroidTest {
             assertEquals("image scrolling must not move the viewport", initial, scrolled)
             }
             if (temperatureFailure) {
+                // Compact/large-font content scrolls as a whole; the parameter row may be below
+                // the accessible viewport. Exercise the real outer scroll, not a state shortcut.
+                fixture.automation.clearCache()
+                var outer = requireNotNull(await("現像画像の表示領域").parent)
+                while (!outer.isScrollable) outer = requireNotNull(outer.parent)
+                fun settle() {
+                    SystemClock.sleep(250)
+                    instrumentation.waitForIdleSync()
+                    fixture.automation.clearCache()
+                    check(outer.refresh())
+                }
+                fun captureStage(stage: String) {
+                    val shot = fixture.captureSoftware()
+                    try {
+                        val directory = File(requireNotNull(instrumentation.targetContext.externalMediaDirs.firstOrNull()),
+                            "additional_test_output/develop-sizing").apply { check(isDirectory || mkdirs()) }
+                        File(directory, "compact-temperature-$stage.png").outputStream().use {
+                            check(shot.compress(Bitmap.CompressFormat.PNG, 100, it))
+                        }
+                    } finally { shot.recycle() }
+                }
+                captureStage("before-scroll")
+                var forward = 0
+                while (find("色温度")?.isVisibleToUser != true && forward < 16) {
+                    assertTrue("outer content must reveal temperature", outer.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD))
+                    forward++
+                    settle()
+                }
                 var temperature = await("色温度")
+                assertTrue("temperature is actually visible", temperature.isVisibleToUser)
+                val temperatureBounds = Rect().also { temperature.getBoundsInScreen(it) }
+                assertTrue(temperatureBounds.width() > 0 && temperatureBounds.height() > 0)
+                captureStage("temperature-visible")
                 while (!temperature.isClickable) temperature = requireNotNull(temperature.parent)
                 assertTrue(temperature.performAction(AccessibilityNodeInfo.ACTION_CLICK))
-                instrumentation.waitForIdleSync()
+                settle()
+                assertTrue("temperature selection uses the real button", temperature.refresh() && temperature.isSelected)
+                var backward = 0
+                fun viewportRestored() = find("現像画像の表示領域")?.let {
+                    Rect().also(it::getBoundsInScreen) == initial
+                } == true
+                while (!viewportRestored() && backward < 16) {
+                    assertTrue("outer content must return to the original viewport", outer.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD))
+                    backward++
+                    settle()
+                }
+                assertTrue("outer scroll restores original viewport bounds", viewportRestored())
+                assertEquals(initialLayout, viewportLayout.get())
+                captureStage("viewport-restored")
+                android.util.Log.i("ViewportTest", "temperature outerForward=$forward outerBackward=$backward bounds=$temperatureBounds")
             }
             scenario.onActivity { phase.value = PhotoRollPhase.BLOCKED; message.value = if (temperatureFailure) "合成の長い検証失敗です。".repeat(25) else "合成の検証失敗" }
             if (temperatureFailure) {
