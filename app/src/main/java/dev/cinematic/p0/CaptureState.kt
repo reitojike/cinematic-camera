@@ -112,7 +112,7 @@ data class CaptureEditor(
     fun sent(id: Long) = copy(submitting = id, note = "送信中")
     fun complete(receipt: ControlReceipt): CaptureEditor {
         if (receipt.epoch != epoch || submitting != receipt.sequence || receipt.phase == ControlPhase.PENDING) return this
-        return if (receipt.phase == ControlPhase.ACCEPTED) copy(exposure = null, focus = null, submitting = null, note = "受付済・実測は別表示")
+        return if (receipt.phase == ControlPhase.ACCEPTED) copy(exposure = null, focus = null, submitting = null, note = "受付済みです。実測値は別に表示します。")
         else copy(submitting = null, note = receipt.detail)
     }
     fun recording(stage: RecordingStage) = if (stage == RecordingStage.STARTING) copy(

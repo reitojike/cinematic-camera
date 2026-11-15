@@ -189,10 +189,12 @@ def compare(baseline, candidate, output):
             png(output / f'{case_id}-diff32.png', after['width'], after['height'], difference)
             changed.append(f'<h2>{case_id}</h2><p>{html.escape(json.dumps(result))}</p>' + ''.join(
                 f'<a href="{case_id}-{kind}.png"><img width="320" src="{case_id}-{kind}.png"></a>' for kind in ('baseline', 'candidate', 'diff32')))
-    passed = not environment_changed and not changed
+    passed = not changed
     report = {'status': 'pass' if passed else 'hold', 'environmentChanged': environment_changed,
               'baselineCommit': old_host['sourceCommit'], 'candidateCommit': new_host['sourceCommit'],
-              'policy': 'Same environment: exact RGB8. Changed driver/AVD: owner review, no automatic update.', 'cases': results}
+              'policy': 'Exact RGB8 across environments. Pixel differences require owner review; no automatic update. Other required safety tests remain separate merge gates.',
+              'baselineEnvironment': {'android': old['android'], 'host': old_host['environment']},
+              'candidateEnvironment': {'android': new['android'], 'host': new_host['environment']}, 'cases': results}
     (output / 'comparison.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
     (output / 'index.html').write_text('<!doctype html><meta charset="utf-8"><h1>GPU baseline comparison</h1><p>' +
         html.escape(report['policy']) + f'</p><p>Status: {report["status"]}; environmentChanged={environment_changed}</p>' + ''.join(changed), encoding='utf-8')

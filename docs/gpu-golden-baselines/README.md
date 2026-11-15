@@ -30,7 +30,7 @@ capture.json の baselineApproved=false は採取時点の不変フィールド�
 python tools/gpu-golden/gpu_golden.py compare docs/gpu-golden-baselines/golden-20261112-131916-51b691ad <new-candidate> <new-report-directory>
 ```
 
-同じ環境では厳密RGB8一致。環境や出力が変わればHOLDし、本人確認なしの自動更新・閾値緩和はしません。GPU/ルック変更PRでは最終clean headで既存90条件を再採取して比較します。今回main同期後の再採取も採用画像の差替えではなく同一性確認に使います。自動Mesa全工程CIやCPU goldenの置換は追加していません。
+環境によらず厳密RGB8一致を確認します。環境が変わっても全90条件が全画素一致し、他の必要試験も成功していればHOLDせず進めます。system image・emulator版・ホストGPUドライバーを記録し、出力差がある場合だけ場所と大きさを示して本人確認を得ます。本人確認なしの自動更新・閾値緩和はしません。ツールの旧HOLD出力の扱いは [現行手順](../../tools/gpu-golden/README.md#環境変更時の採否428-本人承認) を参照。GPU/ルック変更PRでは最終clean headで既存90条件を再採取して比較します。今回main同期後の再採取も採用画像の差替えではなく同一性確認に使います。自動Mesa全工程CIやCPU goldenの置換は追加していません。
 
 ---
 
@@ -67,4 +67,4 @@ This directory is the argument to the existing manual comparator, not new CI wir
 ```text
 python tools/gpu-golden/gpu_golden.py compare docs/gpu-golden-baselines/golden-20261112-072140-1a6ded41 <new-candidate> <new-report-directory>
 ```
-Same-environment comparison requires exact RGB8. Changed environment or output holds for owner review; no automatic replacement or relaxed threshold. Capture remains the existing opt-in Android90 method, including28 band/full checks. No product formula, fixture, CPU golden or CI setting was changed.
+Historical policy at adoption time: same-environment comparison required exact RGB8; changed environment or output held for owner review. Current environment-only handling is defined above; no automatic replacement or relaxed threshold. Capture remains the existing opt-in Android90 method, including28 band/full checks. No product formula, fixture, CPU golden or CI setting was changed.

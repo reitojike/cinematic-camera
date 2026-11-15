@@ -59,3 +59,7 @@ GMDでの初回試行は、APK buildとKVM accel-checkまでは成功したが�
 成功runのartifactは約3.38MB、7日保持。合成画像44枚、JUnit/HTML、SDK image revision、emulator版、起動と試験のログを含む。実写真・アカウント・端末原本は使用せず、fixture名は`SYNTHETIC.dng`。ログは新規の使い捨てATDのものだけである。代表画像も開いて、保存中の中央表示とバナーの両方が合成されていることを確認した。これをUI変更の本人承認や実画面コンポジターの保証とは扱わない。
 
 初回成功のimage: `system-images;android-37.0;google_atd;x86_64`, revision 7, extension 22。snapshot無し、RAM2048MiB、userdata2GiB、1080×2424/density420。PNGは42枚が1080×2424、リセットダイアログ2枚が840×567。JUnit method時間合計は約17.93秒（suite time=0表記のためケース値を使用）。
+
+## #425後のmain同期
+
+main `7615d253`へ同期。Capture fixtureへカメラ権限なし・熱拒否直後・回転通常・回転録画中の4状態（各縦横）が加わったため、期待PNGは44枚から52枚へ増やした。実行method数は8件のまま。上述の44枚の記録は同期前の成功証拠であり、新しい52枚の合格を意味しない。同期後headでCIを再実行する。

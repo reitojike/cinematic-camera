@@ -63,6 +63,14 @@
     "ui-pr-c/15-saving-notifications-disabled.png",
     "ui-pr-c/16-cancelled-other-photo-saving.png",
     "ui-pr-c/17-generic-failure-hold.png",
-    "ui-pr-c/18-generic-failure-navigation-disabled.png"
+    "ui-pr-c/18-generic-failure-navigation-disabled.png",
+    "ui-pr-b/00-permission-horizontal.png",
+    "ui-pr-b/00-permission-vertical.png",
+    "ui-pr-b/04b-thermal-rejected-horizontal.png",
+    "ui-pr-b/04b-thermal-rejected-vertical.png",
+    "ui-pr-b/04c-rotation-horizontal.png",
+    "ui-pr-b/04c-rotation-vertical.png",
+    "ui-pr-b/04d-rotation-recording-horizontal.png",
+    "ui-pr-b/04d-rotation-recording-vertical.png"
   ]
 }

@@ -26,7 +26,7 @@ import java.nio.file.Files
 import java.security.MessageDigest
 import kotlin.math.*
 
-/** Actual OriginalStageClear24 / #284 full-frame / #286 export comparison. Synthetic emulator only. */
+/** Actual GPU full-frame / export safety comparison. Synthetic emulator only. */
 @RunWith(AndroidJUnit4::class)
 class GpuExportParityAndroidTest {
     @Before fun isolatedEmulatorOnly() {
@@ -61,23 +61,20 @@ class GpuExportParityAndroidTest {
         assertEquals(0L, ledger.allocatedBytes); assertEquals(0, ledger.textureCount)
     }
 
-    @Test fun fullFrameAndBandsMatchWhileOriginal24DifferencesAreRecordedAt1600x1200() = gpu { egl ->
+    @Test fun fullFrameAndBandsMatchAt1600x1200() = gpu { egl ->
         val input = GpuReferenceImages.create(GpuReferenceImages.Kind.MIXED, GpuReferenceImages.EXPORT_SIZE)
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val log = File(checkNotNull(context.getExternalFilesDir("gpu-diagnostics")), "export-parity.log")
-        log.writeText("Synthetic 1600x1200; fixed metered base EV=0; OriginalStageClear24 oracle\n")
+        log.writeText("Synthetic 1600x1200; fixed metered base EV=0; GPU-only full-frame and band comparison\n")
         for (adjustments in listOf(PhotoAdjustments.NONE, PhotoAdjustments(60.0, 1.0))) {
             for (strength in listOf(0.0, .5, 1.0)) {
                 val params = GpuRenderParams(strength, adjustments)
                 val label = "1600x1200 strength=$strength adjustments=$adjustments"
-                val cpu = original(input, params)
                 val full = fullFrame(egl, input, params)
-                recordCpuComparison(cpu, full, input.width, input.height, "$label full", log)
                 for (rows in listOf(64, 256)) {
                     val actual = export(egl, input, params, rows)
                     assertGpuMatch(full, actual, "$label rows=$rows")
                     record(log, "$label rows=$rows GPU nearWhite full=${full.nearWhite} band=${actual.nearWhite} delta=${actual.nearWhite - full.nearWhite}")
-                    recordCpuComparison(cpu, actual, input.width, input.height, "$label rows=$rows", log)
                 }
             }
         }
@@ -90,76 +87,14 @@ class GpuExportParityAndroidTest {
         assertEquals("$label full/export Mist factor", full.mistAuto.toRawBits(), band.mistAuto.toRawBits())
     }
 
-    @Test fun cpuDifferencesAreNonBlockingButGpuMismatchStillFails() {
+    @Test fun gpuMismatchStillFails() {
         val reference = Output(intArrayOf(0xff000000.toInt()), doubleArrayOf(0.0, 0.0), 0, 1.0)
         val different = Output(intArrayOf(0xffffffff.toInt()), doubleArrayOf(5.0, 5.0), 1, .5)
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val log = File.createTempFile("gpu-reference-", ".log", context.cacheDir)
-        try {
-            recordCpuComparison(reference, different, 1, 1, "injected reference differences", log)
-            assertTrue(log.readText().contains("CPU_REFERENCE_ONLY"))
-            assertTrue(log.readText().contains("maxAll=255"))
-            assertThrows(AssertionError::class.java) { assertGpuMatch(reference, different, "injected GPU mismatch") }
-        } finally { check(log.delete()) }
+        assertThrows(AssertionError::class.java) { assertGpuMatch(reference, different, "injected GPU mismatch") }
     }
 
     private fun record(log: File, line: String) {
         Log.i("GpuExportParity", line); log.appendText("$line\n")
-    }
-
-    /** CPU differences are reference data, never Gate 2 acceptance or a stop condition. */
-    private fun recordCpuComparison(cpu: Output, gpu: Output, w: Int, h: Int, label: String, log: File) {
-        val display = ImageDiff.display(cpu.pixels, gpu.pixels, w, h, label)
-        val toneDelta = cpu.quantiles.indices.maxOf { abs(cpu.quantiles[it] - gpu.quantiles[it]) }
-        record(log, "$label CPU_REFERENCE_ONLY nearWhiteCpu=${cpu.nearWhite} nearWhiteGpu=${gpu.nearWhite} " +
-            "countDelta=${gpu.nearWhite - cpu.nearWhite} autoCpu=${cpu.mistAuto} autoGpu=${gpu.mistAuto} " +
-            "autoDelta=${abs(cpu.mistAuto - gpu.mistAuto)} toneMaxDelta=$toneDelta " +
-            "maxAll=${display.maxDiff} p999AllRgb=${display.p999} changedPixels=${display.changedPixels}")
-    }
-
-    private fun original(input: LinearSrgbImage, params: GpuRenderParams): Output {
-        val w = input.width; val h = input.height
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val parent = Files.createTempDirectory(context.cacheDir.toPath(), "export-oracle-").toFile()
-        val work = OriginalRasterWorkspace(File(parent, "rasters"))
-        val pixels = IntArray(w * h); val glowPixels = FloatArray(w * h * 3)
-        var quantiles: DoubleArray? = null; var count: Long? = null; var auto: Double? = null
-        val luma = StageClearV1.LUMA
-        try {
-            val cpu = OriginalStageClear24(work).render(ImageRaster(params.adjustments.applyWarmth(input)),
-                params.adjustments.exposureEv, params.strength, stage = { name, raster ->
-                    if (name == "r7_profile") {
-                        val cell = .04 * max(w, h)
-                        val field = OriginalFields.reduce(raster, max(4, round(w / cell).toInt()), max(4, round(h / cell).toInt()),
-                            1, { false }, OriginalFilter.CUBIC) { rgb, out ->
-                            for (p in out.indices) {
-                                val i = p * 3
-                                out[p] = log2(max((rgb[i] * luma[0] + rgb[i + 1] * luma[1] + rgb[i + 2] * luma[2]).toDouble(), 1e-5)).toFloat()
-                            }
-                        }
-                        val row = FloatArray(w)
-                        quantiles = OriginalQuantiles.evaluate(OriginalSamples { consume ->
-                            repeat(h) { y -> field.row(y, row); row.forEach { consume.accept(it) } }
-                        }, { false }, .5, .92)
-                    }
-                    val zero = params.strength == 0.0 && name == "r7_skin"
-                    if (name == "glow" || zero) {
-                        var total = 0L
-                        raster.rows({ false }) { y, row ->
-                            row.copyInto(glowPixels, y * w * 3)
-                            repeat(w) { p ->
-                                val i = p * 3
-                                if (row[i] * luma[0] + row[i + 1] * luma[1] + row[i + 2] * luma[2] > StageClearMistV1.NEAR_WHITE.toFloat()) total++
-                            }
-                        }
-                        count = total
-                        // Existing CPU helper on the actual GLOW raster, not a duplicated count formula.
-                        auto = StageClearMist.autoStrength(LinearSrgbImage(w, h, glowPixels))
-                    }
-                })
-            cpu.raster.rows({ false }) { y, row -> ImageDiff.encodeDisplay(LinearSrgbImage(w, 1, row)).copyInto(pixels, y * w) }
-            return Output(pixels, checkNotNull(quantiles), checkNotNull(count), checkNotNull(auto))
-        } finally { work.closePending(); work.disposeConfirmed(); check(parent.delete()) }
     }
 
     private fun fullFrame(egl: EglContexts, input: LinearSrgbImage, params: GpuRenderParams): Output {

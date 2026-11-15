@@ -29,6 +29,7 @@ private var isolatedSaveApp: Context? = null
         "dev.cinematic.p0.jpegrender.original.Original24CancellationRetryInstrumentationTest",
         "dev.cinematic.p0.photoroll.GpuSaveLifecycleSafetyAndroidTest",
         "dev.cinematic.p0.photoroll.GpuFullSizeSaveLifecycleSafetyAndroidTest",
+        "dev.cinematic.p0.photoroll.DngTrialRendererTest",
     )) { "Run one allowed safety class in a fresh instrumentation process" }
     return isolatedSaveApp ?: run {
         val target = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext

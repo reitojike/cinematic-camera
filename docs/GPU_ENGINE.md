@@ -393,7 +393,7 @@ display/previewの中間色、合成DNG、旧GPU合成診断。GPUコピー・�
 
 - 現行GPU出力を比較対象とし、Android opt-inによる候補生成・比較をGPU既定切替前から様子見期間と並行して進める。#290前段AのCPU差参考記録化と、基準画像の候補生成・本人採用・継続比較は別々に検証・記録する。前段Aだけで基準画像を作成・採用済みとはしない。
 - 既存の決定論的合成fixtureを使い、入力/seed/寸法・調整値・対象commit・GLSLと注入定数の版・色空間/8bit化・基準hash・比較方法を管理する。実写・個人情報を公開goldenに入れない。
-- Android先行時はホストGPU/driver版、AVD名・system image/API/ABI/版、emulator版、描画設定、実EGL/GLES vendor/renderer/ES版も基準画像と一緒に記録する。driverやAVD等の版が変わって差が出た場合は差の場所と大きさを示し、本人の目視確認後に基準を作り直す。環境差を無断の閾値緩和や自動baseline更新で消さない。
+- Android先行時はホストGPU/driver版、AVD名・system image/API/ABI/版、emulator版、描画設定、実EGL/GLES vendor/renderer/ES版も基準画像と一緒に記録する。driverやAVD等の版が変わって差が出た場合は差の場所と大きさを示し、本人の目視確認後に基準を作り直す。全90条件が既存基準と全画素一致し、他の必要試験も成功なら環境変更だけでHOLDしない（#428本人承認）。system image・emulator版・ホストGPUドライバーを記録し、差がある場合だけ本人確認する。環境差を無断の閾値緩和や自動baseline更新で消さない。
 - 基準候補は本人の目視確認後に採用する。同一環境のGPU回帰と異なるdriverの比較を区別し、CPU閾値を無断転用しない。意図した見た目変更時も本人確認後にbaseline更新し、失敗を消す自動再生成は禁止する。
 - この全工程の基準画像比較は現時点ではCI自動実行ではない。少なくともGPUやルックに触れるPRのマージ前、およびCPU経路の削除・リファクタリングの各PR前に手動実行する。対象head、基準hashと環境、条件数・成功/失敗/skip、差分と本人確認の要否をPRへ記録し、未実行をCI成功で代替しない。
 - v0.1.0前のD0ではMesaから実全工程を呼べる境界を設計する。CPU/診断削除・試験移動後のD1〜Dnを経て、基準画像比較をMesa CIへ移す。現在のMesaは上表のpass範囲であり、全工程の基準画像比較を移行済みとはしない。MesaとAndroidのdriver差は別に評価し、Android基準へのbit完全一致を無断で条件にしない。
