@@ -32,9 +32,16 @@ jobs:
       - name: Validate diagnostic collector
         run: python3 -B -m unittest discover -s tools/initial-preview-allocation -v
       - name: Require existing KVM access (no permission changes)
+        env:
+          DIAGNOSTIC_RUNNER_ENVIRONMENT: ${{ runner.environment }}
         run: |
-          test "$RUNNER_ENVIRONMENT" = github-hosted
-          test -c /dev/kvm && test -r /dev/kvm && test -w /dev/kvm
+          hosted=false; character=false; readable=false; writable=false
+          if [ "$DIAGNOSTIC_RUNNER_ENVIRONMENT" = github-hosted ]; then hosted=true; fi
+          if [ -c /dev/kvm ]; then character=true; fi
+          if [ -r /dev/kvm ]; then readable=true; fi
+          if [ -w /dev/kvm ]; then writable=true; fi
+          printf 'hosted=%s kvm_character=%s kvm_readable=%s kvm_writable=%s\n' "$hosted" "$character" "$readable" "$writable"
+          test "$hosted" = true && test "$character" = true && test "$readable" = true && test "$writable" = true
       - name: Install official SDK components
         run: sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0' 'ndk;29.0.14206865' 'cmake;3.22.1' 'emulator' 'system-images;android-37.0;default;x86_64'
       - name: Build unchanged product and diagnostic tests before boot

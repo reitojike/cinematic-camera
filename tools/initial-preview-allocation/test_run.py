@@ -41,6 +41,8 @@ class CollectorTest(unittest.TestCase):
         from pathlib import Path
         workflow=Path(".github/workflows/initial-preview-mesa-allocation.yml").read_text()
         self.assertIn("contents: read", workflow)
+        self.assertIn("DIAGNOSTIC_RUNNER_ENVIRONMENT: ${{ runner.environment }}", workflow)
+        self.assertIn('test "$hosted" = true && test "$character" = true && test "$readable" = true && test "$writable" = true', workflow)
         self.assertIn("allocation-evidence/aggregate.json", workflow)
         self.assertNotIn("pull_request_target", workflow)
         self.assertNotIn("setfacl", workflow)
