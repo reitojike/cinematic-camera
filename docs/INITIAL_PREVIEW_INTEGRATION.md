@@ -63,3 +63,9 @@ app/test APK build成功。新AVDで最初の試行はmain APK未導入により
 既存main相当D1 `a467b0ef` / tree `3e8c7871` のAPKを保存済provenanceとSHA照合して比較した（main `f2c94cc0` と同tree）。同じGPU-only試験・別processで39,901,072→50,422,304→59,868,560→69,314,912 bytesと累積した。初回表示差分だけの回帰ではなく、既存GPU owner/context側を含む未解決問題。GL ledger 0はdriver/allocator全量解放の証明ではない。次は同一ownerでphotoのみ4回入替える限定診断を行う。製品GPU実装は変更していない。
 
 製品E2E4件は各method新processで成功。専用Contextのcache/noBackup＋private wrapped ContentProviderを使い、実base-file lookup→saved/cache→recipe/source/JPEG/sidecar不一致のmiss→embedded/half、原本/JPEG/journal不変を検証した。actual renderer callback→main handoff→Compose案内→exact GPU presented→案内除去、late拒否・背景復帰も成功。Reader mockによる試験とは区別する。端末共有MediaStore書込・実写真使用なし。
+
+### 同一GPU owner内のphoto反復（13309e1aの試験）
+
+same-owner診断はbaseline APKと候補APKを別processで各1件成功。各4回のpresentをdrawCount増分で確認し、closePhoto後ledger0、最後owner/thread解放を確認した。GC要求後native heapの生bytesはbaseline 42,903,552→43,150,000→44,244,944→44,416,256、owner終了後40,977,392。候補は23,808,992→24,039,808→24,000,224→24,171,664、owner終了後21,047,632。同AVD内でbaseline→候補の順なので絶対値差を性能改善と解釈しない。
+
+新owner毎の約9.45 MB増を同owner4photoでは再現せず、owner/context生成側へ限定できた。ただしdriver原因の断定や4反復による完全安定証明はしない。初回案内固有のnative/decode増とは分け、既存GPU全体の未解決事項として残す。製品のEGL/driver/GC動作は変更していない。
