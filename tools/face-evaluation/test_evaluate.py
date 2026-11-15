@@ -17,6 +17,41 @@ class EvaluationTest(unittest.TestCase):
         return {"detector": detector, "sample": sample, "geometry": "test", "width": 640, "height": 480,
                 "status": status, "boxes": [], "phase": "warm", "sdk_ns": 1, "adapter_ns": 1, "total_ns": 2}
 
+    def test_entire_missing_detector_remains_unscored(self):
+        report = summarize([self.coverage_row()], self.coverage_labels(), .5, ["test-a", "test-b"])
+        self.assertFalse(report["coverage_complete"])
+        missing = [g for g in report["groups"] if g["detector"] == "test-b"]
+        self.assertEqual(len(missing), 2)
+        for group in missing:
+            self.assertEqual(group["unscored_samples"], 1)
+            self.assertEqual((group["tp"], group["fp"], group["fn"]), (0, 0, 0))
+            self.assertEqual(sum(group["states"].values()), 0)
+            self.assertEqual(group["timings"], {})
+
+    def test_empty_results_with_roster_are_explicitly_incomplete(self):
+        report = summarize([], self.coverage_labels(), .5, ["test-a", "test-b"])
+        self.assertFalse(report["coverage_complete"])
+        self.assertEqual(len(report["groups"]), 4)
+        self.assertEqual(sum(g["unscored_samples"] for g in report["groups"]), 4)
+        self.assertEqual(report["adoption"], "UNDECIDED")
+
+    def test_unplanned_detector_and_invalid_rosters_are_rejected(self):
+        for roster in ([], [""], ["test-a", "test-a"], [None], ["test-b"]):
+            with self.assertRaises(ValueError):
+                summarize([self.coverage_row()], self.coverage_labels(), .5, roster)
+
+    def test_full_coverage_is_not_adoption(self):
+        rows = [self.coverage_row(sample=s) for s in self.coverage_labels()["samples"]]
+        report = summarize(rows, self.coverage_labels(), .5, ["test-a"])
+        self.assertTrue(report["coverage_complete"])
+        self.assertEqual(report["adoption"], "UNDECIDED")
+        self.assertEqual(report["planned_detectors"], ["test-a"])
+
+    def test_invalid_threshold_rejected_even_without_success(self):
+        for threshold in (0, 2, float("nan")):
+            with self.assertRaises(ValueError):
+                summarize([], self.coverage_labels(), threshold, ["test-a"])
+
     def test_missing_condition_remains_unscored(self):
         groups = summarize([self.coverage_row()], self.coverage_labels(), .5)["groups"]
         self.assertEqual(len(groups), 2)

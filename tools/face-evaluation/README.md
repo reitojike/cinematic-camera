@@ -48,7 +48,8 @@ root製品CIは従来通り必須。本projectの検証は上記の独立コマ�
 
 本人はオフラインでも動くことを重視しつつ、ML Kit の利用・診断ログ通信を許容している。
 完全無通信は要件ではない。画像・顔検出結果の送信、製品への組込み・依存採用は別判断。
-現時点で実写・Pixel・AVD・SDK推論は未実行。写真入力のUI/ファイル読込経路は実装していない。
+接続状態の合成黒画像smokeは各方式11回成功済み。実写・Pixel・初回オフラインは未確認。
+写真入力のUI/ファイル読込経路は実装していない。[再開手順](EVALUATION_PLAN.md)を参照。
 
 ML Kit flavor だけ INTERNET/ACCESS_NETWORK_STATE を持たせ、SDK の通常の診断通信を妨げない。
 baseline/YuNet は通信権限を持たず、全 flavor のカメラ・写真・連絡先等の権限は認めない。
@@ -99,14 +100,16 @@ YuNetをラベル生成の正解にはしない。`--iou` は必須で既定値�
 結果に現れる各detectorについて、人ラベルにある全条件を必ず出力する。結果行がない条件も
 `expected_samples` と `unscored_samples` に含め、未評価を検出漏れFNや成功0件へ変換しない。
 全失敗の条件は未評価のまま、状態別件数のみを記録し、精度件数・時間へ含めない。
-完全に空の結果はdetectorを特定できないためエラーにし、空ラベルも拒否する。
-結果に一度も現れないdetectorの存在は推測できないため、比較予定の全detectorが含まれることは
-収集時に確認する。未実行detectorを含める場合も、そのIDとラベルに一致するsample/geometry/寸法を
-持つ明示的なNOT_RUN行が必要。集計は採用合格を判定せず、`adoption: UNDECIDED` を維持する。
+CLIでは比較予定の全detector IDを `--detector` で明示する（FAST/ACCURATEも別ID）。
+行がまったくないdetectorも全条件を未評価として残し、空の結果も `coverage_complete: false` にする。
+予定外のdetector、重複／空のID、空ラベルはエラー。予定表なしの既存Python APIだけは
+従来どおり結果に現れるdetectorを使い、空結果を拒否する。比較にはCLIの予定表を使う。
+`coverage_complete` は全画像に成功結果があるという意味のみで、精度・性能の合格ではない。
+集計は採用合格を判定せず、`adoption: UNDECIDED` を維持する。
 少数sampleでp95を安定性能の根拠にしない。
 
 ```text
-python evaluate.py --results <repo外の結果> --labels <repo外の人ラベル> --output <repo外の新規集計> --iou <事前合意値>
+python evaluate.py --results <repo外の結果> --labels <repo外の人ラベル> --output <repo外の新規集計> --iou <事前合意値> --detector mlkit-16.1.7-FAST-min0.1-no-tracking --detector mlkit-16.1.7-ACCURATE-min0.1-no-tracking --detector yunet-2023mar-8f2383e4-opencv4.13.0-pc-multi-v1
 ```
 
 画像・顔切抜き・画像別値・個人用パス・元JSONLはGit/公開Issue/PRへ載せない。

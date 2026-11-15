@@ -44,20 +44,33 @@ def score(truth, predictions, threshold):
     return {"tp": matched, "fn": len(truth)-matched, "fp": len(predictions)-matched}
 
 
-def summarize(rows, labels, threshold):
+def summarize(rows, labels, threshold, expected_detectors=None):
     """One accuracy observation per detector/sample; repeats are timing observations only."""
+    if not 0 < threshold <= 1:
+        raise ValueError("IoU threshold must be explicit and in (0, 1]")
     if labels.get("authority") != "human" or labels.get("split") not in ("tuning", "held-out"):
         raise ValueError("human labels and explicit split required")
     samples = labels["samples"]
     if not samples:
         raise ValueError("at least one labeled sample required")
     rows = list(rows)
-    if not rows:
-        raise ValueError("at least one result row required to identify detectors")
-    # The result file identifies detectors; labels define every expected condition for each one.
+    actual_detectors = {row["detector"] for row in rows}
+    if expected_detectors is None:
+        if not rows:
+            raise ValueError("at least one result row required to identify detectors")
+        detectors = actual_detectors
+    else:
+        roster = list(expected_detectors)
+        if (not roster or any(not isinstance(d, str) or not d.strip() for d in roster)
+                or len(set(roster)) != len(roster)):
+            raise ValueError("detector roster must contain unique nonempty IDs")
+        detectors = set(roster)
+        if not actual_detectors <= detectors:
+            raise ValueError("result contains a detector outside the planned roster")
+    # Explicit roster keeps entirely missing detectors visible, even with zero result rows.
     groups = {(detector, condition): {"tp": 0, "fp": 0, "fn": 0, "scored_samples": 0, "failed_runs": 0,
               "states": {s: 0 for s in ("SUCCESS", "FAILED", "CANCELLED", "NOT_RUN")}, "timings": {}}
-              for detector in sorted({row["detector"] for row in rows})
+              for detector in sorted(detectors)
               for condition in sorted({sample["condition"] for sample in samples.values()})}
     observed = {}
     for row in rows:
@@ -97,7 +110,8 @@ def summarize(rows, labels, threshold):
         expected = [name for name, sample in samples.items() if sample["condition"] == condition]
         group["expected_samples"] = len(expected)
         group["unscored_samples"] = sum((detector, name) not in observed for name in expected)
-    return {"adoption": "UNDECIDED", "iou_matching_threshold": threshold, "split": labels["split"],
+    return {"adoption": "UNDECIDED", "planned_detectors": sorted(detectors),
+            "coverage_complete": all(g["unscored_samples"] == 0 for g in groups.values()), "iou_matching_threshold": threshold, "split": labels["split"],
             "groups": [{"detector": key[0], "condition": key[1], **value} for key, value in groups.items()]}
 
 
@@ -114,11 +128,12 @@ if __name__ == "__main__":
     parser.add_argument("--labels", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--iou", type=float, required=True)
+    parser.add_argument("--detector", action="append", required=True, help="Planned exact detector ID; repeat for each mode")
     args = parser.parse_args()
     results, labels_path, output = map(outside_git, (args.results, args.labels, args.output))
     if output in (results, labels_path) or output.exists():
         raise ValueError("Output must be a new file")
     report = summarize([json.loads(line) for line in results.read_text(encoding="utf-8").splitlines()],
-                       json.loads(labels_path.read_text(encoding="utf-8")), args.iou)
+                       json.loads(labels_path.read_text(encoding="utf-8")), args.iou, args.detector)
     with output.open("x", encoding="utf-8") as stream:
         json.dump(report, stream, indent=2)
