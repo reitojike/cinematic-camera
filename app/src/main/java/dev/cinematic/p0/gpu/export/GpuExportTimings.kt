@@ -46,12 +46,12 @@ internal class GpuExportTimings(private val clock: (() -> Long)? = null) {
         SaveTimingStage.B1_QUANTILES -> listOf(GpuExportDetail.FENCE_WAIT, GpuExportDetail.READBACK)
         SaveTimingStage.B4 -> scanParts + GpuExportDetail.READBACK
         SaveTimingStage.FINAL -> scanParts + listOf(GpuExportDetail.READBACK,
-            GpuExportDetail.ROW_CONVERT, GpuExportDetail.ROW_CONSUME)
+            GpuExportDetail.ROW_PROCESS)
         else -> scanParts
     }
     companion object {
         private val scanParts = listOf(GpuExportDetail.INPUT_WAIT, GpuExportDetail.INPUT_READ_CONVERT,
-            GpuExportDetail.INPUT_PACK, GpuExportDetail.UPLOAD, GpuExportDetail.FENCE_WAIT)
+            GpuExportDetail.UPLOAD, GpuExportDetail.FENCE_WAIT)
         private val stages = listOf(SaveTimingStage.B1, SaveTimingStage.B1_QUANTILES, SaveTimingStage.B2,
             SaveTimingStage.B3, SaveTimingStage.B4, SaveTimingStage.B5, SaveTimingStage.FINAL)
     }

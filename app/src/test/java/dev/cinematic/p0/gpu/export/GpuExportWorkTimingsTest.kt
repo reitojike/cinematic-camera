@@ -15,18 +15,15 @@ class GpuExportWorkTimingsTest {
         val reader = requireNotNull(caller.fork())
         reader.measure(GpuExportDetail.READER_TOTAL) {
             now += 5
-            reader.measure(GpuExportDetail.INPUT_CALLBACK) {
-                now += 3
-                reader.measure(GpuExportDetail.INPUT_FREE_WAIT) { now += 11 }
-                now += 4
-            }
+            now += 3
+            reader.measure(GpuExportDetail.INPUT_FREE_WAIT) { now += 11 }
+            now += 4
             now += 7
         }
         caller.measure(GpuExportDetail.UPLOAD) { now += 2 }
         caller.measure(GpuExportDetail.UPLOAD) { now += 3 }
         caller.mergeInput(reader)
-        assertEquals(12L, caller.sample(GpuExportDetail.INPUT_READ_CONVERT)?.nanos)
-        assertEquals(7L, caller.sample(GpuExportDetail.INPUT_PACK)?.nanos)
+        assertEquals(19L, caller.sample(GpuExportDetail.INPUT_READ_CONVERT)?.nanos)
         assertEquals(5L, caller.sample(GpuExportDetail.UPLOAD)?.nanos)
         assertNull(caller.sample(GpuExportDetail.FENCE_WAIT))
     }
@@ -42,7 +39,7 @@ class GpuExportWorkTimingsTest {
         assertFalse(requireNotNull(timing.sample(GpuExportDetail.UPLOAD)).completed)
     }
 
-    @Test fun readerFailureKeepsPartialStatusAndNeverFabricatesUnreachedPacking() {
+    @Test fun readerFailureKeepsPartialStatusWithNoBufferWait() {
         var now = 0L
         val timing = GpuExportWorkTimings { now }
         val reader = requireNotNull(timing.fork())
@@ -52,7 +49,6 @@ class GpuExportWorkTimingsTest {
         timing.mergeInput(reader)
         assertEquals(10L, timing.sample(GpuExportDetail.INPUT_READ_CONVERT)?.nanos)
         assertFalse(requireNotNull(timing.sample(GpuExportDetail.INPUT_READ_CONVERT)).completed)
-        assertNull(timing.sample(GpuExportDetail.INPUT_PACK))
     }
 
     @Test fun backwardClockAndOverflowAreUnavailableNotZero() {
@@ -74,11 +70,11 @@ class GpuExportWorkTimingsTest {
                 call.toLong()
             }
             timing.measure(GpuExportDetail.READER_TOTAL) {
-                timing.measure(GpuExportDetail.INPUT_CALLBACK) { }
+                timing.measure(GpuExportDetail.INPUT_FREE_WAIT) { }
             }
             timing.measure(GpuExportDetail.UPLOAD) { }
             assertNull(timing.sample(GpuExportDetail.READER_TOTAL)?.nanos)
-            assertEquals(1L, timing.sample(GpuExportDetail.INPUT_CALLBACK)?.nanos)
+            assertEquals(1L, timing.sample(GpuExportDetail.INPUT_FREE_WAIT)?.nanos)
             assertEquals(1L, timing.sample(GpuExportDetail.UPLOAD)?.nanos)
             assertTrue(requireNotNull(timing.sample(GpuExportDetail.READER_TOTAL)).completed)
         }
@@ -89,10 +85,10 @@ class GpuExportWorkTimingsTest {
             tick.toLong()
         }
         nestedFailure.measure(GpuExportDetail.READER_TOTAL) {
-            nestedFailure.measure(GpuExportDetail.INPUT_CALLBACK) { }
+            nestedFailure.measure(GpuExportDetail.INPUT_FREE_WAIT) { }
         }
         assertEquals(3L, nestedFailure.sample(GpuExportDetail.READER_TOTAL)?.nanos)
-        assertNull(nestedFailure.sample(GpuExportDetail.INPUT_CALLBACK)?.nanos)
+        assertNull(nestedFailure.sample(GpuExportDetail.INPUT_FREE_WAIT)?.nanos)
     }
 
     @Test fun primitiveClockRetainsSignedOriginsAndRejectsElapsedOverflow() {
@@ -111,6 +107,44 @@ class GpuExportWorkTimingsTest {
         reader.measure(GpuExportDetail.READER_TOTAL) { }
         assertTrue(requireNotNull(timing.sample(GpuExportDetail.UPLOAD)?.nanos) >= 0)
         assertTrue(requireNotNull(reader.sample(GpuExportDetail.READER_TOTAL)?.nanos) >= 0)
+    }
+    @Test fun mergedReaderDistinguishesMissingWaitFromFailedClockAndNotReached() {
+        val absent = GpuExportWorkTimings { 0L }
+        absent.mergeInput(requireNotNull(absent.fork()))
+        assertNull(absent.sample(GpuExportDetail.INPUT_READ_CONVERT))
+        val missing = GpuExportWorkTimings { 0L }
+        missing.mergeInput(null)
+        assertNotNull(missing.sample(GpuExportDetail.INPUT_READ_CONVERT))
+        assertNull(missing.sample(GpuExportDetail.INPUT_READ_CONVERT)?.nanos)
+        var call = 0
+        val reader = GpuExportWorkTimings {
+            val tick = call++
+            if (tick == 1) error("buffer wait clock")
+            tick.toLong()
+        }
+        reader.measure(GpuExportDetail.READER_TOTAL) {
+            reader.measure(GpuExportDetail.INPUT_FREE_WAIT) { }
+        }
+        val caller = GpuExportWorkTimings()
+        caller.mergeInput(reader)
+        assertNull(caller.sample(GpuExportDetail.INPUT_READ_CONVERT)?.nanos)
+        assertTrue(requireNotNull(caller.sample(GpuExportDetail.INPUT_READ_CONVERT)).completed)
+    }
+
+    @Test fun rowProcessMeasuresWholeBandAndKeepsPrimaryFailure() {
+        var now = 0L
+        var calls = 0
+        val timing = GpuExportWorkTimings { calls++; now }
+        timing.measure(GpuExportDetail.ROW_PROCESS) {
+            repeat(1200) { now += 2; now += 3 }
+        }
+        assertEquals(2, calls)
+        assertEquals(6000L, timing.sample(GpuExportDetail.ROW_PROCESS)?.nanos)
+        val failure = IllegalStateException("consumer")
+        assertSame(failure, assertThrows(IllegalStateException::class.java) {
+            timing.measure(GpuExportDetail.ROW_PROCESS) { now += 1; throw failure }
+        })
+        assertFalse(requireNotNull(timing.sample(GpuExportDetail.ROW_PROCESS)).completed)
     }
     @Test fun detailDrainDistinguishesSkippedMissingIncompleteAndClockFailure() {
         val records = mutableListOf<SaveTimingRecord>()
@@ -132,7 +166,7 @@ class GpuExportWorkTimingsTest {
         assertEquals(SaveTimingOutcome.SKIPPED, record(SaveTimingStage.B2_UPLOAD).outcome)
         assertEquals(SaveTimingOutcome.NOT_REACHED, record(SaveTimingStage.B3_UPLOAD).outcome)
         assertEquals(SaveTimingOutcome.INCOMPLETE, record(SaveTimingStage.FINAL_READBACK).outcome)
-        assertEquals(SaveTimingOutcome.NOT_REACHED, record(SaveTimingStage.FINAL_ROW_CONSUME).outcome)
+        assertEquals(SaveTimingOutcome.NOT_REACHED, record(SaveTimingStage.FINAL_ROW_PROCESS).outcome)
         assertEquals(SaveTimingOutcome.UNAVAILABLE, record(SaveTimingStage.B4_READBACK).outcome)
         assertEquals(SaveTimingOutcome.NOT_REACHED, record(SaveTimingStage.B1_QUANTILES_READBACK).outcome)
         assertFalse(records.any { it.stage.name.contains("READER_TOTAL") })

@@ -49,25 +49,23 @@ internal object GpuExportBands {
                 var origin = 0
                 gpuWork(readerTimings, GpuExportDetail.READER_TOTAL) {
                     input.rows(readerStop) { y, row ->
-                        gpuWork(readerTimings, GpuExportDetail.INPUT_CALLBACK) {
+                        originalCheckpoint(readerStop)
+                        check(y == expectedY && y < input.height) { "Original rows must be contiguous and ordered" }
+                        require(row.size == input.width * 3 && (finiteRgb16 || row.all { it.isFinite() }))
+                        for (x in 0 until input.width) {
+                            val rgb = x * 3; val rgba = x * 4
+                            rgbaRow[rgba] = row[rgb]; rgbaRow[rgba + 1] = row[rgb + 1]
+                            rgbaRow[rgba + 2] = row[rgb + 2]; rgbaRow[rgba + 3] = 1f
+                        }
+                        buffer.put(rgbaRow)
+                        expectedY++
+                        if (expectedY - origin == height || expectedY == input.height) {
                             originalCheckpoint(readerStop)
-                            check(y == expectedY && y < input.height) { "Original rows must be contiguous and ordered" }
-                            require(row.size == input.width * 3 && (finiteRgb16 || row.all { it.isFinite() }))
-                            for (x in 0 until input.width) {
-                                val rgb = x * 3; val rgba = x * 4
-                                rgbaRow[rgba] = row[rgb]; rgbaRow[rgba + 1] = row[rgb + 1]
-                                rgbaRow[rgba + 2] = row[rgb + 2]; rgbaRow[rgba + 3] = 1f
-                            }
-                            buffer.put(rgbaRow)
-                            expectedY++
-                            if (expectedY - origin == height || expectedY == input.height) {
-                                originalCheckpoint(readerStop)
-                                buffer.flip()
-                                check(ready.offer(Band(origin, expectedY - origin, buffer)))
-                                origin = expectedY
-                                // Wait inside this callback, BEFORE rows() reads another row.
-                                if (expectedY < input.height) buffer = gpuWork(readerTimings, GpuExportDetail.INPUT_FREE_WAIT) { borrow() }
-                            }
+                            buffer.flip()
+                            check(ready.offer(Band(origin, expectedY - origin, buffer)))
+                            origin = expectedY
+                            // Wait inside this callback, BEFORE rows() reads another row.
+                            if (expectedY < input.height) buffer = gpuWork(readerTimings, GpuExportDetail.INPUT_FREE_WAIT) { borrow() }
                         }
                     }
                 }

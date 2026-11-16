@@ -213,10 +213,12 @@ internal class GpuExportRenderer(
                     egl.checkGl("read export band RGBA8")
                     bytes.position(0)
                     bytes.limit(width * output.height * 4)
-                    repeat(output.height) { y ->
-                        originalCheckpoint(stop)
-                        gpuWork(workTimings, GpuExportDetail.ROW_CONVERT) { GpuExportRgba8.readRow(bytes, y, row) }
-                        gpuWork(workTimings, GpuExportDetail.ROW_CONSUME) { consumeRow(band.origin + y, row) }
+                    gpuWork(workTimings, GpuExportDetail.ROW_PROCESS) {
+                        repeat(output.height) { y ->
+                            originalCheckpoint(stop)
+                            GpuExportRgba8.readRow(bytes, y, row)
+                            consumeRow(band.origin + y, row)
+                        }
                     }
                 }
             }

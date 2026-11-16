@@ -2,10 +2,10 @@ package dev.cinematic.p0.gpu.export
 
 /** CPU wall intervals, not GPU timer queries. Reader intervals overlap the GL caller. */
 internal enum class GpuExportDetail {
-    INPUT_WAIT, INPUT_READ_CONVERT, INPUT_PACK, UPLOAD, FENCE_WAIT,
-    READBACK, ROW_CONVERT, ROW_CONSUME,
+    INPUT_WAIT, INPUT_READ_CONVERT, UPLOAD, FENCE_WAIT,
+    READBACK, ROW_PROCESS,
     // Reader-local intermediates; never serialized.
-    READER_TOTAL, INPUT_CALLBACK, INPUT_FREE_WAIT,
+    READER_TOTAL, INPUT_FREE_WAIT,
 }
 
 /** Thread-confined counters. A reader is merged only after the existing join has drained it. */
@@ -67,12 +67,12 @@ internal class GpuExportWorkTimings(private val clock: (() -> Long)? = null) {
 
     fun fork(): GpuExportWorkTimings? = try { GpuExportWorkTimings(clock) } catch (_: Throwable) { null }
 
-    /** rows() total excludes initial buffer borrowing; callbacks include later borrowing. */
+    /** rows() minus later buffer waits: read/convert, RGBA packing, validation, offer and EOF/close.
+     * Initial borrowing is excluded. Reader wall time overlaps the GL caller, not additive CPU time. */
     fun mergeInput(reader: GpuExportWorkTimings?) {
         try {
             if (reader == null) {
                 add(GpuExportDetail.INPUT_READ_CONVERT, null, true)
-                add(GpuExportDetail.INPUT_PACK, null, true)
                 return
             }
             fun difference(outer: Sample, inner: Sample?): Long? {
@@ -81,15 +81,11 @@ internal class GpuExportWorkTimings(private val clock: (() -> Long)? = null) {
                 return (total - nested).takeIf { it >= 0 }
             }
             val total = reader.sample(GpuExportDetail.READER_TOTAL)
-            val callback = reader.sample(GpuExportDetail.INPUT_CALLBACK)
             val waiting = reader.sample(GpuExportDetail.INPUT_FREE_WAIT)
             if (total != null) add(GpuExportDetail.INPUT_READ_CONVERT,
-                difference(total, callback), total.completed)
-            if (callback != null) add(GpuExportDetail.INPUT_PACK,
-                difference(callback, waiting), callback.completed)
+                difference(total, waiting), total.completed && (waiting?.completed != false))
         } catch (_: Throwable) {
             add(GpuExportDetail.INPUT_READ_CONVERT, null, true)
-            add(GpuExportDetail.INPUT_PACK, null, true)
         }
     }
 }

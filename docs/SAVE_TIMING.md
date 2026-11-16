@@ -132,15 +132,17 @@ CONTROL_PREPARE / JPEG_INSPECT / SOURCE_VERIFY_AFTER / SCRATCH_CLEANUP を保存
 B1 / B2 / B3 / B4 / B5 / FINAL ごとに以下を追加する。
 
 - INPUT_WAIT: GL側が入力帯の準備を待つwall時間。
-- INPUT_READ_CONVERT: reader の rows 全体から callback を引いた時間。読込みとRGB16→Float変換、開閉を含む。
-- INPUT_PACK: reader callback から空きbuffer待ちを引いた時間。RGB→RGBA詰め替え、検証、投入を含む。
+- INPUT_READ_CONVERT: reader の rows 全体から後続の空きbuffer待ちだけを引いたwall時間。読込み、RGB16→Float変換、RGB→RGBA詰め替え、行検証、帯投入、EOF検査・closeを含む。初回buffer取得、帯buffer確保、reader threadの起動・joinは範囲外。純decode時間・純CPU時間ではない。
 - UPLOAD: GL転送API呼出しのCPU wall時間。GPUでの転送完了時間とは異なる。
 - FENCE_WAIT: renderer と B4/B1_QUANTILES 内部の既存明示fence待ち。ドライバ内部の暗黙待ちは別項目にも残り得る。
 
-B1_QUANTILES_FENCE_WAIT、B1_QUANTILES_READBACK、B4_READBACK、FINAL_READBACK、FINAL_ROW_CONVERT、FINAL_ROW_CONSUME も記録する。
+B1_QUANTILES_FENCE_WAIT、B1_QUANTILES_READBACK、B4_READBACK、FINAL_READBACK、FINAL_ROW_PROCESS も記録する。
 GPUタイマー問い合わせ、新たなfence、glFinishは追加しない。reader とGLは並行するため単純加算禁止。
 readback APIに含まれる暗黙同期はREADBACK側に残る。not reached / skipped / unavailable と0を区別する。
-帯・行ごとの時計とメモリ集計のみで、ディスクI/Oは従来どおり終了後の一括書込み。
+FINAL_ROW_PROCESS は帯内の行ループ全体（取消チェック、RGBA8→ARGB変換、consumer呼出し）をまとめたwall時間。行順・取消チェック位置は変更しない。
+INPUT_PACK と行単位の変換/consumer分離は未配布の詳細案から削除し、帯・走査単位だけで計測する。
+時計取得失敗・負の差分はNA、失敗した途中区間はINCOMPLETE。到達しなかったbuffer待ちだけは差引き0とする。
+ディスクI/Oは従来どおり終了後の一括書込み。
 
 記録上限1,024行・256KiBは変更しない。上記の15行/68回は旧形式の例であり、追加後の保持回数には使わない。
 既存N行、新規1回R行なら既存行を削らずに追加できる回数の目安は floor((1024-N)/R)。

@@ -192,7 +192,6 @@ class GpuExportBandsTest {
         assertEquals(listOf(0, 64, 128), origins)
         assertNotNull(timing.sample(GpuExportDetail.INPUT_WAIT)?.nanos)
         assertNotNull(timing.sample(GpuExportDetail.INPUT_READ_CONVERT)?.nanos)
-        assertNotNull(timing.sample(GpuExportDetail.INPUT_PACK)?.nanos)
         assertNull(timing.sample(GpuExportDetail.READER_TOTAL))
     }
 
