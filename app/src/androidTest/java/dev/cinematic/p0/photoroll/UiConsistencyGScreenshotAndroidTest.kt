@@ -45,7 +45,7 @@ class UiConsistencyGScreenshotAndroidTest {
     @get:org.junit.Rule val fixture = SyntheticFixtureRule()
     private data class Layout(val name: String, val height: Int, val font: Float)
     private data class Scene(val name: String, val state: DevelopMessageState? = null,
-        val saveEnabled: Boolean = false, val temperature: Boolean = false,
+        val saveEnabled: Boolean = false, val parameter: String? = null,
         val guide: InitialPreviewKind? = null)
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val args get() = InstrumentationRegistry.getArguments()
@@ -76,10 +76,12 @@ class UiConsistencyGScreenshotAndroidTest {
             Scene("develop-published", ready.copy(savePhase = PhotoRollSavePhase.PUBLISHED), true),
             Scene("develop-cancelled", ready.copy(savePhase = PhotoRollSavePhase.CANCELLED), true),
             Scene("develop-failed", ready.copy(savePhase = PhotoRollSavePhase.GPU_FAILED), true),
-            Scene("develop-unconfirmed", ready.copy(savePhase = PhotoRollSavePhase.UNCONFIRMED), true))
+            Scene("develop-unconfirmed", ready.copy(savePhase = PhotoRollSavePhase.UNCONFIRMED), true),
+            Scene("develop-long-name", ready, true),
+            Scene("develop-edit-temperature", ready.copy(editing = true), parameter = "色温度"),
+            Scene("develop-edit-brightness", ready.copy(editing = true), parameter = "明るさ"))
         val extras = listOf(Scene("capture-rec"), Scene("capture-failure"), Scene("capture-sending"),
-            Scene("capture-permission"), Scene("develop-long-name", ready, true),
-            Scene("develop-edit-temperature", ready.copy(editing = true), temperature = true),
+            Scene("capture-permission"),
             Scene("guide-saved", guide = InitialPreviewKind.SAVED_JPEG),
             Scene("guide-raw", guide = InitialPreviewKind.HALF_GUIDE),
             Scene("guide-embedded", guide = InitialPreviewKind.EMBEDDED_JPEG), Scene("roll-list"))
@@ -144,22 +146,20 @@ class UiConsistencyGScreenshotAndroidTest {
                 }
                 ActivityScenario.launch(PhotoRollActivity::class.java).use {
                     settle()
-                    if (scene.temperature) {
-                        val button = nodes().firstOrNull { it.isClickable && descendants(it).any { n -> n.text?.toString() == "色温度" } }
-                        requireNotNull(button) { "Temperature parameter missing" }
-                        reveal(button)
-                        assertTrue("Select temperature in the synthetic view", button.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+                    if (scene.parameter != null) {
+                        val button = awaitParameter(scene.parameter)
+                        assertTrue("Select parameter in the synthetic view", button.performAction(AccessibilityNodeInfo.ACTION_CLICK))
                         settle()
                     }
                     val bounds = requireNotNull(viewport.get())
                     assertEquals("Exact logical viewport height", layout.height.toFloat(), bounds.height() / density.get(), 1f)
                     if (scene.state?.editing == true) {
-                        val panel = nodes().firstOrNull { it.contentDescription?.toString() == "現像調整パネル" }
-                        val panelRect = Rect().also(requireNotNull(panel)::getBoundsInScreen)
-                        if (layout.name == "normal") panelHeights[scene.name] = panelRect.height() / density.get()
-                        if (scene.temperature && revision == "after") {
+                        reveal(awaitNode("現像調整パネル"))
+                        val panelRect = Rect().also(awaitNode("現像調整パネル")::getBoundsInScreen)
+                        panelHeights[name] = panelRect.height() / density.get()
+                        if (scene.parameter != null && revision == "after") {
                             assertFalse("No duplicate temperature explanation", nodes().any { it.text?.toString() == "相対調整です（K値ではありません）" })
-                            panelHeights["develop-edit-strength"]?.let { assertEquals("Parameter switching preserves panel height", it, panelRect.height() / density.get(), 1f) }
+                            panelHeights["${layout.name}-develop-edit-strength"]?.let { assertEquals("Parameter switching preserves panel height", it, panelRect.height() / density.get(), 1f) }
                         }
                     }
                     writeImage(output, "$name-top")
@@ -171,6 +171,7 @@ class UiConsistencyGScreenshotAndroidTest {
                         val visible = awaitNode(presentation.description)
                         val rect = Rect().also(visible::getBoundsInScreen)
                         assertTrue("Save action visible: $name", visible.isVisibleToUser)
+                        assertTrue("Complete save action inside captured viewport: $name", bounds.contains(rect))
                         assertEquals("Existing save eligibility: $name", scene.saveEnabled, visible.isEnabled)
                         assertEquals("Save state remains available to accessibility", presentation.label, visible.stateDescription?.toString())
                         assertTrue("Save hit width >=76dp: $name", rect.width() / density.get() >= 75f)
@@ -250,16 +251,30 @@ class UiConsistencyGScreenshotAndroidTest {
     private fun descendants(node: AccessibilityNodeInfo): List<AccessibilityNodeInfo> = buildList {
         for (i in 0 until node.childCount) node.getChild(i)?.let { add(it); addAll(descendants(it)) }
     }
-    private fun nodes(): List<AccessibilityNodeInfo> = requireNotNull(fixture.fixtureRoot()).let { listOf(it) + descendants(it) }
+    private fun nodes(): List<AccessibilityNodeInfo> {
+        fixture.automation.clearCache()
+        return requireNotNull(fixture.fixtureRoot()).let { listOf(it) + descendants(it) }
+    }
+    private fun awaitParameter(label: String): AccessibilityNodeInfo {
+        repeat(15) {
+            settle()
+            val button = nodes().firstOrNull { it.isClickable && it.isVisibleToUser &&
+                (it.text?.toString()?.contains(label) == true || descendants(it).any { n -> n.text?.toString() == label }) }
+            if (button != null) return button
+            nodes().firstOrNull { it.isScrollable }?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+        }
+        error("Missing visible parameter: $label")
+    }
     private fun awaitNode(description: String): AccessibilityNodeInfo {
         repeat(30) {
             settle()
             nodes().firstOrNull { it.contentDescription?.toString() == description }?.let { return it }
+            nodes().firstOrNull { it.isScrollable }?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
         }
         error("Missing save description: $description")
     }
     private fun reveal(node: AccessibilityNodeInfo) {
-        node.performAction(AccessibilityNodeInfo.ACTION_SHOW_ON_SCREEN)
+        node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
         settle()
         repeat(8) {
             val match = nodes().firstOrNull { it.contentDescription == node.contentDescription && it.isVisibleToUser }
