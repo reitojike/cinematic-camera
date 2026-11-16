@@ -179,6 +179,13 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                         }
                     }
                 }
+                // This passive notice neither participates in viewport measurement nor intercepts
+                // image gestures. Its lifetime and priority remain owned by the existing messages.
+                productMessages?.toast?.let { toast ->
+                    Box(Modifier.matchParentSize(), contentAlignment = Alignment.BottomCenter) {
+                        CaptureToast(developToastPresentation(toast, compact))
+                    }
+                }
             }
             if (productMessages != null) {
                 // With no image, the problem belongs in the empty 260dp viewport; its actions can scroll.
@@ -187,12 +194,6 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                     else CaptureCenter(it, onProductAction)
                 }
                 productMessages.inline.forEach { CaptureInlineNote(it, onProductAction) }
-                // The completion notice must not resize the image when an editor closes.
-                // Measure its normal two-line content even while hidden (no accessibility node).
-                val toast = productMessages.toast
-                CaptureToast(toast ?: developOperationNotice(
-                    "調整設定をこの端末に保持しました。JPEGの保存とは別です。", CaptureChromeTone.ACCEPTED),
-                    if (toast == null) Modifier.alpha(0f).clearAndSetSemantics {} else Modifier)
                 if (session != null) key(parameter) {
                     Box(Modifier.fillMaxWidth().semantics { contentDescription = "現像調整パネル" }) {
                         TrialStrengthEditorPane(state, readState, parameter, foreground, phase, change, reset, apply, close)

@@ -203,4 +203,19 @@ class DevelopMessagesTest {
             }
         }
     }
+    @Test fun compactToastShortensBothProductSuccessNoticesOnly() {
+        val settings = developOperationNotice("調整設定をこの端末に保持しました。JPEGの保存とは別です。", CaptureChromeTone.ACCEPTED)
+        val saved = UiMessage(MessageSlot.TOAST, CaptureChromeTone.ACCEPTED, "JPEGを保存しました。", "save.published")
+        for ((original, short) in listOf(settings to "調整設定を保持しました", saved to "JPEGを保存しました")) {
+            assertEquals(original, developToastPresentation(original, false))
+            assertEquals(original.copy(body = short), developToastPresentation(original, true))
+        }
+    }
+
+    @Test fun compactToastNeverShortensFailureOrUnknownFacts() {
+        val failure = developOperationNotice("調整設定の保持を確認できません。", CaptureChromeTone.FAILURE)
+        val future = developOperationNotice("新しい受付結果です。", CaptureChromeTone.NORMAL)
+        assertEquals(failure, developToastPresentation(failure, true))
+        assertEquals(future, developToastPresentation(future, true))
+    }
 }
