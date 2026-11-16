@@ -6,7 +6,7 @@ import dev.cinematic.p0.metrics.SaveTimingStage
 import dev.cinematic.p0.metrics.timingBestEffort
 
 /** GL-thread memory only. Drained on queue IO after the existing Future has completed. */
-internal class GpuExportTimings(private val clock: () -> Long = System::nanoTime) {
+internal class GpuExportTimings(private val clock: (() -> Long)? = null) {
     private val spans = mutableMapOf<SaveTimingStage, Pair<Long, Boolean>>()
     private val details = mutableMapOf<SaveTimingStage, GpuExportWorkTimings>()
     private var collectionFailed = false

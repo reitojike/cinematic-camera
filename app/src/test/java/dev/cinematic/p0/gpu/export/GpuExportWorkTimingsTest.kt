@@ -65,6 +65,53 @@ class GpuExportWorkTimingsTest {
         assertNull(timing.sample(GpuExportDetail.FENCE_WAIT)?.nanos)
     }
 
+    @Test fun clockFailureIsLocalToItsIntervalAndNestedReadsCannotRepairIt() {
+        for (failedRead in listOf(0, 3)) {
+            var calls = 0
+            val timing = GpuExportWorkTimings {
+                val call = calls++
+                if (call == failedRead) error("clock")
+                call.toLong()
+            }
+            timing.measure(GpuExportDetail.READER_TOTAL) {
+                timing.measure(GpuExportDetail.INPUT_CALLBACK) { }
+            }
+            timing.measure(GpuExportDetail.UPLOAD) { }
+            assertNull(timing.sample(GpuExportDetail.READER_TOTAL)?.nanos)
+            assertEquals(1L, timing.sample(GpuExportDetail.INPUT_CALLBACK)?.nanos)
+            assertEquals(1L, timing.sample(GpuExportDetail.UPLOAD)?.nanos)
+            assertTrue(requireNotNull(timing.sample(GpuExportDetail.READER_TOTAL)).completed)
+        }
+        var call = 0
+        val nestedFailure = GpuExportWorkTimings {
+            val tick = call++
+            if (tick == 2) error("nested clock")
+            tick.toLong()
+        }
+        nestedFailure.measure(GpuExportDetail.READER_TOTAL) {
+            nestedFailure.measure(GpuExportDetail.INPUT_CALLBACK) { }
+        }
+        assertEquals(3L, nestedFailure.sample(GpuExportDetail.READER_TOTAL)?.nanos)
+        assertNull(nestedFailure.sample(GpuExportDetail.INPUT_CALLBACK)?.nanos)
+    }
+
+    @Test fun primitiveClockRetainsSignedOriginsAndRejectsElapsedOverflow() {
+        val ticks = ArrayDeque(listOf(-5L, -2L, Long.MIN_VALUE, Long.MAX_VALUE))
+        val timing = GpuExportWorkTimings { ticks.removeFirst() }
+        assertEquals(42, gpuWork(timing, GpuExportDetail.UPLOAD) { 42 })
+        timing.measure(GpuExportDetail.FENCE_WAIT) { }
+        assertEquals(3L, timing.sample(GpuExportDetail.UPLOAD)?.nanos)
+        assertNull(timing.sample(GpuExportDetail.FENCE_WAIT)?.nanos)
+    }
+
+    @Test fun defaultPrimitiveClockAndForkRecordAvailableIntervals() {
+        val timing = GpuExportWorkTimings()
+        val reader = requireNotNull(timing.fork())
+        timing.measure(GpuExportDetail.UPLOAD) { }
+        reader.measure(GpuExportDetail.READER_TOTAL) { }
+        assertTrue(requireNotNull(timing.sample(GpuExportDetail.UPLOAD)?.nanos) >= 0)
+        assertTrue(requireNotNull(reader.sample(GpuExportDetail.READER_TOTAL)?.nanos) >= 0)
+    }
     @Test fun detailDrainDistinguishesSkippedMissingIncompleteAndClockFailure() {
         val records = mutableListOf<SaveTimingRecord>()
         val save = SaveTiming.start(22, SaveTimingKind.SAVE, records::addAll)
