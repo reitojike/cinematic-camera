@@ -57,5 +57,7 @@ GPU readback結果の品質比較であり、時間値は採用判断に使わ�
 
 - Debug/test APK assemble成功。比較コードの独立レビューでblocking findingなし。
 - レポート生成の正常・不完全/重複/不正寸法/パス/未知schema/既存出力の非上書きをPythonで確認。
-- AVD実走・品質数値・比較画像はまだ未実施。
+- AVD 実走は 2 tests / 253.149s で成功。36 条件すべて complete、前後の起動・ANR 安定ゲートも成功。実走した比較コードは `d82d9960`。
+- [36 条件の数値と差が大きい 4 組の画像](ui-review/preview-half-large-input/README.md)を保存。RGB8 MAE 最大は 12MP MICRO_DETAIL 25.346958、24MP MICRO_DETAIL 16.792429。12MP NOISE 最大は 10.468294。RAW 周期の細線で視認できる差があり、half の無条件採用を示す結果ではない。
+- 12/24MP の COLOR_PATCHES の MAE はそれぞれ 0.056439〜0.068521 / 0.035769〜0.049385、TONES は 0.052354〜0.120261 / 0.030424〜0.074367。ただし実写の色・階調の保証ではない。
 - 実写品質、Pixel速度、製品採用、既存golden90/帯28の代替合格を主張しない。
