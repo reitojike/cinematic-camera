@@ -45,13 +45,14 @@ class PrDDevelopInteractionsAndroidTest {
         var editor by mutableStateOf(shown)
         var presented by mutableStateOf<PhotoEditValues?>(shown.requestedValues)
         var compact by mutableStateOf(false)
+        var largeText by mutableStateOf(false)
         var failure by mutableStateOf(false)
         var cancelled by mutableStateOf(false)
         var banner by mutableStateOf(false)
         var toast by mutableStateOf(false)
     }
 
-    private fun withScreen(block: (ActivityScenario<PhotoRollActivity>, Model) -> Unit) {
+    private fun withScreen(renderSynthetic: Boolean = false, block: (ActivityScenario<PhotoRollActivity>, Model) -> Unit) {
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
         check(Build.HARDWARE in setOf("ranchu", "goldfish"))
         val bound = requireNotNull(TrialStrengthEditor.empty(PhotoAdjustmentPolicy.defaults).bind(source))
@@ -59,7 +60,7 @@ class PrDDevelopInteractionsAndroidTest {
         val gpu = GpuPhotoRollSession(instrumentation.targetContext.assets)
         fixture.content = {
             val density = LocalDensity.current
-            CompositionLocalProvider(LocalDensity provides Density(density.density, if (model.compact) 1.3f else 1f)) {
+            CompositionLocalProvider(LocalDensity provides Density(density.density, if (model.largeText) 1.8f else if (model.compact) 1.3f else 1f)) {
                 CaptureTheme {
                     Box(if (model.compact) Modifier.fillMaxWidth().height(500.dp) else Modifier.fillMaxSize()) {
                         val state = DevelopMessageState(
@@ -87,7 +88,29 @@ class PrDDevelopInteractionsAndroidTest {
             }
         }
         try {
-            ActivityScenario.launch(PhotoRollActivity::class.java).use { block(it, model) }
+            ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
+                if (renderSynthetic) {
+                    val width = 240; val height = 360
+                    val rgb = FloatArray(width * height * 3) { i ->
+                        val pixel = i / 3; val x = pixel % width; val y = pixel / width
+                        if (x < 6 || x >= width - 6 || y < 6 || y >= height - 6) .9f
+                        else when (i % 3) {
+                            0 -> .05f + .6f * x / width
+                            1 -> .05f + .6f * y / height
+                            else -> if ((x / 24 + y / 24) % 2 == 0) .25f else .5f
+                        }
+                    }
+                    gpu.submit(model.shown.requestedValues)
+                    gpu.renderer.openPhoto(dev.cinematic.p0.raw.LinearSrgbImage(width, height, rgb))
+                    val deadline = SystemClock.uptimeMillis() + 15_000
+                    while (gpu.presented.value != model.shown.requestedValues && SystemClock.uptimeMillis() < deadline) {
+                        gpu.failure.value?.let { throw AssertionError("Synthetic GPU failed", it) }
+                        SystemClock.sleep(30)
+                    }
+                    assertEquals("Synthetic frame must be presented", model.shown.requestedValues, gpu.presented.value)
+                }
+                block(scenario, model)
+            }
         } finally {
             fixture.content = null
             gpu.close()
@@ -226,6 +249,52 @@ class PrDDevelopInteractionsAndroidTest {
         }
         captureEvidence("fixed-surface-three-panel-cycles")
     }
+    @Test fun toastOverlayPreservesViewportAndPassesTouchesNormal() = verifyToastOverlay(false, false)
+    @Test fun toastOverlayPreservesViewportAndPassesTouchesCompact() = verifyToastOverlay(true, false)
+    @Test fun toastOverlayPreservesViewportAndPassesTouchesLargeText() = verifyToastOverlay(false, true)
+    @Test fun toastOverlayPreservesViewportAndPassesTouchesCompactLargeText() = verifyToastOverlay(true, true)
+
+    private fun verifyToastOverlay(compact: Boolean, largeText: Boolean) = withScreen(renderSynthetic = true) { scenario, model ->
+        val label = "調整設定をこの端末に保持しました。JPEGの保存とは別です。"
+        val prefix = "toast-${if (compact) "compact" else "normal"}-${if (largeText) "large" else "default"}"
+        scenario.onActivity { model.compact = compact; model.largeText = largeText }
+        visible("現像結果")
+        for (editing in listOf(false, true)) {
+            scenario.onActivity { model.editor = if (editing) model.shown.begin(.01, true) else model.shown }
+            instrumentation.waitForIdleSync()
+            val image = rect(visible("現像結果（表示用）"))
+            val native = surfaceBounds(scenario)
+            val state = if (editing) "open" else "closed"
+            assertAbsent(label)
+            captureEvidence("$prefix-$state-without")
+            scenario.onActivity { model.toast = true }
+            val toast = visible(label)
+            val notice = rect(toast)
+            assertTrue("Toast remains inside visible image region", image.contains(notice))
+            assertFalse("Toast is not interactive", toast.isClickable || toast.isLongClickable)
+            assertEquals(image, rect(visible("現像結果（表示用）")))
+            assertEquals(native, surfaceBounds(scenario))
+            captureEvidence("$prefix-$state-with")
+            // Real pointer events on the notice itself must reach the underlying image handler.
+            val down = SystemClock.uptimeMillis()
+            for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
+                val event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action,
+                    notice.exactCenterX(), notice.exactCenterY(), 0).apply { source = InputDevice.SOURCE_TOUCHSCREEN }
+                try { check(fixture.automation.injectInputEvent(event, true)) } finally { event.recycle() }
+            }
+            visible("現像結果")
+            longPressAndRelease("現像結果", targetBounds = notice) {
+                assertEquals(image, rect(visible("現像結果（表示用）")))
+                assertEquals(native, surfaceBounds(scenario))
+            }
+            scenario.onActivity { model.toast = false }
+            instrumentation.waitForIdleSync()
+            assertAbsent(label)
+            assertEquals(image, rect(visible("現像結果（表示用）")))
+            assertEquals(native, surfaceBounds(scenario))
+        }
+    }
+
     private fun clickLabel(label: String) {
         visible(label)
         val clickable = rootNodes().filter { matches(it, label) && it.isVisibleToUser }.firstNotNullOfOrNull { candidate ->
@@ -290,8 +359,8 @@ class PrDDevelopInteractionsAndroidTest {
         longPressAndRelease(expectAfter = "現像結果")
     }
 
-    private fun longPressAndRelease(expectAfter: String, whileHeld: () -> Unit = {}) {
-        val target = rect(visible("現像結果（表示用）"))
+    private fun longPressAndRelease(expectAfter: String, targetBounds: Rect? = null, whileHeld: () -> Unit = {}) {
+        val target = targetBounds ?: rect(visible("現像結果（表示用）"))
         assertTrue(target.width() > 0 && target.height() > 0)
         val down = SystemClock.uptimeMillis()
         fun send(action: Int) {
@@ -315,14 +384,15 @@ class PrDDevelopInteractionsAndroidTest {
         val output = File(requireNotNull(InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")),
             "ui-pr-d-interactions")
         check(output.isDirectory || output.mkdirs())
-        val bitmap = fixture.captureSoftware()
+        val bitmap = if (name.startsWith("toast-")) requireNotNull(fixture.automation.takeScreenshot()) else fixture.captureSoftware()
         try {
             File(output, "$name.png").outputStream().use {
                 check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it))
             }
             val resources = instrumentation.targetContext.resources
             File(output, "$name.txt").writeText(
-                "Synthetic model + empty GPU Surface. Software View-tree evidence, not photo/GPU-quality or save proof.\n" +
+                (if (name.startsWith("toast-")) "Synthetic RGB pattern + actual GPU Surface screenshot; no photo input or save.\n"
+                else "Synthetic model + empty GPU Surface. Software View-tree evidence, not photo/GPU-quality or save proof.\n") +
                 "bitmap=${bitmap.width}x${bitmap.height}; density=${resources.displayMetrics.density}; " +
                 "deviceFontScale=${resources.configuration.fontScale}; compact fixture overrides fontScale=1.3.\n")
         } finally { bitmap.recycle() }
