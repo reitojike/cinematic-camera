@@ -3,12 +3,15 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val halfCompare = providers.gradleProperty("cinematicHalfCompare").orNull == "true"
+
 // Host-only shader regression tests. Nothing is added to an APK or a normal test run.
 // Comparison-only RAW half guide. Release never enables this experimental fallback.
 val initialHalfGuide = providers.gradleProperty("initialHalfGuide").orNull == "true"
 // Side-by-side internal comparison only; never changes the normal/release application identity.
 val initialPreviewCompare = providers.gradleProperty("initialPreviewCompare").orNull == "true"
 
+require(!halfCompare || (!initialPreviewCompare && !initialHalfGuide)) { "Half quality comparison is a separate build" }
 val gpuMesa = providers.gradleProperty("cinematicGpuMesa").orNull == "true"
 
 // Draft opt-in: default debug builds require no signing inputs and remain unchanged.
@@ -16,6 +19,7 @@ val cinematicSigningMode = providers.environmentVariable("CINEMATIC_SIGNING_MODE
 require(cinematicSigningMode in setOf("ephemeral_debug", "stable_internal")) {
     "CINEMATIC_SIGNING_MODE must be ephemeral_debug or stable_internal"
 }
+require(!halfCompare || cinematicSigningMode == "ephemeral_debug") { "Evaluation must not use product signing" }
 val stableInternalSigning = cinematicSigningMode == "stable_internal"
 fun requiredSigningInput(name: String): String = providers.environmentVariable(name).orNull
     ?.takeIf { it.isNotBlank() } ?: throw GradleException("Stable internal signing requires environment input: $name")
@@ -30,11 +34,12 @@ android {
         cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" }
     }
     defaultConfig {
-        applicationId = "dev.cinematic.p0"
+        applicationId = if (halfCompare) "dev.cinematic.p0.halfcompare" else "dev.cinematic.p0"
         manifestPlaceholders["cinematicAppLabel"] = "Cinematic Camera Probe"
-        manifestPlaceholders["cinematicTestTarget"] = "dev.cinematic.p0"
+        manifestPlaceholders["cinematicTestTarget"] = if (halfCompare) "dev.cinematic.p0.halfcompare" else "dev.cinematic.p0"
         buildConfigField("boolean", "EDITOR_PREVIEW_DIAGNOSTIC", "false")
         buildConfigField("boolean", "INITIAL_HALF_GUIDE", "false")
+        buildConfigField("boolean", "PRIVATE_HALF_COMPARE", halfCompare.toString())
         minSdk = 33
         targetSdk = 37
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
@@ -43,6 +48,12 @@ android {
         versionName = providers.environmentVariable("CINEMATIC_VERSION_NAME").orNull ?: "0.0.10-p05"
     }
     buildFeatures { compose = true; buildConfig = true }
+    if (halfCompare) {
+        lint.lintConfig = file("src/halfCompare/lint.xml")
+        sourceSets.getByName("main").manifest.srcFile("src/halfCompare/AndroidManifest.xml")
+        sourceSets.getByName("debug").kotlin.srcDir("src/halfCompare/java")
+        sourceSets.getByName("androidTest").kotlin.srcDir("src/halfCompareAndroidTest/java")
+    }
     // Legacy CPU trial safety fixtures stay executable in tests, never in an app APK.
     sourceSets.getByName("test").kotlin.srcDir("src/testSupport/java")
     sourceSets.getByName("androidTest").kotlin.srcDir("src/testSupport/java")
@@ -156,4 +167,9 @@ dependencies {
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test.uiautomator:uiautomator:2.4.1")
+}
+
+// Never package the evaluation identity as a release variant.
+androidComponents {
+    beforeVariants(selector().withBuildType("release")) { if (halfCompare) it.enable = false }
 }

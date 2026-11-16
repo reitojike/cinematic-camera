@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Replaces the product manifest only for the explicit separate-ID evaluation build.
+     No network, camera, storage, provider, export service, backup or sharing component. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" tools:node="remove" />
+    <application android:allowBackup="false" android:fullBackupContent="false"
+        android:label="HALF比較（未採用）" android:supportsRtl="true"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        <!-- Removal markers are never instantiated; ignore lint class checks on these markers only. -->
+        <service android:name="androidx.camera.core.impl.MetadataHolderService" tools:node="remove" tools:ignore="Instantiatable" />
+        <provider android:name="androidx.startup.InitializationProvider" tools:node="remove" tools:ignore="MissingClass" />
+        <receiver android:name="androidx.profileinstaller.ProfileInstallReceiver" tools:node="remove" tools:ignore="MissingClass" />
+        <activity android:name="dev.cinematic.p0.halfcompare.PreviewCompareActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
