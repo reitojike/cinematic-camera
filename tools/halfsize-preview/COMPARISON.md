@@ -35,8 +35,10 @@ JPEG は一覧用に表示寸法へ Android の bilinear で縮小します。�
 
 ```text
 adb -s <emulator> shell am instrument -w -r -e isolated true -e gpuInputSafety true -e halfPreview24Mp true -e class dev.cinematic.p0.jpegrender.original.HalfPreviewBoundaryAndroidTest dev.cinematic.p0.test/androidx.test.runner.AndroidJUnitRunner
-adb -s <emulator> shell am instrument -w -r -e isolated true -e gpuInputSafety true -e halfPreviewComparison true -e halfPreviewRunId <unique-run> -e halfPreviewSourceCommit <clean-40-character-head> -e class dev.cinematic.p0.jpegrender.original.HalfPreviewComparisonAndroidTest dev.cinematic.p0.test/androidx.test.runner.AndroidJUnitRunner
+adb -s <emulator> shell am instrument -w -r -e isolated true -e gpuInputSafety true -e halfPreviewComparison true -e halfPreviewRunId <unique-run> -e halfPreviewSourceCommit <clean-40-character-head> -e class dev.cinematic.p0.jpegrender.original.HalfPreviewComparisonAndroidTest#captureFullHalfAndFullResolutionJpegCandidates dev.cinematic.p0.test/androidx.test.runner.AndroidJUnitRunner
 ```
+
+比較クラス全体は実行しません。demosaic比較・decompositionは別用途のメソッドで、それぞれ専用flagと新しいrun IDを指定する独立実行です。上のコマンドはfull/half/保存JPEG比較メソッド1件だけを選びます。
 
 成果物はアプリ外部私有領域の `half-preview-review/<unique-run>`。既存runは上書きしません。
 manifestは完了までincomplete。失敗時の一時ファイルは消さず、試験と所有者の状態を確認します。
