@@ -25,7 +25,7 @@ class SaveProgressMessagesTest {
     @Test fun cancelAndHoldOverrideLatestBarImmediatelyWithoutChangingCancelEligibility() {
         val developing = active.copy(progress = SaveProgress(SaveProgressPhase.DEVELOPING, .999f))
         val stopping = screenMessages(foregroundSaveMessages(developing.copy(stopping = true))).banner!!
-        assertEquals("保存を止めています", stopping.body)
+        assertEquals("保存を取り消しています", stopping.body)
         assertFalse(stopping.primary!!.enabled)
         assertNull(stopping.progress)
         assertNull(stopping.note)
@@ -40,7 +40,7 @@ class SaveProgressMessagesTest {
         val result = developMessages(state, foregroundSaveMessages(active.copy(stopping = true)))
         assertEquals("保存を取り消しています · プレビューを止めています", result.center?.body)
         assertNull(result.banner?.progress)
-        assertEquals("保存を止めています", result.banner?.body)
+        assertEquals("保存を取り消しています", result.banner?.body)
         assertFalse(result.banner!!.primary!!.enabled)
     }
     @Test fun terminalErrorAndCancellationNeverRenderACompletedBar() {

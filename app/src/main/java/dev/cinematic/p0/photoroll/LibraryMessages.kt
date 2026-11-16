@@ -36,7 +36,7 @@ internal fun foregroundSaveMessages(state: ForegroundSaveMessageState, activeOnl
         if (state.held) CaptureChromeTone.FAILURE else CaptureChromeTone.WARNING,
         when {
             state.held -> "保存の終了を確認できないため停止しています。次の保存は始めません。"
-            state.stopping -> "保存を止めています"
+            state.stopping -> "保存を取り消しています"
             else -> when (state.progress?.phase ?: SaveProgressPhase.PREPARING) {
                 SaveProgressPhase.PREPARING -> "保存の準備中"
                 SaveProgressPhase.DEVELOPING -> "画像を現像中"

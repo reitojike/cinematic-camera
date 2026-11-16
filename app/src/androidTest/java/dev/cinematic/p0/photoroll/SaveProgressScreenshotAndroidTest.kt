@@ -37,7 +37,7 @@ class SaveProgressScreenshotAndroidTest {
     @Test fun captureBeforeAfterForFourPhasesAndStoppingAcrossLayouts() {
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val labels = listOf("保存の準備中", "画像を現像中", "JPEGを作成中", "保存しています", "保存を止めています")
+        val labels = listOf("保存の準備中", "画像を現像中", "JPEGを作成中", "保存しています", "保存を取り消しています")
         val normalAfterOnly = InstrumentationRegistry.getArguments().getString("normalAfterOnly") == "true"
         val animate = InstrumentationRegistry.getArguments().getString("recordAnimation") == "true"
         check(!animate || normalAfterOnly)
