@@ -6,9 +6,14 @@ import dev.cinematic.p0.metrics.SaveTimingStage
 import dev.cinematic.p0.metrics.timingBestEffort
 
 /** GL-thread memory only. Drained on queue IO after the existing Future has completed. */
-internal class GpuExportTimings {
+internal class GpuExportTimings(private val clock: (() -> Long)? = null) {
     private val spans = mutableMapOf<SaveTimingStage, Pair<Long, Boolean>>()
+    private val details = mutableMapOf<SaveTimingStage, GpuExportWorkTimings>()
     private var collectionFailed = false
+    fun detail(name: String): GpuExportWorkTimings? = try {
+        val stage = SaveTimingStage.valueOf(name)
+        if (stage !in stages) null else details.getOrPut(stage) { GpuExportWorkTimings(clock) }
+    } catch (_: Throwable) { collectionFailed = true; null }
     fun finished(name: String, nanos: Long, completed: Boolean) { try {
         val stage = SaveTimingStage.valueOf(name)
         if (stage in stages) spans[stage] = nanos to completed
@@ -24,9 +29,29 @@ internal class GpuExportTimings {
                 completed -> SaveTimingOutcome.UNAVAILABLE
                 else -> SaveTimingOutcome.NOT_REACHED
             }, span?.first?.takeIf { it >= 0 })
+            for (part in detailParts(stage)) {
+                val sample = details[stage]?.sample(part)
+                val outcome = when {
+                    span?.first == -1L -> SaveTimingOutcome.SKIPPED
+                    sample != null && (span?.second == false || !sample.completed) -> SaveTimingOutcome.INCOMPLETE
+                    sample != null && sample.nanos != null -> SaveTimingOutcome.COMPLETED
+                    sample != null || collectionFailed || span?.second == true -> SaveTimingOutcome.UNAVAILABLE
+                    else -> SaveTimingOutcome.NOT_REACHED
+                }
+                timing?.event(SaveTimingStage.valueOf("${stage.name}_${part.name}"), outcome, sample?.nanos)
+            }
         }
     }
+    private fun detailParts(stage: SaveTimingStage): List<GpuExportDetail> = when (stage) {
+        SaveTimingStage.B1_QUANTILES -> listOf(GpuExportDetail.FENCE_WAIT, GpuExportDetail.READBACK)
+        SaveTimingStage.B4 -> scanParts + GpuExportDetail.READBACK
+        SaveTimingStage.FINAL -> scanParts + listOf(GpuExportDetail.READBACK,
+            GpuExportDetail.ROW_PROCESS)
+        else -> scanParts
+    }
     companion object {
+        private val scanParts = listOf(GpuExportDetail.INPUT_WAIT, GpuExportDetail.INPUT_READ_CONVERT,
+            GpuExportDetail.UPLOAD, GpuExportDetail.FENCE_WAIT)
         private val stages = listOf(SaveTimingStage.B1, SaveTimingStage.B1_QUANTILES, SaveTimingStage.B2,
             SaveTimingStage.B3, SaveTimingStage.B4, SaveTimingStage.B5, SaveTimingStage.FINAL)
     }
