@@ -1,4 +1,4 @@
-"""Build a shareable synthetic-only report from a complete, opt-in 90-case capture."""
+"""Build a shareable synthetic-only report from a complete, opt-in 90- or 36-case capture."""
 import argparse
 import csv
 import json
