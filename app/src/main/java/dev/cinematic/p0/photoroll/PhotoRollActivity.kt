@@ -20,11 +20,13 @@ class PhotoRollActivity : ComponentActivity() {
     private val gpuPublications = kotlinx.coroutines.flow.MutableStateFlow(dev.cinematic.p0.gpu.preview.GpuInputPublication())
     private lateinit var resourceObserver: PhotoRollResourceObserver
     private lateinit var renderer: PhotoRollRenderer
+    private lateinit var gpuOwner: GpuPhotoRollOwner
     private lateinit var previewCache: PhotoRollPreviewCache
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        gpuOwner = GpuPhotoRollOwner(assets)
         val repository = PhotoRollRepository(contentResolver, packageName)
         previewCache = ViewModelProvider(this)[PhotoRollPreviewCache::class.java]
         resourceObserver = PhotoRollResourceObserver(applicationContext, DevelopExecution::updateConditions,
@@ -39,7 +41,7 @@ class PhotoRollActivity : ComponentActivity() {
                 PhotoRollRenderResult.Unavailable("私有試験JPEGの現像はAndroid 10以降で利用できます")
         }
         setContent {
-            CaptureTheme { PhotoRollScreen(repository, renderer, foreground, gpuPublications, gpuTrimEpoch,
+            CaptureTheme { PhotoRollScreen(repository, renderer, foreground, gpuPublications, gpuTrimEpoch, gpuOwner,
                 importConditions = { resourceObserver.snapshot().developConditions(rendererAvailable = true) }, close = ::finish) }
         }
     }
@@ -53,19 +55,25 @@ class PhotoRollActivity : ComponentActivity() {
         }
         foreground = true; resourceObserver.foreground(true)
     }
-    override fun onPause() { foreground = false; renderer.discardTransientInputs(); resourceObserver.foreground(false); super.onPause() }
+    override fun onPause() { foreground = false; gpuOwner.exit(GpuPreviewExit.BACKGROUND); renderer.discardTransientInputs(); resourceObserver.foreground(false); super.onPause() }
     @Suppress("OVERRIDE_DEPRECATION")
-    override fun onLowMemory() { if (::previewCache.isInitialized) previewCache.clear(); if (::renderer.isInitialized) renderer.discardTransientInputs(); gpuTrimEpoch++; super.onLowMemory() }
+    override fun onLowMemory() { if (::gpuOwner.isInitialized) gpuOwner.exit(GpuPreviewExit.MEMORY_PRESSURE); if (::previewCache.isInitialized) previewCache.clear(); if (::renderer.isInitialized) renderer.discardTransientInputs(); gpuTrimEpoch++; super.onLowMemory() }
     @Suppress("OVERRIDE_DEPRECATION")
     override fun onTrimMemory(level: Int) {
+        if (::gpuOwner.isInitialized && level != ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN)
+            gpuOwner.exit(GpuPreviewExit.MEMORY_PRESSURE)
         // UI_HIDDEN is normal navigation, not a memory-pressure signal. Raw inputs still use their own policy.
         if (::previewCache.isInitialized && level != ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) previewCache.clear()
         if (::renderer.isInitialized) {
             val gpu = (renderer as? ManualTrialPhotoRollRenderer)?.developEngine == dev.cinematic.p0.gpu.DevelopEngine.GPU
             if (!gpu || level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) renderer.discardTransientInputs()
-            if (gpu && level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) gpuTrimEpoch++
+            if (gpu) gpuTrimEpoch++
         }
         super.onTrimMemory(level)
+    }
+    override fun onDestroy() {
+        if (::gpuOwner.isInitialized) gpuOwner.exit(GpuPreviewExit.ACTIVITY_DESTROYED)
+        super.onDestroy()
     }
     override fun onStart() { super.onStart(); resourceObserver.start() }
     override fun onStop() { resourceObserver.stop(); super.onStop() }
