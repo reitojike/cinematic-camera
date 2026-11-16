@@ -4,6 +4,11 @@ plugins {
 }
 
 // Host-only shader regression tests. Nothing is added to an APK or a normal test run.
+// Comparison-only RAW half guide. Release never enables this experimental fallback.
+val initialHalfGuide = providers.gradleProperty("initialHalfGuide").orNull == "true"
+// Side-by-side internal comparison only; never changes the normal/release application identity.
+val initialPreviewCompare = providers.gradleProperty("initialPreviewCompare").orNull == "true"
+
 val gpuMesa = providers.gradleProperty("cinematicGpuMesa").orNull == "true"
 
 // Draft opt-in: default debug builds require no signing inputs and remain unchanged.
@@ -26,7 +31,10 @@ android {
     }
     defaultConfig {
         applicationId = "dev.cinematic.p0"
+        manifestPlaceholders["cinematicAppLabel"] = "Cinematic Camera Probe"
+        manifestPlaceholders["cinematicTestTarget"] = "dev.cinematic.p0"
         buildConfigField("boolean", "EDITOR_PREVIEW_DIAGNOSTIC", "false")
+        buildConfigField("boolean", "INITIAL_HALF_GUIDE", "false")
         minSdk = 33
         targetSdk = 37
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
@@ -52,6 +60,15 @@ android {
         }
     }
     buildTypes {
+        getByName("debug") {
+            buildConfigField("boolean", "INITIAL_HALF_GUIDE", initialHalfGuide.toString())
+            if (initialPreviewCompare) {
+                applicationIdSuffix = ".initialpreviewcompare"
+                versionNameSuffix = if (initialHalfGuide) "-initial-compare-half" else "-initial-compare-exact"
+                manifestPlaceholders["cinematicAppLabel"] = "Cinematic Initial Compare"
+                manifestPlaceholders["cinematicTestTarget"] = "dev.cinematic.p0.initialpreviewcompare"
+            }
+        }
         getByName("release") {
             isDebuggable = false
             if (stableInternalSigning) signingConfig = signingConfigs.getByName("cinematicInternal")

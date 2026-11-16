@@ -120,7 +120,7 @@ int orientation(const uint8_t* p, size_t n) {
 }
 struct Header { unsigned width = 0, height = 0; int exif = 0; };
 bool jpegHeader(const uint8_t* p, size_t n, Header& header) {
-    if (n < 4 || p[0] != 255 || p[1] != 216) return false;
+    if (n < 4 || p[0] != 255 || p[1] != 216 || p[n - 2] != 255 || p[n - 1] != 217) return false;
     size_t at = 2;
     while (at < n) {
         if (p[at++] != 255) return false;
@@ -170,6 +170,9 @@ Result extract(const uint8_t* snapshot, size_t size, Cancel callback, void* cont
         if (size > maxInput) return result(Status::Unsupported);
         auto owner = std::make_unique<LibRaw>(LIBRAW_OPTIONS_NO_DATAERR_CALLBACK);
         auto& raw = *owner;
+        // Match the current Original24 exact-preview/preflight open policy.
+        // This is a RAW-buffer policy, not an aggregate metadata allocation cap.
+        raw.imgdata.rawparams.max_raw_memory_mb = 512;
         raw.set_progress_handler(progress, &cancel);
         // open_buffer borrows the memory; fixed LibRaw does not write the source buffer.
         int rc = raw.open_buffer(const_cast<uint8_t*>(snapshot), size);
@@ -180,21 +183,29 @@ Result extract(const uint8_t* snapshot, size_t size, Cancel callback, void* cont
         if (list.thumbcount < 0 || list.thumbcount > LIBRAW_THUMBNAIL_MAXCOUNT) return result(Status::Invalid);
         int selected = -1;
         uint64_t largest = 0;
-        bool invalid = false, present = false;
+        bool invalid = false, present = false, overLimit = false, unsupported = false;
         for (int i = 0; i < list.thumbcount; ++i) {
             const auto& item = list.thumblist[i];
             // LibRaw creates a zero-range placeholder even for a DNG with no thumbnail.
             if (!item.toffset && !item.tlength) continue;
             present = true;
-            if (item.tformat != LIBRAW_INTERNAL_THUMBNAIL_JPEG) continue;
+            if (item.tformat != LIBRAW_INTERNAL_THUMBNAIL_JPEG) { unsupported = true; continue; }
             if (item.toffset < 0 || uint64_t(item.toffset) > size || item.tlength > size - size_t(item.toffset)) {
                 invalid = true;
                 continue;
             }
-            if (item.tlength < 64 || item.tlength > maxJpeg || !dimensions(item.twidth, item.theight)) continue;
+            if (item.tlength < 64 || !item.twidth || !item.theight) { invalid = true; continue; }
+            if (item.tlength > maxJpeg || !dimensions(item.twidth, item.theight)) { overLimit = true; continue; }
             Header header;
             if (!jpegHeader(snapshot + size_t(item.toffset), item.tlength, header) ||
                 header.width != item.twidth || header.height != item.theight) {
+                invalid = true;
+                continue;
+            }
+            // Sensor dimensions and JPEG SOF dimensions are both unrotated here.
+            const auto& original = raw.imgdata.sizes;
+            if (!original.raw_width || !original.raw_height) { unsupported = true; continue; }
+            if (header.width > original.raw_width || header.height > original.raw_height) {
                 invalid = true;
                 continue;
             }
@@ -203,18 +214,15 @@ Result extract(const uint8_t* snapshot, size_t size, Cancel callback, void* cont
         }
         if (cancel.stopped()) return result(Status::Cancelled);
         if (!present) return result(Status::Absent);
-        if (selected < 0) return result(invalid ? Status::Invalid : Status::Unsupported);
+        if (selected < 0) return result(invalid ? Status::Invalid :
+            (overLimit && !unsupported ? Status::Absent : Status::Unsupported));
         const auto item = list.thumblist[selected];
         if (cancel.stopped()) return result(Status::Cancelled);
-        rc = raw.unpack_thumb_ex(selected);
-        if (cancel.stopped()) return result(Status::Cancelled);
-        if (rc) return result(error(rc));
-        const auto& thumb = raw.imgdata.thumbnail;
-        if (thumb.tformat != LIBRAW_THUMBNAIL_JPEG || !thumb.thumb || thumb.tlength != item.tlength ||
-            thumb.twidth != item.twidth || thumb.theight != item.theight ||
-            std::memcmp(thumb.thumb, snapshot + size_t(item.toffset), item.tlength)) return result(Status::Invalid);
+        // The validated range is the authoritative bytes. Do not allocate/read/repair
+        // a second LibRaw thumbnail buffer through unpack_thumb_ex.
+        const auto* jpeg = snapshot + size_t(item.toffset);
         Header header;
-        if (!jpegHeader(reinterpret_cast<const uint8_t*>(thumb.thumb), thumb.tlength, header)) return result(Status::Invalid);
+        if (!jpegHeader(jpeg, item.tlength, header)) return result(Status::Invalid);
         Result out = result(Status::Found);
         out.width = header.width;
         out.height = header.height;
@@ -225,7 +233,7 @@ Result extract(const uint8_t* snapshot, size_t size, Cancel callback, void* cont
             out.evidence = header.exif ? OrientationEvidence::ThumbnailAndExif : OrientationEvidence::Thumbnail;
         }
         if (cancel.stopped()) return result(Status::Cancelled);
-        out.jpeg.assign(thumb.thumb, thumb.thumb + thumb.tlength);
+        out.jpeg.assign(jpeg, jpeg + item.tlength);
         if (cancel.stopped()) return result(Status::Cancelled);
         return out;
     } catch (const std::bad_alloc&) { return result(Status::Memory); }

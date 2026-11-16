@@ -14,7 +14,7 @@
     <uses-feature android:name="android.hardware.camera.any" android:required="true" />
     <application android:allowBackup="false" android:fullBackupContent="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
-        android:icon="@drawable/ic_probe" android:label="Cinematic Camera Probe"
+        android:icon="@drawable/ic_probe" android:label="${cinematicAppLabel}"
         android:theme="@android:style/Theme.Material.Light.NoActionBar" android:supportsRtl="true">
         <provider android:name=".metrics.SaveTimingProvider"
             android:authorities="${applicationId}.save-timing"
