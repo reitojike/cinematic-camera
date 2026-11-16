@@ -93,3 +93,7 @@ Issue #452。以下は**変更案**であり、見た目承認・merge前。実�
 | `toast-normal-large-closed-without.png` | `a15259d173aaecc67e6fd8b51956be1d83b6458a0582c8866006c64abe268964` |
 | `toast-normal-large-open-with.png` | `240d71d04ab4d9508a617d43a03d35c2417d25fc2116b535d9c405ab59dd03be` |
 | `toast-normal-large-open-without.png` | `f16d71d6d5484f17eee35ccb3830e6f658e67bf663ba3dc553984100e8296de6` |
+
+## 短画面の3候補比較
+
+現状・案A・案Bを同条件で別撮影した [比較資料](../develop-toast-comparison/README.md) を追加しました。案Bは比較専用試作で、製品採用はまだです。
