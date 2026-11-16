@@ -53,4 +53,4 @@ cold/warm、保存キャッシュ/埋め込み JPEG の表示有無、発熱/背
 
 ## 状態
 
-比較器を準備中。実行結果・画像・Pixel 時間はまだない。製品の工程計測は未接続。
+合成 AOSP AVD の追加 90 条件は bdcddade で完走（1 test、560.703 秒）。起動の90秒安定・ANR 0、起動証跡の実行前後一致を確認。比較画像と全指標は [ui-review](ui-review/preview-half-input/README.md)。compileDebugAndroidTestKotlin と Debug/test APK assemble が成功。独立コードレビューで blocking finding なし。原本・保存の製品コード変更なし。既存 golden 90/帯28 の再実行、12/24MP入力、Pixel 時間、製品の工程計測配線は未実施。
