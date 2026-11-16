@@ -5,8 +5,8 @@ CSP の `connect-src 'none'` と `default-src 'none'` で外向き接続を許�
 画像を含まないコードだけを Git に置き、データは Git 外に保持する。
 
 これは人ラベル UI の試作であり、推論機能・Android への配布・実写精度の合格ではない。
-今ある Android private runner の JSONL とは別の入力 schema である。変換器、
-同一端末の推論から UI へ引き渡す経路、Android でのラベル永続化は未接続。
+Android private runner の JSONL から同じ Windows 内の HTML 用 JSON への変換器を追加した。
+自動 adb 転送や画像変換は含まない。Android native comparison の判定保存とは別経路である。
 PC 上の試作に Pixel の写真や結果を転送しない。実機への導入/操作は個別承認後。
 
 ## 入力
@@ -55,3 +55,38 @@ ML Kit bundled / Play配信 / YuNetの実APK容量比較は別途同条件で測
   fileプロトコルを許可せず未実施。別surface/localhostへの置換で迂回しない。
 - 独立レビューによる3指摘（画素重複、状態区分、空の見逃し数）を修正。
 - このUIの実写利用・Android配布・採用判断は未実施。
+
+## 同じ Windows の AVD → HTML 接続（合成確認段階）
+
+`convert_private.py` は既存 PRIVATE_INPUT の manifest / RGBA と、3方式の完了済み
+JSONL を読む。FAST / ACCURATE / YuNet、**repeats=1** に限定し、欠落、順序差、
+重複、未対応版、画素/manifest/前処理revision SHA不一致、寸法/枠/時間不正を拒否する。
+同じ写真の反復から都合のよい結果を選ばない。FAILED/CANCELLED/NOT_RUNは保持する。
+runnerの完了通知が成功したことは実行側で先に確認する（JSONLだけでは正常終了を証明しない）。
+
+```text
+python tools/face-evaluation/review/convert_private.py --bundle <Git外の入力束> --results <FAST.jsonl> --results <ACCURATE.jsonl> --results <YuNet.jsonl> --output <Git外の新規review.json> --same-windows-host-approved
+```
+
+このフラグは本人の許可に代わるものではない。対象が同じWindows内の承認済みAVDで、
+素材と結果がそのWindowsを離れない場合のみ使用する。Pixelから結果を回収する用途に使わない。
+入力/出力ともGit外を強制し、既存出力を上書きしない。画像をコピーせず、通信/adbを呼ばず、
+ローカルHTMLで読めるJSONだけ作る。このJSONには顔枠があるため公開禁止。
+
+HTMLの「評価データJSON」で生成JSON、「RGBA」で元の同じ入力束を本人が選ぶ。
+画素SHA検証後、3方式の枠を切替え、見逃し数と誤検出を人が判定する。
+未確認は集計に入れず、顔なしも明示的に確認する。公開可能なのはHTMLの集計ボタンの結果だけ。
+変換データの時間はfirst-call/warm別、SDK/adapter別の中央値に分け、混合median_msはnullにする。
+画像読込/前処理はこのrunnerの時間に含まれない。実機の初回速度とは扱わない。
+
+今回のhost合成試験は変換と集計の契約を確認するもの。実AVD→回収→ブラウザーのend-to-end、
+ブラウザーのfile選択/ラベル保存/復元、実写への推論は未確認。以前のfile URL制限の迂回はしない。
+実写前にこの導線の合成実走と独立レビューを完了し、AVD枠を製品担当と調整する。
+実機操作・配布・写真の別端末への移動は個別承認が必要。Windowsでの実写正規化は
+全素材ICC付きなので、向き/sRGB/4MP条件を明示してから行い、DNGとJPEGを混ぜない。
+
+合成host検証: converter 9件成功（hash/geometry/phase/欠測/重複/失敗状態、
+生成JSON→HTML共通coreの検証/集計接続を含む）、HTML core 9件成功。
+これらはCLI/JSの試験であり、ブラウザー操作やAVD実走の代替ではない。
+
+独立静的レビューでblocking指摘なし。推奨された2枚のfirst-call/warm順序、行順逆転拒否、非object結果行の拒否を追加して回帰成功。
