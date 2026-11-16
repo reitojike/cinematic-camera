@@ -97,7 +97,7 @@ class GpuGoldenAndroidTest {
         } finally { persist() }
     }
 
-    private fun preview(egl: EglContexts, input: LinearSrgbImage, params: GpuRenderParams): IntArray {
+    internal fun preview(egl: EglContexts, input: LinearSrgbImage, params: GpuRenderParams): IntArray {
         val ledger = GpuMemoryLedger(GpuMemoryLedger.PREVIEW_BUDGET)
         var pixels: IntArray? = null
         DefaultStageClearGpu(egl, ledger) { texture, analysis ->
@@ -207,7 +207,7 @@ class GpuGoldenAndroidTest {
         }
     }
 
-    private data class Case(val id: String, val group: String, val kind: GpuReferenceImages.Kind,
+    internal data class Case(val id: String, val group: String, val kind: GpuReferenceImages.Kind,
         val width: Int, val height: Int, val params: GpuRenderParams, val bands: Boolean) {
         fun json() = JSONObject().put("id", id).put("group", group).put("kind", kind.name)
             .put("width", width).put("height", height).put("strength", params.strength)
@@ -215,7 +215,7 @@ class GpuGoldenAndroidTest {
             .put("analysis", if (bands) "fixed-base-ev-0" else "production-photo-analysis")
     }
 
-    private fun matrix(): List<Case> = buildList {
+    internal fun matrix(): List<Case> = buildList {
         fun addCase(group: String, kind: GpuReferenceImages.Kind, width: Int, height: Int,
             strength: Double, warmth: Double = 0.0, ev: Double = 0.0, bands: Boolean = false) {
             val id = "c%03d".format(java.util.Locale.ROOT, size + 1)
