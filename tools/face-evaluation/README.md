@@ -170,3 +170,9 @@ SDK providerの利用診断通信は従前のML Kit許容範囲であり、無�
 生成JPEGのEXIF/色・原本非変更、同VMの画面再作成、入力保持、重複、即時取消、
 明示force-stop後の新PIDでの判定復元、合成枠の座標、破損recordロックを確認した。
 実picker、SDK処理途中取消、実写真精度、Pixelの実測は引き続き未検証。実機/配布は個別承認待ち。
+
+
+P2追補: 非公開RGBA入力の検証済みhash重複拒否、PNG後の取消再確認、ストア共通queueによるowner交代の直列化を追加。
+評価専用で製品の写真open・原本・JPEG保存の変更はない。追加2methodと既存2phaseの合成Android回帰、
+5flavor build/lint・JVM10件成功。host36件は35成功・既存Windows symlink権限エラー1。
+DB確定処理開始後の取消完全保証ではなく、確定直前まで確認する。詳細はAndroid導線文書。

@@ -56,7 +56,7 @@ Pixelから写真・URI・顔枠を持ち出してHTMLへ入力する運用は�
   保存・ログ・SDKへ渡さない。EXTRA_LOCAL_ONLYはproviderへの要求であり、任意providerの無通信保証ではない。
 - ImageDecoder（向き適用、sRGB、software）を最大4MP・各辺8192pxに縮小し、透明部分は黒へ合成。
   3方式とも同一opaque ARGB_8888。画像別のdecode_nsとinitialization_nsは内部記録に残す。
-- ViewModelの1workerが逐次処理。画面回転で再実行しない。取消はSDK完了まで待ち、
+- 評価プロセス内のストア共通queueが逐次処理。旧ownerの処理/cleanup/closeから新ownerの復元まで同じqueueを使い、交代済みownerの操作は拒否する。画面回転で再実行しない。取消はSDK完了まで待ち、
   未完了の画像を採点対象へ追加しない。Back/Activity終了でも入力をSDK処理中に破棄しない。
 - noBackupFilesDirに正規化PNGとAtomicFileの記録を保存。原本は書き換えない。
   画像確定後のDB更新失敗時は未参照PNGを削除し、再起動では正常記録を検証した後にorphanだけ除去する。
@@ -124,3 +124,31 @@ adb -s <専用emulator> shell am instrument -w -r -e syntheticComparisonApproved
 
 失敗時にmarker/既存判定を強制削除して再開しない。生成データの所有と失敗点を確認する。
 一括connectedAndroidTestでは新PID条件を満たせないため、この2phaseの代用にしない。
+
+
+## レビューP2修正の境界
+
+- private_manifest / PrivateDatasetRunは、manifestに書かれた値を信頼せず実RGBAを検証したSHAで重複を拒否。
+  Android側はdetectorと結果ファイルの作成前に全件をpreflightする。別IDの同一画素を精度件数へ水増ししない。
+- 比較画像のPNG保存後にもcancel/clearedを確認し、未commitなら既存finallyで画像を消去。
+  DB書込み前と書込み後・finishWrite直前も確認し、取消ならfailWriteで未確定分を戻す。
+  **finishWriteが開始した後の取消を取り消せるという保証ではない**。
+- private storeのqueueはプロセス単位。旧ownerのin-flight処理とfinallyをdrainしてから新ownerが読込/cleanupする。
+  新ownerへの交代後は旧ownerをretireして再書込みを拒否する。SDKとBitmapを処理中に強制解放しない。
+- 対象は評価APKのPNG/判定DBだけ。製品の写真open、原本、JPEG保存、GPU ownerを変更しない。
+  v0.1.0外の検証であり、製品側の共有枠を優先する。
+
+追加の合成instrumentation:
+`privateRunnerRejectsVerifiedDuplicatePixels` は検証済み同一画素・別IDを拒否し、結果ファイルを作らないことをassert。
+`cancelAfterPngAndSerializeOwnerReplacement` はPNG実ファイルができた境界でlatch待機し、
+取消とonClearedによる交代を別々に試す。交代先はbusyのままで旧PNGを消さず、旧処理解放後はDB/PNGを残さないことをassert。
+このpackage-private seamは評価版の合成試験用で、通常constructorはno-op。
+実UIのBack操作やfinishWrite途中の任意タイミングを網羅したとは扱わない。
+
+
+P2修正後の検証（2026-11-16）: 5flavor `verifyEvaluation --offline` 成功（1分42秒）、JVM10件成功。
+host36件は35成功・既存symlink作成権限の環境エラー1。条件は緩めていない。
+専用AOSP read-onlyで90秒安定/ANR0を確認後、追加2method（重複拒否0.050秒、postPNG取消/owner交代2.487秒）
+と既存2phase（4.739秒/3.519秒）すべて成功。実行app/test APKのSHAはビルド成果物と一致。
+生成データを片付け、製品側比較作業へ枠を返す。実写・Pixel・配布は行っていない。
+この修正もv0.1.0外であり、実picker/任意時点OS終了/disk-full等の未確認範囲は変えない。

@@ -28,6 +28,7 @@ def validate(root):
     if not isinstance(samples, list) or not 1 <= len(samples) <= 64:
         raise ValueError("sample count outside 1..64")
     seen = set()
+    seen_pixels = set()
     for sample in samples:
         if not isinstance(sample, dict):
             raise ValueError("sample must be an object")
@@ -46,8 +47,12 @@ def validate(root):
             pixels = stream.read(width * height * 4 + 1)
         if len(pixels) != width * height * 4 or any(a != 255 for a in pixels[3::4]):
             raise ValueError("opaque RGBA8888 byte count required")
-        if hashlib.sha256(pixels).hexdigest() != sample.get("sha256"):
+        pixel_hash = hashlib.sha256(pixels).hexdigest()
+        if pixel_hash != sample.get("sha256"):
             raise ValueError("input hash mismatch")
+        if pixel_hash in seen_pixels:
+            raise ValueError("duplicate pixel content")
+        seen_pixels.add(pixel_hash)
     return {"schema": 1, "manifest_sha256": hashlib.sha256(raw).hexdigest(), "samples": len(samples)}
 
 

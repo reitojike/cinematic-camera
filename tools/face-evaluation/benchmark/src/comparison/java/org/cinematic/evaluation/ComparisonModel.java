@@ -29,7 +29,11 @@ public final class ComparisonModel extends AndroidViewModel {
     static final String[] MODES = {"FAST", "ACCURATE", "MULTI"};
     public record State(JSONArray samples, Bitmap image, int selected, boolean busy, String message) {}
     private final MutableLiveData<State> state = new MutableLiveData<>(new State(new JSONArray(), null, -1, true, "読み込み中"));
-    private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    // One process/store queue, including old-owner drain and new-owner recovery/cleanup.
+    private static final ExecutorService STORE_WORKER = Executors.newSingleThreadExecutor();
+    private static ComparisonModel activeOwner; // Accessed only on STORE_WORKER.
+    private final Runnable beforeImageCommit;
+    private volatile boolean retired;
     private final File directory;
     private final AtomicFile database;
     private final Detector[] detectors = new Detector[3];
@@ -40,11 +44,20 @@ public final class ComparisonModel extends AndroidViewModel {
     private int selected = -1;
     private volatile boolean cancel, cleared;
     private boolean busy = true; // main-thread submission gate; worker never changes it
-    public ComparisonModel(Application app) {
+    public ComparisonModel(Application app) { this(app, () -> {}); }
+    // Package-private deterministic transaction seam for generated instrumentation fixtures only.
+    ComparisonModel(Application app, Runnable beforeImageCommit) {
         super(app);
+        this.beforeImageCommit = beforeImageCommit;
         directory = new File(app.getNoBackupFilesDir(), "face-comparison-v1");
         database = new AtomicFile(new File(directory, "session.json"));
-        worker.execute(() -> {
+        STORE_WORKER.execute(() -> {
+            if (cleared) return;
+            if (activeOwner != null && activeOwner != this) {
+                activeOwner.retired = true;
+                activeOwner.publish("別の評価画面へ引き継ぎました。この画面は更新できません", true);
+            }
+            activeOwner = this;
             try {
                 if (!directory.isDirectory() && !directory.mkdirs()) throw new IllegalStateException();
                 if (database.getBaseFile().exists() || new File(database.getBaseFile().getPath() + ".bak").exists()) {
@@ -61,9 +74,15 @@ public final class ComparisonModel extends AndroidViewModel {
             } catch (Exception | OutOfMemoryError e) { publish("記録を読み込めません。既存データは上書きしません", true); }
         });
     }
+    private void executeOwned(Runnable operation) {
+        STORE_WORKER.execute(() -> {
+            if (cleared || retired || activeOwner != this) return;
+            operation.run();
+        });
+    }
     public LiveData<State> state() { return state; }
     private boolean begin(String message) {
-        if (busy || cleared) return false;
+        if (busy || cleared || retired) return false;
         busy = true; cancel = false;
         State old = state.getValue();
         state.setValue(new State(old.samples(), old.image(), old.selected(), true, message));
@@ -81,7 +100,7 @@ public final class ComparisonModel extends AndroidViewModel {
     public void cancel() { cancel = true; }
     public void select(int index) {
         if (!begin("読み込み中")) return;
-        worker.execute(() -> {
+        executeOwned(() -> {
             try { load(index); publish("枠を確認して、検出器ごとに判定を保存してください"); }
             catch (Exception | OutOfMemoryError e) { publish("画像を検証できません。集計する前に再選択してください", true); }
         });
@@ -140,13 +159,18 @@ public final class ComparisonModel extends AndroidViewModel {
         byte[] bytes = new JSONObject().put("schema", 1).put("config", CONFIG).put("samples", replacement).toString().getBytes(StandardCharsets.UTF_8);
         if (bytes.length > 8_000_000) throw new IllegalStateException();
         var stream = database.startWrite();
-        try { stream.write(bytes); database.finishWrite(stream); }
+        try {
+            if (cancel || cleared || retired) throw new java.util.concurrent.CancellationException();
+            stream.write(bytes);
+            if (cancel || cleared || retired) throw new java.util.concurrent.CancellationException();
+            database.finishWrite(stream);
+        }
         catch (Exception e) { database.failWrite(stream); throw e; }
         samples = replacement;
     }
     public void add(Uri uri) {
         if (!begin("画像を読み込み、3方式で検出しています")) return;
-        worker.execute(() -> {
+        executeOwned(() -> {
             Bitmap input = null, decoded = null;
             AtomicFile pendingImage = null;
             boolean committed = false;
@@ -192,10 +216,13 @@ public final class ComparisonModel extends AndroidViewModel {
                     if (!input.compress(Bitmap.CompressFormat.PNG, 100, out)) throw new IllegalStateException();
                     image.finishWrite(out);
                 } catch (Exception e) { image.failWrite(out); throw e; }
+                beforeImageCommit.run();
+                if (cancel || cleared || retired) { failure = "取消しました。未完了の画像は記録しません"; return; }
                 JSONArray next = new JSONArray(samples.toString()); next.put(sample); save(next); committed = true;
                 displayed = input; selected = samples.length() - 1;
                 publish("検出完了。未評価のままでは集計されません");
-            } catch (OutOfMemoryError e) { failure = "メモリ不足のため中止しました。既存の判定は保持しています"; }
+            } catch (java.util.concurrent.CancellationException e) { failure = "取消しました。未完了の画像は記録しません"; }
+            catch (OutOfMemoryError e) { failure = "メモリ不足のため中止しました。既存の判定は保持しています"; }
             catch (Exception e) { failure = "読込・検出・保存に失敗しました。既存の判定は保持しています"; }
             finally {
                 if (decoded != null && !decoded.isRecycled()) decoded.recycle();
@@ -215,7 +242,7 @@ public final class ComparisonModel extends AndroidViewModel {
     }
     public void label(int detector, int missed, List<Integer> falseBoxes) {
         if (detector < 0 || detector > 2 || missed < 0 || missed > 10000 || !begin("判定を保存中")) return;
-        worker.execute(() -> {
+        executeOwned(() -> {
             try {
                 JSONArray next = new JSONArray(samples.toString());
                 JSONObject sample = next.getJSONObject(selected);
@@ -231,7 +258,9 @@ public final class ComparisonModel extends AndroidViewModel {
     @Override protected void onCleared() {
         cleared = true; cancel = true;
         // Never interrupt native work or recycle its bitmap until it has drained.
-        worker.execute(() -> { for (Detector d : detectors) if (d != null) d.close(); });
-        worker.shutdown();
+        STORE_WORKER.execute(() -> {
+            for (Detector d : detectors) if (d != null) d.close();
+            if (activeOwner == this) activeOwner = null;
+        });
     }
 }

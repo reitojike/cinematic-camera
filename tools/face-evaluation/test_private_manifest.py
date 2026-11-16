@@ -68,3 +68,18 @@ class ManifestTest(unittest.TestCase):
     def test_real_checkout_is_rejected(self):
         (self.root / ".git").write_text("gitdir: external")
         with self.assertRaises(ValueError): validate(self.root)
+
+    def test_same_pixels_under_different_ids_rejected(self):
+        second = "evaluation-fedcba9876543210"
+        (self.root / (second + ".rgba")).write_bytes(self.pixels)
+        self.data["samples"].append({**self.data["samples"][0], "id": second})
+        with self.assertRaisesRegex(ValueError, "duplicate pixel content"):
+            self.run_bundle()
+
+    def test_distinct_verified_pixels_remain_valid(self):
+        second = "evaluation-fedcba9876543210"
+        pixels = bytes([4, 5, 6, 255] * 4)
+        (self.root / (second + ".rgba")).write_bytes(pixels)
+        self.data["samples"].append({**self.data["samples"][0], "id": second,
+                                     "sha256": hashlib.sha256(pixels).hexdigest()})
+        self.assertEqual(self.run_bundle()["samples"], 2)

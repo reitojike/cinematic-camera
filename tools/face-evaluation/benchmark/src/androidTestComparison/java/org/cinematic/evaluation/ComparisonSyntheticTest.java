@@ -157,4 +157,63 @@ public final class ComparisonSyntheticTest {
         }
         assertTrue(directory().delete());assertTrue(marker().delete());
     }
+    private String hex(byte[] bytes) {
+        StringBuilder out=new StringBuilder();for(byte value:bytes)out.append(String.format(java.util.Locale.ROOT,"%02x",value & 255));return out.toString();
+    }
+    private void awaitLatch(java.util.concurrent.CountDownLatch latch) {
+        try { if(!latch.await(20,java.util.concurrent.TimeUnit.SECONDS)) throw new IllegalStateException("Transaction fixture timeout"); }
+        catch(InterruptedException e){Thread.currentThread().interrupt();throw new IllegalStateException(e);}
+    }
+    private long pngCount() {
+        File[] files=directory().listFiles();assertNotNull(files);
+        return java.util.Arrays.stream(files).filter(f->f.getName().endsWith(".png")).count();
+    }
+    @Test public void cancelAfterPngAndSerializeOwnerReplacement() throws Exception {
+        gate();assertTrue(!directory().exists() || directory().list().length==0);assertFalse(marker().exists());
+        File source=image("comparison-synthetic-transaction.png",640,320,false);
+        var app=(android.app.Application)context.getApplicationContext();
+        for(boolean clear:new boolean[]{false,true}) {
+            var reached=new java.util.concurrent.CountDownLatch(1);var release=new java.util.concurrent.CountDownLatch(1);
+            AtomicReference<ComparisonModel> old=new AtomicReference<>(), next=new AtomicReference<>();
+            try {
+                instrumentation.runOnMainSync(()->old.set(new ComparisonModel(app,()->{reached.countDown();awaitLatch(release);})));
+                assertEquals(0,ready(old.get()).samples().length());
+                instrumentation.runOnMainSync(()->old.get().add(Uri.fromFile(source)));
+                assertTrue("Must reach actual PNG-finished boundary",reached.await(20,java.util.concurrent.TimeUnit.SECONDS));
+                assertEquals(1,pngCount());
+                if(clear) {
+                    instrumentation.runOnMainSync(()->{old.get().onCleared();next.set(new ComparisonModel(app));});
+                    assertTrue("New owner recovery is queued behind old transaction",state(next.get()).busy());
+                    assertEquals("New owner must not delete old pending PNG",1,pngCount());
+                } else instrumentation.runOnMainSync(()->old.get().cancel());
+                release.countDown();
+                assertEquals(0,ready(clear?next.get():old.get()).samples().length());
+                assertEquals("Cancelled uncommitted PNG is removed",0,pngCount());
+                assertFalse(new File(directory(),"session.json").exists());
+            } finally {
+                release.countDown();
+                instrumentation.runOnMainSync(()->{if(!clear && old.get()!=null)old.get().onCleared();if(next.get()!=null)next.get().onCleared();});
+            }
+        }
+        assertTrue(source.delete());assertTrue(directory().delete());
+    }
+    @Test public void privateRunnerRejectsVerifiedDuplicatePixels() throws Exception {
+        gate();File root=new File(context.getFilesDir(),"evaluation-input");assertFalse(root.exists());assertTrue(root.mkdir());
+        String[] ids={"evaluation-1111111111111111","evaluation-2222222222222222"};
+        File output=new File(context.getFilesDir(),"evaluation-results-3333333333333333.jsonl");assertFalse(output.exists());
+        byte[] pixels={1,2,3,(byte)255};String hash=hex(MessageDigest.getInstance("SHA-256").digest(pixels));
+        try {
+            org.json.JSONArray samples=new org.json.JSONArray();
+            for(String id:ids){Files.write(new File(root,id+".rgba").toPath(),pixels);samples.put(new JSONObject().put("id",id).put("width",1).put("height",1).put("sha256",hash));}
+            byte[] manifest=new JSONObject().put("schema",1).put("geometry","upright-srgb-argb8888-v1").put("revision","a".repeat(64)).put("samples",samples).toString().getBytes(StandardCharsets.UTF_8);
+            Files.write(new File(root,"manifest.json").toPath(),manifest);
+            android.os.Bundle args=new android.os.Bundle();args.putString("datasetRunApproved","true");args.putString("runId","3333333333333333");
+            args.putString("manifestSha256",hex(MessageDigest.getInstance("SHA-256").digest(manifest)));
+            IllegalArgumentException error=assertThrows(IllegalArgumentException.class,()->PrivateDatasetRun.run(context,args));
+            assertEquals("Duplicate pixel content",error.getMessage());assertFalse("Rejected before output construction",output.exists());
+        } finally {
+            for(String id:ids)assertTrue(new File(root,id+".rgba").delete());assertTrue(new File(root,"manifest.json").delete());assertTrue(root.delete());
+            if(output.exists())assertTrue(output.delete());
+        }
+    }
 }

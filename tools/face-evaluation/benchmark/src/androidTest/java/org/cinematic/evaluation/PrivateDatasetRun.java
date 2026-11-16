@@ -72,10 +72,12 @@ final class PrivateDatasetRun {
         var samples = manifest.getJSONArray("samples");
         if (samples.length() < 1 || samples.length() > 64) throw new IllegalArgumentException("Invalid sample count");
         var seen = new HashSet<String>();
+        var seenPixels = new HashSet<String>();
         for (int i = 0; i < samples.length(); i++) {
             JSONObject sample = samples.getJSONObject(i);
             if (!seen.add(sample.getString("id"))) throw new IllegalArgumentException("Duplicate sample");
-            pixels(root, sample); // Preflight every input before detector construction.
+            String verifiedHash = hash(pixels(root, sample)); // Preflight before detector/output construction.
+            if (!seenPixels.add(verifiedHash)) throw new IllegalArgumentException("Duplicate pixel content");
         }
         File output = new File(context.getFilesDir(), "evaluation-results-" + runId + ".jsonl");
         if (!output.createNewFile()) throw new IllegalArgumentException("Result already exists");
