@@ -112,7 +112,7 @@ class ForegroundExportOwnerTest {
             }, android.app.Instrumentation.ActivityResult(android.app.Activity.RESULT_OK,
                 android.content.Intent().setData(uri).addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)), true)
             scenario = ActivityScenario.launch(PhotoRollActivity::class.java)
-            click("外部DNGを取り込む")
+            click("取り込む")
             if (documentsUi) {
                 check(androidx.test.uiautomator.UiDevice.getInstance(instrumentation).currentPackageName == context.packageName)
                 pickerLaunchAttempted = true
