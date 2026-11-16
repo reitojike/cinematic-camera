@@ -9,6 +9,12 @@ import org.junit.Test
 import java.util.UUID
 
 class GpuPreviewTimingAndroidTest {
+    @Test fun explicitAndroidCancellationKeepsCancelledOutcome() {
+        var rows = emptyList<GpuPreviewTimingRecord>()
+        val timing = requireNotNull(GpuPreviewTiming.start(22, { rows = it }))
+        timing.failed(android.os.OperationCanceledException())
+        assertEquals(GpuPreviewTimingOutcome.CANCELLED, rows.single { it.stage == GpuPreviewTimingStage.OPEN }.outcome)
+    }
     @Test fun shellOnlyReadSnapshotIsSeparateFromSaveRecords() {
         check(Build.HARDWARE in setOf("ranchu", "goldfish"))
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")

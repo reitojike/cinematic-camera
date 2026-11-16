@@ -72,7 +72,8 @@ internal class GpuPreviewTiming private constructor(private val version: Int,
         }
     }
     /** Classify the original cause, never a signal also used for cleanup. */
-    fun failed(cause: Throwable) = finish(if (cause is java.util.concurrent.CancellationException)
+    fun failed(cause: Throwable) = finish(if (cause is java.util.concurrent.CancellationException ||
+        cause is dev.cinematic.p0.rawcapture.DngVerificationStopped || cause is android.os.OperationCanceledException)
         GpuPreviewTimingOutcome.CANCELLED else GpuPreviewTimingOutcome.FAILED)
     @Synchronized fun finish(outcome: GpuPreviewTimingOutcome) = timingBestEffort {
         if (!ended) {

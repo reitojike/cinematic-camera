@@ -72,7 +72,8 @@ class GpuPreviewTimingTest {
         for (failure in listOf(
             dev.cinematic.p0.gpu.preview.GpuInputReadinessTimeout(dev.cinematic.p0.gpu.preview.GpuInputWaitReason.OTHER_PREPARATION),
             dev.cinematic.p0.jpegrender.original.Original24MemoryUnavailable(),
-            java.util.concurrent.CancellationException()
+            java.util.concurrent.CancellationException(),
+            dev.cinematic.p0.rawcapture.DngVerificationStopped()
         )) {
             var rows = emptyList<GpuPreviewTimingRecord>()
             val timing = requireNotNull(GpuPreviewTiming.start(22, { rows = it }))
@@ -81,7 +82,7 @@ class GpuPreviewTimingTest {
             try { try { throw failure } catch (cause: Exception) { cleanupCancelled.set(true); throw cause } }
             catch (cause: Exception) { timing.failed(cause) }
             assertTrue(cleanupCancelled.get())
-            assertEquals(if (failure is java.util.concurrent.CancellationException) GpuPreviewTimingOutcome.CANCELLED
+            assertEquals(if (failure is java.util.concurrent.CancellationException || failure is dev.cinematic.p0.rawcapture.DngVerificationStopped) GpuPreviewTimingOutcome.CANCELLED
                 else GpuPreviewTimingOutcome.FAILED, rows.single { it.stage == GpuPreviewTimingStage.OPEN }.outcome)
         }
     }
