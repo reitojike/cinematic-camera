@@ -46,6 +46,44 @@ class SaveTimingAndroidTest {
         runSyntheticSave(64, 48)
     }
 
+    /** Absolute diagnostic cost only; not a save benchmark or a Pixel performance claim. */
+    @Test fun captureEnvironmentAndBoundedBatchCost() {
+        check(InstrumentationRegistry.getArguments().getString("timingCost") == "true")
+        val directory = java.io.File(app.cacheDir, "synthetic-timing-cost-${UUID.randomUUID()}")
+        check(directory.mkdir())
+        val store = SaveTimingStore(directory)
+        val snapshots = mutableListOf<Long>()
+        val batches = mutableListOf<Long>()
+        try {
+            repeat(24) { iteration ->
+                val sampleStart = System.nanoTime()
+                val environment = AndroidSaveTimingEnvironment.snapshot(app)
+                val sampleNanos = System.nanoTime() - sampleStart
+                assertTrue(environment.thermal == null || environment.thermal in 0..6)
+                val batchStart = System.nanoTime()
+                val timing = SaveTiming.startObserved(22, SaveTimingKind.SAVE, store::appendAll,
+                    { AndroidSaveTimingEnvironment.snapshot(app) })!!
+                timing.pixels(1600, 1200)
+                val gpu = dev.cinematic.p0.gpu.export.GpuExportTimings()
+                listOf("B1", "B1_QUANTILES", "B2", "B3", "B4", "B5", "FINAL").forEach {
+                    gpu.finished(it, 1, true)
+                }
+                gpu.drain(timing, true)
+                timing.finish(SaveTimingOutcome.COMPLETED)
+                val batchNanos = System.nanoTime() - batchStart
+                if (iteration >= 4) { snapshots += sampleNanos; batches += batchNanos }
+            }
+            val stored = store.snapshot()
+            assertTrue(stored.size <= SaveTimingStore.MAX_BYTES)
+            assertEquals(SaveTimingStore.MAX_RECORDS, stored.toString(Charsets.US_ASCII).trimEnd().lines().size)
+            android.util.Log.i("SaveTimingCost", "snapshot_samples_ns=${snapshots.joinToString(",")}")
+            android.util.Log.i("SaveTimingCost", "environment_and_batch_samples_ns=${batches.joinToString(",")}")
+        } finally {
+            // Only this test-created private directory, never user media or production timing rows.
+            directory.deleteRecursively()
+        }
+    }
+
     /** Explicit opt-in; one warm-up and three measured saves, with identical synthetic input. */
     @Test fun captureSaveStageBenchmark() {
         check(InstrumentationRegistry.getArguments().getString("saveBenchmark") == "true")
@@ -85,10 +123,18 @@ class SaveTimingAndroidTest {
         val records = snapshot.lines().filter { SaveTimingRecord.valid(it) }
             .map { it.split('\t') }.filter { it[1] !in before }
         assertEquals(1, records.map { it[1] }.toSet().size)
-        assertEquals(15, records.size)
+        assertTrue(records.size >= 26)
+        assertTrue(records.size <= SaveTimingStore.MAX_RECORDS)
+        for (stage in listOf("ENVIRONMENT_START", "ENVIRONMENT_END")) {
+            val row = records.single { it[4] == stage }
+            assertEquals("2", row[0]); assertEquals(10, row.size)
+            assertTrue(row[8] in setOf("FOREGROUND", "BACKGROUND", "UNKNOWN"))
+            assertTrue(row[9] == "NA" || row[9].toInt() in 0..6)
+        }
         assertTrue(records.none { it[5] == "STARTED" })
         assertTrue(records.single { it[4] == "ATTEMPT" }[7] != "NA")
-        for (stage in listOf("NATIVE_DECODE", "B1", "B1_QUANTILES", "B2", "B3", "B4", "B5", "FINAL", "JPEG_ENCODE", "PUBLICATION")) {
+        for (stage in listOf("NATIVE_DECODE", "B1", "B1_QUANTILES", "B2", "B3", "B4", "B5", "FINAL", "JPEG_ENCODE", "PUBLICATION", "SOURCE_VERIFY_BEFORE", "SOURCE_SNAPSHOT", "DECODE_CLOSE",
+            "ANALYSIS_REDUCE", "CONTROL_PREPARE", "BITMAP_ALLOC", "JPEG_INSPECT", "SOURCE_VERIFY_AFTER", "SCRATCH_CLEANUP")) {
             assertTrue("Missing completed $stage", records.any { it[4] == stage && it[5] == "COMPLETED" && it[7] != "NA" })
         }
         assertTrue(records.any { it[4] == "ATTEMPT" && it[5] == "PUBLISHED" && it[6] == (width.toLong() * height).toString() })

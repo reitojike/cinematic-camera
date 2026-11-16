@@ -217,7 +217,7 @@ class SaveTimingTest {
         assertEquals(600, SaveTimingStore(directory).snapshot().toString(Charsets.US_ASCII).trimEnd().lines().size)
     }
 
-    @Test fun normalGpuSaveHasFifteenEndRecordsAndLegacyRowsExpireOnSave69() {
+    @Test fun normalGpuSaveHasBoundedEndRecordsAndLegacyRowsRotateByActualCount() {
         val records = mutableListOf<SaveTimingRecord>()
         val timing = SaveTiming.start(20, SaveTimingKind.SAVE, records::addAll)!!
         timing.measure(SaveTimingStage.NATIVE_DECODE) { 1 }
@@ -230,10 +230,11 @@ class SaveTimingTest {
         repeat(2) { timing.started(OriginalStage.RESOURCE_CLOSE); timing.finished(OriginalStage.RESOURCE_CLOSE, 1, true) }
         timing.measure(SaveTimingStage.PUBLICATION) { 1 }
         timing.finish(SaveTimingOutcome.PUBLISHED)
-        assertEquals(15, records.size)
+        assertTrue(records.size >= 24)
+        assertTrue(records.size < SaveTimingStore.MAX_RECORDS)
         val store = SaveTimingStore(temp.newFolder())
         store.append(record().copy(version = 19, outcome = SaveTimingOutcome.STARTED))
-        repeat(68) { store.appendAll(records) }
+        repeat((SaveTimingStore.MAX_RECORDS - 1) / records.size) { store.appendAll(records) }
         assertTrue(store.snapshot().toString(Charsets.US_ASCII).contains("\t19\t"))
         store.appendAll(records)
         assertFalse(store.snapshot().toString(Charsets.US_ASCII).contains("\t19\t"))
@@ -241,6 +242,74 @@ class SaveTimingTest {
         val longest = SaveTimingRecord("f".repeat(32), Int.MAX_VALUE, SaveTimingKind.RECHECK,
             SaveTimingStage.RECONCILIATION, SaveTimingOutcome.NOT_REACHED, 24_000_000, Long.MAX_VALUE).line()
         assertTrue(longest.length * SaveTimingStore.MAX_RECORDS < SaveTimingStore.MAX_BYTES)
+    }
+
+    @Test fun environmentSnapshotsAreFixedSchemaAndPreserveLegacyRows() {
+        val records = mutableListOf<SaveTimingRecord>()
+        var sample = SaveTimingEnvironment(SaveVisibility.FOREGROUND, 0)
+        var now = 10L
+        val timing = SaveTiming.startObserved(22, SaveTimingKind.SAVE, records::addAll, { sample }, { now })!!
+        sample = SaveTimingEnvironment(SaveVisibility.BACKGROUND, 3)
+        now = 30L
+        timing.finish(SaveTimingOutcome.CANCELLED)
+        val env = records.filter { it.environment != null }
+        assertEquals(listOf(SaveTimingStage.ENVIRONMENT_START, SaveTimingStage.ENVIRONMENT_END), env.map { it.stage })
+        assertEquals(listOf(SaveVisibility.FOREGROUND, SaveVisibility.BACKGROUND), env.map { it.environment!!.visibility })
+        assertEquals(listOf(0, 3), env.map { it.environment!!.thermal })
+        assertEquals(20L, records.last().nanos)
+        assertTrue(env.all { it.line().startsWith("2\t") && SaveTimingRecord.valid(it.line().trimEnd()) })
+        val store = SaveTimingStore(temp.newFolder())
+        store.append(record())
+        store.appendAll(records)
+        val lines = store.snapshot().toString(Charsets.US_ASCII).trimEnd().lines()
+        assertTrue(lines.first().startsWith("1\t"))
+        assertTrue(lines.all(SaveTimingRecord::valid))
+        assertFalse(SaveTimingRecord.valid(env.first().line().trimEnd().replace("FOREGROUND", "photo-name")))
+        assertFalse(SaveTimingRecord.valid(env.first().line().trimEnd().replace("\t0", "\t7")))
+    }
+
+    @Test fun failingEnvironmentIsUnknownAndEndSampleIsOutsideTotalDuration() {
+        val records = mutableListOf<SaveTimingRecord>()
+        var now = 0L
+        val timing = SaveTiming.startObserved(22, SaveTimingKind.SAVE, records::addAll,
+            { now += 5; throw IOException("must not escape") }, { now })!!
+        now += 20
+        timing.finish(SaveTimingOutcome.FAILED)
+        assertEquals(25L, records.last().nanos)
+        assertEquals(30L, now)
+        assertTrue(records.filter { it.environment != null }.all { it.environment == SaveTimingEnvironment() })
+        assertEquals(2, records.count { it.environment != null })
+        timing.finish(SaveTimingOutcome.FAILED)
+        assertEquals(2, records.count { it.environment != null })
+    }
+
+    @Test fun visibilityTracksMultipleActivitiesAndUnknownIsNotBackground() {
+        val counter = SaveVisibilityCounter()
+        assertEquals(SaveVisibility.UNKNOWN, counter.snapshot())
+        counter.initialize()
+        assertEquals(SaveVisibility.BACKGROUND, counter.snapshot())
+        counter.started(); counter.started(); counter.stopped()
+        assertEquals(SaveVisibility.FOREGROUND, counter.snapshot())
+        counter.stopped()
+        assertEquals(SaveVisibility.BACKGROUND, counter.snapshot())
+        counter.stopped()
+        assertEquals(SaveVisibility.UNKNOWN, counter.snapshot())
+    }
+
+    @Test fun existingUnclassifiedSpansAreRecordedWithoutChangingAction() {
+        val records = mutableListOf<SaveTimingRecord>()
+        var now = 0L
+        val timing = SaveTiming.start(22, SaveTimingKind.SAVE, records::addAll) { now }!!
+        val stages = listOf(OriginalStage.SOURCE_VERIFY_BEFORE, OriginalStage.SOURCE_SNAPSHOT,
+            OriginalStage.DECODE_CLOSE, OriginalStage.ANALYSIS_REDUCE, OriginalStage.CONTROL_PREPARE,
+            OriginalStage.BITMAP_ALLOC, OriginalStage.JPEG_INSPECT, OriginalStage.SOURCE_VERIFY_AFTER, OriginalStage.SCRATCH_CLEANUP)
+        stages.forEach { originalStage(timing, it) { now += 123 } }
+        timing.finish(SaveTimingOutcome.PUBLISHED)
+        stages.forEach { stage ->
+            val row = records.single { it.stage.name == stage.name }
+            assertEquals(123L, row.nanos)
+            assertEquals(SaveTimingOutcome.COMPLETED, row.outcome)
+        }
     }
 
     @Test fun repeatedCallbacksAreBoundedAndKeepTerminalOutcome() {

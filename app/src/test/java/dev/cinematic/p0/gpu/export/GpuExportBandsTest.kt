@@ -180,6 +180,37 @@ class GpuExportBandsTest {
         } finally { file.delete() }
     }
 
+    @Test fun timingEnabledKeepsRowsAndDoesNotExposeReaderInternals() {
+        val clock = java.util.concurrent.atomic.AtomicLong()
+        val timing = GpuExportWorkTimings { clock.incrementAndGet() }
+        val origins = mutableListOf<Int>()
+        GpuExportBands.forEach(raster(4, 130), 64, { false }, timing) { origin, rows, rgba ->
+            origins += origin
+            assertEquals(4 * rows * 4, rgba.remaining())
+            assertEquals(origin.toFloat(), rgba.get(), 0f)
+        }
+        assertEquals(listOf(0, 64, 128), origins)
+        assertNotNull(timing.sample(GpuExportDetail.INPUT_WAIT)?.nanos)
+        assertNotNull(timing.sample(GpuExportDetail.INPUT_READ_CONVERT)?.nanos)
+        assertNull(timing.sample(GpuExportDetail.READER_TOTAL))
+    }
+
+    @Test fun brokenTimingClockDoesNotMaskConsumerFailureOrAbandonReader() {
+        val timing = GpuExportWorkTimings { throw IllegalStateException("clock") }
+        val closed = AtomicBoolean()
+        val source = object : OriginalRaster {
+            override val width = 4; override val height = 513
+            override fun rows(stop: () -> Boolean, consume: (Int, FloatArray) -> Unit) {
+                try { raster(width, height).rows(stop, consume) } finally { closed.set(true) }
+            }
+        }
+        val failure = IOException("consumer")
+        assertSame(failure, assertThrows(IOException::class.java) {
+            GpuExportBands.forEach(source, stop = { false }, timings = timing) { _, _, _ -> throw failure }
+        })
+        assertTrue(closed.get())
+        assertNull(timing.sample(GpuExportDetail.INPUT_WAIT)?.nanos)
+    }
     private fun raster(w: Int, h: Int, beforeRow: () -> Unit = {}) = object : OriginalRaster {
         override val width = w; override val height = h
         override fun rows(stop: () -> Boolean, consume: (Int, FloatArray) -> Unit) {

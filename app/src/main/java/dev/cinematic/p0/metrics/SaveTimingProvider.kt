@@ -13,7 +13,10 @@ import java.io.FileNotFoundException
 
 /** USB-authorized adb shell can read one fixed, sanitized snapshot in non-debuggable builds. */
 class SaveTimingProvider : ContentProvider() {
-    override fun onCreate() = true
+    override fun onCreate(): Boolean {
+        AndroidSaveTimingEnvironment.install(context)
+        return true
+    }
     override fun getType(uri: Uri): String = "text/tab-separated-values"
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
         val app = requireNotNull(context)
@@ -36,5 +39,6 @@ class SaveTimingProvider : ContentProvider() {
 internal fun timingStore(context: Context) = SaveTimingStore(File(context.noBackupFilesDir, "save-timing"))
 internal fun startSaveTiming(context: Context, kind: SaveTimingKind): SaveTiming? = try {
     val store = timingStore(context.applicationContext)
-    SaveTiming.start(BuildConfig.VERSION_CODE, kind, store::appendAll)
+    SaveTiming.startObserved(BuildConfig.VERSION_CODE, kind, store::appendAll,
+        { AndroidSaveTimingEnvironment.snapshot(context.applicationContext) })
 } catch (_: Throwable) { null }
