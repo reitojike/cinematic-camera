@@ -266,7 +266,7 @@ class PrDDevelopInteractionsAndroidTest {
             val native = surfaceBounds(scenario)
             val state = if (editing) "open" else "closed"
             assertAbsent(label)
-            captureEvidence("$prefix-$state-without")
+            captureEvidence("$prefix-$state-without", compact, if (largeText) 1.8f else if (compact) 1.3f else 1f)
             scenario.onActivity { model.toast = true }
             val toast = visible(label)
             val notice = rect(toast)
@@ -274,7 +274,7 @@ class PrDDevelopInteractionsAndroidTest {
             assertFalse("Toast is not interactive", toast.isClickable || toast.isLongClickable)
             assertEquals(image, rect(visible("現像結果（表示用）")))
             assertEquals(native, surfaceBounds(scenario))
-            captureEvidence("$prefix-$state-with")
+            captureEvidence("$prefix-$state-with", compact, if (largeText) 1.8f else if (compact) 1.3f else 1f)
             // Real pointer events on the notice itself must reach the underlying image handler.
             val down = SystemClock.uptimeMillis()
             for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
@@ -380,7 +380,7 @@ class PrDDevelopInteractionsAndroidTest {
     }
 
     /** Full software UI evidence only; empty Surface pixels do not represent a rendered photograph. */
-    private fun captureEvidence(name: String) {
+    private fun captureEvidence(name: String, compact: Boolean? = null, effectiveFontScale: Float? = null) {
         val output = File(requireNotNull(InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")),
             "ui-pr-d-interactions")
         check(output.isDirectory || output.mkdirs())
@@ -394,7 +394,8 @@ class PrDDevelopInteractionsAndroidTest {
                 (if (name.startsWith("toast-")) "Synthetic RGB pattern + actual GPU Surface screenshot; no photo input or save.\n"
                 else "Synthetic model + empty GPU Surface. Software View-tree evidence, not photo/GPU-quality or save proof.\n") +
                 "bitmap=${bitmap.width}x${bitmap.height}; density=${resources.displayMetrics.density}; " +
-                "deviceFontScale=${resources.configuration.fontScale}; compact fixture overrides fontScale=1.3.\n")
+                "deviceFontScale=${resources.configuration.fontScale}; compact=$compact; effectiveFontScale=$effectiveFontScale; " +
+                "null overrides indicate legacy fixture evidence, not a font-scale measurement.\n")
         } finally { bitmap.recycle() }
     }
 
