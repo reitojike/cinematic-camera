@@ -58,6 +58,25 @@ class DevelopMessagesTest {
         assertEquals(CaptureChromeTone.WARNING, developSavePresentation(state(PhotoRollSavePhase.CANCELLED)).tone)
     }
 
+    @Test fun actionLabelsDescribeTheExistingSaveActionWithoutChangingStatus() {
+        val expected = mapOf(
+            PhotoRollSavePhase.READY to "保存", PhotoRollSavePhase.SAVING to "保存中",
+            PhotoRollSavePhase.PUBLISHED to "開く", PhotoRollSavePhase.CANCELLED to "再試行",
+            PhotoRollSavePhase.UNCONFIRMED to "確認", PhotoRollSavePhase.GPU_FAILED to "再試行",
+            PhotoRollSavePhase.HOLD to "保存")
+        expected.forEach { (phase, label) -> assertEquals(label, developSavePresentation(state(phase)).actionLabel) }
+        assertEquals("保存", developSavePresentation(state(null)).actionLabel)
+        assertEquals("保存", developSavePresentation(state().copy(editing = true)).actionLabel)
+        assertEquals("保存", developSavePresentation(state().copy(savingRecipe = true)).actionLabel)
+        assertEquals("保存中", developSavePresentation(state().copy(saving = true)).actionLabel)
+        assertEquals("確認中", developSavePresentation(state().copy(rechecking = true, saving = true)).actionLabel)
+        assertEquals("↻", developSavePresentation(state().copy(rechecking = true)).icon)
+        assertTrue(developSavePresentation(state().copy(rechecking = true)).actionInProgress)
+        assertTrue(developSavePresentation(state().copy(saving = true)).actionInProgress)
+        assertFalse(developSavePresentation(state().copy(savingRecipe = true)).actionInProgress)
+        assertFalse(developSavePresentation(state(PhotoRollSavePhase.CANCELLED)).actionInProgress)
+    }
+
     @Test fun recipePersistenceIsNotJpegSaving() {
         val result = developSavePresentation(state().copy(savingRecipe = true))
         assertEquals("設定保存中", result.label)

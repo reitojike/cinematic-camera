@@ -163,10 +163,10 @@ class ForegroundExportOwnerTest {
             action("JPEGを保存") // Real Panel completion delivered the imported URI to the editor.
             editorReady = true // A prepared save proves that the existing queue has been used.
             click("比較"); click("表示")
-            click("STRENGTH")
+            click("強さ")
             fun slider(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
                 if (node == null) return null
-                if (node.contentDescription?.toString() == "STRENGTH" && node.rangeInfo != null && node.isEnabled) return node
+                if (node.contentDescription?.toString() == "強さ" && node.rangeInfo != null && node.isEnabled) return node
                 for (i in 0 until node.childCount) slider(node.getChild(i))?.let { return it }
                 return null
             }

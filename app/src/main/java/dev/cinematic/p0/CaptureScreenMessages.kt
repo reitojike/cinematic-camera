@@ -31,7 +31,7 @@ internal fun captureMessages(
         "再接続して設定を確認してください。", "controls.recovery",
         title = "設定状態を確認できません",
         primary = if (canReconnect) MessageControl(MessageAction.RECONNECT, "再接続") else null))
-    if (cameraPermissionMissing) add(UiMessage(MessageSlot.PROBLEM, CaptureChromeTone.FAILURE,
+    if (cameraPermissionMissing) add(UiMessage(MessageSlot.PROBLEM, CaptureChromeTone.WARNING,
         "カメラの許可が必要です。", "camera.permission",
         title = "カメラを使えません",
         primary = MessageControl(MessageAction.GRANT_ACCESS, "カメラを許可")))
@@ -77,7 +77,8 @@ internal fun BoxScope.CaptureMessageOverlay(messages: ScreenMessages, horizontal
         messages.banner?.let { message ->
             CaptureBanner(message, onAction, Modifier.align(if (horizontal) Alignment.Center else Alignment.TopCenter)
                 .padding(top = if (horizontal) 0.dp else statusBarHeight + 4.dp)
-                .widthIn(max = if (horizontal) 220.dp else 380.dp).then(rotation), failureFallback = failureFallback)
+                .widthIn(max = if (horizontal) 220.dp else 380.dp)
+                .then(if (horizontal) Modifier else Modifier.fillMaxWidth()).then(rotation), failureFallback = failureFallback)
         }
     }
     messages.toast?.let { message ->
