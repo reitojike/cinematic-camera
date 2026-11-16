@@ -26,6 +26,7 @@ private var isolatedSaveApp: Context? = null
         "dev.cinematic.p0.photoroll.GpuActiveSaveOwnershipSafetyAndroidTest",
         "dev.cinematic.p0.photoroll.GpuRealListSwitchSafetyAndroidTest",
         "dev.cinematic.p0.jpegrender.original.GpuConcurrentInputSafetyAndroidTest",
+        "dev.cinematic.p0.jpegrender.original.GpuRepeatedSaveAllocationAndroidTest",
         "dev.cinematic.p0.jpegrender.original.Original24CancellationRetryInstrumentationTest",
         "dev.cinematic.p0.photoroll.GpuSaveLifecycleSafetyAndroidTest",
         "dev.cinematic.p0.photoroll.GpuFullSizeSaveLifecycleSafetyAndroidTest",

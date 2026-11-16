@@ -3,6 +3,7 @@ package dev.cinematic.p0.photoroll
 import android.content.res.AssetManager
 import dev.cinematic.p0.gpu.*
 import dev.cinematic.p0.gpu.preview.GpuPreviewRenderer
+import dev.cinematic.p0.gpu.preview.GpuPreviewRuntime
 import dev.cinematic.p0.photoedit.PhotoAdjustmentPolicy
 import dev.cinematic.p0.photoedit.PhotoEditValues
 import kotlinx.coroutines.CoroutineScope
@@ -15,6 +16,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /** One selected photo owns its GL callbacks. Closed generations can never publish to a new photo. */
 internal class GpuPhotoRollSession(assets: AssetManager,
+    private val runtime: GpuPreviewRuntime? = null,
     engineFactory: (EglContexts, GpuMemoryLedger) -> StageClearGpu = { egl, ledger -> DefaultStageClearGpu(egl, ledger) },
 ) {
     private val closed = AtomicBoolean()
@@ -28,6 +30,7 @@ internal class GpuPhotoRollSession(assets: AssetManager,
         onError = { if (!closed.get()) mutableFailure.value = it },
         engineFactory = engineFactory,
         recoverContextOnSubmit = false,
+        sharedRuntime = runtime,
         onPresented = { params, display ->
             if (!closed.get() && !display.showBefore) {
                 mutablePresented.value = PhotoEditValues(params.strength,
@@ -41,10 +44,13 @@ internal class GpuPhotoRollSession(assets: AssetManager,
             GpuRenderParams(values.strength, PhotoAdjustmentPolicy.adjustments(values)), GpuDisplayOptions(before, 0))
     }
 
-    fun close() {
+    fun retireForReuse() = finish(true)
+    fun close() = finish(false)
+
+    private fun finish(reuse: Boolean) {
         if (closed.compareAndSet(false, true)) {
             mutablePresented.value = null
-            renderer.close()
+            if (reuse) renderer.retireForReuse() else renderer.close()
             GpuPhotoRollRetiredOwners.retain(renderer)
         }
     }
@@ -53,22 +59,24 @@ internal class GpuPhotoRollSession(assets: AssetManager,
 /** A lifecycle close is only a request. A later owner must observe its completion before opening.
  * Failed/stalled owners stay retained; replacing the screen must not conceal an ownership failure. */
 internal object GpuPhotoRollRetiredOwners {
-    private val pending = mutableSetOf<GpuPreviewRenderer>()
+    private val pending = mutableMapOf<Any, (Long) -> Boolean>()
     private val cleanup = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    @Synchronized fun retain(renderer: GpuPreviewRenderer) {
-        pending += renderer
+    fun retain(renderer: GpuPreviewRenderer) = retain(renderer, renderer::awaitClosed)
+    fun retain(runtime: GpuPreviewRuntime) = retain(runtime, runtime::awaitClosed)
+    @Synchronized private fun retain(owner: Any, await: (Long) -> Boolean) {
+        pending[owner] = await
         cleanup.launch {
             // Success is reclaimed even when no later photo is opened. Failure stays observable
             // at the next explicit retry/open, and is never confused with accepted shutdown.
-            if (runCatching { renderer.awaitClosed(2_000) }.getOrDefault(false)) {
-                synchronized(this@GpuPhotoRollRetiredOwners) { pending.remove(renderer) }
+            if (runCatching { await(2_000) }.getOrDefault(false)) {
+                synchronized(this@GpuPhotoRollRetiredOwners) { pending.remove(owner) }
             }
         }
     }
     fun releaseBeforeOpen() {
-        val owners = synchronized(this) { pending.toList() }
-        owners.forEach { owner ->
-            if (!owner.awaitClosed(2_000)) throw GpuSurfaceTeardownException("Previous GPU preview release is incomplete")
+        val owners = synchronized(this) { pending.toMap() }
+        owners.forEach { (owner, await) ->
+            if (!await(2_000)) throw GpuSurfaceTeardownException("Previous GPU preview release is incomplete")
             synchronized(this) { pending.remove(owner) }
         }
     }
