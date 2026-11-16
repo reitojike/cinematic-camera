@@ -147,10 +147,10 @@ class DevelopViewAndroidTest {
             }
             File(context.getExternalFilesDir(null), "design-accessibility.txt")
                 .writeText(dump(root()))
-            assertTrue(keySelected("STRENGTH"))
+            assertTrue(keySelected("強さ"))
             assertFalse(keySelected("色温度"))
             val rulerBounds = Rect().also { awaitNode("RESET").getBoundsInScreen(it) }
-            val keyBounds = Rect().also { keyNode("STRENGTH").getBoundsInScreen(it) }
+            val keyBounds = Rect().also { keyNode("強さ").getBoundsInScreen(it) }
             assertTrue("ruler precedes the key row", rulerBounds.bottom <= keyBounds.top)
             // The ruler's non-actionable heading must not long-press the photo behind it.
             val panelBounds = Rect().also { awaitNode("現像調整パネル").getBoundsInScreen(it) }
@@ -200,12 +200,12 @@ class DevelopViewAndroidTest {
             awaitNode("色温度 · 相対（K値ではありません）")
             capture("temperature")
             assertTrue(keySelected("色温度"))
-            assertFalse(keySelected("STRENGTH"))
+            assertFalse(keySelected("強さ"))
             assertTrue(awaitNode("目盛りを閉じる", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
             instrumentation.waitForIdleSync()
             val readySave = awaitNode("JPEGを保存", true)
             assertFalse(keySelected("色温度"))
-            assertFalse(keySelected("STRENGTH"))
+            assertFalse(keySelected("強さ"))
             assertTrue(readySave.isEnabled)
             assertTrue(readySave.performAction(AccessibilityNodeInfo.ACTION_CLICK))
             instrumentation.waitForIdleSync()

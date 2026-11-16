@@ -60,7 +60,7 @@ internal object ConfirmedCancellationEditProbe {
             ActivityScenario.launch(PhotoRollActivity::class.java).use {
                 click(name)
                 await("confirmed cancellation remains retryable and editable") {
-                    action("同じ設定で保存を再試行") != null && action("STRENGTH") != null
+                    action("同じ設定で保存を再試行") != null && action("強さ") != null
                 }
                 val cancelled = live ?: requireNotNull(AndroidManualOriginalTrialSaves.knownPrepared(source))
                 assertEquals(request, cancelled.request)
@@ -76,7 +76,7 @@ internal object ConfirmedCancellationEditProbe {
                 }
                 click("一覧へ戻る")
                 click(name)
-                click("STRENGTH")
+                click("強さ")
                 click("RESET")
                 click("目盛りを閉じる")
                 await("new recipe ready") { action("JPEGを保存") != null }

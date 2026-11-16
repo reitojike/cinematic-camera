@@ -89,6 +89,16 @@ fun CaptureStatusBar(
 /** Editor variants retain their existing typography and borderless labels. */
 internal enum class StatusChipStyle { CAPTURE, EDITOR_BADGE, EDITOR_LABEL }
 
+/** Only recording is filled; failures (including unknown exposure mode) remain outlined. */
+internal fun captureChipBackground(tone: CaptureChromeTone): Color =
+    if (tone == CaptureChromeTone.RECORDING) CaptureDesign.Recording else Color.Transparent
+
+internal fun captureChipTextColor(chip: CaptureStatusChip): Color = when {
+    chip.tone == CaptureChromeTone.RECORDING -> CaptureDesign.Ink
+    chip.mode && chip.tone == CaptureChromeTone.NORMAL -> CaptureDesign.Text
+    else -> captureChromeColor(chip.tone)
+}
+
 @Composable
 internal fun StatusChip(chip: CaptureStatusChip, rotation: Float = 0f, horizontal: Boolean = false,
     modifier: Modifier = Modifier, style: StatusChipStyle = StatusChipStyle.CAPTURE) {
@@ -100,14 +110,10 @@ internal fun StatusChip(chip: CaptureStatusChip, rotation: Float = 0f, horizonta
         Text(chip.text, paint, style = CaptureDesign.Label, color = color)
         return
     }
-    val background = when (chip.tone) {
-        CaptureChromeTone.RECORDING -> CaptureDesign.Recording.copy(alpha = .16f)
-        CaptureChromeTone.FAILURE -> color.copy(alpha = .12f)
-        else -> Color.Transparent
-    }
+    val background = captureChipBackground(chip.tone)
     val border = when {
-        chip.mode -> color
         chip.tone == CaptureChromeTone.RECORDING -> CaptureDesign.Recording
+        chip.mode -> color
         chip.tone == CaptureChromeTone.NORMAL -> CaptureDesign.Line
         else -> color
     }
@@ -121,7 +127,7 @@ internal fun StatusChip(chip: CaptureStatusChip, rotation: Float = 0f, horizonta
         .background(background).border(1.dp, border).padding(horizontal = 6.dp, vertical = 3.dp),
         contentAlignment = Alignment.Center) {
         Text(if (horizontal) chip.compact else chip.text,
-            color = color, fontSize = (if (horizontal) 11 else if (chip.mode) 14 else 12).sp,
+            color = captureChipTextColor(chip), fontSize = (if (horizontal) 11 else if (chip.mode) 14 else 12).sp,
             fontFamily = FontFamily.Monospace, fontWeight = if (chip.mode) FontWeight.SemiBold else FontWeight.Medium,
             maxLines = if (horizontal && chip.compact.contains('\n')) 2 else 1,
             softWrap = false, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)

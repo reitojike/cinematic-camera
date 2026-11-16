@@ -81,7 +81,9 @@ internal data class UiMessage(
             CaptureChromeTone.NORMAL, CaptureChromeTone.WARNING,
             CaptureChromeTone.FAILURE, CaptureChromeTone.ACCEPTED,
         )) &&
-            (slot != MessageSlot.PROBLEM || (tone == CaptureChromeTone.FAILURE && !title.isNullOrBlank())) &&
+            (slot != MessageSlot.PROBLEM || (!title.isNullOrBlank() &&
+                (tone == CaptureChromeTone.FAILURE ||
+                    (tone == CaptureChromeTone.WARNING && fact == "camera.permission")))) &&
             (title == null || slot == MessageSlot.PROBLEM) &&
             (note == null || slot in setOf(MessageSlot.PROBLEM, MessageSlot.BANNER)) &&
             (secondary == null || primary != null) &&

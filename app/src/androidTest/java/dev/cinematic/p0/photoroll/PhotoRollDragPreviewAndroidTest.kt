@@ -267,8 +267,8 @@ class PhotoRollDragPreviewAndroidTest {
     }
 
     private fun beginDrag(): Drag {
-        if (findNode("STRENGTH", range = true) == null) click("STRENGTH")
-        val bounds = Rect().also { node("STRENGTH", range = true).getBoundsInScreen(it) }
+        if (findNode("強さ", range = true) == null) click("強さ")
+        val bounds = Rect().also { node("強さ", range = true).getBoundsInScreen(it) }
         return Drag(bounds.exactCenterX(), bounds.exactCenterY()).also { it.down() }
     }
 
