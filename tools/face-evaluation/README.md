@@ -161,6 +161,12 @@ SDK providerの利用診断通信は従前のML Kit許容範囲であり、無�
 
 2026-11-16の準備検証: 5flavor app/test APK + lint、comparison記録/集計JVM10件成功。
 既存host34件は33成功・symlink作成権限の環境エラー1（assert/skip変更なし）、HTML合成8件成功。
-**native画面・SAF・EXIF/色・取消/回転/再起動の端末実走は未実施**。
+この時点のbuild単独ではnative UIの合格とは扱わない。後続の合成Android実走の範囲は下記追補を参照。
 実写評価-readyや製品採用-readyとは扱わない。個別承認前に配布・実機操作をしない。
 詳細と残りの実行試験は [Android導線](review/ANDROID_DESIGN.md) を参照。
+
+
+2026-11-16追補: [合成Android実行試験](review/ANDROID_DESIGN.md#合成android実行試験2026-11-16) の2phaseが成功。
+生成JPEGのEXIF/色・原本非変更、同VMの画面再作成、入力保持、重複、即時取消、
+明示force-stop後の新PIDでの判定復元、合成枠の座標、破損recordロックを確認した。
+実picker、SDK処理途中取消、実写真精度、Pixelの実測は引き続き未検証。実機/配布は個別承認待ち。

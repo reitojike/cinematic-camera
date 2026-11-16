@@ -71,7 +71,7 @@ Pixelから写真・URI・顔枠を持ち出してHTMLへ入力する運用は�
   first-callはこのownerでの最初の呼出しで、プロセスcold startや実機性能の保証ではない。
   未評価、FAILED、CANCELLED、NOT_RUNを区別する。画像の途中取消は全体を未追加とする。
 
-### 現段階の未確認
+### 初期実装時点の未確認（下記の合成Android試験で一部を解消）
 
 標準ピッカーを含む端末内UI実走、EXIF回転と色を含む合成画像の実行試験、
 取消/Back/回転/再起動/ストレージ失敗のAndroid実行試験、30〜50枚の実写精度は未実施。
@@ -80,3 +80,47 @@ Pixelから写真・URI・顔枠を持ち出してHTMLへ入力する運用は�
 参照: [ImageDecoder](https://developer.android.com/reference/android/graphics/ImageDecoder)、
 [SAF](https://developer.android.com/training/data-storage/shared/documents-files)、
 [ViewModel](https://developer.android.com/topic/libraries/architecture/viewmodel)。
+
+## 合成Android実行試験（2026-11-16）
+
+既存専用AOSP API37のread-only instanceを標準wrapperで起動し、90秒のboot/system_server安定・ANR0を確認。
+実写・Pixelは使用しない。comparisonだけAndroidJUnitRunnerを使い、容量用4flavorのrunnerは変更しない。
+以下の2methodを**個別にこの順序で**実行し、間にcomparisonアプリだけ明示force-stopする。
+同一プロセスの一括実行は復元検証にならないため、restart側は前phaseとのPID相違をassertする。
+
+1. `ComparisonSyntheticTest#generatedImageUiRotationCancelAndPersist`
+   - testが生成した2色JPEGにEXIF90度を設定し、ImageDecoder後の縦横寸法と赤/青の位置を検証。
+   - 読取前後の原本SHA一致、3方式のSUCCESS、同一画像の二重追加なし。
+   - ActivityScenario.recreateで同じViewModel、未保存の見逃し入力保持、余計な画像追加なし。
+   - 3方式の判定保存と集計allowlist、生成6MP画像の即時取消で未追加を検証。
+2. `ComparisonSyntheticTest#persistedRecordAfterProcessRestart`
+   - 明示force-stop後の新PIDをassert。画像SHA照合を通じ、同じ生成ID・寸法・判定を復元。
+   - 既知の合成矩形をrecordへ一時注入し、View.drawの画像fit viewportに緑の枠辺が一致することを検証。
+     この矩形は描画fixtureであり、SDKが顔を検出した精度証拠ではない。
+   - 1方式の寸法だけを破損させ、安全ロックされることを確認。finallyで元recordへ戻す。
+   - markerの生成ID/hashで所有を照合し、試験が作った画像/記録だけ削除。
+
+最終2phaseはそれぞれ成功（5.383秒、3.232秒）。初期探索版の2成功は最終結果に重複計上しない。
+最終app/test APKを実行後のインストール済みAPKとSHA256照合し一致、終了時ANR0・生成dataset/marker不在を確認。
+app SHA256: `aac186aa5b75f279167ba6666dc9d9a3b909d0f7c2125dd532c915ec5a660760`
+AndroidTest SHA256: `3691dcd0dd28475fd63df12d7e54aa4d1b387d7616ce99f361183471c0f17843`
+
+### 引き続き未検証
+
+SAF実ピッカーでの選択/キャンセル、SDK処理途中の取消・Back、OSによる強制終了の任意タイミング、
+disk-full/削除失敗のAndroid故障注入、異なるEXIF/色空間の網羅、実写真の顔精度、Pixel速度/熱/電力。
+今回のView.drawはViewツリーの検証であり、画面キャプチャ/表示合成や目視承認の代替ではない。
+この合成検証を理由に実写真・実機導入・配布の個別承認を省略しない。
+
+
+再実行は専用エミュレーターのidentity/安定gateと空の評価領域を確認後、対象serialを明示する。
+以下は順序の例（shellに合う引用方法で実行）。未指定serialや実機へは実行しない。
+
+```text
+adb -s <専用emulator> shell am instrument -w -r -e syntheticComparisonApproved true -e class org.cinematic.evaluation.ComparisonSyntheticTest#generatedImageUiRotationCancelAndPersist org.cinematic.evaluation.comparison.test/androidx.test.runner.AndroidJUnitRunner
+adb -s <専用emulator> shell am force-stop org.cinematic.evaluation.comparison
+adb -s <専用emulator> shell am instrument -w -r -e syntheticComparisonApproved true -e class org.cinematic.evaluation.ComparisonSyntheticTest#persistedRecordAfterProcessRestart org.cinematic.evaluation.comparison.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+失敗時にmarker/既存判定を強制削除して再開しない。生成データの所有と失敗点を確認する。
+一括connectedAndroidTestでは新PID条件を満たせないため、この2phaseの代用にしない。

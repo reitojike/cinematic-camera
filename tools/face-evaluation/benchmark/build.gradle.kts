@@ -21,7 +21,7 @@ android {
         create("mlkit") { dimension = "detector"; applicationIdSuffix = ".mlkit" }
         create("mlkitplay") { dimension = "detector"; applicationIdSuffix = ".mlkitplay" }
         create("yunet") { dimension = "detector"; applicationIdSuffix = ".yunet" }
-        create("comparison") { dimension = "detector"; applicationIdSuffix = ".comparison" }
+        create("comparison") { dimension = "detector"; applicationIdSuffix = ".comparison"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -49,6 +49,8 @@ dependencies {
     "comparisonImplementation"("androidx.lifecycle:lifecycle-livedata:2.10.0")
     "testComparisonImplementation"("junit:junit:4.13.2")
     "testComparisonImplementation"("org.json:json:20250517")
+    "androidTestComparisonImplementation"("androidx.test:runner:1.7.0")
+    "androidTestComparisonImplementation"("androidx.test.ext:junit:1.3.0")
 }
 val stageModel = tasks.register("stageModel") {
     val model = providers.environmentVariable("FACE_EVAL_MODEL")
