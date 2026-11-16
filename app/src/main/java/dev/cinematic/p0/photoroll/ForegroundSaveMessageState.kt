@@ -24,6 +24,10 @@ internal fun rememberForegroundSaveMessages(
     )
     val epoch by ForegroundExports.changes.collectAsState()
     val active = remember(epoch) { ForegroundExports.gate.active() }
+    // Key the composition to the delivery ticket, so a previous attempt cannot flash into a new one.
+    val progress = key(active) {
+        active?.value?.progress?.collectAsState()?.value
+    }
     val context = LocalContext.current
     var permissionEpoch by remember { mutableIntStateOf(0) }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { permissionEpoch++ }
@@ -33,7 +37,7 @@ internal fun rememberForegroundSaveMessages(
     return ForegroundSaveMessageBinding(
         ForegroundSaveMessageState(owner?.supportsForegroundSave == true, active != null,
             active?.held == true, active?.stopRequested == true, foreground, notificationsAllowed,
-            Build.VERSION.SDK_INT >= 33),
+            Build.VERSION.SDK_INT >= 33, progress),
     ) { action ->
         when (action) {
             MessageAction.CANCEL_SAVE -> if (active != null && ForegroundExports.gate.active() === active) {

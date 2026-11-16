@@ -1,6 +1,9 @@
 package dev.cinematic.p0.photoroll
 
 import dev.cinematic.p0.CaptureChromeTone
+import dev.cinematic.p0.MessageProgress
+import dev.cinematic.p0.saveprogress.SaveProgress
+import dev.cinematic.p0.saveprogress.SaveProgressPhase
 import dev.cinematic.p0.MessageAction
 import dev.cinematic.p0.MessageControl
 import dev.cinematic.p0.MessageSlot
@@ -17,6 +20,7 @@ internal data class ForegroundSaveMessageState(
     val foreground: Boolean,
     val notificationsAllowed: Boolean,
     val canRequestNotifications: Boolean,
+    val progress: SaveProgress? = null,
 )
 
 /** Shared by libraryMessages and developMessages; callers retain their original action guards. */
@@ -32,10 +36,19 @@ internal fun foregroundSaveMessages(state: ForegroundSaveMessageState, activeOnl
         if (state.held) CaptureChromeTone.FAILURE else CaptureChromeTone.WARNING,
         when {
             state.held -> "保存の終了を確認できないため停止しています。次の保存は始めません。"
-            state.stopping -> "保存を止めています。"
-            else -> "JPEGを保存中です。アプリを離れても続きます。"
+            state.stopping -> "保存を取り消しています"
+            else -> when (state.progress?.phase ?: SaveProgressPhase.PREPARING) {
+                SaveProgressPhase.PREPARING -> "保存の準備中"
+                SaveProgressPhase.DEVELOPING -> "画像を現像中"
+                SaveProgressPhase.ENCODING -> "JPEGを作成中"
+                SaveProgressPhase.SAVING -> "保存しています"
+            }
         },
         "save.foreground_progress", primary = cancel, secondary = notify, inProgress = !state.held,
+        note = if (!state.held && !state.stopping) "アプリを離れても続きます。" else null,
+        progress = if (state.held || state.stopping || state.progress?.running == false) null
+            else MessageProgress(if (!state.stopping && state.progress?.phase == SaveProgressPhase.DEVELOPING)
+                state.progress.developedFraction else null),
     )
     else candidates += UiMessage(MessageSlot.INLINE, CaptureChromeTone.NORMAL,
         "保存はアプリ切替後も継続します。撮影開始時は中断し、自動再開しません。", "save.background_policy")

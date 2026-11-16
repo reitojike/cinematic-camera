@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.update
 /** Existing handle adapter only. No bitmap, URI grant, recipe, or publication authority in an Intent. */
 internal interface ForegroundExportWork {
     val identity: Any
+    val progress: kotlinx.coroutines.flow.StateFlow<dev.cinematic.p0.saveprogress.SaveProgress>? get() = null
     fun reserveForeground(conditions: AutoDevelopConditions): Boolean
     /** All producer owners, including retained row executors; closed files alone are insufficient. */
     val resourcesClosed: Boolean

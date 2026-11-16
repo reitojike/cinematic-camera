@@ -4,6 +4,7 @@ import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.cinematic.p0.gpu.*
 import dev.cinematic.p0.rawcapture.*
+import dev.cinematic.p0.saveprogress.SaveProgressPhase
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.*
@@ -28,6 +29,9 @@ class Original24GpuBoundaryCancellationAndroidTest {
                 if (insideBand) !event.complete && event.stage == "MIST" else event.complete && event.stage == "B1"
             if (target && stopEvent.compareAndSet(null, event)) {
                 fixture.assertWorkingSource(save)
+                assertEquals(SaveProgressPhase.DEVELOPING, save.progress.value.phase)
+                assertTrue(save.progress.value.running)
+                assertTrue(requireNotNull(save.progress.value.developedFraction) < 1f)
                 // Use the real save owner's cancellation signal, never an injected exception.
                 save.requestStop()
             }
@@ -40,6 +44,8 @@ class Original24GpuBoundaryCancellationAndroidTest {
         assertEquals(ManualOriginalTrialSavePhase.CANCELLED, cancelled.phase)
         assertEquals(ManualOriginalTrialSaveReason.STOPPED, cancelled.reason)
         assertNull(cancelled.uri); assertNull(cancelled.gpuFailure)
+        assertFalse(save.progress.value.running)
+        assertNull(save.progress.value.developedFraction)
         cancelledWitness.assertReleased()
         fixture.assertClosed(save, unpublished = true)
         fixture.verifyOriginals()
@@ -82,6 +88,8 @@ class Original24GpuBoundaryCancellationAndroidTest {
         assertEquals(nextEngine, fixture.setting.current())
         assertArrayEquals(intent, fixture.intent(save).read(ManualOriginalTrialRequestCodec.MAX_BYTES))
         fixture.verifyPublication(save)
+        assertFalse(save.progress.value.running)
+        assertNull(save.progress.value.developedFraction)
         assertNull(save.state.value.gpuFailure)
         val published = save.state.value
         val record = fixture.journal(save).read()

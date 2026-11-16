@@ -10,6 +10,9 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,6 +49,9 @@ internal data class MessageControl(
     init { if (BuildConfig.DEBUG) require(label.isNotBlank()) }
 }
 
+/** Null fraction is ongoing activity. A fraction describes development work, not save completion. */
+internal data class MessageProgress(val fraction: Float? = null)
+
 internal data class UiMessage(
     val slot: MessageSlot,
     val tone: CaptureChromeTone,
@@ -58,6 +64,7 @@ internal data class UiMessage(
     val secondary: MessageControl? = null,
     /** Processing or paused processing is distinct from an ordinary WARNING. */
     val inProgress: Boolean = false,
+    val progress: MessageProgress? = null,
 ) {
     init {
         if (BuildConfig.DEBUG) require(isValid()) { "Invalid UI message contract" }
@@ -65,6 +72,8 @@ internal data class UiMessage(
 
     internal fun isValid(): Boolean =
             (body.isNotBlank() && fact.isNotBlank()) &&
+            (progress == null || (inProgress && (progress.fraction == null ||
+                progress.fraction.isFinite() && progress.fraction >= 0f && progress.fraction < 1f))) &&
             (primary == null || primary.label.isNotBlank()) &&
             (secondary == null || secondary.label.isNotBlank()) &&
             (tone != CaptureChromeTone.RECORDING) &&
@@ -74,7 +83,7 @@ internal data class UiMessage(
         )) &&
             (slot != MessageSlot.PROBLEM || (tone == CaptureChromeTone.FAILURE && !title.isNullOrBlank())) &&
             (title == null || slot == MessageSlot.PROBLEM) &&
-            (note == null || slot == MessageSlot.PROBLEM) &&
+            (note == null || slot in setOf(MessageSlot.PROBLEM, MessageSlot.BANNER)) &&
             (secondary == null || primary != null) &&
             (primary == null || slot in setOf(MessageSlot.CENTER, MessageSlot.PROBLEM, MessageSlot.BANNER, MessageSlot.INLINE)) &&
             (secondary == null || slot != MessageSlot.INLINE) &&
@@ -225,6 +234,20 @@ internal fun CaptureBanner(message: UiMessage, onAction: (MessageAction) -> Unit
         Box(Modifier.width(3.dp).fillMaxHeight().background(captureChromeColor(message.tone)))
         Column(Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 8.dp)) {
             Text(message.body, style = CaptureDesign.Body, color = CaptureDesign.Text)
+            message.note?.let { Text(it, style = CaptureDesign.Body, color = CaptureDesign.Muted) }
+            message.progress?.let { progress ->
+                // Phase text is announced by the banner; do not announce an overall percentage.
+                val bar = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp)
+                    .clearAndSetSemantics { }
+                if (progress.fraction == null) LinearProgressIndicator(
+                    modifier = bar, color = CaptureDesign.Amber, trackColor = CaptureDesign.Line,
+                    strokeCap = StrokeCap.Butt,
+                ) else LinearProgressIndicator(
+                    progress = { progress.fraction }, modifier = bar,
+                    color = CaptureDesign.Amber, trackColor = CaptureDesign.Line,
+                    strokeCap = StrokeCap.Butt, drawStopIndicator = {},
+                )
+            }
             MessageActions(message, onAction)
         }
     }
