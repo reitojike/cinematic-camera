@@ -37,10 +37,13 @@ class SaveProgressScreenshotAndroidTest {
     @Test fun captureBeforeAfterForFourPhasesAndStoppingAcrossLayouts() {
         check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val labels = listOf("保存の準備中", "画像を現像中", "JPEGを作成中", "保存しています", "保存を止めています。")
+        val labels = listOf("保存の準備中", "画像を現像中", "JPEGを作成中", "保存しています", "保存を止めています")
+        val normalAfterOnly = InstrumentationRegistry.getArguments().getString("normalAfterOnly") == "true"
+        val animate = InstrumentationRegistry.getArguments().getString("recordAnimation") == "true"
+        check(!animate || normalAfterOnly)
         val layouts = listOf(Layout("normal", 760, 1f), Layout("short", 480, 1f), Layout("large-text", 760, 2f))
-        val cases = layouts.flatMap { layout -> (0..4).flatMap { stage ->
-            listOf(Case(layout, stage, false), Case(layout, stage, true)) } }
+        val cases = layouts.filter { !normalAfterOnly || it.name == "normal" }.flatMap { layout -> (0..4).flatMap { stage ->
+            listOf(Case(layout, stage, false), Case(layout, stage, true)).filter { !normalAfterOnly || it.after } } }
         val shown = mutableStateOf(cases.first())
         val rendered = AtomicReference<String?>()
         val base = ForegroundSaveMessageState(true, true, false, false, true, true, true)
@@ -72,7 +75,7 @@ class SaveProgressScreenshotAndroidTest {
                                         editor, { editor }, PhotoRollPhase.DISPLAYED, null, null,
                                         null, null, null, true, PhotoRollSavePhase.SAVING, true, false, false,
                                         {}, {}, {}, {}, { _, _, _ -> }, {}, {}, {}, {},
-                                        productMessages = developMessages(state, listOf(banner(current))),
+                                        productMessages = developMessages(state.copy(saveStopping = current.after && current.stage == 4), listOf(banner(current))),
                                         productSave = developSavePresentation(state),
                                         info = { Text("合成画面による表示確認です。", style = CaptureDesign.Body) })
                                 }
@@ -84,6 +87,8 @@ class SaveProgressScreenshotAndroidTest {
             SideEffect { rendered.set(current.name) }
         }
         ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
+            var recording: android.os.ParcelFileDescriptor? = null
+            try {
             for (case in cases) {
                 val expected = banner(case)
                 assertEquals(MessageAction.CANCEL_SAVE, expected.primary?.action)
@@ -91,8 +96,19 @@ class SaveProgressScreenshotAndroidTest {
                 scenario.onActivity { shown.value = case }
                 awaitVisible(case.name, expected.body, rendered)
                 assertCancelPresentation(requireNotNull(expected.primary).label, enabled = case.stage != 4)
+                if (animate && recording == null) {
+                    recording = instrumentation.uiAutomation.executeShellCommand(
+                        "screenrecord --time-limit 18 /sdcard/Download/save-progress-animation.mp4")
+                }
+                if (animate) SystemClock.sleep(3000) // Artifact-only animation; no save worker exists.
                 val bitmap = fixture.captureSoftware()
                 try { writeImage(case, bitmap) } finally { bitmap.recycle() }
+            }
+            } finally {
+                // Finish the bounded recording before closing this synthetic Activity, even on failure.
+                recording?.let { android.os.ParcelFileDescriptor.AutoCloseInputStream(it).use { input ->
+                    input.copyTo(java.io.ByteArrayOutputStream())
+                } }
             }
         }
     }

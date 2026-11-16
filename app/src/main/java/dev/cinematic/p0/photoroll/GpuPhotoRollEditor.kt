@@ -409,6 +409,7 @@ import kotlinx.coroutines.flow.StateFlow
         saving = saving, savingRecipe = savingRecipe, editing = editor.session != null, foreground = foreground,
         memoryProblem = memoryProblem, gpuFailure = gpuFailure, message = problemMessage,
         sourceInvalid = gpuPhotoRollSourceInvalid(problem),
+        saveStopping = foregroundMessageBinding.state.let { it.active && it.stopping && !it.held },
         saveFailureMessage = saveState?.gpuFailure?.description,
         canLeave = !savingRecipe,
         canResumePreview = foreground && !saving && !savingRecipe && gpuSaveCanResumePreview(saveState?.phase),

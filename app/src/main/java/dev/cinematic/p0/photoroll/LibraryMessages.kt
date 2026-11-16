@@ -36,7 +36,7 @@ internal fun foregroundSaveMessages(state: ForegroundSaveMessageState, activeOnl
         if (state.held) CaptureChromeTone.FAILURE else CaptureChromeTone.WARNING,
         when {
             state.held -> "保存の終了を確認できないため停止しています。次の保存は始めません。"
-            state.stopping -> "保存を止めています。"
+            state.stopping -> "保存を止めています"
             else -> when (state.progress?.phase ?: SaveProgressPhase.PREPARING) {
                 SaveProgressPhase.PREPARING -> "保存の準備中"
                 SaveProgressPhase.DEVELOPING -> "画像を現像中"
@@ -45,7 +45,8 @@ internal fun foregroundSaveMessages(state: ForegroundSaveMessageState, activeOnl
             }
         },
         "save.foreground_progress", primary = cancel, secondary = notify, inProgress = !state.held,
-        progress = if (state.held || state.progress?.running == false && !state.stopping) null
+        note = if (!state.held && !state.stopping) "アプリを離れても続きます。" else null,
+        progress = if (state.held || state.stopping || state.progress?.running == false) null
             else MessageProgress(if (!state.stopping && state.progress?.phase == SaveProgressPhase.DEVELOPING)
                 state.progress.developedFraction else null),
     )

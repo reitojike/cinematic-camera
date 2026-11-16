@@ -83,7 +83,7 @@ internal data class UiMessage(
         )) &&
             (slot != MessageSlot.PROBLEM || (tone == CaptureChromeTone.FAILURE && !title.isNullOrBlank())) &&
             (title == null || slot == MessageSlot.PROBLEM) &&
-            (note == null || slot == MessageSlot.PROBLEM) &&
+            (note == null || slot in setOf(MessageSlot.PROBLEM, MessageSlot.BANNER)) &&
             (secondary == null || primary != null) &&
             (primary == null || slot in setOf(MessageSlot.CENTER, MessageSlot.PROBLEM, MessageSlot.BANNER, MessageSlot.INLINE)) &&
             (secondary == null || slot != MessageSlot.INLINE) &&
@@ -234,6 +234,7 @@ internal fun CaptureBanner(message: UiMessage, onAction: (MessageAction) -> Unit
         Box(Modifier.width(3.dp).fillMaxHeight().background(captureChromeColor(message.tone)))
         Column(Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 8.dp)) {
             Text(message.body, style = CaptureDesign.Body, color = CaptureDesign.Text)
+            message.note?.let { Text(it, style = CaptureDesign.Body, color = CaptureDesign.Muted) }
             message.progress?.let { progress ->
                 // Phase text is announced by the banner; do not announce an overall percentage.
                 val bar = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp)

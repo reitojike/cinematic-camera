@@ -23,6 +23,7 @@ internal data class DevelopMessageState(
     val rechecking: Boolean = false,
     val justPublished: Boolean = false,
     val sourceInvalid: Boolean = false,
+    val saveStopping: Boolean = false,
 )
 
 internal data class DevelopSavePresentation(
@@ -109,7 +110,8 @@ internal fun developMessages(
             (state.saving || state.savePhase == PhotoRollSavePhase.SAVING)
         candidates += UiMessage(MessageSlot.CENTER,
             if (writing) CaptureChromeTone.WARNING else CaptureChromeTone.NORMAL,
-            if (writing) "保存中 · プレビューを止めています" else "保存のためプレビューを止めました",
+            if (writing && state.saveStopping) "保存を取り消しています · プレビューを止めています"
+            else if (writing) "保存中 · プレビューを止めています" else "保存のためプレビューを止めました",
             "preview.export_paused",
             primary = if (writing) null else resume)
     } else when (state.phase) {
