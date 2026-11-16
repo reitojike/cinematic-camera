@@ -1,7 +1,7 @@
 # 実写 AHD / PPG 比較版
 
 ## 現在地
-記載した範囲のローカル検証が完了。GitHub CI の最終状態は PR #441 を参照。#438 上の積み重ね Draft であり、main への採用変更ではない。
+main `f476442f`（#443 初回案内、#449 現像owner再利用、#450 保存進捗を含む）へ同期済み。#438 の比較用JNI・品質指定は保全した評価専用Draftで、PPGの製品採用やmainへのマージを意味しない。GitHub CI/canonicalの最終状態は PR #441 を参照。
 実写アクセス、Pixel操作、比較APKの配布/公開はまだ行っていない。本人が接続時に明示承認してから開始する。
 
 ## 安全境界
@@ -24,7 +24,27 @@ AHD/PPGを同じ拡大位置で切り替える。ピンチで最大6倍に拡大
 結果はメモリだけに保持する。背景化/回転後は写真を選び直す。露出条件は画面再生成時に保持する。
 原本が選択後に変わった場合は比較結果を破棄する。providerの既にブロック中のreadは即時取消を保証しない。
 
-## ローカル検証
+## 2026-11-16 同期後の固定候補
+
+実装source: `d6af9fe992a2765235d150d83b3f7bbc55fd87c6`。後続がこの文書だけの場合も、APKの実行sourceはこのSHAとして区別する。
+- 通常4task（lint/unit/app/test APK）成功、単体1413件・失敗0・既存skip12。比較opt-in版4taskと通常Release buildも成功。lintは通常/比較ともerror0。
+- 専用read-only AOSP AVDで比較11件、通常embedded JNI8件、half geometry境界2件、初回候補接続3件、owner再利用5件を成功確認。これは実行件数であり、新規固有試験数ではない。
+- 通常GPU90のRGB8は採用baseline `51b691ad` と全画素一致（maxDelta0/changedPixels0）、帯28成功。環境差あり、baseline更新なし。
+- 90秒起動安定、試験前後のsystem_server不変/boot完了/ANRなし、専用AVD停止・資源返却を確認。
+- 通常Debugは#438由来のandroidTest用quality JNIを含むが、PPG比較Activityと専用PPG JNIは含まない。通常Releaseはquality/PPG比較JNIとも両ABIで不在。embedded抽出JNIは通常/比較/Releaseに保持。
+- 比較版は `dev.cinematic.p0.previewcompare`、両instrumentation targetも同ID。製品/初回案内比較とのflag混用は拒否。製品署名は禁止、比較Release variantなし。
+- 比較appの権限はAndroidXの非公開receiver用signature権限のみ。通信/カメラ/共有ストレージ権限なし、backup無効、写真保存service/providerなし。AndroidX startup provider authorityも比較IDで分離。
+- 比較UI/原本処理/quality指定は旧 `10b714bf` と不変。通常製品のKotlin/assets/保存進捗/ownerは同期mainと同一。実写真・Pixel性能・24MP大型比較の再検証は未実施。
+
+別ID比較APK（配布・実機導入の承認ではない）:
+- versionCode `10` / versionName `0.0.10-p05`
+- app SHA-256: `d536450f8cc9411053c41e4e08be907010ccecbff52cfa7f668274e05e1e6df1`
+- test APK SHA-256: `583d685a0e51f6525d509eedcc9921c993d27b1012522390c5dd63125400342e`
+- Debug証明書SHA-256: `0e6fc2b5e12b4bcf5142592992f3b4879b44ca849c6c26c14464003ca0a35a8c`
+
+通常Debug APKは既存固定署名製品を更新するための配布物ではない。通常アプリの削除・data消去・署名不一致更新は禁止。実機確認は #445 に集約し、接続時の個別承認後、本人が明示的に選ぶ原本だけを読み取る。
+
+## 同期前のローカル検証履歴（旧head）
 - 通常版lint、単体試験1380件（失敗0・既定skip12）、Debug/Releaseビルド成功。
 - opt-in比較版app/testAPKと限定manifest用lint成功。
 - 通常Debug/Releaseのarm64-v8a・x86_64とも比較専用JNIなし。通常Debug APKに比較Activityなし。
@@ -49,7 +69,7 @@ AHD/PPGを同じ拡大位置で切り替える。ピンチで最大6倍に拡大
 UIの日本語XMLをPowerShellの文字列経由で読んだ際に転送時の文字コードで解析失敗した。XMLをadb pullでバイトのまま取得し直してUTF-8解析した結果で確認した。アプリ内文言は正常。
 合成生成RGBを単純な正解画像と扱うことはしていない。忠実なGT導出は小さな作業ではないため深追いしない。
 
-## 比較APK（製品とは別）
+## 同期前の比較APK履歴（旧head、今回の導入候補ではない）
 実装source: 928ae1d627c8fa0c2a097a735f621ead5932b147。
 後続commitは合成試験と文書のみ。APKはこの実装で固定する。
 versionCode=10 / versionName=0.0.10-p05。通常リリースの番号系列とは別。
