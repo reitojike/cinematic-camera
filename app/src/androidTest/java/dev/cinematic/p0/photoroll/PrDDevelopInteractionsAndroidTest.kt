@@ -2,6 +2,11 @@ package dev.cinematic.p0.photoroll
 
 import android.graphics.Rect
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionOnScreen
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.math.roundToInt
 import java.io.File
 import android.os.Build
 import android.os.SystemClock
@@ -46,6 +51,7 @@ class PrDDevelopInteractionsAndroidTest {
         var presented by mutableStateOf<PhotoEditValues?>(shown.requestedValues)
         var compact by mutableStateOf(false)
         var largeText by mutableStateOf(false)
+        val viewport = AtomicReference<Rect>()
         var failure by mutableStateOf(false)
         var cancelled by mutableStateOf(false)
         var banner by mutableStateOf(false)
@@ -79,6 +85,11 @@ class PrDDevelopInteractionsAndroidTest {
                             {}, { model.editor = model.editor.begin(.01, true) }, {}, {}, { _, _, _ -> }, {}, {}, {},
                             { token -> model.editor = model.editor.close(token); model.toast = true },
                             modifier = Modifier.fillMaxSize().safeDrawingPadding(),
+                            viewportModifier = Modifier.onGloballyPositioned { coordinates ->
+                                val point = coordinates.positionOnScreen()
+                                model.viewport.set(Rect(point.x.roundToInt(), point.y.roundToInt(),
+                                    point.x.roundToInt() + coordinates.size.width, point.y.roundToInt() + coordinates.size.height))
+                            },
                             gpuSession = gpu.takeUnless { model.failure || model.cancelled },
                             gpuReady = !model.failure && !model.cancelled,
                             gpuPresentedValues = model.presented,
@@ -262,7 +273,9 @@ class PrDDevelopInteractionsAndroidTest {
         for (editing in listOf(false, true)) {
             scenario.onActivity { model.editor = if (editing) model.shown.begin(.01, true) else model.shown }
             instrumentation.waitForIdleSync()
+            SystemClock.sleep(250)
             val image = rect(visible("現像結果（表示用）"))
+            val viewport = Rect(requireNotNull(model.viewport.get()))
             val native = surfaceBounds(scenario)
             val state = if (editing) "open" else "closed"
             assertAbsent(label)
@@ -272,9 +285,18 @@ class PrDDevelopInteractionsAndroidTest {
             val notice = rect(toast)
             assertTrue("Toast remains inside visible image region", image.contains(notice))
             assertFalse("Toast is not interactive", toast.isClickable || toast.isLongClickable)
-            assertEquals(image, rect(visible("現像結果（表示用）")))
+            val obscuredSemantics = rect(visible("現像結果（表示用）"))
+            assertTrue("Comparison action remains accessible", obscuredSemantics.width() > 0 && obscuredSemantics.height() > 0)
+            assertEquals("Outer viewport layout, including caption", viewport, model.viewport.get())
             assertEquals(native, surfaceBounds(scenario))
             captureEvidence("$prefix-$state-with", compact, if (largeText) 1.8f else if (compact) 1.3f else 1f)
+            assertUncoveredPixelsUnchanged("$prefix-$state", image, notice)
+            File(evidenceDirectory(), "$prefix-$state-bounds.txt").writeText(
+                "outerLayout=$viewport; native=$native; semanticsBefore=$image; semanticsWithToast=$obscuredSemantics; toast=$notice\n" +
+                "Accessibility bounds can be clipped by the toast. Pixel/layout assertions are separate.\n")
+            performComparisonAction("RAWの基準表示に切り替える")
+            visible("基準表示（撮影時WB・調整なし）")
+            performComparisonAction("現像結果へ戻す")
             // Real pointer events on the notice itself must reach the underlying image handler.
             val down = SystemClock.uptimeMillis()
             for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
@@ -284,15 +306,42 @@ class PrDDevelopInteractionsAndroidTest {
             }
             visible("現像結果")
             longPressAndRelease("現像結果", targetBounds = notice) {
-                assertEquals(image, rect(visible("現像結果（表示用）")))
+                assertEquals(viewport, model.viewport.get())
                 assertEquals(native, surfaceBounds(scenario))
             }
             scenario.onActivity { model.toast = false }
-            instrumentation.waitForIdleSync()
-            assertAbsent(label)
+            awaitAbsent(label)
+            assertEquals(viewport, model.viewport.get())
             assertEquals(image, rect(visible("現像結果（表示用）")))
             assertEquals(native, surfaceBounds(scenario))
         }
+    }
+
+    private fun evidenceDirectory() = File(requireNotNull(InstrumentationRegistry.getArguments()
+        .getString("additionalTestOutputDir")), "ui-pr-d-interactions")
+
+    private fun assertUncoveredPixelsUnchanged(prefix: String, image: Rect, notice: Rect) {
+        val before = requireNotNull(BitmapFactory.decodeFile(File(evidenceDirectory(), "$prefix-without.png").path))
+        val after = requireNotNull(BitmapFactory.decodeFile(File(evidenceDirectory(), "$prefix-with.png").path))
+        try {
+            val area = Rect(image).apply { bottom = minOf(bottom, notice.top) }
+            assertTrue("A positive image area must remain above the notice", area.width() > 0 && area.height() > 0)
+            var differences = 0
+            for (y in area.top until area.bottom) for (x in area.left until area.right) {
+                if (before.getPixel(x, y) != after.getPixel(x, y)) differences++
+            }
+            assertEquals("Visible RGB pattern/white frame must not move or rescale outside the toast", 0, differences)
+        } finally { before.recycle(); after.recycle() }
+    }
+
+    private fun awaitAbsent(label: String) {
+        repeat(100) {
+            instrumentation.waitForIdleSync()
+            fixture.automation.clearCache()
+            if (visibleOrNull(label) == null) return
+            SystemClock.sleep(30)
+        }
+        error("Node did not disappear: $label")
     }
 
     private fun clickLabel(label: String) {
