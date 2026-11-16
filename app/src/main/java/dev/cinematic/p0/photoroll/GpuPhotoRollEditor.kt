@@ -64,7 +64,7 @@ import kotlinx.coroutines.flow.StateFlow
         eligible = { !cancellation.isCanceled && session?.presented?.value == null },
         publish = { initialGuide = it }) }
     DisposableEffect(session) {
-        onDispose { guideHandoff.close(); cancellation.cancel(); session?.close(); renderer.discardTransientInputs() }
+        onDispose { guideHandoff.close(); cancellation.cancel(); session?.retireForReuse(); renderer.discardTransientInputs() }
     }
     // UI_HIDDEN and more severe trims release only this preview owner, never foreground export.
     LaunchedEffect(trimEpoch) {

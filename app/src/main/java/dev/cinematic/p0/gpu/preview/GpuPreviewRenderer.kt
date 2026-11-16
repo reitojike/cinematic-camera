@@ -103,13 +103,16 @@ internal class GpuPreviewRenderer(
     // Diagnostic owners may recover on a new submit. Product owners require explicit retry,
     // including when a submit was already queued before the failing frame reported its error.
     private val recoverContextOnSubmit: Boolean = true,
+    private val sharedRuntime: GpuPreviewRuntime? = null,
 ) : AutoCloseable {
     init { require(draw == null || engineFactory == null) { "Choose one preview drawing owner" } }
     private data class Request(val params: GpuRenderParams, val display: GpuDisplayOptions)
     private class SurfaceLease(val surface: Surface, val width: Int, val height: Int) {
         val valid = AtomicBoolean(true)
     }
-    private val thread = GlThread()
+    private val thread = sharedRuntime?.thread ?: GlThread()
+    private val runtimeGeneration = sharedRuntime?.lease()
+    @Volatile private var warmRetirement = false
     private val enqueueLock = Any()
     private val closed = AtomicBoolean()
     private val wakeQueued = AtomicBoolean()
@@ -152,6 +155,14 @@ internal class GpuPreviewRenderer(
         guarded { renderFrame(frameTime) }
     }
 
+    init {
+        sharedRuntime?.onRetiring(checkNotNull(runtimeGeneration)) {
+            val notify = !closed.get()
+            close()
+            if (notify) runCatching { onError(GpuUnavailableException("Preview runtime is retiring")) }
+        }
+    }
+
     fun submit(params: GpuRenderParams, display: GpuDisplayOptions) {
         require(params.strength.isFinite() && params.strength in 0.0..1.0)
         require(display.rotationDegrees in setOf(0, 90, 180, 270))
@@ -192,7 +203,7 @@ internal class GpuPreviewRenderer(
 
     /** Explicit retry after a reported failure. No implicit CPU fallback or retry loop. */
     fun retry(): Boolean = synchronized(enqueueLock) {
-        if (closed.get() || teardownPending || surfaceDestroyFailure.get() != null) return false
+        if (sharedRuntime != null || closed.get() || teardownPending || surfaceDestroyFailure.get() != null) return false
         post {
             if (!teardownPending) {
                 teardownFailed.set(false)
@@ -305,6 +316,8 @@ internal class GpuPreviewRenderer(
         val problem = failure.get() ?: surfaceDestroyFailure.get() ?:
             if (completion === terminated) shutdownFailure.get() else null
         if (!completed || problem != null) {
+            sharedRuntime?.stopAccepting()
+            if (sharedRuntime != null) close()
             teardownFailed.set(true)
             val reported = problem as? GpuSurfaceTeardownException ?: GpuSurfaceTeardownException(
                 if (completed) "Could not destroy GPU preview EGL surface" else "GPU preview surface destruction is incomplete",
@@ -328,7 +341,8 @@ internal class GpuPreviewRenderer(
         if (!terminated.await(timeoutMillis, TimeUnit.MILLISECONDS)) return false
         val elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start)
         val remainingMillis = (timeoutMillis - elapsedMillis).coerceAtLeast(0)
-        return thread.awaitTermination(remainingMillis) &&
+        return (if (warmRetirement) true else sharedRuntime?.awaitClosed(remainingMillis)
+            ?: thread.awaitTermination(remainingMillis)) &&
             shutdownFailure.get() == null && surfaceDestroyFailure.get() == null &&
             ledger.allocatedBytes == 0L && ledger.textureCount == 0 && liveWindows.get() == 0 && window == null &&
             !frameScheduled &&
@@ -364,7 +378,7 @@ internal class GpuPreviewRenderer(
     private fun post(block: () -> Unit) {
         synchronized(enqueueLock) {
             if (closed.get()) return
-            thread.post { guarded(block) }
+            thread.post { if (sharedRuntime == null || !closed.get()) guarded(block) }
         }
     }
 
@@ -374,6 +388,7 @@ internal class GpuPreviewRenderer(
 
     private fun guarded(block: () -> Unit) {
         try { block() } catch (failure: Throwable) {
+            sharedRuntime?.stopAccepting()
             GpuSurfaceProbe.failure("renderer.failure", failure)
             failed = true
             contextLost = generateSequence(failure) { it.cause }.any { it is GpuContextLostException }
@@ -381,6 +396,7 @@ internal class GpuPreviewRenderer(
             runCatching { releaseWindow() }.exceptionOrNull()?.takeIf { it !== failure }?.let(failure::addSuppressed)
             if (contextLost) runCatching { releasePhoto() }.exceptionOrNull()?.let(failure::addSuppressed)
             onError(failure)
+            if (sharedRuntime != null) close() // Product errors never return a context to the warm pool.
         }
     }
 
@@ -412,7 +428,8 @@ internal class GpuPreviewRenderer(
 
     private fun createContext(): EglContexts {
         trace("context.create.begin")
-        return EglContexts(thread, assets).also { context ->
+        return (sharedRuntime?.context(checkNotNull(runtimeGeneration)) ?: EglContexts(thread, assets)).also { context ->
+            context.makeOffscreenCurrent()
             egl = context
             GlCapabilities.inspect(context).requireSupported()
             val extensions = GLES32.glGetString(GLES32.GL_EXTENSIONS).orEmpty().split(' ')
@@ -532,9 +549,15 @@ internal class GpuPreviewRenderer(
         try { oldOutput?.close() } finally { oldPhoto?.input?.close() }
     }
 
-    override fun close() {
+    fun retireForReuse() = closeInternal(sharedRuntime != null)
+
+    override fun close() = closeInternal(false)
+
+    private fun closeInternal(keepContext: Boolean) {
+        if (!keepContext) sharedRuntime?.stopAccepting()
         synchronized(enqueueLock) {
             if (!closed.compareAndSet(false, true)) return
+            warmRetirement = keepContext
             trace("renderer.close.begin")
             lease.getAndSet(null)?.valid?.set(false); started.set(false)
             attached.value = false
@@ -545,7 +568,7 @@ internal class GpuPreviewRenderer(
                     try { releaseWindow() } finally {
                         try { retainedInput = null; releasePhoto() } finally {
                             try { engine?.close() } finally {
-                                try { timer?.close() } finally { egl?.close() }
+                                try { timer?.close() } finally { if (sharedRuntime == null) egl?.close() }
                             }
                         }
                     }
@@ -554,7 +577,19 @@ internal class GpuPreviewRenderer(
                     shutdownFailure.set(failure); onError(failure)
                 } finally {
                     trace("renderer.close.end") { "windows=${liveWindows.get()} drawCount=$drawCount" }
-                    thread.close(); terminated.countDown()
+                    if (sharedRuntime != null) {
+                        val problem = shutdownFailure.get() ?: surfaceDestroyFailure.get() ?:
+                            if (ledger.allocatedBytes != 0L || ledger.textureCount != 0 || liveWindows.get() != 0 ||
+                                retainedInput != null || photo != null || enginePhoto != null || output != null || frameScheduled)
+                                IllegalStateException("Preview resources survived retirement") else null
+                        try { sharedRuntime.release(checkNotNull(runtimeGeneration), problem) }
+                        catch (failure: Throwable) { shutdownFailure.compareAndSet(null, failure) }
+                        if (!keepContext || !sharedRuntime.reusable || problem != null || shutdownFailure.get() != null) {
+                            warmRetirement = false
+                            sharedRuntime.close()
+                        }
+                    } else thread.close()
+                    terminated.countDown()
                 }
             }
         }

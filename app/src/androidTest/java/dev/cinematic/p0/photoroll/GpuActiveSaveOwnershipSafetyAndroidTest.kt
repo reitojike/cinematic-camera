@@ -111,7 +111,8 @@ class GpuActiveSaveOwnershipSafetyAndroidTest {
                 scenario.onActivity {
                     initialEpoch = it.previewTrimEpoch
                     it.onTrimMemory(ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW)
-                    assertEquals(initialEpoch, it.previewTrimEpoch)
+                    // Memory pressure now retires the reusable preview runtime even at RUNNING_LOW.
+                    assertEquals(initialEpoch + 1, it.previewTrimEpoch)
                 }
                 for (level in listOf(ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN, ComponentCallbacks2.TRIM_MEMORY_COMPLETE)) {
                     scenario.onActivity { it.onTrimMemory(level) }
@@ -125,7 +126,7 @@ class GpuActiveSaveOwnershipSafetyAndroidTest {
                     assertNull(fixture.journal(save).read())
                     assertArrayEquals(intent, fixture.intent(save).read(ManualOriginalTrialRequestCodec.MAX_BYTES))
                 }
-                scenario.onActivity { assertEquals(initialEpoch + 2, it.previewTrimEpoch) }
+                scenario.onActivity { assertEquals(initialEpoch + 3, it.previewTrimEpoch) }
                 barrier.release.countDown()
                 await("trimmed export publication and FGS closure", 180_000) { ForegroundExports.gate.active() == null }
                 fixture.verifyPublication(save)
