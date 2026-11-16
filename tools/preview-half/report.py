@@ -11,13 +11,23 @@ def report(source: Path, destination: Path, head: str) -> None:
     if not re.fullmatch(r"[0-9a-f]{8,40}", head):
         raise ValueError("A recorded source commit is required")
     data = json.loads((source / "comparison.json").read_text(encoding="utf-8"))
-    if data.get("schema") != 1 or data.get("matrixVersion") != "stage-clear-90-v1-raw-input-experiment":
+    matrix = data.get("matrixVersion")
+    if data.get("schema") != 1 or matrix not in ("stage-clear-90-v1-raw-input-experiment", "large-raw-36-v1"):
         raise ValueError("Unexpected capture schema or matrix")
+    large = matrix == "large-raw-36-v1"
+    count, prefix = (36, "l") if large else (90, "c")
     cases = data.get("cases", [])
-    if data.get("status") != "complete" or len(cases) != 90:
-        raise ValueError("Only complete 90-case captures may be reported")
-    if {c["id"] for c in cases} != {f"c{i:03d}" for i in range(1, 91)}:
+    if data.get("status") != "complete" or len(cases) != count:
+        raise ValueError("Only complete captures may be reported")
+    if {c["id"] for c in cases} != {f"{prefix}{i:03d}" for i in range(1, count + 1)}:
         raise ValueError("Case IDs are missing or duplicated")
+    if large:
+        kinds = ("TONES", "COLOR_PATCHES", "MICRO_DETAIL", "LIGHTS", "NOISE", "MIXED")
+        expected = {(w, h, k, strength, warmth, ev) for w, h in ((4000, 3000), (6000, 4000))
+                    for k in kinds for strength, warmth, ev in ((0, 0, 0), (.5, 0, 0), (1, 100, 2))}
+        actual = {(c["rawWidth"], c["rawHeight"], c["kind"], c["strength"], c["warmth"], c["ev"]) for c in cases}
+        if actual != expected:
+            raise ValueError("Large-input matrix coverage differs")
     for case in cases:
         for mode in ("full", "half"):
             name = case[mode]
@@ -42,9 +52,11 @@ def report(source: Path, destination: Path, head: str) -> None:
         for case in cases:
             writer.writerow({**{f: case[f] for f in fields}, **{m: case["metrics"][m] for m in metrics}})
     lines = ["# FULL AHD / half 入力の GPU 後比較（合成・未採用）", "",
-             f"比較コード: `{head}`。90 条件完走。写真・実機データは含まない。", "",
-             "RAW は比較寸法の 2 倍（最大約 3.15MP）の合成 Bayer。12/24MP 実写の画質・速度の結論ではない。",
-             "既存 RGB golden のケース ID/編集値を共有する追加実験で、元 fixture の色や near-white 占有率そのものの再現ではない。",
+             f"比較コード: `{head}`。{count} 条件完走。写真・実機データは含まない。", "",
+             ("RAW は直接生成した 4000×3000 / 6000×4000 の合成 Bayer。実写画質・Pixel 速度の結論ではない。" if large else
+              "RAW は比較寸法の 2 倍（最大約 3.15MP）の合成 Bayer。12/24MP 実写の画質・速度の結論ではない。"),
+             ("36 条件の補足であり、既存 90 条件の代替ではない。identity ColorMatrix / neutral WB の camera-channel 刺激で、実写色・肌色・センサーノイズのモデルではない。" if large else
+              "既存 RGB golden のケース ID/編集値を共有する追加実験で、元 fixture の色や near-white 占有率そのものの再現ではない。"),
              "保存は原寸 AHD のまま、half 製品採用は未決定。数値は 8bit RGB 出力間の差。",
              "PSNR が空欄の場合は完全一致。全条件は [metrics.csv](metrics.csv)。", "",
              "MAE の大きい 3 条件、最大差の最大条件、最悪パターンと別種で最も差の大きい条件を掲載する（重複は省く）。", ""]

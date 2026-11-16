@@ -116,7 +116,7 @@ class PreviewHalfInputComparisonAndroidTest {
         } }
     }
 
-    private fun metrics(a: IntArray, b: IntArray): JSONObject {
+    internal fun metrics(a: IntArray, b: IntArray): JSONObject {
         var total = 0L; var squared = 0L; var maximum = 0; var changedPixels = 0L
         val histogram = IntArray(256)
         val shifts = intArrayOf(16, 8, 0)
