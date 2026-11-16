@@ -1,6 +1,10 @@
 package dev.cinematic.p0.rawcapture
 
 import android.content.Context
+import dev.cinematic.p0.saveprogress.SaveProgressStore
+import dev.cinematic.p0.saveprogress.SaveProgressSink
+import dev.cinematic.p0.saveprogress.SaveProgressPhase
+import dev.cinematic.p0.saveprogress.bestEffort
 import dev.cinematic.p0.gpu.DevelopEngine
 import dev.cinematic.p0.gpu.DevelopEngineSetting
 import android.net.Uri
@@ -277,10 +281,19 @@ internal object AndroidManualOriginalTrialSaves {
         private val app = context.applicationContext
         private val operation = AndroidRenderedJpegOperation.get(app, request.captureId, request.generation)
         private var timing: SaveTiming? = null // One admitted queue call; never shared across attempts.
+        val progress = SaveProgressStore()
+        private var progressSink: SaveProgressSink? = null
         fun beginTiming(publicationOnly: Boolean) {
+            bestEffort {
+                progressSink = progress.begin()
+                if (publicationOnly) progressSink?.phase(SaveProgressPhase.SAVING)
+            }
             timing = startSaveTiming(app, if (publicationOnly) SaveTimingKind.RECHECK else SaveTimingKind.SAVE)
         }
-        fun endTiming(outcome: SaveTimingOutcome) { timing?.finish(outcome); timing = null }
+        fun endTiming(outcome: SaveTimingOutcome) {
+            bestEffort { progress.finish(); progressSink = null }
+            timing?.finish(outcome); timing = null
+        }
         @Volatile private var attempt: Original24Attempt? = null
         private var outputCleanupPending = false
         private var selectedEngine: DevelopEngine? = null
@@ -295,7 +308,7 @@ internal object AndroidManualOriginalTrialSaves {
             MediaStoreJpegRows(app), recoveryResources, isCurrent)
         override val hasUnreleasedResources get() = attempt?.hasUnreleasedResources == true || outputCleanupPending || recoveryResources.hasOpenResources
         // The admitted coordinator owns the cancellation latch. Do not retain it across retries.
-        fun requestStop() { attempt?.requestStop() }
+        fun requestStop() { bestEffort { progress.finish() }; attempt?.requestStop() }
         override fun readPublication() = reconciliation.read()
         override val reconciliationFinding get() = reconciliation.lastFinding
         fun hasPublishedEvidence() = reconciliation.hasPublishedEvidence()
@@ -329,7 +342,7 @@ internal object AndroidManualOriginalTrialSaves {
             if (!directory.isDirectory && !directory.mkdirs()) throw IOException("Trial generation directory unavailable")
             // New producer attempts are GPU-only; saved-generation authority remains unchanged.
             val engine = Original24Attempt(app, request, io, File(directory, "original-work"),
-                trace = timing, saveTiming = timing, developEngine = selected).also { attempt = it }
+                trace = timing, saveTiming = timing, developEngine = selected, progress = progressSink).also { attempt = it }
             if (stop()) engine.requestStop()
             outputCleanupPending = true
             try {
@@ -357,6 +370,7 @@ internal object AndroidManualOriginalTrialSaves {
             return object : ManualOriginalTrialPublication {
                 override val hasUnreleasedResources get() = publisher.hasUnreleasedResources
                 override fun advance(stop: () -> Boolean) = try {
+                    bestEffort { progressSink?.phase(SaveProgressPhase.SAVING) }
                     timing?.pixels(render.request.output.width, render.request.output.height)
                     measured(timing, SaveTimingStage.PUBLICATION) { publisher.advance(stop) }
                 }
@@ -395,6 +409,8 @@ internal object AndroidManualOriginalTrialSaves {
     ) {
         val request get() = owner.request
         val state get() = owner.state
+        val progress get() = backend.progress.state
+        fun resetProgressPresentation() { bestEffort { backend.progress.begin() } }
         val appliedStrength get() = request.strength
         val appliedAdjustments get() = request.adjustments
         fun matches(source: SharedOriginalReference) = owner.matches(source)

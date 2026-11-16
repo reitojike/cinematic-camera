@@ -45,9 +45,11 @@ internal class ManualTrialJpegSaveOwner(
     private var retryCancellation = false
     private val exportWork = object : ForegroundExportWork {
         override val identity get() = handle
+        override val progress get() = handle.progress
         private var request: dev.cinematic.p0.rawcapture.AutoDevelopCoordinator.ForegroundExportRequest? = null
         override fun reserveForeground(conditions: dev.cinematic.p0.rawcapture.AutoDevelopConditions): Boolean {
             request = handle.reserveForegroundExport(conditions)
+            if (request != null) handle.resetProgressPresentation()
             return request != null
         }
         override val resourcesClosed get() = !handle.hasUnreleasedResources

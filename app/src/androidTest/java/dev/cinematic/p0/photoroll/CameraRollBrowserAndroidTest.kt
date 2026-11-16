@@ -234,7 +234,7 @@ class CameraRollBrowserAndroidTest {
         instrumentation.waitForIdleSync()
         assertEquals(1, cancels)
         await("通知を許可", true)
-        assertNull(find("JPEGを保存中です。アプリを離れても続きます。"))
+        assertNull(find("保存の準備中"))
         assertNull(find("選択した写真・動画だけにアクセスできます"))
         capture("message-failure-priority")
     }

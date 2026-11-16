@@ -112,7 +112,7 @@ class ForegroundExportOwnerTest {
             }, android.app.Instrumentation.ActivityResult(android.app.Activity.RESULT_OK,
                 android.content.Intent().setData(uri).addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)), true)
             scenario = ActivityScenario.launch(PhotoRollActivity::class.java)
-            click("外部DNGを取り込む")
+            click("取り込む")
             if (documentsUi) {
                 check(androidx.test.uiautomator.UiDevice.getInstance(instrumentation).currentPackageName == context.packageName)
                 pickerLaunchAttempted = true
@@ -226,7 +226,7 @@ class ForegroundExportOwnerTest {
             assertFalse(File(generation, "original-work").exists())
             assertEquals(beforeJpegs + 1, jpegCount())
             scenario.moveToState(Lifecycle.State.RESUMED)
-            action("保存したJPEGを照合して開く")
+            action("保存したJPEGを開く（開く前に照合します）")
             assertEquals(beforeJpegs + 1, jpegCount())
             DngContentVerifier.verify(requireNotNull(fingerprint), { requireNotNull(resolver.openInputStream(uri)) })
             DngContentVerifier.verify(requireNotNull(fingerprint), { requireNotNull(resolver.openInputStream(Uri.parse(copy.uri))) })
@@ -402,12 +402,32 @@ class ForegroundExportOwnerTest {
                 assertEquals(ManualOriginalTrialSavePhase.READY, f.handle.state.value.phase)
                 assertNull(f.journal().read())
                 assertNull(f.storage(CaptureJournalFile.MANUAL_REQUEST).read(ManualOriginalTrialRequestCodec.MAX_BYTES))
-                action("JPEGを保存") // Ready UI is not a publication receipt or an automatic retry.
+                // Cancellation before admission leaves the durable core READY, but the failed
+                // delivery is conservatively UNCONFIRMED in the existing presentation owner.
+                // Neither state authorizes automatic publication or a retry.
+                // Assert the main state message, not a badge that may be horizontally off-screen.
+                fun unconfirmed(node: AccessibilityNodeInfo?): Boolean = node != null &&
+                    ((node.isVisibleToUser && (node.text?.toString() == "保存できたか確認できません。もう一度確認してください。" ||
+                        node.contentDescription?.toString() == "保存できたか確認できません。もう一度確認してください。")) ||
+                        (0 until node.childCount).any { unconfirmed(node.getChild(it)) })
+                fun revealHeader(node: AccessibilityNodeInfo?): Boolean {
+                    if (node == null) return false
+                    if (node.className == "android.widget.ScrollView" &&
+                        node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) return true
+                    return (0 until node.childCount).any { revealHeader(node.getChild(it)) }
+                }
+                await {
+                    instrumentation.waitForIdleSync()
+                    val root = instrumentation.uiAutomation.rootInActiveWindow
+                    if (unconfirmed(root)) true else { revealHeader(root); false }
+                }
+                action("保存結果をもう一度確認")
+                assertFalse(f.handle.hasUnreleasedResources)
                 assertEquals(f.beforeJpegs, jpegCount())
             } else {
                 assertEquals(ManualOriginalTrialSavePhase.PUBLISHED, f.handle.state.value.phase)
                 scenario.moveToState(Lifecycle.State.RESUMED)
-                action("保存したJPEGを照合して開く")
+                action("保存したJPEGを開く（開く前に照合します）")
                 assertEquals(f.beforeJpegs + 1, jpegCount())
             }
             f.verifyOriginal()
