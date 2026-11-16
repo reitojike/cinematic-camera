@@ -164,4 +164,3 @@
 ## 20 現像：色温度の編集 / 短画面 360×500dp / 文字1.8倍
 
 ![現像：色温度の編集 / 短画面 360×500dp / 文字1.8倍：左が変更前、右が変更後](assets/pr-g-ui/20-short-500dp-font-1.8-develop-edit-temperature-top.png)
-
