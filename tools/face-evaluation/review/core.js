@@ -18,10 +18,16 @@
         if(data.timing_contract && (!['first-call','warm'].includes(r.phase) || (r.status==='SUCCESS' && (!Number.isFinite(r.adapter_ms) || r.adapter_ms<0)))) throw Error('Invalid timing contract');
         if (r.status !== 'SUCCESS') continue;
         if (!Number.isFinite(r.ms) || r.ms < 0 || !Array.isArray(r.boxes)) throw Error('Invalid result');
-        for (const b of r.boxes) if (!Array.isArray(b) || b.length !== 4 || !b.every(Number.isFinite) || b[0] < 0 || b[1] < 0 || b[2] <= 0 || b[3] <= 0 || b[0]+b[2] > s.width || b[1]+b[3] > s.height) throw Error('Invalid box');
+        for (const b of r.boxes) if (!Array.isArray(b) || b.length !== 4 || !b.every(Number.isFinite) || b[2] <= 0 || b[3] <= 0) throw Error('Invalid box');
       }
     }
     return data;
+  }
+  // Display only: keep detector coordinates and indices unchanged for human scoring.
+  function clipBox(b,width,height) {
+    const x=Math.max(0,Math.min(width,b[0])), y=Math.max(0,Math.min(height,b[1]));
+    const right=Math.max(0,Math.min(width,b[0]+b[2])), bottom=Math.max(0,Math.min(height,b[1]+b[3]));
+    return right>x && bottom>y ? [x,y,right-x,bottom-y] : null;
   }
   function label(result, value) {
     if (result.status !== 'SUCCESS' || !value || !Number.isInteger(value.missed) || value.missed < 0 || value.missed > 1000 || !Array.isArray(value.falseIndices) || new Set(value.falseIndices).size !== value.falseIndices.length || !value.falseIndices.every(i => Number.isInteger(i) && i >= 0 && i < result.boxes.length)) throw Error('Invalid human label');
@@ -44,7 +50,7 @@
       return {detector:d,scored,unscored,statuses,detected,missed,false_positive:falsePositive,timing_by_phase:data.timing_contract?Object.fromEntries(Object.entries(phases).map(([k,v])=>[k,{n:v.sdk.length,median_sdk_ms:median(v.sdk),median_adapter_ms:median(v.adapter)}])):undefined,median_ms:n ? (times[Math.floor((n-1)/2)]+times[Math.floor(n/2)])/2 : null};
     })};
   }
-  const api={detectors,validate,label,aggregate};
+  const api={detectors,validate,label,aggregate,clipBox};
   if(typeof module !== 'undefined') module.exports=api;
   else root.FaceReview=api;
 })(globalThis);

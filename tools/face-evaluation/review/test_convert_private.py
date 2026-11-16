@@ -42,6 +42,13 @@ class ConverterTest(unittest.TestCase):
         script="""const c=require('./core.js');let raw='';process.stdin.on('data',b=>raw+=b);process.stdin.on('end',()=>{const d=c.validate(JSON.parse(raw));const labels=Object.fromEntries(d.samples.map(s=>[s.id,Object.fromEntries(c.detectors.map(k=>[k,{missed:0,falseIndices:[]}]))]));const a=c.aggregate(d,labels);if(a.detectors.some(r=>r.scored!==1||r.median_ms!==null||r.timing_by_phase['first-call'].median_sdk_ms!==2))process.exit(2);if(JSON.stringify(a).includes(d.samples[0].id))process.exit(3);});"""
         subprocess.run(["node","-e",script],input=json.dumps(data),text=True,
                        cwd=Path(__file__).parent,check=True,capture_output=True)
+    def test_outside_boxes_preserved(self):
+        boxes=[[-1,0,2,1],[0,-1,1,2],[0,0,2,2],[10,10,1,1]]
+        self.rows[0]["boxes"]=boxes
+        data=self.run_convert()
+        self.assertEqual(data["samples"][0]["results"]["mlkit-fast"]["boxes"], boxes)
+        script="const c=require('./core.js');let raw='';process.stdin.on('data',b=>raw+=b);process.stdin.on('end',()=>{const d=c.validate(JSON.parse(raw));const a=c.aggregate(d,{[d.samples[0].id]:{'mlkit-fast':{missed:0,falseIndices:[3]}}});if(a.detectors[0].detected!==4||a.detectors[0].false_positive!==1)process.exit(2);});"
+        subprocess.run(["node","-e",script],input=json.dumps(data),text=True,cwd=Path(__file__).parent,check=True,capture_output=True)
     def test_non_object_row(self):
         self.rows[0]=[]
         with self.assertRaises(ValueError):self.run_convert()
@@ -86,7 +93,7 @@ class ConverterTest(unittest.TestCase):
         (self.root/(self.sample["id"]+".rgba")).write_bytes(bytes([0,0,0,255]))
         with self.assertRaises(ValueError):self.run_convert()
     def test_bad_geometry_and_time(self):
-        for key,value in [("boxes",[[0,0,2,1]]),("sdk_ns",-1),("adapter_ns",True)]:
+        for key,value in [("boxes",[[0,0,0,1]]),("sdk_ns",-1),("adapter_ns",True)]:
             before=copy.deepcopy(self.rows);self.rows[0][key]=value
             with self.assertRaises(ValueError):self.run_convert()
             self.rows=before

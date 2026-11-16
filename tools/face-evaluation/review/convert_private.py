@@ -58,8 +58,8 @@ def convert(bundle, results):
                 for b in boxes:
                     if (not isinstance(b, list) or len(b) != 4
                         or any(type(x) not in (int, float) or not math.isfinite(x) for x in b)
-                        or b[0] < 0 or b[1] < 0 or b[2] <= 0 or b[3] <= 0
-                        or b[0]+b[2] > s["width"] or b[1]+b[3] > s["height"]):
+                        or b[2] <= 0 or b[3] <= 0
+                        ):
                         raise ValueError("Invalid box geometry")
                 for field in ("sdk_ns", "adapter_ns"):
                     v = row.get(field)

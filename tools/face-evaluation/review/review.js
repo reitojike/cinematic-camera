@@ -18,7 +18,7 @@ async function render(){
   if(g!==generation)return;
   const pixels=new Uint8ClampedArray(b);for(let i=3;i<pixels.length;i+=4)if(pixels[i]!==255)throw Error('不透明な RGBA が必要です');
   const canvas=$('canvas');canvas.width=s.width;canvas.height=s.height;const ctx=canvas.getContext('2d');ctx.putImageData(new ImageData(pixels,s.width,s.height),0,0);ctx.strokeStyle='#00ff8c';ctx.fillStyle='#00ff8c';ctx.lineWidth=Math.max(2,s.width/400);ctx.font=`${Math.max(16,s.width/40)}px sans-serif`;
-  r.boxes.forEach((b,i)=>{ctx.strokeRect(...b);ctx.fillText(String(i+1),b[0],Math.max(20,b[1]));const label=document.createElement('label'),input=document.createElement('input');input.type='checkbox';input.value=i;input.checked=l?.falseIndices.includes(i)??false;label.append(input,document.createTextNode(` 枠 ${i+1} は誤検出`));$('boxes').append(label);});
+  r.boxes.forEach((b,i)=>{const visible=C.clipBox(b,s.width,s.height);if(visible){ctx.strokeRect(...visible);ctx.fillText(String(i+1),visible[0],Math.min(s.height,Math.max(20,visible[1])));}const label=document.createElement('label'),input=document.createElement('input');input.type='checkbox';input.value=i;input.checked=l?.falseIndices.includes(i)??false;label.append(input,document.createTextNode(` 枠 ${i+1} は誤検出`));$('boxes').append(label);});
   verified=true;$('save').disabled=false;$('clear').disabled=false;status(`${r.boxes.length} 個検出 / ${r.ms.toFixed(1)} ms / ${l?'判定済み':'未判定'}。同じ端末のブラウザー内に保存します。`);
  }catch(e){if(g===generation)status(e.message);}
 }
