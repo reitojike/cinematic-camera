@@ -5,6 +5,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.gpu.diag.GpuStageTap
 import dev.cinematic.p0.gpu.export.GpuExportRenderer
+import dev.cinematic.p0.gpu.export.GpuExportTimings
 import dev.cinematic.p0.raw.original.OriginalRaster
 import dev.cinematic.p0.raw.original.originalCheckpoint
 import org.junit.Assert.*
@@ -32,9 +33,7 @@ class GpuExportRendererAndroidTest {
         }
     }
 
-    private class Raster : OriginalRaster {
-        override val width = 257
-        override val height = 513
+    private class Raster(override val width: Int = 257, override val height: Int = 513) : OriginalRaster {
         override fun rows(stop: () -> Boolean, consume: (Int, FloatArray) -> Unit) {
             val row = FloatArray(width * 3)
             repeat(height) { y ->
@@ -80,6 +79,55 @@ class GpuExportRendererAndroidTest {
         return Output(output, result)
     }
 
+    /** Opt-in diagnostic only: no performance threshold and no real-photo/device inputs. */
+    @Test fun optInTimingCollectionOverheadSyntheticPairs() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("timingCost") == "true")
+        gpu { egl ->
+            val input = Raster(1600, 1200)
+            val gains = doubleArrayOf(1.02, 1.0, .98)
+            fun run(enabled: Boolean): Pair<Output, Long> {
+                val ledger = GpuMemoryLedger(GpuMemoryLedger.EXPORT_BUDGET)
+                val renderer = GpuExportRenderer(egl, ledger, 256)
+                val pixels = IntArray(input.width * input.height)
+                val timings = if (enabled) GpuExportTimings() else null
+                var rows = 0
+                // Renderer wall time includes synthetic input generation, GL work, readback,
+                // row copy and renderer cleanup. Excludes setup, assertions, drain and logging.
+                val start = System.nanoTime()
+                val result = renderer.render(input, .25, gains, .75, timings = timings) { y, row ->
+                    row.copyInto(pixels, y * input.width)
+                    rows++
+                }
+                val nanos = System.nanoTime() - start
+                assertEquals(input.height, rows)
+                assertReleased(ledger)
+                assertTrue(result.peakTextureBytes <= GpuMemoryLedger.EXPORT_BUDGET)
+                return Output(pixels, result) to nanos
+            }
+            fun equal(a: Output, b: Output) {
+                assertArrayEquals(a.pixels, b.pixels)
+                assertArrayEquals(a.result.toneQuantiles.map { it.toRawBits() }.toLongArray(),
+                    b.result.toneQuantiles.map { it.toRawBits() }.toLongArray())
+                assertEquals(a.result.nearWhiteCount, b.result.nearWhiteCount)
+                assertEquals(a.result.mistAutoStrength.toRawBits(), b.result.mistAutoStrength.toRawBits())
+                assertEquals(a.result.peakTextureBytes, b.result.peakTextureBytes)
+                assertEquals(a.result.boundaryNanos.keys, b.result.boundaryNanos.keys)
+            }
+            // One full warm-up per condition, same EGL/shader cache for all ten renders.
+            val reference = run(false).first
+            equal(reference, run(true).first)
+            repeat(4) { pair ->
+                val order = if (pair % 2 == 0) listOf(false, true) else listOf(true, false)
+                for ((position, enabled) in order.withIndex()) {
+                    val (output, nanos) = run(enabled)
+                    equal(reference, output)
+                    Log.i("GpuTimingOverhead", "synthetic_timing_overhead_v1 width=1600 height=1200 " +
+                        "band_rows=256 strength=0.75 pair=$pair position=$position " +
+                        "timings=${if (enabled) "on" else "off"} renderer_wall_nanos=$nanos")
+                }
+            }
+        }
+    }
     @Test fun pooledAndFreshStorageAreBitIdenticalIncludingTheShortLastBand() = gpu { egl ->
         for (bandRows in listOf(64, 256)) for (strength in listOf(0.0, .75)) {
             val fresh = render(egl, Raster(), bandRows, strength, reuseTextures = false)
@@ -110,7 +158,7 @@ class GpuExportRendererAndroidTest {
     @Test fun consumerFailureAndCancellationReleaseAllTexturesAndPermitSameRendererRetry() = gpu { egl ->
         val input = Raster()
         val ledger = GpuMemoryLedger(GpuMemoryLedger.EXPORT_BUDGET)
-        val renderer = GpuExportRenderer(egl, ledger, 64)
+        val renderer = GpuExportRenderer(egl, ledger, 256)
         val failure = IllegalStateException("synthetic row consumer failure")
         var delivered = 0
         assertSame(failure, assertThrows(IllegalStateException::class.java) {
@@ -150,7 +198,7 @@ class GpuExportRendererAndroidTest {
     @Test fun explicitSmallBudgetFailsWithoutLeakingPartialFields() = gpu { egl ->
         // B1 の小さな場は確保できるが、最初の 257x64 RGBA32F 帯は確保できない予算。
         val ledger = GpuMemoryLedger(128L * 1024)
-        val renderer = GpuExportRenderer(egl, ledger, 64)
+        val renderer = GpuExportRenderer(egl, ledger, 256)
         repeat(2) {
             var delivered = 0
             assertThrows(GpuMemoryBudgetException::class.java) {
@@ -166,7 +214,7 @@ class GpuExportRendererAndroidTest {
     @Test fun cancellationAtEveryBoundaryReleasesTexturesAndPermitsFinalRetry() = gpu { egl ->
         val input = Raster()
         val ledger = GpuMemoryLedger(GpuMemoryLedger.EXPORT_BUDGET)
-        val renderer = GpuExportRenderer(egl, ledger, 64)
+        val renderer = GpuExportRenderer(egl, ledger, 256)
         for (target in listOf("B1", "B1_QUANTILES", "B2", "B3", "B4", "B5", "FINAL")) {
             var stopped = false
             var targetBands = 0

@@ -46,6 +46,44 @@ class SaveTimingAndroidTest {
         runSyntheticSave(64, 48)
     }
 
+    /** Absolute diagnostic cost only; not a save benchmark or a Pixel performance claim. */
+    @Test fun captureEnvironmentAndBoundedBatchCost() {
+        check(InstrumentationRegistry.getArguments().getString("timingCost") == "true")
+        val directory = java.io.File(app.cacheDir, "synthetic-timing-cost-${UUID.randomUUID()}")
+        check(directory.mkdir())
+        val store = SaveTimingStore(directory)
+        val snapshots = mutableListOf<Long>()
+        val batches = mutableListOf<Long>()
+        try {
+            repeat(24) { iteration ->
+                val sampleStart = System.nanoTime()
+                val environment = AndroidSaveTimingEnvironment.snapshot(app)
+                val sampleNanos = System.nanoTime() - sampleStart
+                assertTrue(environment.thermal == null || environment.thermal in 0..6)
+                val batchStart = System.nanoTime()
+                val timing = SaveTiming.startObserved(22, SaveTimingKind.SAVE, store::appendAll,
+                    { AndroidSaveTimingEnvironment.snapshot(app) })!!
+                timing.pixels(1600, 1200)
+                val gpu = dev.cinematic.p0.gpu.export.GpuExportTimings()
+                listOf("B1", "B1_QUANTILES", "B2", "B3", "B4", "B5", "FINAL").forEach {
+                    gpu.finished(it, 1, true)
+                }
+                gpu.drain(timing, true)
+                timing.finish(SaveTimingOutcome.COMPLETED)
+                val batchNanos = System.nanoTime() - batchStart
+                if (iteration >= 4) { snapshots += sampleNanos; batches += batchNanos }
+            }
+            val stored = store.snapshot()
+            assertTrue(stored.size <= SaveTimingStore.MAX_BYTES)
+            assertEquals(SaveTimingStore.MAX_RECORDS, stored.toString(Charsets.US_ASCII).trimEnd().lines().size)
+            android.util.Log.i("SaveTimingCost", "snapshot_samples_ns=${snapshots.joinToString(",")}")
+            android.util.Log.i("SaveTimingCost", "environment_and_batch_samples_ns=${batches.joinToString(",")}")
+        } finally {
+            // Only this test-created private directory, never user media or production timing rows.
+            directory.deleteRecursively()
+        }
+    }
+
     /** Explicit opt-in; one warm-up and three measured saves, with identical synthetic input. */
     @Test fun captureSaveStageBenchmark() {
         check(InstrumentationRegistry.getArguments().getString("saveBenchmark") == "true")
