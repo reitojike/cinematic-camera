@@ -33,6 +33,7 @@ Issue #233 / PR #455。先行する最大約 3.15MP の 90 条件とは別の追
 
 DNGはRGGB、black64、white4095、identity ColorMatrix、neutral AsShotNeutral。
 これはLibRawの同じWB/色変換を通すための**合成camera-channel刺激**であり、校正済みカメラ、実写肌色、センサー/ISOノイズのモデルではない。
+初期90条件のNOISEは独立RGBの強い刺激で、今回のscalar RAW noiseとは分布・振幅が異なる。数値が小さくても「入力画素数や縮小率だけで誤差が減った」とは解釈しない。各同一DNG内のFULL/half対の差として読む。
 RAWサンプルは64〜4095に限定する。近傍相関のないnoiseや極端なRAW周期はstress条件で、一般の写真の誤差分布ではない。
 
 ## 所有・出力
