@@ -155,6 +155,19 @@ internal fun developOperationNotice(text: String, tone: CaptureChromeTone) = UiM
     tone, text, "develop.operation_notice",
 )
 
+/** Wording only: keep the fact, tone, priority and lifetime owned by the original notice. */
+internal fun developToastPresentation(message: UiMessage, compact: Boolean): UiMessage {
+    if (!compact || message.slot != MessageSlot.TOAST) return message
+    val short = when {
+        message.fact == "save.published" -> "JPEGを保存しました"
+        message.fact == "develop.operation_notice" &&
+            message.body == "調整設定をこの端末に保持しました。JPEGの保存とは別です。" -> "調整設定を保持しました"
+        // Unknown future notices must retain their meaning, not be silently truncated.
+        else -> return message
+    }
+    return message.copy(body = short)
+}
+
 /** Caption is presentation only: never grants edit/save permission or submits a render. */
 internal fun developCaption(comparing: Boolean, updating: Boolean): UiMessage {
     val label = if (comparing) "基準表示（撮影時WB・調整なし）" else "現像結果"

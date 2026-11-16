@@ -183,7 +183,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                 // image gestures. Its lifetime and priority remain owned by the existing messages.
                 productMessages?.toast?.let { toast ->
                     Box(Modifier.matchParentSize(), contentAlignment = Alignment.BottomCenter) {
-                        CaptureToast(toast)
+                        CaptureToast(developToastPresentation(toast, compact))
                     }
                 }
             }

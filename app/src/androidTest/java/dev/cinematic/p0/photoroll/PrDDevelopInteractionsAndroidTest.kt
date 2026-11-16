@@ -56,6 +56,7 @@ class PrDDevelopInteractionsAndroidTest {
         var cancelled by mutableStateOf(false)
         var banner by mutableStateOf(false)
         var toast by mutableStateOf(false)
+        var savedToast by mutableStateOf(false)
     }
 
     private fun withScreen(renderSynthetic: Boolean = false, block: (ActivityScenario<PhotoRollActivity>, Model) -> Unit) {
@@ -78,7 +79,8 @@ class PrDDevelopInteractionsAndroidTest {
                         val messages = developMessages(state, if (model.banner) listOf(UiMessage(
                             MessageSlot.BANNER, CaptureChromeTone.WARNING,
                             "別の写真のJPEGを保存中です。アプリを離れても続きます。", "fixture.other_save",
-                            primary = MessageControl(MessageAction.CANCEL_SAVE, "保存を取り消す"), inProgress = true)) else if (model.toast) listOf(developOperationNotice("調整設定をこの端末に保持しました。JPEGの保存とは別です。", CaptureChromeTone.ACCEPTED)) else emptyList())
+                            primary = MessageControl(MessageAction.CANCEL_SAVE, "保存を取り消す"), inProgress = true)) else if (model.toast) listOf(if (model.savedToast) UiMessage(MessageSlot.TOAST, CaptureChromeTone.ACCEPTED, "JPEGを保存しました。", "save.published")
+                            else developOperationNotice("調整設定をこの端末に保持しました。JPEGの保存とは別です。", CaptureChromeTone.ACCEPTED)) else emptyList())
                         PhotoRollDevelopView("SYNTHETIC.dng", PhotoRollPreviewMode.MANUAL_TRIAL,
                             model.editor, { model.editor }, state.phase, null, null, null, null, null,
                             true, state.savePhase, false, false, true,
@@ -265,10 +267,14 @@ class PrDDevelopInteractionsAndroidTest {
     @Test fun toastOverlayPreservesViewportAndPassesTouchesLargeText() = verifyToastOverlay(false, true)
     @Test fun toastOverlayPreservesViewportAndPassesTouchesCompactLargeText() = verifyToastOverlay(true, true)
 
-    private fun verifyToastOverlay(compact: Boolean, largeText: Boolean) = withScreen(renderSynthetic = true) { scenario, model ->
-        val label = "調整設定をこの端末に保持しました。JPEGの保存とは別です。"
-        val prefix = "toast-${if (compact) "compact" else "normal"}-${if (largeText) "large" else "default"}"
-        scenario.onActivity { model.compact = compact; model.largeText = largeText }
+    @Test fun savedToastOverlayPreservesViewportAndPassesTouchesCompact() = verifyToastOverlay(true, false, true)
+    @Test fun savedToastOverlayPreservesViewportAndPassesTouchesCompactLargeText() = verifyToastOverlay(true, true, true)
+
+    private fun verifyToastOverlay(compact: Boolean, largeText: Boolean, saved: Boolean = false) = withScreen(renderSynthetic = true) { scenario, model ->
+        val label = if (saved) "JPEGを保存しました" else if (compact || largeText) "調整設定を保持しました"
+            else "調整設定をこの端末に保持しました。JPEGの保存とは別です。"
+        val prefix = "toast-${if (saved) "saved-" else ""}${if (compact) "compact" else "normal"}-${if (largeText) "large" else "default"}"
+        scenario.onActivity { model.compact = compact; model.largeText = largeText; model.savedToast = saved }
         visible("現像結果")
         for (editing in listOf(false, true)) {
             scenario.onActivity { model.editor = if (editing) model.shown.begin(.01, true) else model.shown }
