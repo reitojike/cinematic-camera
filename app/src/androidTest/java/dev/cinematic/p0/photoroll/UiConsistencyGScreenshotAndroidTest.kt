@@ -168,7 +168,8 @@ class UiConsistencyGScreenshotAndroidTest {
                         val presentation = developSavePresentation(scene.state)
                         val saveNode = awaitNode(presentation.description)
                         reveal(saveNode)
-                        val visible = awaitNode(presentation.description)
+                        val visible = actionNode(awaitNode(presentation.description))
+                        writeTree(output, name)
                         val rect = Rect().also(visible::getBoundsInScreen)
                         assertTrue("Save action visible: $name", visible.isVisibleToUser)
                         assertTrue("Complete save action inside captured viewport: $name", bounds.contains(rect))
@@ -208,7 +209,7 @@ class UiConsistencyGScreenshotAndroidTest {
         val current = if (state.editing) editor.begin(.01, true) else editor
         PhotoRollDevelopView(if (scene.name == "develop-long-name") "SYNTHETIC_とても長いファイル名_ABCDEFGHIJKLMNOPQRSTUVWXYZ_1234567890.dng" else "SYNTHETIC.dng",
             PhotoRollPreviewMode.MANUAL_TRIAL, current, { current }, state.phase, null, null,
-            image.takeUnless { state.exportPaused }, null, null, !state.savingRecipe,
+            image.takeUnless { state.exportPaused }, image.takeUnless { state.exportPaused }, "基準表示（撮影時WB・調整なし）", !state.savingRecipe,
             state.savePhase, state.saving || state.savingRecipe, scene.saveEnabled, !state.saving && !state.savingRecipe,
             {}, {}, {}, {}, { _, _, _ -> }, {}, {}, {}, {},
             modifier = Modifier.fillMaxSize(), gpuReady = !state.exportPaused,
@@ -253,7 +254,14 @@ class UiConsistencyGScreenshotAndroidTest {
     }
     private fun nodes(): List<AccessibilityNodeInfo> {
         fixture.automation.clearCache()
-        return requireNotNull(fixture.fixtureRoot()).let { listOf(it) + descendants(it) }
+        return fixture.fixtureRoot()?.let { listOf(it) + descendants(it) } ?: emptyList()
+    }
+    // Android exposes the description as a child; state/enabled/hit area belong to its action parent.
+    // Observed identically on the baseline and PR-G; retain strict assertions on that owner.
+    private fun actionNode(node: AccessibilityNodeInfo): AccessibilityNodeInfo {
+        var current = node
+        while (!current.isClickable && current.stateDescription == null) current = current.parent ?: return current
+        return current
     }
     private fun awaitParameter(label: String): AccessibilityNodeInfo {
         repeat(15) {
@@ -298,6 +306,12 @@ class UiConsistencyGScreenshotAndroidTest {
         check(latch.await(5, TimeUnit.SECONDS)) { "Fixture layout timeout" }
         instrumentation.waitForIdleSync()
         SystemClock.sleep(80)
+    }
+    private fun writeTree(output: File, name: String) {
+        File(output, "$name-tree.txt").writeText(nodes().joinToString("\n") { node ->
+            val r = Rect().also(node::getBoundsInScreen)
+            "class=${node.className}; text=${node.text}; description=${node.contentDescription}; state=${node.stateDescription}; clickable=${node.isClickable}; enabled=${node.isEnabled}; visible=${node.isVisibleToUser}; bounds=$r; parentState=${node.parent?.stateDescription}"
+        })
     }
     private fun writeImage(output: File, name: String) {
         val full = fixture.captureSoftware()
