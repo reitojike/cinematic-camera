@@ -130,3 +130,23 @@ python evaluate.py --results <repo外の結果> --labels <repo外の人ラベル
 - 未取得: 実写精度、PC/Android出力一致、初回offline/IPC/通信、Pixel cold/warm、PSS/native/graphics、
   電力/熱、撮影/保存競合、mask被覆/背景漏れ、顔測光とguardの画作り。すべて未合格。
   Camera2撮影補助、製品接続、採用閾値、依存採用、写真送信、リリースは本人の後続判断。
+
+## Play 配信版の容量比較準備（2026-11-16）
+
+`mlkitplay`（別applicationId）を評価専用flavorとして追加。依存は公式指定の
+`play-services-mlkit-face-detection:17.1.0` とモデル可用性APIの
+`play-services-base:18.11.1`。bundled16.1.7/YuNet固定値、製品依存は変更しない。
+4flavorを同じverifyEvaluation/auditの対象とする。写真アクセス権限は追加しない。
+
+Play版は検出前にModuleInstallClient.areModulesAvailableでモデル存在を確認し、
+未取得ならNOT_RUN / MODEL_UNAVAILABLEを記録する。空検出成功へ変換しない。
+自動取得用manifest指定、installModules/deferredInstall呼出しは追加しない。
+SDK providerの利用診断通信は従前のML Kit許容範囲であり、無通信保証ではない。
+既存runnerはNOT_RUNで打切り、実行成功として報告しない。
+可用性確認はadapter/total区間に含み、SDK検出区間には含まない。
+
+[公式モデル可用性API](https://developers.google.com/android/guides/module-install-apis)と
+[顔検出公式ガイド](https://developers.google.com/ml-kit/vision/face-detection/android)を参照。
+初回モデル取得・オフライン動作・実機計測は未実施。
+ローカル判定UIとAndroid内部導線の準備は [review](review/README.md) と
+[Android導線設計](review/ANDROID_DESIGN.md) に記録する。

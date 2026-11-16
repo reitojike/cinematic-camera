@@ -39,6 +39,8 @@ public final class Measurement {
             result.put("status", "SUCCESS").put("boxes", serialized)
                 .put("sdk_ns", detector.sdkNs()).put("adapter_ns", end - call).put("total_ns", end - start)
                 .put("completed_elapsed_ns", end);
+        } catch (Detector.NotReadyException e) {
+            result.put("status", "NOT_RUN").put("reason", "MODEL_UNAVAILABLE");
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             result.put("status", "CANCELLED");

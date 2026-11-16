@@ -5,6 +5,8 @@ import java.util.List;
 
 /** Same upright, opaque sRGB ARGB_8888 bitmap; coordinates are unrounded input pixels. */
 public interface Detector extends AutoCloseable {
+    /** Evaluation not performed: optional model is not installed. */
+    final class NotReadyException extends Exception {}
     String id();
     List<float[]> detect(Bitmap input) throws Exception;
     /** Wall time inside completed SDK calls; includes async scheduling, not kernel-only time. */

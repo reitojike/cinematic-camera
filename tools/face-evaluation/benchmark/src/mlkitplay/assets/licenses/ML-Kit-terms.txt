@@ -1,0 +1,13 @@
+Evaluation only: com.google.android.gms:play-services-mlkit-face-detection:17.1.0
+The published POM identifies "ML Kit Terms of Service":
+https://developers.google.com/ml-kit/terms
+These terms incorporate Google's APIs Terms of Service.
+This reference is not a grant of rights and does not replace those terms.
+SDK/model terms must not be confused with the Apache license of website code samples.
+
+Data disclosure: https://developers.google.com/ml-kit/android-data-disclosure
+Play-delivered models do not imply absence of metrics, downloads or IPC behavior.
+Runtime evaluation and distribution remain on hold pending the documented gates.
+
+Third-party notices from resolved AAR/JAR artifacts are packaged separately by coordinate.
+An artifact with zero notice entries requires further license review before distribution.

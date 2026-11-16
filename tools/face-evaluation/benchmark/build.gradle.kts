@@ -19,6 +19,7 @@ android {
     productFlavors {
         create("baseline") { dimension = "detector"; applicationIdSuffix = ".baseline" }
         create("mlkit") { dimension = "detector"; applicationIdSuffix = ".mlkit" }
+        create("mlkitplay") { dimension = "detector"; applicationIdSuffix = ".mlkitplay" }
         create("yunet") { dimension = "detector"; applicationIdSuffix = ".yunet" }
     }
     compileOptions {
@@ -30,6 +31,8 @@ android {
 }
 dependencies {
     "mlkitImplementation"("com.google.mlkit:face-detection:16.1.7")
+    "mlkitplayImplementation"("com.google.android.gms:play-services-mlkit-face-detection:17.1.0")
+    "mlkitplayImplementation"("com.google.android.gms:play-services-base:18.11.1")
     "yunetImplementation"("org.opencv:opencv:4.13.0")
 }
 val stageModel = tasks.register("stageModel") {
@@ -50,12 +53,12 @@ tasks.configureEach {
     if (name.startsWith("mergeYunet") && name.endsWith("Assets")) dependsOn(stageModel)
 }
 tasks.register("verifyEvaluation") {
-    for (flavor in listOf("Baseline", "Mlkit", "Yunet")) {
+    for (flavor in listOf("Baseline", "Mlkit", "Mlkitplay", "Yunet")) {
         dependsOn("assemble${flavor}Debug", "assemble${flavor}DebugAndroidTest", "lint${flavor}Debug")
     }
 }
 // Preserve license files at AAR roots: Android packaging does not copy these into assets itself.
-for (flavor in listOf("baseline", "mlkit", "yunet")) {
+for (flavor in listOf("baseline", "mlkit", "mlkitplay", "yunet")) {
     val cap = flavor.replaceFirstChar { it.uppercaseChar() }
     val noticesDir = layout.buildDirectory.dir("notices/$flavor").get().asFile
     android.sourceSets.getByName(flavor).assets.srcDir(noticesDir)
