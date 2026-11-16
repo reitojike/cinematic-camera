@@ -232,7 +232,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                     PhotoRollSavePhase.CANCELLED -> "取り消した保存を同じ設定で再試行"; PhotoRollSavePhase.GPU_FAILED -> "同じ GPU 保存を再試行"; PhotoRollSavePhase.PUBLISHED -> "保存したJPEGを照合して開く"; PhotoRollSavePhase.UNCONFIRMED -> "同じ保存を再照合"; else -> "JPEGを保存" }
                     stateDescription = saveLabel
                     if (!saveEnabled) disabled() }.clickable(enabled = saveEnabled, role = Role.Button, onClick = save), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Box(Modifier.size(68.dp), contentAlignment = Alignment.Center) {
+                    Box(Modifier.size(67.dp), contentAlignment = Alignment.Center) {
                         Canvas(Modifier.fillMaxSize()) {
                             val dashed = savePending || savePhase == PhotoRollSavePhase.SAVING
                             drawCircle(saveColor, radius = size.minDimension / 2 - 2.dp.toPx(), style = Stroke(2.dp.toPx(), pathEffect =

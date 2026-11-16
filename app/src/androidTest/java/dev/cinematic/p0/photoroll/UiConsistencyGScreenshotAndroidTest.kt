@@ -92,6 +92,8 @@ class UiConsistencyGScreenshotAndroidTest {
                 .map { layout to it }
         }
         check(cases.isNotEmpty())
+        val manualHold = args.getString("uiGManualHoldSeconds")?.toInt() ?: 0
+        require(manualHold in 0..180 && (manualHold == 0 || cases.size == 1))
         val panelHeights = mutableMapOf<String, Float>()
         val image = syntheticImage()
         val source = SharedOriginalReference("content://fixture/ui-pr-g", OriginalFingerprint(100, "a".repeat(64)), OriginalGrant.USER_SELECTED)
@@ -175,9 +177,9 @@ class UiConsistencyGScreenshotAndroidTest {
                         assertTrue("Complete save action inside captured viewport: $name", bounds.contains(rect))
                         assertEquals("Existing save eligibility: $name", scene.saveEnabled, visible.isEnabled)
                         assertEquals("Save state remains available to accessibility", presentation.label, visible.stateDescription?.toString())
-                        assertTrue("Save hit width >=76dp: $name", rect.width() / density.get() >= 75f)
-                        assertTrue("Save hit height >=76dp: $name", rect.height() / density.get() >= 75f)
-                        assertTrue("Save action stays within 96dp row: $name", rect.height() / density.get() <= 97f)
+                        assertTrue("Save hit width >=76dp: $name", rect.width() / density.get() >= 75.99f)
+                        assertTrue("Save hit height >=76dp: $name", rect.height() / density.get() >= 75.99f)
+                        assertTrue("Save action stays within 96dp row: $name", rect.height() / density.get() <= 96.01f)
                         // Bounds of every visible save child must stay inside the merged hit area.
                         descendants(visible).filter { it.isVisibleToUser }.forEach { child ->
                             val childBounds = Rect().also(child::getBoundsInScreen)
@@ -199,6 +201,15 @@ class UiConsistencyGScreenshotAndroidTest {
                         writeImage(output, "$name-footer")
                     }
                     File(output, "$name-metrics.txt").writeText(evidence.toString())
+                    // Optional, bounded manual-review window. No injected actions or real owner callbacks.
+                    if (manualHold > 0) {
+                        File(output, "manual-ready.txt").writeText(name)
+                        repeat(manualHold) {
+                            writeTree(output, "manual-latest", activeWindow = true)
+                            if (fixture.fixtureRoot() != null) writeImage(output, "manual-latest-host")
+                            SystemClock.sleep(1000)
+                        }
+                    }
                 }
             }
         } finally { fixture.content = null; image.recycle() }
@@ -290,7 +301,7 @@ class UiConsistencyGScreenshotAndroidTest {
                 val r = Rect().also(match::getBoundsInScreen)
                 // Keep a margin for the complete action rather than its first visible pixel.
                 val root = Rect().also(requireNotNull(fixture.fixtureRoot())::getBoundsInScreen)
-                if (root.contains(r) && r.height() / density.get() >= 75f) return
+                if (root.contains(r) && r.height() / density.get() >= 75.99f) return
             }
             nodes().firstOrNull { it.isScrollable }?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
             settle()
@@ -307,8 +318,12 @@ class UiConsistencyGScreenshotAndroidTest {
         instrumentation.waitForIdleSync()
         SystemClock.sleep(80)
     }
-    private fun writeTree(output: File, name: String) {
-        File(output, "$name-tree.txt").writeText(nodes().joinToString("\n") { node ->
+    private fun writeTree(output: File, name: String, activeWindow: Boolean = false) {
+        fixture.automation.clearCache()
+        val tree = if (activeWindow) fixture.automation.rootInActiveWindow?.takeIf {
+            it.packageName == instrumentation.targetContext.packageName
+        }?.let { listOf(it) + descendants(it) } ?: emptyList() else nodes()
+        File(output, "$name-tree.txt").writeText("uptimeMs=${SystemClock.uptimeMillis()}\n" + tree.joinToString("\n") { node ->
             val r = Rect().also(node::getBoundsInScreen)
             "class=${node.className}; text=${node.text}; description=${node.contentDescription}; state=${node.stateDescription}; clickable=${node.isClickable}; enabled=${node.isEnabled}; visible=${node.isVisibleToUser}; bounds=$r; parentState=${node.parent?.stateDescription}"
         })
