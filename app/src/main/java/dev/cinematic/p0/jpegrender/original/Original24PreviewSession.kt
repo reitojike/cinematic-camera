@@ -1,5 +1,8 @@
 package dev.cinematic.p0.jpegrender.original
 
+import dev.cinematic.p0.metrics.GpuPreviewTiming
+import dev.cinematic.p0.metrics.GpuPreviewTimingStage
+import dev.cinematic.p0.metrics.previewMeasured
 import android.os.CancellationSignal
 import android.os.Looper
 import android.os.ParcelFileDescriptor
@@ -48,6 +51,7 @@ internal class Original24PreviewSession(
     private val beforeExactDecode: ((Int, CancellationSignal, () -> LinearSrgbImage) -> Unit)? = null,
     /** Anonymous stage observation for synthetic diagnostics; no new queue or native owner. */
     private val observeDecode: ((PreviewRasterMode, Boolean) -> Unit)? = null,
+    private val timing: GpuPreviewTiming? = null,
     private val openOriginal: () -> InputStream,
 ) : AutoCloseable {
     private val active = AtomicBoolean(false)
@@ -117,10 +121,10 @@ internal class Original24PreviewSession(
         ownsDirectory = true
         // Existing original-trial scratch reserve; no full-size Float RGB or JPEG is produced.
         if (scratchDirectory.usableSpace < 2L * 1024 * 1024 * 1024) throw IOException("Insufficient original preview workspace")
-        DngContentVerifier.copy(source.fingerprint, { io().input(openOriginal()) }, {
+        previewMeasured(timing, GpuPreviewTimingStage.SNAPSHOT) { DngContentVerifier.copy(source.fingerprint, { io().input(openOriginal()) }, {
             io().output(Files.newOutputStream(snapshotFile.toPath(), StandardOpenOption.CREATE_NEW,
                 StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS).also { ownsSnapshot = true })
-        }, stop)
+        }, stop) }
         sourceFd = ParcelFileDescriptor.open(snapshotFile, ParcelFileDescriptor.MODE_READ_ONLY)
         if (beforeExactDecode != null) {
             check(rasterMode == PreviewRasterMode.FULL) { "A guide may only precede exact FULL input" }
@@ -130,12 +134,13 @@ internal class Original24PreviewSession(
             val halfUsed = AtomicBoolean(false)
             var halfFailure: Throwable? = null
             try {
-                beforeExactDecode.invoke(requireNotNull(sourceFd).fd, signal) {
+                previewMeasured(timing, GpuPreviewTimingStage.GUIDE) { beforeExactDecode.invoke(requireNotNull(sourceFd).fd, signal) {
                     check(Thread.currentThread() === thread && borrowing.get() && halfUsed.compareAndSet(false, true)) {
                         "Half guide must run once synchronously on its snapshot owner"
                     }
                     try { decodeRaster(PreviewRasterMode.HALF_CANDIDATE, stop, selectSize) }
                     catch (error: Throwable) { halfFailure = error; throw error }
+                }
                 }
             } finally { borrowing.set(false) }
             // A caller cannot turn a failed native/cleanup attempt into permission to decode again.
@@ -161,14 +166,15 @@ internal class Original24PreviewSession(
         var failure: Throwable? = null
         try {
             observeDecode?.invoke(mode, true)
-            val metadata = JSONObject(originalNativeMemoryCall {
+            val exactTiming = timing.takeIf { mode == rasterMode }
+            val metadata = JSONObject(previewMeasured(exactTiming, GpuPreviewTimingStage.NATIVE_DECODE) { originalNativeMemoryCall {
                 val inputFd = requireNotNull(sourceFd).fd
                 val outputFd = requireNotNull(rasterFd).fd
                 when (mode) {
                     PreviewRasterMode.FULL -> NativeOriginalRaster.decode24(inputFd, outputFd, signal)
                     PreviewRasterMode.HALF_CANDIDATE -> NativeOriginalRaster.decodeHalfPreview(inputFd, outputFd, signal)
                 }
-            })
+            } })
             closeRasterDescriptor()
             originalCheckpoint(stop)
             // Source geometry remains full-resolution. Never weaken the full preflight contract
@@ -193,12 +199,14 @@ internal class Original24PreviewSession(
             val (reducedWidth, reducedHeight) = selectSize(width, height)
             if (reducedWidth < 4 || reducedHeight < 4) throw IOException("Original preview aspect is unsupported")
             resourceAdmission(Original24MemoryStage.BOUNDED_PREVIEW)
-            val reduced = OriginalFields.reduce(rows, reducedWidth, reducedHeight, 3, stop) { rgb, output ->
+            val reduced = previewMeasured(exactTiming, GpuPreviewTimingStage.BOX_REDUCE) { OriginalFields.reduce(rows, reducedWidth, reducedHeight, 3, stop) { rgb, output ->
                 rgb.copyInto(output)
-            }.reducedRgb()
+            }.reducedRgb() }
             // Bind the private native input and the current provider contents to the requested original.
-            DngContentVerifier.verify(source.fingerprint, { io().input(snapshotFile.inputStream()) }, stop)
-            verifyOriginal(stop)
+            previewMeasured(exactTiming, GpuPreviewTimingStage.VERIFY_AFTER) {
+                DngContentVerifier.verify(source.fingerprint, { io().input(snapshotFile.inputStream()) }, stop)
+                verifyOriginal(stop)
+            }
             releaseRaster()
             originalCheckpoint(stop)
             observeDecode?.invoke(mode, false)

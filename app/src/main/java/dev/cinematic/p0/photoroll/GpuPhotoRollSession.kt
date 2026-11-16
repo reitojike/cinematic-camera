@@ -19,6 +19,7 @@ internal class GpuPhotoRollSession(assets: AssetManager,
     private val runtime: GpuPreviewRuntime? = null,
     engineFactory: (EglContexts, GpuMemoryLedger) -> StageClearGpu = { egl, ledger -> DefaultStageClearGpu(egl, ledger) },
 ) {
+    @Volatile internal var openTiming: dev.cinematic.p0.metrics.GpuPreviewTiming? = null
     private val closed = AtomicBoolean()
     private val mutableFailure = MutableStateFlow<Throwable?>(null)
     val failure = mutableFailure.asStateFlow()
@@ -27,12 +28,16 @@ internal class GpuPhotoRollSession(assets: AssetManager,
     /** Optional local diagnostic observation; never carries pixels or changes frame readiness. */
     @Volatile internal var presentedForDiagnostics: (() -> Unit)? = null
     val renderer = GpuPreviewRenderer(assets,
-        onError = { if (!closed.get()) mutableFailure.value = it },
+        onError = {
+            openTiming?.finish(dev.cinematic.p0.metrics.GpuPreviewTimingOutcome.FAILED)
+            if (!closed.get()) mutableFailure.value = it
+        },
         engineFactory = engineFactory,
         recoverContextOnSubmit = false,
         sharedRuntime = runtime,
         onPresented = { params, display ->
             if (!closed.get() && !display.showBefore) {
+                openTiming?.presented()
                 mutablePresented.value = PhotoEditValues(params.strength,
                     params.adjustments.warmth, params.adjustments.exposureEv)
                 if (dev.cinematic.p0.BuildConfig.DEBUG) runCatching { presentedForDiagnostics?.invoke() }
@@ -49,6 +54,8 @@ internal class GpuPhotoRollSession(assets: AssetManager,
 
     private fun finish(reuse: Boolean) {
         if (closed.compareAndSet(false, true)) {
+            openTiming?.finish(dev.cinematic.p0.metrics.GpuPreviewTimingOutcome.CANCELLED)
+            openTiming = null
             mutablePresented.value = null
             if (reuse) renderer.retireForReuse() else renderer.close()
             GpuPhotoRollRetiredOwners.retain(renderer)

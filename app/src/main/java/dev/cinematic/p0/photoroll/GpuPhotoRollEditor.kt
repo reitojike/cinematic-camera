@@ -83,6 +83,8 @@ import kotlinx.coroutines.flow.StateFlow
         input = null; save = null; saveState = null; error = null; notice = null; metadataRestored = false
         editor = editor.suspendForLifecycle()
         if (session == null) return@LaunchedEffect
+        val timing = dev.cinematic.p0.metrics.startGpuPreviewTiming(context)
+        session.openTiming = timing
         val savedValues = PhotoEditValues(savedStrength, savedWarmth, savedExposure)
         val restore = !recipeLoaded
         val identity = savedIdentity
@@ -114,7 +116,7 @@ import kotlinx.coroutines.flow.StateFlow
                     loading = async(Dispatchers.IO) {
                         gpuPhotoRollInputResult {
                             renderer.openGpu(repository, Uri.parse(source), fromFiles, cancellation, deadline,
-                                { admitted.complete(GpuInputAdmissionResult(it)) }, guide = guideHandoff::offer) { original ->
+                                { admitted.complete(GpuInputAdmissionResult(it)) }, guide = guideHandoff::offer, timing = timing) { original ->
                                 if (restore) recipes.read(original.reference) ?: PhotoAdjustmentPolicy.defaults
                                 else {
                                     PhotoEditRestoration.requireMatches(original.reference, identity, contract)
@@ -162,12 +164,20 @@ import kotlinx.coroutines.flow.StateFlow
                     withContext(Dispatchers.IO) { GpuPhotoRollRetiredOwners.releaseBeforeOpen() }
                     return@coroutineScope
                 }
+                timing?.firstFrameStarted()
                 session.submit(loaded.values)
                 session.renderer.openPhoto(loaded.input)
             }
-        } catch (cancelled: CancellationException) { throw cancelled }
-        catch (failure: Exception) { currentCoroutineContext().ensureActive(); error = failure }
+        } catch (cancelled: CancellationException) {
+            timing?.finish(dev.cinematic.p0.metrics.GpuPreviewTimingOutcome.CANCELLED)
+            throw cancelled
+        } catch (failure: Exception) {
+            // The signal is also cancelled for failure cleanup; it is not the cause.
+            timing?.failed(failure)
+            currentCoroutineContext().ensureActive(); error = failure
+        }
         catch (failure: OutOfMemoryError) {
+            timing?.finish(dev.cinematic.p0.metrics.GpuPreviewTimingOutcome.FAILED)
             currentCoroutineContext().ensureActive()
             error = dev.cinematic.p0.jpegrender.original.Original24MemoryUnavailable(failure)
         }

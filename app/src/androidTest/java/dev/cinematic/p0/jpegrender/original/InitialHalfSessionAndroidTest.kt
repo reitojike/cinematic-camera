@@ -78,6 +78,31 @@ class InitialHalfSessionAndroidTest {
         }
     }
 
+    @Test fun inputStageTimingDoesNotChangePixelsOrOriginalAndDoesNotClaimPresentation() = fixture { file, root, source, geometry ->
+        val baseline = Original24PreviewSession(source, File(root, "timing-baseline"), {}, geometry) { file.inputStream() }
+            .use { it.loadGpuAsShotInput() }
+        var records = emptyList<dev.cinematic.p0.metrics.GpuPreviewTimingRecord>()
+        val timing = requireNotNull(dev.cinematic.p0.metrics.GpuPreviewTiming.start(22, { records = it }))
+        timing.pixels(geometry.outputWidth, geometry.outputHeight)
+        val measured = Original24PreviewSession(source, File(root, "timing-measured"), {}, geometry, timing = timing) {
+            file.inputStream()
+        }.use { session -> session.loadGpuAsShotInput().also { assertFalse(session.hasUnreleasedResources) } }
+        timing.finish(dev.cinematic.p0.metrics.GpuPreviewTimingOutcome.CANCELLED) // Input-only test, never presented.
+        assertArrayEquals(baseline.copyPixels(), measured.copyPixels(), 0f)
+        for (stage in listOf(dev.cinematic.p0.metrics.GpuPreviewTimingStage.SNAPSHOT,
+            dev.cinematic.p0.metrics.GpuPreviewTimingStage.NATIVE_DECODE,
+            dev.cinematic.p0.metrics.GpuPreviewTimingStage.BOX_REDUCE,
+            dev.cinematic.p0.metrics.GpuPreviewTimingStage.VERIFY_AFTER)) {
+            val record = records.single { it.stage == stage }
+            assertEquals(dev.cinematic.p0.metrics.GpuPreviewTimingOutcome.COMPLETED, record.outcome)
+            assertTrue(requireNotNull(record.nanos) >= 0)
+        }
+        assertEquals(dev.cinematic.p0.metrics.GpuPreviewTimingOutcome.NOT_REACHED,
+            records.single { it.stage == dev.cinematic.p0.metrics.GpuPreviewTimingStage.GPU_FIRST_FRAME }.outcome)
+        assertFalse(records.joinToString("") { it.line() }.contains(source.uri))
+        DngContentVerifier.verify(source.fingerprint, { file.inputStream() })
+    }
+
     @Test fun optionalSyntheticHalfCostProbeSeparatesGuideReadyAndExactDecodeStart() {
         assumeTrue(InstrumentationRegistry.getArguments().getString("initialHalfTiming") == "true")
         fixture(2048, 1536) { file, root, source, geometry ->

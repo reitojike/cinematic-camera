@@ -1,5 +1,8 @@
 package dev.cinematic.p0.photoroll
 
+import dev.cinematic.p0.metrics.GpuPreviewTiming
+import dev.cinematic.p0.metrics.GpuPreviewTimingStage
+import dev.cinematic.p0.metrics.previewMeasured
 import dev.cinematic.p0.BuildConfig
 import java.util.concurrent.atomic.AtomicReference
 import android.content.Context
@@ -48,7 +51,7 @@ internal object GpuPhotoRollInputs {
         uri: Uri, fromFiles: Boolean, maxSourceBytes: Long, cancellation: CancellationSignal,
         deadline: GpuInputRequestDeadline, admitted: (Throwable?) -> Unit,
         beforeExactDecode: ((PhotoRollOriginal, Original24PreflightGeometry, Int, CancellationSignal, () -> LinearSrgbImage) -> Unit)? = null,
-        stale: () -> Boolean): CompletableFuture<Input> {
+        timing: GpuPreviewTiming? = null, stale: () -> Boolean): CompletableFuture<Input> {
         val app = context.applicationContext
         // Capture the initial restore future, not a barrier enqueued after an active export.
         val startup = AndroidAutoDevelopQueue.startupCompletion(app)
@@ -65,15 +68,18 @@ internal object GpuPhotoRollInputs {
                 val token = deadline.tryAdmit {
                     DevelopExecution.tryStartGpuDiagnosticPreviewObserved(observations).also { decision = it }.attempt
                 } ?: throw GpuInputAdmissionRefused(decision.snapshot)
-                val owner = Owner(app, token, cancellation, stale).also { retained = it }
+                val owner = Owner(app, token, cancellation, stale, timing).also { retained = it }
                 var failure: Throwable? = null
                 try {
                     DevelopExecution.registerGpuPreviewStop(token, owner::stop)
                     cancellation.setOnCancelListener(owner::stop)
                     announced = true
                     admitted(null)
-                    val original = repository.check(uri, fromFiles, owner::stopped, maxSourceBytes, owner.readers)
-                    val geometry = owner.inspect(original.reference)
+                    val original = previewMeasured(timing, GpuPreviewTimingStage.CHECK_ORIGINAL) {
+                        repository.check(uri, fromFiles, owner::stopped, maxSourceBytes, owner.readers)
+                    }
+                    val geometry = previewMeasured(timing, GpuPreviewTimingStage.PREFLIGHT) { owner.inspect(original.reference) }
+                    timing?.pixels(geometry.outputWidth, geometry.outputHeight)
                     val image = owner.load(original, geometry, beforeExactDecode) { readers, stop ->
                         repository.verifyPreview(original, stop, readers)
                     }
@@ -102,7 +108,7 @@ internal object GpuPhotoRollInputs {
     }
 
     private class Owner(private val app: Context, private val token: AutoDevelopCoordinator.Attempt,
-        private val cancellation: CancellationSignal, private val stale: () -> Boolean) {
+        private val cancellation: CancellationSignal, private val stale: () -> Boolean, private val timing: GpuPreviewTiming?) {
         val readers = PhotoRollReadResources()
         private val preflightReaders = DngIoResources()
         private val signal = CancellationSignal()
@@ -147,7 +153,7 @@ internal object GpuPhotoRollInputs {
                     if (stopped()) throw DngVerificationStopped()
                     guide.invoke(original, geometry, fd, cancellation, half)
                     if (stopped()) throw DngVerificationStopped()
-                }) { this.original(source) }.also { session = it }
+                }, timing = timing) { this.original(source) }.also { session = it }
             if (stopped()) current.requestStop()
             return current.loadGpuAsShotInput(::stopped)
         }
