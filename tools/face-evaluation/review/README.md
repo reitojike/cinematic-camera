@@ -90,3 +90,39 @@ HTMLの「評価データJSON」で生成JSON、「RGBA」で元の同じ入力�
 これらはCLI/JSの試験であり、ブラウザー操作やAVD実走の代替ではない。
 
 独立静的レビューでblocking指摘なし。推奨された2枚のfirst-call/warm順序、行順逆転拒否、非object結果行の拒否を追加して回帰成功。
+
+## Windows ICC正規化（合成確認・実写未使用）
+
+`normalize_windows.ps1` は **Windows PowerShell 5.1** のWindows標準WIC/WPFを使う。
+追加Python画像ライブラリ、画像サービス、ネットワークは使わない。
+[Microsoft ColorConvertedBitmap](https://learn.microsoft.com/en-us/dotnet/api/system.windows.media.imaging.colorconvertedbitmap.-ctor)
+と[ColorContext](https://learn.microsoft.com/en-us/dotnet/api/system.windows.media.colorcontext)に従い、
+埋め込みICCから標準sRGBへ変換する。ICC無し/複数/変換不能は推測せず拒否。
+JPEG/PNG 1フレーム、128MiB以下・64MP以下、EXIF8方向を適用して最大4,000,000画素・8192辺へ縮小。
+Pbgra32を黒へ合成し、不透明RGBAを3方式共通の入力にする。Android native comparisonの
+ImageDecoderとは別の前処理なので、同一画素だと主張せず、結果を混ぜない。
+
+本人が選んだファイルだけを`SelectedFiles`へ渡す。スクリプト自身はライブラリを列挙しない。
+入力/出力は固定ローカルディスク・Git外、reparse/UNC/ネットワーク割当ドライブを拒否。
+OneDrive等の同期フォルダの非送信を自動保証するものではないため、実行前に非同期の私有フォルダと確認する。原本は読取専用、
+出力は新規ディレクトリのみ。ランダムIDと画素SHAを使用し原本名/URIをmanifestへ載せない。
+manifestは全件完了後だけ作る。失敗時は部分出力が残り得るため、その束を使用せずローカルで確認する。
+実行コードと.NET版を含む前処理revisionを固定し、別revisionの結果は比較表へ混ぜない。
+`SamePcApproved`は実際の本人許可を代替しない。
+
+```powershell
+# Windows PowerShell 5.1内。パスは本人が選択したGit外のローカルファイル。
+.\tools\face-evaluation\review\normalize_windows.ps1 -SelectedFiles @('<選択JPEG>') -OutputDirectory '<新しい私有入力束>' -SamePcApproved
+```
+
+合成試験: `powershell.exe -NoProfile -File tools/face-evaluation/review/test_normalize_windows.ps1`
+はsRGB恒等変換、Windows標準SWOP CMYKプロファイルからsRGBへの変換、8方向、縮小上限、
+ICC付き合成PNG読取、原本hash不変、ICC欠落拒否を確認した。実写のプロファイル・広色域RGBの
+色精度・JPEG EXIF全形式の網羅・PNG eXIf・全AVD/ブラウザー導線は別ゲートで未確認。
+追加でICC付きJPEGのEXIF6を実エンコードして読取り→2x3変換、CLI→private_manifest検証の接続も合成試験した。
+
+実写開始前の順序: (1)独立レビュー (2)製品担当から共有AVD空き枠を確保
+(3)合成入力を同じWindows内AVDの固定app-privateへ渡して3方式実行し正常終了確認
+(4)同じWindowsだけに結果を回収して変換 (5)ブラウザーで本人が選択/判定/再起動復元を確認。
+file URLを操作ツールが拒否する場合、別surface/localhostへの置換で迂回せず、その操作を未検証と報告する。
+ここまで成立してから本人指定の実写で少数枚→30〜50枚へ進む。Pixelへの転送/操作/配布は別の具体承認が必要。
