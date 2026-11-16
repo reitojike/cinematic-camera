@@ -142,7 +142,9 @@ internal class Original24Attempt(context: Context, private val request: Original
             try {
                 originalStage(trace, OriginalStage.BITMAP_PACK) {
                 // Retain before invoking the observer: a reporting failure must also recycle it.
-                val packed = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { bitmap = it }
+                val packed = originalStage(trace, OriginalStage.BITMAP_ALLOC) {
+                    Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { bitmap = it }
+                }
                 packed.setHasAlpha(false)
                 run {
                     val gpu = Original24GpuOutput(context.assets).also { gpuOutput = it }

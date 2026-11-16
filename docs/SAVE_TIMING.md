@@ -112,3 +112,39 @@ adb -s <authorized-device> exec-out content read --uri content://dev.cinematic.p
 標準出力をホスト側でファイルへ保存する。`run-as`、root、アプリのdebuggable化は不要。
 開いている保存を停止せずsnapshotを取得でき、取得失敗を保存失敗とみなさない。
 抽出は記録を消さない。実機での取得可否は、合成AVDの受入結果と区別して記録する。
+
+
+## 詳細内訳の追加（Issue #457、提案）
+
+既存の時間行は schema 1 の8列を維持する。開始・終了の環境行だけ schema 2 の10列で、
+stage は `ENVIRONMENT_START` / `ENVIRONMENT_END`、nanos は NA、末尾に visibility と thermal を追加する。
+visibility は `FOREGROUND` / `BACKGROUND` / `UNKNOWN`。Application.ActivityLifecycleCallbacks の
+started Activity 数が1以上なら前面、0なら背面とする。onPauseのみでは背面にしない。
+これは画面の可視状態であり foreground service の状態やプロセス優先度ではない。
+thermal は PowerManager.currentThermalStatus の0〜6、取得不能は NA。途中の最大値は取得しない。
+Activity名、端末情報、温度、写真、URIは記録しない。開始取得時間は ATTEMPT に含み、終了取得時間は含まない。
+
+既存 span の SOURCE_VERIFY_BEFORE / SOURCE_SNAPSHOT / DECODE_CLOSE / ANALYSIS_REDUCE /
+CONTROL_PREPARE / JPEG_INSPECT / SOURCE_VERIFY_AFTER / SCRATCH_CLEANUP を保存記録へ接続し、
+既存 Bitmap.createBitmap 呼び出しだけを BITMAP_ALLOC で囲む。処理順や画像計算は変更しない。
+これらは重なりや計測外の制御処理を含むため、差分が必ず0になる保証はない。
+
+B1 / B2 / B3 / B4 / B5 / FINAL ごとに以下を追加する。
+
+- INPUT_WAIT: GL側が入力帯の準備を待つwall時間。
+- INPUT_READ_CONVERT: reader の rows 全体から callback を引いた時間。読込みとRGB16→Float変換、開閉を含む。
+- INPUT_PACK: reader callback から空きbuffer待ちを引いた時間。RGB→RGBA詰め替え、検証、投入を含む。
+- UPLOAD: GL転送API呼出しのCPU wall時間。GPUでの転送完了時間とは異なる。
+- FENCE_WAIT: renderer と B4/B1_QUANTILES 内部の既存明示fence待ち。ドライバ内部の暗黙待ちは別項目にも残り得る。
+
+B1_QUANTILES_FENCE_WAIT、B1_QUANTILES_READBACK、B4_READBACK、FINAL_READBACK、FINAL_ROW_CONVERT、FINAL_ROW_CONSUME も記録する。
+GPUタイマー問い合わせ、新たなfence、glFinishは追加しない。reader とGLは並行するため単純加算禁止。
+readback APIに含まれる暗黙同期はREADBACK側に残る。not reached / skipped / unavailable と0を区別する。
+帯・行ごとの時計とメモリ集計のみで、ディスクI/Oは従来どおり終了後の一括書込み。
+
+記録上限1,024行・256KiBは変更しない。上記の15行/68回は旧形式の例であり、追加後の保持回数には使わない。
+既存N行、新規1回R行なら既存行を削らずに追加できる回数の目安は floor((1024-N)/R)。
+失敗・省略・再照合によりRは変わる。古いschema 1行は引き続き読める。
+
+公式API: [ActivityLifecycleCallbacks](https://developer.android.com/reference/android/app/Application.ActivityLifecycleCallbacks)、
+[PowerManager.getCurrentThermalStatus](https://developer.android.com/reference/android/os/PowerManager#getCurrentThermalStatus())。

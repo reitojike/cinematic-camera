@@ -85,10 +85,18 @@ class SaveTimingAndroidTest {
         val records = snapshot.lines().filter { SaveTimingRecord.valid(it) }
             .map { it.split('\t') }.filter { it[1] !in before }
         assertEquals(1, records.map { it[1] }.toSet().size)
-        assertEquals(15, records.size)
+        assertTrue(records.size >= 26)
+        assertTrue(records.size <= SaveTimingStore.MAX_RECORDS)
+        for (stage in listOf("ENVIRONMENT_START", "ENVIRONMENT_END")) {
+            val row = records.single { it[4] == stage }
+            assertEquals("2", row[0]); assertEquals(10, row.size)
+            assertTrue(row[8] in setOf("FOREGROUND", "BACKGROUND", "UNKNOWN"))
+            assertTrue(row[9] == "NA" || row[9].toInt() in 0..6)
+        }
         assertTrue(records.none { it[5] == "STARTED" })
         assertTrue(records.single { it[4] == "ATTEMPT" }[7] != "NA")
-        for (stage in listOf("NATIVE_DECODE", "B1", "B1_QUANTILES", "B2", "B3", "B4", "B5", "FINAL", "JPEG_ENCODE", "PUBLICATION")) {
+        for (stage in listOf("NATIVE_DECODE", "B1", "B1_QUANTILES", "B2", "B3", "B4", "B5", "FINAL", "JPEG_ENCODE", "PUBLICATION", "SOURCE_VERIFY_BEFORE", "SOURCE_SNAPSHOT", "DECODE_CLOSE",
+            "ANALYSIS_REDUCE", "CONTROL_PREPARE", "BITMAP_ALLOC", "JPEG_INSPECT", "SOURCE_VERIFY_AFTER", "SCRATCH_CLEANUP")) {
             assertTrue("Missing completed $stage", records.any { it[4] == stage && it[5] == "COMPLETED" && it[7] != "NA" })
         }
         assertTrue(records.any { it[4] == "ATTEMPT" && it[5] == "PUBLISHED" && it[6] == (width.toLong() * height).toString() })

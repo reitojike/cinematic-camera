@@ -5,6 +5,9 @@ import dev.cinematic.p0.gpu.ComputePass
 import dev.cinematic.p0.gpu.GpuFence
 import dev.cinematic.p0.gpu.GpuTexture
 import dev.cinematic.p0.gpu.TextureInput
+import dev.cinematic.p0.gpu.export.GpuExportDetail
+import dev.cinematic.p0.gpu.export.GpuExportWorkTimings
+import dev.cinematic.p0.gpu.export.gpuWork
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.ceil
@@ -62,7 +65,9 @@ internal object GpuAnalysis {
 
     /** #281: Glow 後の線形輝度が NEAR_WHITE を超える画素数を返す。 */
     @Suppress("UNUSED_PARAMETER")
-    fun nearWhiteCount(input: GpuTexture, width: Int, height: Int): Long {
+    @JvmOverloads
+    fun nearWhiteCount(input: GpuTexture, width: Int, height: Int,
+        timings: GpuExportWorkTimings? = null): Long {
         require(width == input.width && height == input.height && width > 0 && height > 0)
         require(input.format == GpuTexture.Format.RGBA32F)
         val egl = input.context
@@ -82,13 +87,16 @@ internal object GpuAnalysis {
                     GLES32.glUniform2i(location, width, height)
                 }, bindResources = { GLES32.glBindBufferBase(GLES32.GL_SHADER_STORAGE_BUFFER, 0, buffer[0]) },
                 memoryBarrier = GLES32.GL_SHADER_STORAGE_BARRIER_BIT or GLES32.GL_BUFFER_UPDATE_BARRIER_BIT))
-            GpuFence(egl).use { it.await() }
-            GLES32.glBindBuffer(GLES32.GL_SHADER_STORAGE_BUFFER, buffer[0])
-            val mapped = GLES32.glMapBufferRange(GLES32.GL_SHADER_STORAGE_BUFFER, 0, 4,
-                GLES32.GL_MAP_READ_BIT) as? ByteBuffer ?: error("Near-white counter read failed")
-            val count = try { mapped.order(ByteOrder.nativeOrder()).getInt(0).toLong() and 0xffffffffL }
-            finally { check(GLES32.glUnmapBuffer(GLES32.GL_SHADER_STORAGE_BUFFER)) { "Near-white counter became invalid" } }
-            egl.checkGl("read near-white scalar")
+            gpuWork(timings, GpuExportDetail.FENCE_WAIT) { GpuFence(egl).use { it.await() } }
+            val count = gpuWork(timings, GpuExportDetail.READBACK) {
+                GLES32.glBindBuffer(GLES32.GL_SHADER_STORAGE_BUFFER, buffer[0])
+                val mapped = GLES32.glMapBufferRange(GLES32.GL_SHADER_STORAGE_BUFFER, 0, 4,
+                    GLES32.GL_MAP_READ_BIT) as? ByteBuffer ?: error("Near-white counter read failed")
+                val value = try { mapped.order(ByteOrder.nativeOrder()).getInt(0).toLong() and 0xffffffffL }
+                finally { check(GLES32.glUnmapBuffer(GLES32.GL_SHADER_STORAGE_BUFFER)) { "Near-white counter became invalid" } }
+                egl.checkGl("read near-white scalar")
+                value
+            }
             check(count <= width.toLong() * height) { "Invalid near-white count" }
             return count
         } finally {
