@@ -7,6 +7,12 @@ plugins {
 val previewCompare = providers.gradleProperty("cinematicPreviewCompare").orNull == "true"
 
 // Host-only shader regression tests. Nothing is added to an APK or a normal test run.
+// Comparison-only RAW half guide. Release never enables this experimental fallback.
+val initialHalfGuide = providers.gradleProperty("initialHalfGuide").orNull == "true"
+// Side-by-side internal comparison only; never changes the normal/release application identity.
+val initialPreviewCompare = providers.gradleProperty("initialPreviewCompare").orNull == "true"
+require(!previewCompare || (!initialPreviewCompare && !initialHalfGuide)) { "Private AHD/PPG and initial-guide comparisons are separate builds" }
+
 val gpuMesa = providers.gradleProperty("cinematicGpuMesa").orNull == "true"
 
 // Draft opt-in: default debug builds require no signing inputs and remain unchanged.
@@ -30,7 +36,10 @@ android {
     }
     defaultConfig {
         applicationId = if (previewCompare) "dev.cinematic.p0.previewcompare" else "dev.cinematic.p0"
+        manifestPlaceholders["cinematicAppLabel"] = "Cinematic Camera Probe"
+        manifestPlaceholders["cinematicTestTarget"] = if (previewCompare) "dev.cinematic.p0.previewcompare" else "dev.cinematic.p0"
         buildConfigField("boolean", "EDITOR_PREVIEW_DIAGNOSTIC", "false")
+        buildConfigField("boolean", "INITIAL_HALF_GUIDE", "false")
         buildConfigField("boolean", "PRIVATE_PREVIEW_COMPARE", previewCompare.toString())
         externalNativeBuild.cmake.arguments += "-DCINEMATIC_PRIVATE_PREVIEW_COMPARE=${if (previewCompare) "ON" else "OFF"}"
         minSdk = 33
@@ -64,6 +73,15 @@ android {
         }
     }
     buildTypes {
+        getByName("debug") {
+            buildConfigField("boolean", "INITIAL_HALF_GUIDE", initialHalfGuide.toString())
+            if (initialPreviewCompare) {
+                applicationIdSuffix = ".initialpreviewcompare"
+                versionNameSuffix = if (initialHalfGuide) "-initial-compare-half" else "-initial-compare-exact"
+                manifestPlaceholders["cinematicAppLabel"] = "Cinematic Initial Compare"
+                manifestPlaceholders["cinematicTestTarget"] = "dev.cinematic.p0.initialpreviewcompare"
+            }
+        }
         getByName("release") {
             isDebuggable = false
             if (stableInternalSigning) signingConfig = signingConfigs.getByName("cinematicInternal")

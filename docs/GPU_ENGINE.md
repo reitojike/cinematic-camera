@@ -634,6 +634,7 @@ vec4 cs_resampleAxis(sampler2D s_input, sampler2D s_weights,
 - `GpuAnalysis.localToneQuantiles(input: GpuTexture, width: Int, height: Int): DoubleArray` は #280 が実装する。
   戻り値は2要素で、順番は p50、p92。
 - `GpuAnalysis.nearWhiteCount(input: GpuTexture, width: Int, height: Int): Long` は #281 が実装する。
+- 案C（Mist nearWhiteCount の CPU 同期待ち除去）は別の PR で扱う。出力が変わる場合は差分を示して本人が確認する。方針: [GPU内解析値の受け渡し](https://github.com/reitojike/cinematic-camera/issues/290#issuecomment-6872447429)・[Mistを優先する追加指示](https://github.com/reitojike/cinematic-camera/issues/290#issuecomment-6878656092)。
   両関数は PR1 では未実装として失敗させ、もっともらしい仮の数値を返さない。各担当は自分の関数の中身だけを変更する。
 - `assets/gpu/common/*` と `gpu/resample/*` は #279、`r7/*` は #280、`look/*` は #281・#282 の担当。
   共通関数が足りない場合は各自のフォルダに一時的に置き、#284 の統合で common へ移す。

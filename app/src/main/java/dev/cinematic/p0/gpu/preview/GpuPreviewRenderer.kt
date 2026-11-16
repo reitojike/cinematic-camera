@@ -230,6 +230,19 @@ internal class GpuPreviewRenderer(
         }
     }
 
+    private var presentationHeight = 0
+    /** Display-only top-aligned region in the unchanged native surface. */
+    fun setPresentationHeight(height: Int) {
+        if (height <= 0) return
+        post {
+            if (presentationHeight != height) {
+                presentationHeight = height
+                latest.invalidate()
+                schedule()
+            }
+        }
+    }
+
     fun resizeSurface(surface: Surface, width: Int, height: Int) {
         if (width <= 0 || height <= 0) return
         synchronized(enqueueLock) {
@@ -447,13 +460,19 @@ internal class GpuPreviewRenderer(
                 trace("window.create.end") { "windows=${liveWindows.get()}" }
             }
             context.makeCurrent(checkNotNull(window))
+            val visibleHeight = presentationHeight.takeIf { it > 0 }?.coerceAtMost(current.height) ?: current.height
+            val viewportY = current.height - visibleHeight
+            GLES32.glBindFramebuffer(GLES32.GL_FRAMEBUFFER, 0)
+            GLES32.glDisable(GLES32.GL_SCISSOR_TEST)
+            GLES32.glClearColor(0f, 0f, 0f, 1f)
+            GLES32.glClear(GLES32.GL_COLOR_BUFFER_BIT)
             val cpuStart = System.nanoTime()
             var decisions = GpuDecisions(0.0, 1.0)
             timer?.begin()
             try {
                 if (fullPhoto != null) {
                     decisions = checkNotNull(engine).renderPreview(fullPhoto, request.params,
-                        StageClearGpuPreviewTarget(checkNotNull(window), current.width, current.height, linearFiltering),
+                        StageClearGpuPreviewTarget(checkNotNull(window), current.width, visibleHeight, linearFiltering, viewportY),
                         request.display).decisions
                 } else {
                     val inputPhoto = checkNotNull(source)
@@ -462,7 +481,7 @@ internal class GpuPreviewRenderer(
                         draw.invoke(inputPhoto, request.params, result)
                         result
                     }
-                    present(context, image, current.width, current.height, request.display.rotationDegrees, linearFiltering = linearFiltering)
+                    present(context, image, current.width, visibleHeight, request.display.rotationDegrees, linearFiltering = linearFiltering, viewportY = viewportY)
                 }
             } catch (failure: Throwable) { timer?.cancelActive(); throw failure }
             timer?.end()
@@ -545,7 +564,7 @@ internal class GpuPreviewRenderer(
 
 /** Borrowed texture sampling state is restored even when drawing fails. */
 internal fun present(egl: EglContexts, image: GpuTexture, width: Int, height: Int, rotation: Int, target: GpuTexture? = null,
-    linearFiltering: Boolean = false) {
+    linearFiltering: Boolean = false, viewportY: Int = 0) {
     egl.requireCurrent()
     // GL_LINEAR on RGBA32F needs OES_texture_float_linear; core ES uses the same four-tap
     // interpolation in the display shader instead of raising the engine's minimum capabilities.
@@ -559,7 +578,8 @@ internal fun present(egl: EglContexts, image: GpuTexture, width: Int, height: In
         GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_MIN_FILTER, filtering)
         GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_MAG_FILTER, filtering)
         egl.passes().run(FragmentPass(egl.shaders().fragment("display/present.frag"), listOf(TextureInput("s_input", image, 0)), target,
-            GpuViewport(0, 0, width, height), uniforms = { id ->
+            GpuViewport(0, viewportY, width, height), uniforms = { id ->
+                GLES32.glUniform1f(egl.shaders().uniformLocation(id, "u_viewportY"), viewportY.toFloat())
                 GLES32.glUniform2f(egl.shaders().uniformLocation(id, "u_surfaceSize"), width.toFloat(), height.toFloat())
                 GLES32.glUniform1i(egl.shaders().uniformLocation(id, "u_rotation"), rotation)
                 GLES32.glUniform1i(egl.shaders().uniformLocation(id, "u_linearFiltering"), if (linearFiltering) 1 else 0)

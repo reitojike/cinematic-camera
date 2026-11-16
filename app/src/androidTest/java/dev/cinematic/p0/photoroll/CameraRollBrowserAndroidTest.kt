@@ -158,7 +158,7 @@ class CameraRollBrowserAndroidTest {
 
     @Test fun accessGuidancePreservesFullSelectedMixedNoneAndUnsupportedMeanings() = runFixture(Fixture(full)) { _, update, _ ->
         await(emptyText)
-        assertNull(find("アクセス許可・選び直す"))
+        assertNull(find("アクセスを許可"))
         assertNull(find(full.description))
         capture("full-empty")
         val cases = listOf(selected,
@@ -168,7 +168,7 @@ class CameraRollBrowserAndroidTest {
         for (access in cases) {
             update(Fixture(access))
             await(if (access == selected) "選択した写真・動画だけにアクセスできます" else access.description)
-            await(if (access.selected) "選び直す" else "アクセス許可・選び直す")
+            await(if (access.selected) "選び直す" else "アクセスを許可")
             await("設定")
             capture("access-${access.supported}-${access.images}-${access.videos}-${access.selected}")
         }

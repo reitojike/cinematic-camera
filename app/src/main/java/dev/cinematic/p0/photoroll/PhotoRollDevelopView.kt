@@ -62,6 +62,8 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
     apply: (PhotoEditInputToken) -> Unit, cancel: (PhotoEditInputToken) -> Unit, close: (PhotoEditInputToken) -> Unit,
     modifier: Modifier = Modifier, statusOverlay: @Composable () -> Unit = {}, fillImageWidth: Boolean = false, viewportModifier: Modifier = Modifier,
     gpuSession: GpuPhotoRollSession? = null, gpuReady: Boolean = false,
+    gpuPresentedValues: PhotoEditValues? = state.displayedValues,
+    initialGuide: InitialPreviewFrame? = null,
     gpuFailure: dev.cinematic.p0.gpu.GpuFailureHandling? = null,
     productMessages: ScreenMessages? = null, productFailureFallback: UiMessage? = null, productSave: DevelopSavePresentation? = null,
     onProductAction: (MessageAction) -> Unit = {}, memoryProblem: dev.cinematic.p0.UiMessage? = null, info: @Composable () -> Unit) {
@@ -75,6 +77,9 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
     val requested = session?.draft ?: state.requestedValues
     val unapplied = mode in setOf(PhotoRollPreviewMode.MANUAL_TRIAL, PhotoRollPreviewMode.STAGE_CLEAR,
         PhotoRollPreviewMode.PRIVATE_TRIAL) && state.displayedValues != requested
+    // A deliberately paused/failed preview is not an update in progress.
+    val captionUpdating = gpuSession != null && phase != PhotoRollPhase.BLOCKED &&
+        phase != PhotoRollPhase.PAUSED && gpuPresentedValues != requested
     val saveLabel = productSave?.label ?: developSaveLabel(mode, savePhase, savePending, session != null)
     val saveTone = productSave?.tone ?: when {
         savePending || savePhase == PhotoRollSavePhase.SAVING -> CaptureChromeTone.WARNING
@@ -87,6 +92,8 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
     BoxWithConstraints(modifier.fillMaxSize()) {
         // Expanded source details must not squeeze the editor or footer out of reach.
         val compact = captureNeedsFullScroll(maxWidth.value, maxHeight.value, LocalDensity.current.fontScale, 560f)
+        val problemInEmptyViewport = productMessages?.center?.slot == MessageSlot.PROBLEM &&
+            gpuSession == null && preview == null
         Column(Modifier.fillMaxSize().background(CaptureDesign.Ink).then(if (compact) Modifier.verticalScroll(rememberScrollState()) else Modifier)) {
             Row(Modifier.fillMaxWidth().heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = back, shape = RectangleShape, modifier = Modifier.semantics { contentDescription = "一覧へ戻る" }) { Text("‹") }
@@ -103,33 +110,46 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                     if (developShowsFaceWarning(mode)) StatusChip(CaptureStatusChip("face-warning", "顔保護なし", tone = CaptureChromeTone.WARNING),
                         style = StatusChipStyle.EDITOR_LABEL)
                 }
-                TextButton(onClick = { information = !information }, shape = RectangleShape,
+                if (productMessages != null) CaptureTextAction(
+                    MessageControl(MessageAction.OPEN_INFO, "ⓘ", description = "原本と現像について"),
+                    { information = !information })
+                else TextButton(onClick = { information = !information }, shape = RectangleShape,
                     modifier = Modifier.semantics { contentDescription = "原本情報と試験品質の注意" }) { Text("ⓘ") }
             }
             Box((if (compact) Modifier.fillMaxWidth().height(260.dp) else Modifier.fillMaxWidth().weight(1f))
                 .then(viewportModifier).semantics { contentDescription = "現像画像の表示領域" }, contentAlignment = Alignment.Center) {
                 val updating = phase in setOf(PhotoRollPhase.CHECKING, PhotoRollPhase.RENDERING, PhotoRollPhase.PAUSED)
                 if (gpuSession != null) GpuPhotoRollImage(gpuSession, requested, comparing && compareEnabled,
-                    compareEnabled, { comparing = it }, Modifier.fillMaxSize())
+                    compareEnabled, { comparing = it }, Modifier.fillMaxSize(), updating = captionUpdating, initialGuide = initialGuide, header = if (productMessages != null) { before ->
+                        Column(Modifier.fillMaxWidth()) {
+                            DevelopCaption(if (initialGuide != null) developCaption(false, false).copy(body = initialGuide.label)
+                                else developCaption(before, captionUpdating), Modifier.fillMaxWidth())
+                            productMessages.banner?.let { CaptureBanner(it, onProductAction, failureFallback = productFailureFallback) }
+                        }
+                    } else null)
                 else if (preview != null && phase != PhotoRollPhase.BLOCKED) PhotoRollComparisonImage(preview,
                     comparison.takeIf { compareEnabled }, foreground, "現像結果（表示用）", comparisonLabel,
                     Modifier.fillMaxSize(), comparing && compareEnabled, { comparing = it }, unapplied || updating,
                     fillImageWidth = fillImageWidth, stableCaption = true)
                 else if (productMessages == null && phase != PhotoRollPhase.BLOCKED) Text(if (updating) "画像を準備中…" else "原本の確認待ち", color = CaptureDesign.Muted)
                 if (productMessages != null) {
-                    Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
+                    if (gpuSession == null) Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()
+                        .then(if (compact && problemInEmptyViewport) Modifier.fillMaxHeight() else Modifier)) {
+                        DevelopCaption(developCaption(false, captionUpdating), Modifier.fillMaxWidth())
                         productMessages.banner?.let { CaptureBanner(it, onProductAction, failureFallback = productFailureFallback) }
-                        productMessages.inline.forEach { CaptureInlineNote(it, onProductAction) }
+                        if (compact && problemInEmptyViewport) Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                            productMessages.center?.let { CaptureProblem(it, onProductAction,
+                                Modifier.verticalScroll(rememberScrollState()), failureFallback = productFailureFallback) }
+                        }
                     }
-                    productMessages.center?.let {
-                        if (it.slot == MessageSlot.PROBLEM) CaptureProblem(it, onProductAction, Modifier.align(Alignment.Center), failureFallback = productFailureFallback)
+                    if (!compact) productMessages.center?.let {
+                        if (it.slot == MessageSlot.PROBLEM) CaptureProblem(it, onProductAction, Modifier.align(Alignment.Center).verticalScroll(rememberScrollState()), failureFallback = productFailureFallback)
                         else CaptureCenter(it, onProductAction, Modifier.align(Alignment.Center))
                     }
-                    productMessages.toast?.let { CaptureToast(it, Modifier.align(Alignment.BottomCenter)) }
                 } else Column(Modifier.align(Alignment.TopCenter).fillMaxWidth().background(CaptureDesign.Ink.copy(alpha = .9f))) {
                     statusOverlay()
                 }
-                Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().verticalScroll(rememberScrollState()).background(CaptureDesign.Ink.copy(alpha = .9f))
+                if (productMessages == null) Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().verticalScroll(rememberScrollState()).background(CaptureDesign.Scrim)
                     .pointerInput(Unit) { detectTapGestures(onTap = {}) }) {
                     if (productMessages == null) {
                     if (phase == PhotoRollPhase.BLOCKED && memoryProblem != null) {
@@ -160,13 +180,32 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                     }
                 }
             }
+            if (productMessages != null) {
+                // With no image, the problem belongs in the empty 260dp viewport; its actions can scroll.
+                if (compact && !problemInEmptyViewport) productMessages.center?.let {
+                    if (it.slot == MessageSlot.PROBLEM) CaptureProblem(it, onProductAction, failureFallback = productFailureFallback)
+                    else CaptureCenter(it, onProductAction)
+                }
+                productMessages.inline.forEach { CaptureInlineNote(it, onProductAction) }
+                // The completion notice must not resize the image when an editor closes.
+                // Measure its normal two-line content even while hidden (no accessibility node).
+                val toast = productMessages.toast
+                CaptureToast(toast ?: developOperationNotice(
+                    "調整設定をこの端末に保持しました。JPEGの保存とは別です。", CaptureChromeTone.ACCEPTED),
+                    if (toast == null) Modifier.alpha(0f).clearAndSetSemantics {} else Modifier)
+                if (session != null) key(parameter) {
+                    Box(Modifier.fillMaxWidth().semantics { contentDescription = "現像調整パネル" }) {
+                        TrialStrengthEditorPane(state, readState, parameter, foreground, phase, change, reset, apply, close)
+                    }
+                }
+            }
             Row(Modifier.fillMaxWidth().heightIn(min = 72.dp)) {
                 PhotoEditParameter.entries.forEach { key ->
                     val supported = mode in setOf(PhotoRollPreviewMode.MANUAL_TRIAL, PhotoRollPreviewMode.STAGE_CLEAR, PhotoRollPreviewMode.PRIVATE_TRIAL) && (key == PhotoEditParameter.STRENGTH || adjustments)
                     val value = when (key) { PhotoEditParameter.STRENGTH -> requested.strength; PhotoEditParameter.TEMPERATURE -> requested.temperature; PhotoEditParameter.BRIGHTNESS -> requested.brightness }
                     val displayed = state.displayedValues?.let { when (key) { PhotoEditParameter.STRENGTH -> it.strength; PhotoEditParameter.TEMPERATURE -> it.temperature; PhotoEditParameter.BRIGHTNESS -> it.brightness } }
                     val dirty = supported && value != displayed
-                    val keyEnabled = supported && foreground && (session != null || beginEnabled)
+                    val keyEnabled = initialGuide == null && supported && foreground && (session != null || beginEnabled)
                     TextButton(onClick = { parameter = key; if (session == null) begin() }, enabled = keyEnabled,
                         modifier = Modifier.weight(1f).heightIn(min = 72.dp).captureControlSurface(session != null && parameter == key)
                             .semantics { selected = session != null && parameter == key }, shape = RectangleShape, contentPadding = PaddingValues(4.dp),
@@ -174,9 +213,9 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(when (key) { PhotoEditParameter.STRENGTH -> "STRENGTH"; PhotoEditParameter.TEMPERATURE -> "色温度"; PhotoEditParameter.BRIGHTNESS -> "明るさ" }, style = CaptureDesign.Label)
                             Text(if (supported && value != null) editValueLabel(key, value) else "—", style = CaptureDesign.Value, color = if (!keyEnabled) CaptureDesign.Disabled else if (dirty) CaptureDesign.Amber else CaptureDesign.Text)
-                            Text(when { !supported -> "未対応"; dirty -> "指定 · 未反映"; key == PhotoEditParameter.TEMPERATURE -> "相対"; key == PhotoEditParameter.BRIGHTNESS -> "EV"; else -> "表示中" },
+                            Text(when { initialGuide != null -> " "; !supported -> "未対応"; dirty -> "指定 · 未反映"; key == PhotoEditParameter.TEMPERATURE -> "相対"; key == PhotoEditParameter.BRIGHTNESS -> "EV"; else -> "表示中" },
                                 style = CaptureDesign.Label, color = if (!keyEnabled) CaptureDesign.Disabled else if (dirty) CaptureDesign.Amber else CaptureDesign.Muted)
-                            Text(if (supported && dirty) displayed?.let { "表示中 ${editValueLabel(key, it)}" } ?: "表示中の値なし" else " ",
+                            Text(if (initialGuide == null && supported && dirty) displayed?.let { "表示中 ${editValueLabel(key, it)}" } ?: "表示中の値なし" else " ",
                                 style = CaptureDesign.Label, color = if (keyEnabled) CaptureDesign.Muted else CaptureDesign.Disabled)
                         }
                     }
@@ -216,6 +255,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
         onDismissRequest = { information = false }, onAction = { information = false },
     ) {
         Text(name, style = CaptureDesign.Body, color = CaptureDesign.Text)
+        Text("画像を長押ししている間だけ基準表示に切り替わります。", style = CaptureDesign.Body, color = CaptureDesign.Muted)
         info()
     }
     if (information && productMessages == null) AlertDialog(onDismissRequest = { information = false },

@@ -3,6 +3,7 @@
             Java_dev_cinematic_p0_raw_original_NativeOriginalRaster_decode24;
     Java_dev_cinematic_p0_raw_original_NativeOriginalRaster_decodeHalfPreview;
             Java_dev_cinematic_p0_raw_original_NativeOriginalRaster_preflight24;
+            Java_dev_cinematic_p0_raw_NativeEmbeddedJpeg_extractNative;
             Java_dev_cinematic_p0_jpegrender_original_NativePreviewQualityTest_decode;
     local: *;
 };

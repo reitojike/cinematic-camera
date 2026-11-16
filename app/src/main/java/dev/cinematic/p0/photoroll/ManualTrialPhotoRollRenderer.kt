@@ -75,20 +75,31 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
         val values: dev.cinematic.p0.photoedit.PhotoEditValues,
         val retainedSave: PhotoRollJpegSaveOwner?)
 
+    private val initialCache = InitialPreviewSavedCache()
+    fun clearInitialPreviewCache() = initialCache.clear()
+
     /** Called once per open/retry, on IO. The frame loop never reopens the original. */
     fun openGpu(repository: PhotoRollRepository, uri: Uri, fromFiles: Boolean,
         cancellation: CancellationSignal, deadline: dev.cinematic.p0.gpu.preview.GpuInputRequestDeadline,
         admitted: (Throwable?) -> Unit,
+        guide: ((InitialPreviewFrame) -> Unit)? = null,
         values: (PhotoRollOriginal) -> dev.cinematic.p0.photoedit.PhotoEditValues): GpuInput {
         check(developEngine == dev.cinematic.p0.gpu.DevelopEngine.GPU)
         val epoch = originalEpoch.get()
+        var selectedValues: dev.cinematic.p0.photoedit.PhotoEditValues? = null
+        val cacheGeneration = initialCache.generation()
         val loaded = awaitTrialPreview(GpuPhotoRollInputs.open(app, resources, repository, uri, fromFiles,
-            maxSourceBytes, cancellation, deadline, admitted) { epoch != originalEpoch.get() },
+            maxSourceBytes, cancellation, deadline, admitted, beforeExactDecode = if (guide == null) null else { original, geometry, fd, signal, half ->
+                val current = values(original).also { selectedValues = it }
+                InitialPreviewGuide.load(app, original, geometry, current, fd, signal,
+                    initialCache, cacheGeneration,
+                    if (dev.cinematic.p0.BuildConfig.DEBUG && dev.cinematic.p0.BuildConfig.INITIAL_HALF_GUIDE) half else null)?.let(guide)
+            }) { epoch != originalEpoch.get() },
             cancellation, awaitCancelledOwner = true)
         cancellation.throwIfCanceled()
         if (epoch != originalEpoch.get()) throw DngVerificationStopped()
         checkedOriginal = CheckedOriginal(loaded.original, fromFiles, epoch, repository)
-        return GpuInput(loaded.original, loaded.image, loaded.geometry, values(loaded.original),
+        return GpuInput(loaded.original, loaded.image, loaded.geometry, selectedValues ?: values(loaded.original),
             AndroidManualOriginalTrialSaves.knownPrepared(loaded.original.reference)?.let { ManualTrialJpegSaveOwner(it, resources) })
     }
 

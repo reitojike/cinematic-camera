@@ -44,6 +44,10 @@ internal class Original24PreviewSession(
     /** Optional provider-metadata fence supplied by the checked photo selection. Saves never use it. */
     private val checkPreviewSource: ((DngIoResources, () -> Boolean) -> Unit)? = null,
     private val rasterMode: PreviewRasterMode = PreviewRasterMode.FULL,
+    /** Synchronous borrowed snapshot; caller must not close/retain the FD or overlap native work. */
+    private val beforeExactDecode: ((Int, CancellationSignal, () -> LinearSrgbImage) -> Unit)? = null,
+    /** Anonymous stage observation for synthetic diagnostics; no new queue or native owner. */
+    private val observeDecode: ((PreviewRasterMode, Boolean) -> Unit)? = null,
     private val openOriginal: () -> InputStream,
 ) : AutoCloseable {
     private val active = AtomicBoolean(false)
@@ -117,52 +121,97 @@ internal class Original24PreviewSession(
             io().output(Files.newOutputStream(snapshotFile.toPath(), StandardOpenOption.CREATE_NEW,
                 StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS).also { ownsSnapshot = true })
         }, stop)
-        if (!rasterFile.createNewFile()) throw IOException("Original preview raster already exists")
-        ownsRaster = true
-        rasterFd = ParcelFileDescriptor.open(rasterFile, ParcelFileDescriptor.MODE_READ_WRITE)
         sourceFd = ParcelFileDescriptor.open(snapshotFile, ParcelFileDescriptor.MODE_READ_ONLY)
-        resourceAdmission(Original24MemoryStage.ORIGINAL_DECODE)
-        val metadata = JSONObject(originalNativeMemoryCall {
-            val inputFd = requireNotNull(sourceFd).fd
-            val outputFd = requireNotNull(rasterFd).fd
-            when (rasterMode) {
-                PreviewRasterMode.FULL -> NativeOriginalRaster.decode24(inputFd, outputFd, signal)
-                PreviewRasterMode.HALF_CANDIDATE -> NativeOriginalRaster.decodeHalfPreview(inputFd, outputFd, signal)
-            }
-        })
-        closeDescriptors()
+        if (beforeExactDecode != null) {
+            check(rasterMode == PreviewRasterMode.FULL) { "A guide may only precede exact FULL input" }
+            resourceAdmission(Original24MemoryStage.ORIGINAL_DECODE)
+            val thread = Thread.currentThread()
+            val borrowing = AtomicBoolean(true)
+            val halfUsed = AtomicBoolean(false)
+            var halfFailure: Throwable? = null
+            try {
+                beforeExactDecode.invoke(requireNotNull(sourceFd).fd, signal) {
+                    check(Thread.currentThread() === thread && borrowing.get() && halfUsed.compareAndSet(false, true)) {
+                        "Half guide must run once synchronously on its snapshot owner"
+                    }
+                    try { decodeRaster(PreviewRasterMode.HALF_CANDIDATE, stop, selectSize) }
+                    catch (error: Throwable) { halfFailure = error; throw error }
+                }
+            } finally { borrowing.set(false) }
+            // A caller cannot turn a failed native/cleanup attempt into permission to decode again.
+            halfFailure?.let { throw it }
+        }
         originalCheckpoint(stop)
-        // Source geometry remains full-resolution. Never weaken the full preflight contract
-        // by treating half output dimensions as the original's dimensions.
-        val sourceWidth = metadata.getInt("sourceWidth"); val sourceHeight = metadata.getInt("sourceHeight")
-        val orientation = metadata.getInt("orientation")
-        val geometry = Original24PreflightGeometry(metadata.getInt("rawWidth"), metadata.getInt("rawHeight"),
-            sourceWidth, sourceHeight, orientation,
-            if (orientation >= 5) sourceHeight else sourceWidth,
-            if (orientation >= 5) sourceWidth else sourceHeight, metadata.getInt("cropLeft"), metadata.getInt("cropTop"))
-        if (geometry != expectedGeometry) throw IOException("Original preview geometry differs from admitted preflight")
-        val width = if (rasterMode == PreviewRasterMode.FULL) geometry.outputWidth else (geometry.outputWidth + 1) / 2
-        val height = if (rasterMode == PreviewRasterMode.FULL) geometry.outputHeight else (geometry.outputHeight + 1) / 2
-        if (metadata.getInt("width") != width || metadata.getInt("height") != height ||
-            metadata.getInt("bits") != 16 || metadata.getInt("channels") != 3 || metadata.getInt("halfSize") != rasterMode.halfSize ||
-            metadata.getLong("pixelsWritten") != width.toLong() * height ||
-            metadata.getString("color") != "linear-sRGB-D65" ||
-            metadata.getString("scope") != rasterMode.scope ||
-            rasterFile.length() != width.toLong() * height * 6)
-            throw IOException("Original preview raster observations differ")
-        val rows = OriginalRasterFile(rasterFile, width, height, 2).also { raster = it }
-        val (reducedWidth, reducedHeight) = selectSize(width, height)
-        if (reducedWidth < 4 || reducedHeight < 4) throw IOException("Original preview aspect is unsupported")
-        resourceAdmission(Original24MemoryStage.BOUNDED_PREVIEW)
-        val reduced = OriginalFields.reduce(rows, reducedWidth, reducedHeight, 3, stop) { rgb, output ->
-            rgb.copyInto(output)
-        }.reducedRgb()
-        // Bind the private native input and the current provider contents to the requested original.
-        DngContentVerifier.verify(source.fingerprint, { io().input(snapshotFile.inputStream()) }, stop)
-        verifyOriginal(stop)
+        val reduced = decodeRaster(rasterMode, stop, selectSize)
         releaseTransient()
         originalCheckpoint(stop)
         return reduced
+    }
+
+    /** One raster at a time, borrowing the session's unchanged source FD. A half raster is fully
+     * released before FULL starts; a failed close retains this owner and aborts the session. */
+    private fun decodeRaster(mode: PreviewRasterMode, stop: () -> Boolean,
+        selectSize: (Int, Int) -> GpuPreviewInputSize.Size): LinearSrgbImage {
+        originalCheckpoint(stop)
+        check(!ownsRaster && rasterFd == null && raster == null)
+        resourceAdmission(Original24MemoryStage.ORIGINAL_DECODE)
+        if (!rasterFile.createNewFile()) throw IOException("Original preview raster already exists")
+        ownsRaster = true
+        rasterFd = ParcelFileDescriptor.open(rasterFile, ParcelFileDescriptor.MODE_READ_WRITE)
+        var failure: Throwable? = null
+        try {
+            observeDecode?.invoke(mode, true)
+            val metadata = JSONObject(originalNativeMemoryCall {
+                val inputFd = requireNotNull(sourceFd).fd
+                val outputFd = requireNotNull(rasterFd).fd
+                when (mode) {
+                    PreviewRasterMode.FULL -> NativeOriginalRaster.decode24(inputFd, outputFd, signal)
+                    PreviewRasterMode.HALF_CANDIDATE -> NativeOriginalRaster.decodeHalfPreview(inputFd, outputFd, signal)
+                }
+            })
+            closeRasterDescriptor()
+            originalCheckpoint(stop)
+            // Source geometry remains full-resolution. Never weaken the full preflight contract
+            // by treating half output dimensions as the original's dimensions.
+            val sourceWidth = metadata.getInt("sourceWidth"); val sourceHeight = metadata.getInt("sourceHeight")
+            val orientation = metadata.getInt("orientation")
+            val geometry = Original24PreflightGeometry(metadata.getInt("rawWidth"), metadata.getInt("rawHeight"),
+                sourceWidth, sourceHeight, orientation,
+                if (orientation >= 5) sourceHeight else sourceWidth,
+                if (orientation >= 5) sourceWidth else sourceHeight, metadata.getInt("cropLeft"), metadata.getInt("cropTop"))
+            if (geometry != expectedGeometry) throw IOException("Original preview geometry differs from admitted preflight")
+            val width = if (mode == PreviewRasterMode.FULL) geometry.outputWidth else (geometry.outputWidth + 1) / 2
+            val height = if (mode == PreviewRasterMode.FULL) geometry.outputHeight else (geometry.outputHeight + 1) / 2
+            if (metadata.getInt("width") != width || metadata.getInt("height") != height ||
+                metadata.getInt("bits") != 16 || metadata.getInt("channels") != 3 || metadata.getInt("halfSize") != mode.halfSize ||
+                metadata.getLong("pixelsWritten") != width.toLong() * height ||
+                metadata.getString("color") != "linear-sRGB-D65" ||
+                metadata.getString("scope") != mode.scope ||
+                rasterFile.length() != width.toLong() * height * 6)
+                throw IOException("Original preview raster observations differ")
+            val rows = OriginalRasterFile(rasterFile, width, height, 2).also { raster = it }
+            val (reducedWidth, reducedHeight) = selectSize(width, height)
+            if (reducedWidth < 4 || reducedHeight < 4) throw IOException("Original preview aspect is unsupported")
+            resourceAdmission(Original24MemoryStage.BOUNDED_PREVIEW)
+            val reduced = OriginalFields.reduce(rows, reducedWidth, reducedHeight, 3, stop) { rgb, output ->
+                rgb.copyInto(output)
+            }.reducedRgb()
+            // Bind the private native input and the current provider contents to the requested original.
+            DngContentVerifier.verify(source.fingerprint, { io().input(snapshotFile.inputStream()) }, stop)
+            verifyOriginal(stop)
+            releaseRaster()
+            originalCheckpoint(stop)
+            observeDecode?.invoke(mode, false)
+            return reduced
+        } catch (error: Throwable) { failure = error; throw error }
+        finally {
+            try { releaseRaster() }
+            catch (cleanup: Throwable) {
+                val primary = failure
+                if (primary == null) throw cleanup
+                if (primary !== cleanup) primary.addSuppressed(cleanup)
+            }
+        }
     }
 
     private fun io() = resources ?: DngIoResources().also { resources = it }
@@ -172,8 +221,26 @@ internal class Original24PreviewSession(
     private fun closeDescriptors() {
         var failure: Throwable? = null
         try { sourceFd?.close(); sourceFd = null } catch (error: Throwable) { failure = error }
-        try { rasterFd?.close(); rasterFd = null } catch (error: Throwable) {
+        try { closeRasterDescriptor() } catch (error: Throwable) {
             if (failure == null) failure = error else if (failure !== error) failure!!.addSuppressed(error)
+        }
+        failure?.let { throw it }
+    }
+
+    private fun closeRasterDescriptor() { rasterFd?.close(); rasterFd = null }
+
+    private fun releaseRaster() {
+        var failure: Throwable? = null
+        try { closeRasterDescriptor() } catch (error: Throwable) { failure = error }
+        try { raster?.closePending() } catch (error: Throwable) {
+            if (failure == null) failure = error else if (failure !== error) failure.addSuppressed(error)
+        }
+        if (rasterFd == null && raster?.hasPendingOwners != true) {
+            raster = null
+            try { if (ownsRaster) { Files.deleteIfExists(rasterFile.toPath()); ownsRaster = false } }
+            catch (error: Throwable) {
+                if (failure == null) failure = error else if (failure !== error) failure.addSuppressed(error)
+            }
         }
         failure?.let { throw it }
     }

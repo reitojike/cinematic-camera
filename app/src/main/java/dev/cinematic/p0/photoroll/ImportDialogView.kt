@@ -17,7 +17,7 @@ internal fun ImportDialogView(state: DngImportScreenState, preparationNotice: St
     CaptureDialog(
         MessageDialog("DNGを端末に取り込む", "DNGを共有フォルダへコピーしてから開きます。",
             close = MessageControl(MessageAction.CLOSE, "閉じる", !state.busy && !pickerPending),
-            confirm = MessageControl(MessageAction.CONFIRM, "DNGを選ぶ・選び直す",
+            confirm = MessageControl(MessageAction.CONFIRM, "DNGを選ぶ",
                 foreground && !state.busy && !pickerPending && !awaitingSelection)),
         onDismissRequest = { if (!state.busy && !pickerPending) close() },
         onAction = { when (it) { MessageAction.CLOSE -> close(); MessageAction.CONFIRM -> select(); else -> Unit } },
@@ -30,11 +30,11 @@ internal fun ImportDialogView(state: DngImportScreenState, preparationNotice: St
             "import.backup_explanation"), {})
         messages.inline.forEach { CaptureInlineNote(it, {}) }
         if (awaitingSelection && !state.busy) {
-            CaptureTextAction(MessageControl(MessageAction.CANCEL_SAVE, "取り込みを取り消す"), { cancelPreparation() })
+            CaptureTextAction(MessageControl(MessageAction.CANCEL_IMPORT, "取り込みを取り消す"), { cancelPreparation() })
         }
         if (state.busy) {
             LinearProgressIndicator(Modifier.fillMaxWidth(), color = CaptureDesign.Amber, trackColor = CaptureDesign.Line)
-            CaptureTextAction(MessageControl(MessageAction.CANCEL_SAVE, "取り込みを取り消す"),
+            CaptureTextAction(MessageControl(MessageAction.CANCEL_IMPORT, "取り込みを取り消す"),
                 { cancel() })
         }
         state.items.forEachIndexed { index, item ->
@@ -45,7 +45,7 @@ internal fun ImportDialogView(state: DngImportScreenState, preparationNotice: St
                         MessageControl(MessageAction.CONFIRM, if (item.ready) "編集へ" else "再開", foreground && !state.busy),
                         { resume(item.id) })
                     if (item.grantPending || !item.ready) CaptureTextAction(
-                        MessageControl(MessageAction.CANCEL_SAVE, if (item.grantPending) "権限を解放" else "取消", foreground && !state.busy),
+                        MessageControl(if (item.grantPending) MessageAction.RELEASE_GRANT else MessageAction.CANCEL_IMPORT, if (item.grantPending) "権限を解放" else "取消", foreground && !state.busy),
                         { cancelItem(item.id) })
                 }
             }

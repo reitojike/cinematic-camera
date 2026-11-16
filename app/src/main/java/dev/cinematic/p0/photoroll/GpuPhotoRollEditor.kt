@@ -41,7 +41,7 @@ import kotlinx.coroutines.flow.StateFlow
     var input by remember { mutableStateOf<ManualTrialPhotoRollRenderer.GpuInput?>(null) }
     var error by remember { mutableStateOf<Throwable?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
-    var noticeIsFailure by remember { mutableStateOf(true) }
+    var noticeTone by remember { mutableStateOf(CaptureChromeTone.FAILURE) }
     var savingRecipe by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
     var rechecking by remember { mutableStateOf(false) }
@@ -56,12 +56,21 @@ import kotlinx.coroutines.flow.StateFlow
         if (active && !exportPaused) createSession(context.assets) else null
     }
     val cancellation = remember(session) { CancellationSignal() }
+    var initialGuide by remember(session) { mutableStateOf<InitialPreviewFrame?>(null) }
+    var exactPresented by remember(session) { mutableStateOf(false) }
+    val guideHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
+    val guideHandoff = remember(session) { InitialPreviewHandoff(
+        post = { block -> guideHandler.post { block() } },
+        eligible = { !cancellation.isCanceled && session?.presented?.value == null },
+        publish = { initialGuide = it }) }
     DisposableEffect(session) {
-        onDispose { cancellation.cancel(); session?.close(); renderer.discardTransientInputs() }
+        onDispose { guideHandoff.close(); cancellation.cancel(); session?.close(); renderer.discardTransientInputs() }
     }
     // UI_HIDDEN and more severe trims release only this preview owner, never foreground export.
     LaunchedEffect(trimEpoch) {
         if (trimEpoch != observedTrim) {
+            renderer.clearInitialPreviewCache()
+            initialGuide = null
             observedTrim = trimEpoch
             if (foreground) trimBlocked = true
         }
@@ -70,6 +79,7 @@ import kotlinx.coroutines.flow.StateFlow
     LaunchedEffect(session) {
         // Background/trim must not discard the retained save or implicitly reopen its preview.
         if (exportPaused) { input = null; return@LaunchedEffect }
+        initialGuide = null
         input = null; save = null; saveState = null; error = null; notice = null; metadataRestored = false
         editor = editor.suspendForLifecycle()
         if (session == null) return@LaunchedEffect
@@ -104,7 +114,7 @@ import kotlinx.coroutines.flow.StateFlow
                     loading = async(Dispatchers.IO) {
                         gpuPhotoRollInputResult {
                             renderer.openGpu(repository, Uri.parse(source), fromFiles, cancellation, deadline,
-                                { admitted.complete(GpuInputAdmissionResult(it)) }) { original ->
+                                { admitted.complete(GpuInputAdmissionResult(it)) }, guide = guideHandoff::offer) { original ->
                                 if (restore) recipes.read(original.reference) ?: PhotoAdjustmentPolicy.defaults
                                 else {
                                     PhotoEditRestoration.requireMatches(original.reference, identity, contract)
@@ -169,6 +179,9 @@ import kotlinx.coroutines.flow.StateFlow
     }
     val ticket = editor.ticket
     LaunchedEffect(presented, ticket) {
+        if (presented != null && input?.values == presented) {
+            guideHandoff.close(); exactPresented = true; initialGuide = null
+        }
         editor = gpuPresentedEditor(editor, presented, error != null || failure != null)
     }
     // The image is already submitted above. A queued metadata read must not delay photo B's
@@ -248,8 +261,8 @@ import kotlinx.coroutines.flow.StateFlow
     LaunchedEffect(justPublished) {
         if (justPublished) { delay(4000); justPublished = false }
     }
-    LaunchedEffect(notice, noticeIsFailure) {
-        if (notice != null && !noticeIsFailure) { delay(4000); notice = null }
+    LaunchedEffect(notice, noticeTone) {
+        if (notice != null && noticeTone != CaptureChromeTone.FAILURE) { delay(4000); notice = null }
     }
     fun commit(next: TrialStrengthEditor) {
         editor = next
@@ -297,7 +310,7 @@ import kotlinx.coroutines.flow.StateFlow
                         save = next; saveState = next.snapshot
                         next.startForegroundSave(context)
                     } catch (cancelled: CancellationException) { throw cancelled }
-                    catch (failure: Exception) { noticeIsFailure = true; notice = "再書き出しの受付を確認できません。前回の記録を保留しています" }
+                    catch (failure: Exception) { noticeTone = CaptureChromeTone.FAILURE; notice = "再書き出しの受付を確認できません。前回の記録を保留しています" }
                     finally { saving = false }
                 }
     }
@@ -312,7 +325,7 @@ import kotlinx.coroutines.flow.StateFlow
                             ensureActive()
                             if (save === old) saveState = result
                         } catch (cancelled: CancellationException) { throw cancelled }
-                        catch (_: Exception) { noticeIsFailure = true; notice = "保存結果を確認できません。保留を維持します" }
+                        catch (_: Exception) { noticeTone = CaptureChromeTone.FAILURE; notice = "保存結果を確認できません。保留を維持します" }
                         finally { saving = false; rechecking = false }
                     }
     }
@@ -320,7 +333,8 @@ import kotlinx.coroutines.flow.StateFlow
         MessageDialog("前回の保存結果を確認できません",
             "保存先に JPEG がある可能性があります。保存し直す場合は、前回と同じ設定で別の JPEG を作ります。原本と前回の記録は保持します。",
             MessageControl(MessageAction.CLOSE, "今は保存しない", enabled = !saving),
-            MessageControl(MessageAction.CONFIRM, "重複の可能性はあるが保存し直す", enabled = foreground && !saving && !savingRecipe)),
+            MessageControl(MessageAction.CONFIRM, "重複の可能性はあるが保存し直す", enabled = foreground && !saving && !savingRecipe),
+            confirmationLast = true),
         onDismissRequest = { if (!saving) recoveryChoices = false },
         onAction = { action -> when (action) {
             MessageAction.CONFIRM -> confirmRecovery()
@@ -356,7 +370,7 @@ import kotlinx.coroutines.flow.StateFlow
                         if (result.phase == PhotoRollSavePhase.PUBLISHED && result.uri != null) try {
                             context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(Uri.parse(result.uri), "image/jpeg")
                                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
-                        } catch (_: Exception) { noticeIsFailure = true; notice = "保存したJPEGを開けませんでした。対応する写真アプリを確認してください" }
+                        } catch (_: Exception) { noticeTone = CaptureChromeTone.FAILURE; notice = "保存したJPEGを開けませんでした。対応する写真アプリを確認してください" }
                     }
                 } catch (cancelled: CancellationException) { throw cancelled }
                 catch (failure: Exception) { error = failure }
@@ -364,6 +378,8 @@ import kotlinx.coroutines.flow.StateFlow
             }
         }
     val retryAction = { if (foreground && !savingRecipe && !saving) {
+            renderer.clearInitialPreviewCache()
+            initialGuide = null
             if (problem is dev.cinematic.p0.jpegrender.original.Original24MemoryUnavailable) {
                 try {
                     renderer.releaseUnusedMemoryForRetry()
@@ -392,6 +408,7 @@ import kotlinx.coroutines.flow.StateFlow
         phase = phase, savePhase = saveState?.phase, exportPaused = exportPaused,
         saving = saving, savingRecipe = savingRecipe, editing = editor.session != null, foreground = foreground,
         memoryProblem = memoryProblem, gpuFailure = gpuFailure, message = problemMessage,
+        sourceInvalid = gpuPhotoRollSourceInvalid(problem),
         saveFailureMessage = saveState?.gpuFailure?.description,
         canLeave = !savingRecipe,
         canResumePreview = foreground && !saving && !savingRecipe && gpuSaveCanResumePreview(saveState?.phase),
@@ -399,9 +416,7 @@ import kotlinx.coroutines.flow.StateFlow
         retryEnabled = foreground && !saving && !savingRecipe, rechecking = rechecking, justPublished = justPublished,
     )
     val noticeMessage = notice?.let {
-        UiMessage(if (noticeIsFailure) MessageSlot.BANNER else MessageSlot.TOAST,
-            if (noticeIsFailure) CaptureChromeTone.FAILURE else CaptureChromeTone.NORMAL,
-            it, "develop.operation_notice")
+        developOperationNotice(it, noticeTone)
     }
     val productMessages = developMessages(presentationState,
         foregroundSaveMessages(foregroundMessageBinding.state, activeOnly = true) + listOfNotNull(noticeMessage))
@@ -446,14 +461,16 @@ import kotlinx.coroutines.flow.StateFlow
                 try {
                     withContext(NonCancellable + Dispatchers.IO) { write.get() }
                     if (editor.accepts(current)) {
-                        editor = next; noticeIsFailure = false; notice = "調整設定をこの端末に保持しました。JPEGの保存とは別です"
+                        editor = next; noticeTone = CaptureChromeTone.ACCEPTED; notice = "調整設定をこの端末に保持しました。JPEGの保存とは別です。"
                     }
                 } catch (cancelled: CancellationException) { throw cancelled }
-                catch (_: Exception) { noticeIsFailure = true; notice = "調整設定の保持を確認できません。閉じる操作を再試行してください" }
+                catch (_: Exception) { noticeTone = CaptureChromeTone.FAILURE; notice = "調整設定の保持を確認できません。閉じる操作を再試行してください" }
                 finally { savingRecipe = false }
             }
         },
         gpuSession = session.takeUnless { exportPaused }, gpuReady = ready && !exportPaused, gpuFailure = gpuFailure,
+        gpuPresentedValues = presented,
+        initialGuide = initialGuide.takeIf { active && !exportPaused && problem == null && !exactPresented && presented == null },
         modifier = modifier,
         info = { Text("顔保護には対応していません。色は暫定で、24MP 以下の対応 DNG のみ読み込めます。",
             style = CaptureDesign.Body, color = CaptureDesign.Muted) })

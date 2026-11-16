@@ -7,6 +7,7 @@ precision highp isampler2D;
 #include "common/display.glsl"
 uniform sampler2D s_input;
 uniform vec2 u_surfaceSize;
+uniform float u_viewportY;
 uniform int u_rotation;
 uniform bool u_linearFiltering;
 layout(location = 0) out vec4 o_color;
@@ -29,7 +30,7 @@ void main() {
     vec2 rotatedSize = (u_rotation == 90 || u_rotation == 270) ? imageSize.yx : imageSize;
     vec2 fittedSize = rotatedSize * min(u_surfaceSize.x / rotatedSize.x, u_surfaceSize.y / rotatedSize.y);
     // GL surface origin is bottom-left, input row zero is top-left.
-    vec2 topLeft = vec2(gl_FragCoord.x, u_surfaceSize.y - gl_FragCoord.y);
+    vec2 topLeft = vec2(gl_FragCoord.x, u_surfaceSize.y - (gl_FragCoord.y - u_viewportY));
     vec2 uv = (topLeft - (u_surfaceSize - fittedSize) * 0.5) / fittedSize;
     if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
         o_color = vec4(0.0, 0.0, 0.0, 1.0);

@@ -5,8 +5,47 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DevelopMessagesTest {
+    @Test fun captionHasShortLabelAndOnlyPendingValuesUseWarning() {
+        for (before in listOf(false, true)) for (pending in listOf(false, true)) {
+            val caption = developCaption(before, pending)
+            val label = if (before) "基準表示（撮影時WB・調整なし）" else "現像結果"
+            assertEquals(MessageSlot.CAPTION, caption.slot)
+            assertEquals(if (pending) "$label · 更新中" else label, caption.body)
+            assertEquals(if (pending) CaptureChromeTone.WARNING else CaptureChromeTone.NORMAL, caption.tone)
+            assertNull(caption.primary)
+            assertNull(caption.secondary)
+        }
+    }
+
     private fun state(phase: PhotoRollSavePhase? = PhotoRollSavePhase.READY) =
         DevelopMessageState(PhotoRollPhase.DISPLAYED, savePhase = phase)
+
+    @Test fun sourceFailureUsesOnlyExistingBackActionAndEligibility() {
+        for (canLeave in listOf(false, true)) {
+            val result = developMessages(DevelopMessageState(PhotoRollPhase.BLOCKED,
+                sourceInvalid = true, canLeave = canLeave, retryEnabled = true,
+                message = "原本の内容が変わりました。Filesから選び直してください。"))
+            val card = requireNotNull(result.center)
+            assertEquals("原本を読み込めません", card.title)
+            assertEquals(MessageAction.BACK_TO_LIST, card.primary?.action)
+            assertEquals(canLeave, card.primary?.enabled)
+            assertNull(card.secondary)
+            assertFalse(card.primary?.action == MessageAction.RETRY)
+        }
+        assertEquals(MessageAction.RETRY, developMessages(DevelopMessageState(PhotoRollPhase.BLOCKED,
+            retryEnabled = true)).center?.primary?.action)
+    }
+
+    @Test fun operationNoticesUseExplicitToneAndRecoveryIsNotEmphasized() {
+        val accepted = developOperationNotice("調整設定をこの端末に保持しました。JPEGの保存とは別です。", CaptureChromeTone.ACCEPTED)
+        assertEquals(MessageSlot.TOAST, accepted.slot)
+        assertEquals(CaptureChromeTone.ACCEPTED, accepted.tone)
+        assertEquals(CaptureChromeTone.NORMAL, developOperationNotice("補足", CaptureChromeTone.NORMAL).tone)
+        assertEquals(MessageSlot.BANNER, developOperationNotice("失敗", CaptureChromeTone.FAILURE).slot)
+        val recovery = developMessages(state(PhotoRollSavePhase.UNCONFIRMED).copy(canRecover = true)).banner?.primary
+        assertEquals("保存結果を確認", recovery?.label)
+        assertFalse(requireNotNull(recovery).emphasis)
+    }
 
     @Test fun allSavePhasesHaveDistinctProductPresentation() {
         val labels = mapOf(
@@ -33,6 +72,8 @@ class DevelopMessagesTest {
         val result = developMessages(state(PhotoRollSavePhase.SAVING).copy(exportPaused = true), listOf(foreground))
         assertEquals("保存中 · プレビューを止めています", result.center?.body)
         assertEquals("preview.export_paused", result.center?.fact)
+        assertEquals(CaptureChromeTone.WARNING, result.center?.tone)
+        assertNull("Do not offer resume while JPEG is being saved", result.center?.primary)
         assertEquals("save.foreground_progress", result.banner?.fact)
         assertEquals(MessageAction.CANCEL_SAVE, result.banner?.primary?.action)
     }

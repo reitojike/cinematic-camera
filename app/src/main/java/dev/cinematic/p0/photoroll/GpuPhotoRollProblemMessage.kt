@@ -17,8 +17,8 @@ internal fun gpuPhotoRollProblemMessage(problem: Throwable?, notice: String? = n
                 "OSがメモリ不足と判断しているため現像を開始できません。原本は変更していません。時間をおいて再試行してください"
             else "現像用のメモリを確保できませんでした。原本は変更していません。時間をおいて再試行してください"
         is PhotoRollSourceFailure -> problem.userMessage
-        is dev.cinematic.p0.rawcapture.DngContentChanged -> "原本の内容が変わりました。Filesから選び直してください"
-        is SecurityException -> "原本の読み取り権限がありません。Filesから選び直してください"
+        is dev.cinematic.p0.rawcapture.DngContentChanged -> "原本の内容が変わりました。Filesから選び直してください。"
+        is SecurityException -> "原本の読み取り権限がありません。Filesから選び直してください。"
         else -> gpuFailurePolicy(problem)?.reason ?: "現像を完了できません。原本は変更していません。再試行してください"
     }
 
@@ -49,3 +49,7 @@ internal fun gpuPhotoRollMemoryProblem(problem: Throwable?, retryEnabled: Boolea
 // A save-admission rejection must not discard its existing preview or retained export owner.
 internal fun gpuMemoryRetryNeedsReopen(exportPaused: Boolean, hasInput: Boolean, sessionFailed: Boolean): Boolean =
     !exportPaused && (!hasInput || sessionFailed)
+
+/** Same typed source failures used by the existing message classifier; display input only. */
+internal fun gpuPhotoRollSourceInvalid(problem: Throwable?): Boolean =
+    problem is PhotoRollSourceFailure || problem is dev.cinematic.p0.rawcapture.DngContentChanged || problem is SecurityException

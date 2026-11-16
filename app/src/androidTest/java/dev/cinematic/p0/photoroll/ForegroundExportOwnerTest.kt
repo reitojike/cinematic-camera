@@ -117,7 +117,7 @@ class ForegroundExportOwnerTest {
                 check(androidx.test.uiautomator.UiDevice.getInstance(instrumentation).currentPackageName == context.packageName)
                 pickerLaunchAttempted = true
             }
-            click("DNGを選ぶ・選び直す")
+            click("DNGを選ぶ")
             if (documentsUi) selectSyntheticDownloadThroughDocumentsUi(name) { ownedPickerPackage = it }
             try {
                 await {

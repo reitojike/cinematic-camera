@@ -22,6 +22,7 @@ internal data class DevelopMessageState(
     val retryEnabled: Boolean = false,
     val rechecking: Boolean = false,
     val justPublished: Boolean = false,
+    val sourceInvalid: Boolean = false,
 )
 
 internal data class DevelopSavePresentation(
@@ -68,7 +69,7 @@ internal fun developMessages(
     val presentation = developSavePresentation(state)
     candidates += UiMessage(MessageSlot.CHIP, presentation.tone, presentation.label, "save.summary")
     val resume = MessageControl(MessageAction.RESUME_PREVIEW, "プレビューを再開", state.canResumePreview)
-    val recover = MessageControl(MessageAction.RECHECK_SAVE, "保存結果を確認・保存し直す", state.canRecover)
+    val recover = MessageControl(MessageAction.RECHECK_SAVE, "保存結果を確認", state.canRecover)
     val retry = MessageControl(MessageAction.RETRY, "再試行", state.retryEnabled)
     val uncertain = state.savePhase in setOf(PhotoRollSavePhase.HOLD, PhotoRollSavePhase.UNCONFIRMED)
 
@@ -90,7 +91,8 @@ internal fun developMessages(
         state.phase == PhotoRollPhase.BLOCKED -> candidates += UiMessage(
             MessageSlot.PROBLEM, CaptureChromeTone.FAILURE,
             state.gpuFailure?.reason ?: state.message ?: "画像を表示できません。再試行してください。",
-            "develop.failure", title = state.gpuFailure?.title ?: "画像を表示できません", primary = retry)
+            "develop.failure", title = if (state.sourceInvalid) "原本を読み込めません" else state.gpuFailure?.title ?: "画像を表示できません",
+            primary = if (state.sourceInvalid) MessageControl(MessageAction.BACK_TO_LIST, "一覧に戻る", state.canLeave) else retry)
         state.savePhase == PhotoRollSavePhase.GPU_FAILED -> candidates += UiMessage(
             MessageSlot.PROBLEM, CaptureChromeTone.FAILURE,
             state.saveFailureMessage ?: "JPEGの保存に失敗しました。再試行してください。",
@@ -109,7 +111,7 @@ internal fun developMessages(
             if (writing) CaptureChromeTone.WARNING else CaptureChromeTone.NORMAL,
             if (writing) "保存中 · プレビューを止めています" else "保存のためプレビューを止めました",
             "preview.export_paused",
-            primary = resume)
+            primary = if (writing) null else resume)
     } else when (state.phase) {
         PhotoRollPhase.EMPTY, PhotoRollPhase.CHECKING, PhotoRollPhase.RENDERING ->
             candidates += UiMessage(MessageSlot.CENTER, CaptureChromeTone.NORMAL,
@@ -144,3 +146,17 @@ internal fun developFailureFallback(canLeave: Boolean) = UiMessage(
     title = "現像を続けられません",
     primary = MessageControl(MessageAction.BACK_TO_LIST, "一覧に戻る", canLeave),
 )
+
+/** Tone comes from the operation, never from matching user-facing text. */
+internal fun developOperationNotice(text: String, tone: CaptureChromeTone) = UiMessage(
+    if (tone == CaptureChromeTone.FAILURE) MessageSlot.BANNER else MessageSlot.TOAST,
+    tone, text, "develop.operation_notice",
+)
+
+/** Caption is presentation only: never grants edit/save permission or submits a render. */
+internal fun developCaption(comparing: Boolean, updating: Boolean): UiMessage {
+    val label = if (comparing) "基準表示（撮影時WB・調整なし）" else "現像結果"
+    return UiMessage(MessageSlot.CAPTION,
+        if (updating) CaptureChromeTone.WARNING else CaptureChromeTone.NORMAL,
+        if (updating) "$label · 更新中" else label, "preview.caption")
+}
