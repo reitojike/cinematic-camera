@@ -158,7 +158,7 @@ class GpuExportRendererAndroidTest {
     @Test fun consumerFailureAndCancellationReleaseAllTexturesAndPermitSameRendererRetry() = gpu { egl ->
         val input = Raster()
         val ledger = GpuMemoryLedger(GpuMemoryLedger.EXPORT_BUDGET)
-        val renderer = GpuExportRenderer(egl, ledger, 256)
+        val renderer = GpuExportRenderer(egl, ledger, 64)
         val failure = IllegalStateException("synthetic row consumer failure")
         var delivered = 0
         assertSame(failure, assertThrows(IllegalStateException::class.java) {
@@ -198,7 +198,7 @@ class GpuExportRendererAndroidTest {
     @Test fun explicitSmallBudgetFailsWithoutLeakingPartialFields() = gpu { egl ->
         // B1 の小さな場は確保できるが、最初の 257x64 RGBA32F 帯は確保できない予算。
         val ledger = GpuMemoryLedger(128L * 1024)
-        val renderer = GpuExportRenderer(egl, ledger, 256)
+        val renderer = GpuExportRenderer(egl, ledger, 64)
         repeat(2) {
             var delivered = 0
             assertThrows(GpuMemoryBudgetException::class.java) {
@@ -214,7 +214,7 @@ class GpuExportRendererAndroidTest {
     @Test fun cancellationAtEveryBoundaryReleasesTexturesAndPermitsFinalRetry() = gpu { egl ->
         val input = Raster()
         val ledger = GpuMemoryLedger(GpuMemoryLedger.EXPORT_BUDGET)
-        val renderer = GpuExportRenderer(egl, ledger, 256)
+        val renderer = GpuExportRenderer(egl, ledger, 64)
         for (target in listOf("B1", "B1_QUANTILES", "B2", "B3", "B4", "B5", "FINAL")) {
             var stopped = false
             var targetBands = 0
