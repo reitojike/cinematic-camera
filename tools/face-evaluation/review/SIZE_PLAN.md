@@ -78,3 +78,15 @@ SDKに渡さない。アプリ独自のHTTP/画像送信/顔結果送信は追�
 初回offlineは未実施。実写に使う前に、導入/操作の個別承認とPlay版診断情報の差を明示する。
 モデル不在はNOT_RUNだが、可用性APIの失敗や確認後の状態変化はFAILEDになり得る。
 いずれも成功した顔なし画像へ変換しない。実機offline動作の合格は主張しない。
+
+## comparison 実装後の再測定（2026-11-16、2ABI・debug）
+
+同一アダプターをsourceSet共有に移した後の測定。前表は前head時点の記録として残す。
+baseline 2,474,871 bytes、bundled ML Kit 32,450,579 bytes、Play 6,681,523 bytes、
+YuNet 89,270,495 bytes。アダプターwrapper追加等によるdebug APK差を含む。
+comparison APKは両SDKと評価UIを含むため、単一方式の製品容量見積りには使わない。
+モデルだけのサイズ・native非圧縮量・配布後モデル取得量を取り違えない。
+
+全5flavorの権限/ABI/固定YuNet hash監査成功。comparisonはnetwork2権限と自パッケージsignature権限のみ。
+公開Activityは評価launcher。AndroidX ProfileInstallReceiverはexportedだがDUMP権限で保護される。
+写真/カメラ/外部ストレージの広域権限、写真用FileProviderはない。合成単体試験のみで実写精度は未測定。

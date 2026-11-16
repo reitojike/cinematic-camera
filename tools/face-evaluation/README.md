@@ -150,3 +150,17 @@ SDK providerの利用診断通信は従前のML Kit許容範囲であり、無�
 初回モデル取得・オフライン動作・実機計測は未実施。
 ローカル判定UIとAndroid内部導線の準備は [review](review/README.md) と
 [Android導線設計](review/ANDROID_DESIGN.md) に記録する。
+
+
+### Android comparison 初期実装
+
+`comparison` は bundled ML Kit FAST/ACCURATE と YuNet を同じ画像で評価する別IDの評価用APK。
+容量比較用4flavorとは分け、verifyEvaluation/auditは合計5flavorを検査する。
+端末内JPEG/PNG選択、3方式の枠表示、方式ごとの見逃し/誤検出の明示判定、app-private保存、
+集計だけの書出しを実装した。Play SDKはこのUIに含めない。製品/GPU/原本保存経路は非接続。
+
+2026-11-16の準備検証: 5flavor app/test APK + lint、comparison記録/集計JVM10件成功。
+既存host34件は33成功・symlink作成権限の環境エラー1（assert/skip変更なし）、HTML合成8件成功。
+**native画面・SAF・EXIF/色・取消/回転/再起動の端末実走は未実施**。
+実写評価-readyや製品採用-readyとは扱わない。個別承認前に配布・実機操作をしない。
+詳細と残りの実行試験は [Android導線](review/ANDROID_DESIGN.md) を参照。

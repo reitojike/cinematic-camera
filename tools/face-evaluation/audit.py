@@ -14,7 +14,7 @@ NETWORK_PERMISSIONS = {"android.permission.INTERNET", "android.permission.ACCESS
 def validate_permissions(flavor, permissions):
     """Allow SDK diagnostics only in ML Kit; reject all other platform permissions."""
     platform = {p for p in permissions if p.startswith("android.permission.")}
-    expected = NETWORK_PERMISSIONS if flavor in ("mlkit", "mlkitplay") else set()
+    expected = NETWORK_PERMISSIONS if flavor in ("mlkit", "mlkitplay", "comparison") else set()
     if platform != expected:
         raise ValueError("Unexpected platform permissions for evaluation flavor")
     # AndroidX may add only this package's signature-protected receiver permission.
@@ -25,7 +25,7 @@ def validate_permissions(flavor, permissions):
 
 def audit(root):
     result = {}
-    for flavor in ("baseline", "mlkit", "mlkitplay", "yunet"):
+    for flavor in ("baseline", "mlkit", "mlkitplay", "yunet", "comparison"):
         apk = root / f"outputs/apk/{flavor}/debug/benchmark-{flavor}-debug.apk"
         manifest = root / f"intermediates/merged_manifests/{flavor}Debug/process{flavor.capitalize()}DebugManifest/AndroidManifest.xml"
         xml = ET.parse(manifest).getroot()
@@ -39,7 +39,7 @@ def audit(root):
             if not set(abis).issubset({"arm64-v8a", "x86_64"}):
                 raise ValueError("Unexpected ABI")
             model = [x for x in entries if x.filename.endswith("face_detection_yunet_2023mar.onnx")]
-            if flavor == "yunet":
+            if flavor in ("yunet", "comparison"):
                 if len(model) != 1 or hashlib.sha256(archive.read(model[0])).hexdigest() != "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4":
                     raise ValueError("Packaged model mismatch")
             elif model:

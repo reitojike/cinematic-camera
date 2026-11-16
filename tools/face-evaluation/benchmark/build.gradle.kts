@@ -21,19 +21,34 @@ android {
         create("mlkit") { dimension = "detector"; applicationIdSuffix = ".mlkit" }
         create("mlkitplay") { dimension = "detector"; applicationIdSuffix = ".mlkitplay" }
         create("yunet") { dimension = "detector"; applicationIdSuffix = ".yunet" }
+        create("comparison") { dimension = "detector"; applicationIdSuffix = ".comparison" }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
     // Model is supplied outside the repository. No network/download task is run by this project.
-    sourceSets.getByName("yunet").assets.srcDir(layout.buildDirectory.dir("model-assets").get().asFile)
+    for (flavor in listOf("yunet", "comparison")) {
+        sourceSets.getByName(flavor).assets.srcDir(layout.buildDirectory.dir("model-assets").get().asFile)
+        sourceSets.getByName(flavor).java.srcDir("src/sharedYunet/java")
+    }
+    for (flavor in listOf("mlkit", "comparison")) {
+        sourceSets.getByName(flavor).java.srcDir("src/sharedMlkit/java")
+    }
+    sourceSets.getByName("comparison").assets.srcDirs("src/mlkit/assets", "src/yunet/assets")
 }
 dependencies {
     "mlkitImplementation"("com.google.mlkit:face-detection:16.1.7")
     "mlkitplayImplementation"("com.google.android.gms:play-services-mlkit-face-detection:17.1.0")
     "mlkitplayImplementation"("com.google.android.gms:play-services-base:18.11.1")
     "yunetImplementation"("org.opencv:opencv:4.13.0")
+    "comparisonImplementation"("com.google.mlkit:face-detection:16.1.7")
+    "comparisonImplementation"("org.opencv:opencv:4.13.0")
+    "comparisonImplementation"("androidx.activity:activity:1.13.0")
+    "comparisonImplementation"("androidx.lifecycle:lifecycle-viewmodel:2.10.0")
+    "comparisonImplementation"("androidx.lifecycle:lifecycle-livedata:2.10.0")
+    "testComparisonImplementation"("junit:junit:4.13.2")
+    "testComparisonImplementation"("org.json:json:20250517")
 }
 val stageModel = tasks.register("stageModel") {
     val model = providers.environmentVariable("FACE_EVAL_MODEL")
@@ -50,15 +65,16 @@ val stageModel = tasks.register("stageModel") {
     }
 }
 tasks.configureEach {
-    if (name.startsWith("mergeYunet") && name.endsWith("Assets")) dependsOn(stageModel)
+    if ((name.startsWith("mergeYunet") || name.startsWith("mergeComparison")) && name.endsWith("Assets")) dependsOn(stageModel)
 }
 tasks.register("verifyEvaluation") {
-    for (flavor in listOf("Baseline", "Mlkit", "Mlkitplay", "Yunet")) {
+    for (flavor in listOf("Baseline", "Mlkit", "Mlkitplay", "Yunet", "Comparison")) {
         dependsOn("assemble${flavor}Debug", "assemble${flavor}DebugAndroidTest", "lint${flavor}Debug")
+        if (flavor == "Comparison") dependsOn("testComparisonDebugUnitTest")
     }
 }
 // Preserve license files at AAR roots: Android packaging does not copy these into assets itself.
-for (flavor in listOf("baseline", "mlkit", "mlkitplay", "yunet")) {
+for (flavor in listOf("baseline", "mlkit", "mlkitplay", "yunet", "comparison")) {
     val cap = flavor.replaceFirstChar { it.uppercaseChar() }
     val noticesDir = layout.buildDirectory.dir("notices/$flavor").get().asFile
     android.sourceSets.getByName(flavor).assets.srcDir(noticesDir)

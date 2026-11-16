@@ -1,4 +1,4 @@
-# Android 内部の実写評価導線（設計・未実装）
+# Android 内部の実写評価導線（評価専用・実機未検証）
 
 ## 選択
 
@@ -47,3 +47,36 @@ Pixelから写真・URI・顔枠を持ち出してHTMLへ入力する運用は�
 固定値が不利になる場合がある。最初の固定条件での見逃しを記録し、閾値や解像度を
 後から変えるなら別設定として分ける。結果をよくするために同じ評価表へ混在させない。
 初回/温間/SDK内/変換込みの時間を別々に保持し、1枚の代表値を勝手に混ぜない。
+
+## Android comparison 初期実装（実機・実写・画面操作は未検証）
+
+- comparison は bundled ML Kit FAST/ACCURATE + YuNet の別 application ID。
+  Play 版は含めない。容量用の既存4flavorは維持し、アダプター実装のみsourceSetで共有する。
+- 標準 ACTION_OPEN_DOCUMENT + EXTRA_LOCAL_ONLY でJPEG/PNGを1枚選択。URIは一時的に読取へ使うだけで
+  保存・ログ・SDKへ渡さない。EXTRA_LOCAL_ONLYはproviderへの要求であり、任意providerの無通信保証ではない。
+- ImageDecoder（向き適用、sRGB、software）を最大4MP・各辺8192pxに縮小し、透明部分は黒へ合成。
+  3方式とも同一opaque ARGB_8888。画像別のdecode_nsとinitialization_nsは内部記録に残す。
+- ViewModelの1workerが逐次処理。画面回転で再実行しない。取消はSDK完了まで待ち、
+  未完了の画像を採点対象へ追加しない。Back/Activity終了でも入力をSDK処理中に破棄しない。
+- noBackupFilesDirに正規化PNGとAtomicFileの記録を保存。原本は書き換えない。
+  画像確定後のDB更新失敗時は未参照PNGを削除し、再起動では正常記録を検証した後にorphanだけ除去する。
+  記録破損・画素SHA不一致はロックして上書き/集計しない。アプリ削除時は判定も消える。
+- 各方式の枠番号、誤検出チェック、見逃し整数を明示保存。0も明示入力。
+  未保存の入力は回転用Bundleに保持し、保存した判定は再起動後も保持する。
+- native Viewの画像fit範囲から枠を変換。これは評価用の別Viewで、製品GpuPreviewSurfaceへ接続しない。
+  将来製品接続時は固定Surfaceのviewportへ合わせ、パネル開閉の両方を検証する。
+- FLAG_SECUREで画面キャプチャを抑制。自動写真export/共有/FileProvider/外向きHTTP実装はない。
+  書出しは本人が押した集計JSONだけ。ID/SHA/URI/枠/画像をallowlistへ入れない。
+- 時間は手動評価済みSUCCESSのみ、first-callとwarmを分け、SDKとadapterの中央値/件数を記載。
+  first-callはこのownerでの最初の呼出しで、プロセスcold startや実機性能の保証ではない。
+  未評価、FAILED、CANCELLED、NOT_RUNを区別する。画像の途中取消は全体を未追加とする。
+
+### 現段階の未確認
+
+標準ピッカーを含む端末内UI実走、EXIF回転と色を含む合成画像の実行試験、
+取消/Back/回転/再起動/ストレージ失敗のAndroid実行試験、30〜50枚の実写精度は未実施。
+ビルド・純粋な記録/集計の単体試験はこれらの代替ではない。配布・実機操作前に本人の承認が必要。
+
+参照: [ImageDecoder](https://developer.android.com/reference/android/graphics/ImageDecoder)、
+[SAF](https://developer.android.com/training/data-storage/shared/documents-files)、
+[ViewModel](https://developer.android.com/topic/libraries/architecture/viewmodel)。

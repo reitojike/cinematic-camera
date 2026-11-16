@@ -37,3 +37,22 @@ class PermissionTest(unittest.TestCase):
         self.assertIn("throw new Detector.NotReadyException()", source)
         self.assertNotIn("installModules(", source)
         self.assertNotIn("deferredInstall(", source)
+
+    def test_comparison_diagnostics_only_and_no_photo_permission(self):
+        validate_permissions("comparison", list(NETWORK_PERMISSIONS))
+        with self.assertRaises(ValueError):
+            validate_permissions("comparison", list(NETWORK_PERMISSIONS) + ["android.permission.READ_MEDIA_IMAGES"])
+
+    def test_comparison_not_in_product_and_no_play_delivery(self):
+        from pathlib import Path
+        root = Path(__file__).parent
+        build = (root / "benchmark/build.gradle.kts").read_text(encoding="utf-8")
+        comparison_dependencies = [line for line in build.splitlines() if '"comparisonImplementation"' in line]
+        self.assertFalse(any('play-services-mlkit' in line for line in comparison_dependencies))
+        activity = (root / "benchmark/src/comparison/java/org/cinematic/evaluation/ComparisonActivity.java").read_text(encoding="utf-8")
+        self.assertIn('Intent.EXTRA_LOCAL_ONLY, true', activity)
+        self.assertIn('FLAG_SECURE', activity)
+        self.assertNotIn('ACTION_SEND', activity)
+        self.assertNotIn('takePersistableUriPermission', activity)
+        main_settings = (root.parent.parent / "settings.gradle.kts").read_text(encoding="utf-8")
+        self.assertNotIn('face-evaluation', main_settings)
