@@ -119,9 +119,10 @@ class PreviewHalfInputComparisonAndroidTest {
     private fun metrics(a: IntArray, b: IntArray): JSONObject {
         var total = 0L; var squared = 0L; var maximum = 0; var changedPixels = 0L
         val histogram = IntArray(256)
+        val shifts = intArrayOf(16, 8, 0)
         for (i in a.indices) {
             var changed = false
-            for (shift in intArrayOf(16, 8, 0)) {
+            for (shift in shifts) {
                 val difference = abs(((a[i] ushr shift) and 255) - ((b[i] ushr shift) and 255))
                 total += difference; squared += difference.toLong() * difference
                 maximum = maxOf(maximum, difference); histogram[difference]++
