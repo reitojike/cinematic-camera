@@ -40,6 +40,52 @@ try {
     $jpegPath=Join-Path $root 'orientation6.jpg';$stream=[IO.File]::Create($jpegPath);try{$jpeg.Save($stream)}finally{$stream.Dispose()}
     $rotated=Get-NormalizedPixels $jpegPath
     Assert ($rotated.width-eq2 -and $rotated.height-eq3) 'JPEG EXIF read connection'
+    # EXIF ColorSpace is not an ICC. Test both WIC fallback values, with/without ICC.
+    foreach($colorSpace in @(1,65535)) {
+        foreach($hasIcc in @($false,$true)) {
+            $md=[Windows.Media.Imaging.BitmapMetadata]::new('jpg')
+            $md.SetQuery('/app1/ifd/exif/{ushort=40961}',[uint16]$colorSpace)
+            $enc=[Windows.Media.Imaging.JpegBitmapEncoder]::new()
+            $cc=$null;if($hasIcc){$cc=$contexts}
+            $enc.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($source,$null,$md,$cc))
+            $cp=Join-Path $root ("exif-"+$colorSpace+"-"+$hasIcc+".jpg")
+            $st=[IO.File]::Create($cp);try{$enc.Save($st)}finally{$st.Dispose()}
+            $accepted=$false;try{$r=Get-NormalizedPixels $cp;$accepted=$true}catch{}
+            Assert ($accepted-eq$hasIcc) 'EXIF-only must reject; embedded ICC plus EXIF must accept'
+        }
+    }
+    # Container parser boundaries, using only encoder-produced synthetic profiles.
+    $js=[IO.File]::OpenRead($jpegPath);try{[byte[]]$icc=[FaceEmbeddedIcc]::Extract($js)}finally{$js.Dispose()}
+    function IccSegment([byte[]]$bytes,[byte]$index,[byte]$total) {
+        $n=$bytes.Length+16
+        return [byte[]](@(255,226,[byte]($n-shr8),[byte]($n-band255))+[Text.Encoding]::ASCII.GetBytes("ICC_PROFILE"+[char]0)+@($index,$total)+$bytes)
+    }
+    function ParseIcc([byte[]]$bytes){$ms=[IO.MemoryStream]::new($bytes);try{return [FaceEmbeddedIcc]::Extract($ms)}finally{$ms.Dispose()}}
+    $mid=[int]($icc.Length/2)
+    [byte[]]$first=$icc[0..($mid-1)];[byte[]]$last=$icc[$mid..($icc.Length-1)]
+    [byte[]]$split=@(255,216)+(IccSegment $last 2 2)+(IccSegment $first 1 2)+@(255,217)
+    [byte[]]$roundTrip=ParseIcc $split
+    Assert ([Convert]::ToBase64String($roundTrip)-eq[Convert]::ToBase64String($icc)) 'split ICC sequence assembly'
+    foreach($invalid in @(
+        [byte[]](@(255,216)+(IccSegment $icc 1 1)+(IccSegment $icc 1 1)+@(255,217)),
+        [byte[]](@(255,216)+(IccSegment $first 1 2)+@(255,217)),
+        [byte[]](@(255,216,255,226,0,20,1))
+    )) {
+        $bad=$false;try{ParseIcc $invalid|Out-Null}catch{$bad=$true};Assert $bad 'duplicate/missing/truncated ICC accepted'
+    }
+    [byte[]]$pngBytes=[IO.File]::ReadAllBytes($path)
+    $offset=8;$iccStart=-1;$iccEnd=-1
+    while($offset-lt$pngBytes.Length) {
+        $length=([int]$pngBytes[$offset]-shl24)-bor([int]$pngBytes[$offset+1]-shl16)-bor([int]$pngBytes[$offset+2]-shl8)-bor$pngBytes[$offset+3]
+        $kind=[Text.Encoding]::ASCII.GetString($pngBytes,$offset+4,4)
+        if($kind-eq'iCCP'){$iccStart=$offset;$iccEnd=$offset+$length+11;break}
+        $offset+=$length+12
+    }
+    Assert ($iccStart-ge0) 'synthetic PNG has no iCCP'
+    [byte[]]$doublePng=$pngBytes[0..$iccEnd]+$pngBytes[$iccStart..$iccEnd]+$pngBytes[($iccEnd+1)..($pngBytes.Length-1)]
+    $bad=$false;try{ParseIcc $doublePng|Out-Null}catch{$bad=$true};Assert $bad 'duplicate PNG ICC accepted'
+    $pngBytes[$iccEnd]=$pngBytes[$iccEnd]-bxor1
+    $bad=$false;try{ParseIcc $pngBytes|Out-Null}catch{$bad=$true};Assert $bad 'bad PNG ICC CRC accepted'
     $bundle=Join-Path $root 'bundle'
     & (Join-Path $PSScriptRoot 'normalize_windows.ps1') -SelectedFiles @($path) -OutputDirectory $bundle -SamePcApproved
     & python (Join-Path $PSScriptRoot '..\private_manifest.py') $bundle
@@ -57,7 +103,7 @@ try {
         foreach($f in $ownedFiles){Assert ($f.Name -eq 'manifest.json' -or $f.Name -match '^evaluation-[0-9a-f]{16}\.rgba$') 'unexpected synthetic file';Remove-Item -LiteralPath $f.FullName}
         [IO.Directory]::Delete($bundle)
     }
-    foreach($name in @('synthetic.png','untagged.png','orientation6.jpg')){$owned=Join-Path $root $name;if(Test-Path -LiteralPath $owned){Remove-Item -LiteralPath $owned}}
+    foreach($name in @('synthetic.png','untagged.png','orientation6.jpg','exif-1-False.jpg','exif-1-True.jpg','exif-65535-False.jpg','exif-65535-True.jpg')){$owned=Join-Path $root $name;if(Test-Path -LiteralPath $owned){Remove-Item -LiteralPath $owned}}
     [IO.Directory]::Delete($root)
 }
-'PASS: synthetic ICC identity/CMYK, eight orientations, cap, tagged decode, source protection, missing ICC rejection'
+'PASS: synthetic ICC identity/CMYK, eight orientations, cap, tagged decode, source protection, missing ICC rejection, EXIF-only rejection, ICC+EXIF acceptance, split/duplicate/truncated ICC and CRC'
