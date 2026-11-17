@@ -87,3 +87,20 @@ APK SHA-256:
 3枚で10〜15分程度の見込み。これは本人の目視を含む段取りの見積もりで、Pixelでの処理時間の実測ではない。
 確認終了後は比較アプリを削除できる。普段の撮影/編集/保存は既存の製品版を使う。
 実写を見ずにPPGを採用したり、保存AHDを変えたりしない。
+
+## 2026-11-18 main追従の限定再検証
+
+#465までのmain `a6de65f5`を競合なしで取り込んだ実行sourceは`c4f9c45070be6b83d872b6320a8246e76dd30292`。
+その後のmain `b49b4567`は#468の文書1ファイルだけであり、製品・比較・試験sourceは同じ。
+通常のKotlin/assetsはmainと同一、比較専用source・Gradle・native差分は旧`8e46f5ed`から変更していない。
+通常プレビュー/保存AHD、別ID、明示opt-in、製品署名禁止と比較Release禁止は維持する。
+
+- 通常/比較のlint、unit、app/test APKは成功。各unit1435件、失敗0、既存skip12。通常Release buildも成功。
+- 完成APKを検査し、通常Debugにはtest用quality JNIのみ、比較Debugには専用PPG JNI、通常Releaseには両比較JNIがないことを両ABIで確認。embedded抽出JNIは全構成で維持。両runner targetは各applicationIdと一致。
+- 比較appに通信・カメラ・共有画像権限、保存service、SaveTimingProviderなし。backup無効、AndroidX startup authorityは比較ID。mainから入ったTimingLifecycleProbeActivityは非exportedの空Debug Activityで、写真/保存/通信処理なし。
+- 専用read-only AOSPで通常UI7件＋embedded8件、比較のprivacy/lifecycle/race11件が成功。90秒起動安定、前後boot/process/config/system_server照合、crash/ANRなしを確認し、所有instanceを停止して枠を返却した。
+- 終了前の追加所有照合ではconfigパスの区切り文字の表記差により1回停止。起動時と同じ正規パスで再照合して成功後に停止した。検査を省略・緩和していない。
+- 独立静的レビューは実行sourceでblockingなし。最終CI/canonicalはPRの現headを確認する。
+
+レーンAを優先し、変更のない描画経路のGPU90/帯28を今回再実行していない。前回の成功を今回headの再実行実績とは扱わない。Pixel速度・24MP大型比較・実機操作・配布は今回未実施で、製品採用/マージ承認を意味しない。
+旧版での本人目視確認はPR #441の実写比較記録（3枚・4条件）を参照し、新sourceでの実写再確認に読み替えない。
