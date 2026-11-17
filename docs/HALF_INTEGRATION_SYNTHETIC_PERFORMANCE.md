@@ -1,4 +1,4 @@
-# 本来プレビュー FULL/half 統合・合成性能入口（未実行）
+# 本来プレビュー FULL/half 統合・合成性能入口
 
 Issue #233。製品採用・実機操作・公開・mainマージは範囲外。
 
@@ -29,7 +29,8 @@ Pixel速度・実写品質・採用の根拠にはしない。readback/Bitmap/�
 
 ## 実行前ゲート
 
-現時点はhost静的確認のみ。compile/lint/unit/AVD回帰は未実施。
+a5faa59 のhost assembleDebug / assembleDebugAndroidTest と、下記合成ABBAは実施済み。
+同じ別ID構成のlintDebug / testDebugUnitTestも成功。既存Android全回帰は未完。
 Windowsまたは共有AVDの枠は親担当と調整し、実機へは実行しない。
 既存 #459 の15合成テスト成功を、この統合head・新規testの合格と読み替えない。
 
@@ -47,3 +48,32 @@ emulator hardware、DEBUG、別ID、guide無効をコードで検査する。
 OPEN=PRESENTEDになるまで報告はincomplete。失敗時は不明なownerのファイルを再帰削除しない。
 出力は評価アプリのexternal files内 `half-performance/synthetic-12mp.json` 等。
 これは合成専用であり実写に転用しない。
+
+
+## 2026-11-17 合成結果（a5faa59）
+
+独立・read-only AOSP API37 emulator、host GPU + GuestAngle,Vulkan、4 vCPU / 4096MiB。
+既存wrapperのinstance照合、90秒boot/system_server安定、ANR/crash 0、compute smoke成功。
+対象の単独実行後に所有権照合して停止。実機・実写・保存経路には触れていない。
+別IDのassembleDebug/AndroidTest成功（3分09秒）。instance証跡host単体試験40件成功。
+12MP / 24MP 各4run、全てOPEN=PRESENTED、GUIDE=NOT_REACHED、thermal開始/終了すべて0。
+以下は秒、各モード2標本のみ。p95・Pixelの推定値として使わない。
+
+|入力|順|mode|OPEN|native decode|BOX reduce|GPU first frame|
+|---|---|---|---:|---:|---:|---:|
+|12MP|A1|FULL|8.8632|4.5957|2.6001|1.1290|
+|12MP|B1|half|3.0165|0.8558|0.9857|0.6403|
+|12MP|B2|half|2.9580|0.8443|0.9643|0.6503|
+|12MP|A2|FULL|7.9695|4.5451|2.2575|0.6818|
+|24MP|A1|FULL|14.8793|9.0630|3.8526|1.0727|
+|24MP|B1|half|4.3682|1.3938|1.4160|0.6711|
+|24MP|B2|half|4.3549|1.4189|1.3740|0.6599|
+|24MP|A2|FULL|14.0752|8.9074|3.6181|0.6806|
+
+この合成入力では差の主因はnative decodeとBOX reduce。初回GPU frameは両サイズとも
+後続runより長い。cacheを制御していないためcold/warmの因果や固定倍率を断定しない。
+画質差はこの性能テストでは検証しない。#455の画質比較と#459の私有評価を置き換えない。
+本人の採否、承認後の実機同条件評価、統合headのCI/独立レビューは別ゲート。
+
+同じ別ID構成のlintDebug / testDebugUnitTestは4分31秒で成功。JVM集計: 1443件、failure 0、error 0、skip 12。
+通常ID構成およびprivate halfCompare構成の統合後再回帰・サーバーCIは別途必要。
