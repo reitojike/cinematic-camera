@@ -15,12 +15,15 @@ DETECTORS = {
 }
 
 def convert(bundle, results):
+    return _convert(bundle, results, DETECTORS)
+
+def _convert(bundle, results, detectors):
     verified = validate(bundle)
     manifest = json.loads((Path(bundle) / "manifest.json").read_text(encoding="utf-8"))
     samples = [{"id": s["id"], "sha256": s["sha256"], "width": s["width"],
                 "height": s["height"], "results": {}} for s in manifest["samples"]]
-    if len(results) != 3:
-        raise ValueError("Exactly three completed repeats=1 runs required")
+    if len(results) != len(detectors):
+        raise ValueError("Exactly one completed repeats=1 run per condition required")
     seen_detectors = set()
     for source in results:
         path = outside_git(Path(source))
@@ -32,7 +35,7 @@ def convert(bundle, results):
         if len(rows) != len(samples):
             raise ValueError("Incomplete or repeated run")
         detector = rows[0].get("detector")
-        if detector not in DETECTORS or detector in seen_detectors:
+        if detector not in detectors or detector in seen_detectors:
             raise ValueError("Unexpected or repeated detector")
         seen_detectors.add(detector)
         for index, row in enumerate(rows):
@@ -66,7 +69,7 @@ def convert(bundle, results):
                     if type(v) is not int or not 0 <= v <= 2**53-1:
                         raise ValueError("Invalid timing")
                 result.update(boxes=boxes, ms=row["sdk_ns"]/1e6, adapter_ms=row["adapter_ns"]/1e6)
-            s["results"][DETECTORS[detector]] = result
+            s["results"][detectors[detector]] = result
     return {"schema": 1, "timing_contract": "phase-separated-sdk-adapter-v1", "samples": samples}
 
 if __name__ == "__main__":

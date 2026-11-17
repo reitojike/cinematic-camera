@@ -27,9 +27,13 @@ public final class SyntheticRunner extends Instrumentation {
                 throw new IllegalStateException("Synthetic evaluation run not approved");
             }
             String mode = arguments.getString("mode", "FAST");
+            File resultFile = new File(getTargetContext().getFilesDir(),
+                mode.equals("ACCURATE_MIN005") ? "synthetic-accurate-min005-results.jsonl" : "synthetic-results.jsonl");
+            if (mode.equals("ACCURATE_MIN005") && !resultFile.createNewFile())
+                throw new IllegalArgumentException("Candidate result already exists");
             long start = SystemClock.elapsedRealtimeNanos();
             try (Detector detector = DetectorFactory.create(getTargetContext(), mode);
-                 FileWriter writer = new FileWriter(new File(getTargetContext().getFilesDir(), "synthetic-results.jsonl"))) {
+                 FileWriter writer = new FileWriter(resultFile)) {
                 long init = SystemClock.elapsedRealtimeNanos() - start;
                 for (int i = 0; i < 11; i++) {
                     var row = Measurement.run(detector, bitmap, "synthetic-black", i == 0 ? "first-call" : "warm", i, init);

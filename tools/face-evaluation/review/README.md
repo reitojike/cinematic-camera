@@ -139,3 +139,35 @@ JPEG の分割順・欠落・重複、PNG の重複・CRC・zlib/Adler と 16 Mi
 欠落・重複・途中切断・PNG CRC 破損の拒否を含む。実写の色精度の合格ではない。
 検出器が返す画像境界外の枠は元の座標と番号を保持し、判定・誤検出数から除外しない。
 画面に描くときだけ画像範囲へクリップする。完全に画像外の枠も一覧の誤検出チェックに残る。
+
+## 最小顔サイズの別条件診断（#406）
+
+bundled ML Kit の `mode=ACCURATE_MIN005` は ACCURATE / minFaceSize=0.05 を使う。
+従来の FAST / ACCURATE は min0.1 のまま。0.05 は診断候補であり採用値ではない。
+ID は `mlkit-16.1.7-ACCURATE-min0.05-no-tracking`。Play配信flavorへは追加しない。
+PrivateDatasetRun は従来どおり新しい runId を必須とし、既存出力を拒否する。
+合成runnerの候補出力は `synthetic-accurate-min005-results.jsonl` で、既存なら拒否する。
+
+同じmanifest/画素/revision、repeats=1のbaselineとcandidateだけを次で比較データへ変換する。
+
+```text
+python tools/face-evaluation/review/compare_minface.py --bundle <私有入力束> --baseline <min0.1.jsonl> --candidate <min0.05.jsonl> --output <新規比較.json> --same-windows-host-approved
+```
+
+条件入替・重複・別SDK/別min値・欠測・入力不一致・既存出力を拒否する。
+FAILED/CANCELLED/NOT_RUNは保持し、成功した顔なしへ置き換えない。
+結果は `face-minsize-comparison-v1` / `diagnostic-unscored-only` の別schemaで、
+`conditions` に明示した2条件を保持する。従来の3方式HTMLへ読み込ませない。
+既存のreview.json・判定・集計を上書きせず、旧mlkit-accurate IDへ偽装しない。
+専用 `minface.html` で比較JSONと同じRGBAを選択し、2条件を別々に判定できる。
+`minface-core.js` / `minface-review.js` も同じフォルダに保持する。通信・サーバー不要。
+保存keyは `face-minsize-review-v1-<比較JSONのSHA>` で、旧labelsを読取・移行しない。
+候補min0.05だけを判定して途中保存/集計することもでき、未判定の基準はunscoredとして残す。
+集計は `face-minsize-aggregate-v1` / `human-static-minsize-only` と明示2条件名を持ち、
+`face-minsize-aggregate.json` として保存する。画像ID・SHA・枠・元ファイル名は含めない。
+未判定・失敗・中止・未実行を顔なし成功へ変更せず、差分を自動的に正解・改善と扱わない。
+新画面のブラウザー実操作/保存復元は未検証。host coreとconverter接続の合成試験とは区別する。既存写真での調整は独立評価の代替ではない。
+写真・枠・個別結果は同じPC内のみ。実写再実行・実機操作の許可をこの手順は与えない。
+
+合成回帰: `python -B -m unittest discover -s tools/face-evaluation/review -p "test_*.py"`
+従来HTML core: `node --test tools/face-evaluation/review/core.test.js`
