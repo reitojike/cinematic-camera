@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- Unreachable product-only classes remain compiled to reuse the one native/GPU implementation.
+         The comparison manifest intentionally exposes neither recording nor foreground export.
+         Normal product lint remains unchanged; no comparison-file errors are suppressed. -->
+    <issue id="MissingPermission">
+        <ignore path="**/CineRecorder.kt" />
+    </issue>
+    <issue id="ForegroundServiceType">
+        <ignore path="**/ForegroundExportService.kt" />
+    </issue>
+</lint>
