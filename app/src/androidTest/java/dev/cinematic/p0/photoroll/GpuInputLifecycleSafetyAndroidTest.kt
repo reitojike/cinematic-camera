@@ -137,13 +137,13 @@ class GpuInputLifecycleSafetyAndroidTest {
                 val first = owners.last()
                 val initialReads = provider.opens.get()
                 val beforeGesture = checkNotNull(first.session.presented.value)
-                click("STRENGTH")
-                val bounds = android.graphics.Rect().also { awaitNode("STRENGTH", range = true).getBoundsInScreen(it) }
+                click("強さ")
+                val bounds = android.graphics.Rect().also { awaitNode("強さ", range = true).getBoundsInScreen(it) }
                 val records = PreviewGestureDriver(instrumentation.uiAutomation).drag(2,
                     bounds.exactCenterX(), bounds.exactCenterY(), -bounds.width() * .25f,
                     steps = 60, intervalMs = 32)
                 assertEquals(62, records.size)
-                val releasedStrength = checkNotNull(awaitNode("STRENGTH", range = true).rangeInfo).current.toDouble()
+                val releasedStrength = checkNotNull(awaitNode("強さ", range = true).rangeInfo).current.toDouble()
                 click("目盛りを閉じる")
                 await("real RAW drag release reaches GPU recipe and idle save state") {
                     saveReady() && first.session.presented.value?.let {
@@ -153,8 +153,8 @@ class GpuInputLifecycleSafetyAndroidTest {
                 assertEquals(initialReads, provider.opens.get())
                 provider.verifyUnchanged()
                 failNext.set(true)
-                click("STRENGTH")
-                val range = awaitNode("STRENGTH", range = true)
+                click("強さ")
+                val range = awaitNode("強さ", range = true)
                 assertTrue(range.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_PROGRESS.id,
                     Bundle().apply { putFloat(AccessibilityNodeInfo.ACTION_ARGUMENT_PROGRESS_VALUE,
                         if (releasedStrength == .7) .6f else .7f) }))

@@ -226,7 +226,7 @@ internal object SaveRecoveryColdUiProbe {
         fun find(node: AccessibilityNodeInfo?): Boolean {
             if (node == null || !node.refresh() || !node.isVisibleToUser) return false
             val own = node.text?.toString()?.split('\n').orEmpty()
-            if ("STRENGTH" in own) {
+            if ("強さ" in own) {
                 // Compose may merge the button's text; otherwise use the immediate text column.
                 val labels = if (own.size > 1) own else node.parent?.let(::texts).orEmpty()
                 return trialStrengthLabel(value) in labels && (!requireDisplayed || ("表示中" in labels &&

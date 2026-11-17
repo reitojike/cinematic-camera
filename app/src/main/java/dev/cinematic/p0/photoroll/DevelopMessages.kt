@@ -31,30 +31,33 @@ internal data class DevelopSavePresentation(
     val tone: CaptureChromeTone,
     val icon: String,
     val description: String,
+    val actionLabel: String,
+    val actionInProgress: Boolean = false,
 )
 
 /** GPU product presentation only. The legacy CPU helper and save button eligibility stay unchanged. */
 internal fun developSavePresentation(state: DevelopMessageState): DevelopSavePresentation {
-    fun value(label: String, tone: CaptureChromeTone, icon: String, description: String) =
-        DevelopSavePresentation(label, tone, icon, description)
+    fun value(label: String, tone: CaptureChromeTone, icon: String, description: String,
+        actionLabel: String = "保存", actionInProgress: Boolean = false) =
+        DevelopSavePresentation(label, tone, icon, description, actionLabel, actionInProgress)
     return when {
-        state.rechecking -> value("保存照合中", CaptureChromeTone.WARNING, "↻", "保存結果を確認中")
+        state.rechecking -> value("保存照合中", CaptureChromeTone.WARNING, "↻", "保存結果を確認中", "確認中", actionInProgress = true)
         state.savingRecipe -> value("設定保存中", CaptureChromeTone.WARNING, "↓", "調整設定を保存中")
         state.saving || state.savePhase == PhotoRollSavePhase.SAVING ->
-            value("保存中", CaptureChromeTone.WARNING, "↓", "保存中")
+            value("保存中", CaptureChromeTone.WARNING, "↓", "保存中", "保存中", actionInProgress = true)
         state.editing -> value("調整中", CaptureChromeTone.NORMAL, "↓", "調整を閉じると保存できます")
         else -> when (state.savePhase) {
             null -> value("保存準備中", CaptureChromeTone.NORMAL, "↓", "JPEGを保存（準備中）")
             PhotoRollSavePhase.READY -> value("未保存", CaptureChromeTone.READY, "↓", "JPEGを保存")
-            PhotoRollSavePhase.SAVING -> value("保存中", CaptureChromeTone.WARNING, "↓", "保存中")
+            PhotoRollSavePhase.SAVING -> value("保存中", CaptureChromeTone.WARNING, "↓", "保存中", "保存中", actionInProgress = true)
             PhotoRollSavePhase.PUBLISHED -> value("保存済み", CaptureChromeTone.ACCEPTED, "↗",
-                "保存したJPEGを開く（開く前に照合します）")
+                "保存したJPEGを開く（開く前に照合します）", "開く")
             PhotoRollSavePhase.CANCELLED -> value("保存取消", CaptureChromeTone.WARNING, "↻",
-                "同じ設定で保存を再試行")
+                "同じ設定で保存を再試行", "再試行")
             PhotoRollSavePhase.UNCONFIRMED -> value("保存未確認", CaptureChromeTone.FAILURE, "↻",
-                "保存結果をもう一度確認")
+                "保存結果をもう一度確認", "確認")
             PhotoRollSavePhase.GPU_FAILED -> value("保存失敗", CaptureChromeTone.FAILURE, "↻",
-                "同じ設定で保存を再試行")
+                "同じ設定で保存を再試行", "再試行")
             PhotoRollSavePhase.HOLD -> value("保存保留", CaptureChromeTone.FAILURE, "↓", "保存保留中")
         }
     }
@@ -155,6 +158,19 @@ internal fun developOperationNotice(text: String, tone: CaptureChromeTone) = UiM
     tone, text, "develop.operation_notice",
 )
 
+/** Wording only: keep the fact, tone, priority and lifetime owned by the original notice. */
+internal fun developToastPresentation(message: UiMessage, compact: Boolean): UiMessage {
+    if (!compact || message.slot != MessageSlot.TOAST) return message
+    val short = when {
+        message.fact == "save.published" -> "JPEGを保存しました"
+        message.fact == "develop.operation_notice" &&
+            message.body == "調整設定をこの端末に保持しました。JPEGの保存とは別です。" -> "調整設定を保持しました"
+        // Unknown future notices must retain their meaning, not be silently truncated.
+        else -> return message
+    }
+    return message.copy(body = short)
+}
+
 /** Caption is presentation only: never grants edit/save permission or submits a render. */
 internal fun developCaption(comparing: Boolean, updating: Boolean): UiMessage {
     val label = if (comparing) "基準表示（撮影時WB・調整なし）" else "現像結果"
@@ -162,3 +178,8 @@ internal fun developCaption(comparing: Boolean, updating: Boolean): UiMessage {
         if (updating) CaptureChromeTone.WARNING else CaptureChromeTone.NORMAL,
         if (updating) "$label · 更新中" else label, "preview.caption")
 }
+
+/** Guide pixels are provisional; this caption never changes the handoff or action eligibility. */
+internal fun initialGuideCaption(frame: InitialPreviewFrame) = UiMessage(
+    MessageSlot.CAPTION, CaptureChromeTone.WARNING, frame.label, "preview.caption",
+)

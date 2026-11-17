@@ -78,6 +78,7 @@ internal class GpuExportRenderer(
         private val fields = mutableListOf<GpuExportField>()
         private val times = linkedMapOf<String, Long>()
         private var boundaryName = ""
+        private var workTimings: GpuExportWorkTimings? = null
         lateinit var tone: GpuExportField
         lateinit var skin: GpuExportField
         val bloom = mutableListOf<GpuExportField>()
@@ -101,24 +102,25 @@ internal class GpuExportRenderer(
             originalCheckpoint(stop)
             val start = System.nanoTime()
             boundaryName = name
+            workTimings = timings?.detail(name)
             var completed = false
             try {
                 action()
-                GpuFence(egl).use { it.await(stop) }
+                gpuWork(workTimings, GpuExportDetail.FENCE_WAIT) { GpuFence(egl).use { it.await(stop) } }
                 times[name] = System.nanoTime() - start
                 completed = true
             } finally { timings?.finished(name, times[name] ?: (System.nanoTime() - start), completed) }
             originalCheckpoint(stop)
         }
         private fun scan(action: (Band) -> Unit) {
-            GpuExportBands.forEach(input, bandHeight, stop) { origin, rows, rgba ->
+            GpuExportBands.forEach(input, bandHeight, stop, workTimings) { origin, rows, rgba ->
                 val upload = GpuTexture.create(egl, ledger, width, rows, GpuTexture.Format.RGBA32F, pool)
-                try { upload.upload(rgba) } catch (failure: Throwable) { upload.close(); throw failure }
+                try { gpuWork(workTimings, GpuExportDetail.UPLOAD) { upload.upload(rgba) } } catch (failure: Throwable) { upload.close(); throw failure }
                 Band(origin, upload).use { band ->
                     action(band)
                     // Do not queue many bands ahead of cancellation. At most this band's work
                     // remains submitted when stop becomes true.
-                    GpuFence(egl).use { it.await(stop) }
+                    gpuWork(workTimings, GpuExportDetail.FENCE_WAIT) { GpuFence(egl).use { it.await(stop) } }
                 }
                 onBandComplete?.invoke(boundaryName, origin, rows)
             }
@@ -136,12 +138,12 @@ internal class GpuExportRenderer(
                 }
             }
             boundary("B1_QUANTILES") {
-                quantiles = GpuExportAnalysis.quantiles(egl, width, height, stop) { consume ->
+                quantiles = GpuExportAnalysis.quantiles(egl, width, height, stop, timings = workTimings) { consume ->
                     for (origin in 0 until height step bandHeight) {
                         originalCheckpoint(stop)
                         tone.band(origin, minOf(bandHeight, height - origin)).use { band ->
                             consume(band)
-                            GpuFence(egl).use { it.await(stop) }
+                            gpuWork(workTimings, GpuExportDetail.FENCE_WAIT) { GpuFence(egl).use { it.await(stop) } }
                         }
                         onBandComplete?.invoke(boundaryName, origin, minOf(bandHeight, height - origin))
                         originalCheckpoint(stop)
@@ -173,7 +175,7 @@ internal class GpuExportRenderer(
                 if (strength != 0.0) StageClearMistV1.KERNELS.forEach { (radius, _) -> mist += blur(radius, GpuTexture.Format.RGBA32F) }
                 scan { band ->
                     val glowed = band.glow()
-                    nearWhite += GpuAnalysis.nearWhiteCount(glowed, width, glowed.height)
+                    nearWhite += GpuAnalysis.nearWhiteCount(glowed, width, glowed.height, timings = workTimings)
                     if (strength != 0.0) {
                         val source = band.draw("look/mist_source.frag", listOf("s_glowed" to glowed))
                         band.release(glowed); mist.forEach { it.accept(band.origin, source) }
@@ -196,7 +198,7 @@ internal class GpuExportRenderer(
                 val row = IntArray(width)
                 scan { band ->
                     val output = band.finish()
-                    GpuFence(egl).use { it.await(stop) }
+                    gpuWork(workTimings, GpuExportDetail.FENCE_WAIT) { GpuFence(egl).use { it.await(stop) } }
                     bytes.clear()
                     GLES32.glBindFramebuffer(GLES32.GL_FRAMEBUFFER, output.framebufferId)
                     GLES32.glReadBuffer(GLES32.GL_COLOR_ATTACHMENT0)
@@ -205,14 +207,18 @@ internal class GpuExportRenderer(
                     GLES32.glPixelStorei(GLES32.GL_PACK_ROW_LENGTH, 0)
                     GLES32.glPixelStorei(GLES32.GL_PACK_SKIP_PIXELS, 0)
                     GLES32.glPixelStorei(GLES32.GL_PACK_SKIP_ROWS, 0)
-                    GLES32.glReadPixels(0, 0, width, output.height, GLES32.GL_RGBA, GLES32.GL_UNSIGNED_BYTE, bytes)
+                    gpuWork(workTimings, GpuExportDetail.READBACK) {
+                        GLES32.glReadPixels(0, 0, width, output.height, GLES32.GL_RGBA, GLES32.GL_UNSIGNED_BYTE, bytes)
+                    }
                     egl.checkGl("read export band RGBA8")
                     bytes.position(0)
                     bytes.limit(width * output.height * 4)
-                    repeat(output.height) { y ->
-                        originalCheckpoint(stop)
-                        GpuExportRgba8.readRow(bytes, y, row)
-                        consumeRow(band.origin + y, row)
+                    gpuWork(workTimings, GpuExportDetail.ROW_PROCESS) {
+                        repeat(output.height) { y ->
+                            originalCheckpoint(stop)
+                            GpuExportRgba8.readRow(bytes, y, row)
+                            consumeRow(band.origin + y, row)
+                        }
                     }
                 }
             }

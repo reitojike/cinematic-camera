@@ -18,9 +18,9 @@ import dev.cinematic.p0.rawcapture.*
 internal data class InitialPreviewFrame(val bitmap: Bitmap, val kind: InitialPreviewKind,
     val identity: InitialPreviewIdentity) {
     val label get() = when {
-        kind.edited -> "保存済みJPEGの案内表示・プレビュー準備中"
-        kind == InitialPreviewKind.HALF_GUIDE -> "RAW基準の案内画像・調整は未反映"
-        else -> "撮影時の案内画像・調整は未反映"
+        kind.edited -> "保存済みJPEGの案内表示 · プレビュー準備中"
+        kind == InitialPreviewKind.HALF_GUIDE -> "RAW基準の案内画像 · 調整は未反映"
+        else -> "撮影時の案内画像 · 調整は未反映"
     }
 }
 

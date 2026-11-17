@@ -6,6 +6,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.gpu.analysis.GpuAnalysis
 import dev.cinematic.p0.gpu.export.GpuExportAnalysis
+import dev.cinematic.p0.gpu.export.GpuExportDetail
+import dev.cinematic.p0.gpu.export.GpuExportWorkTimings
 import dev.cinematic.p0.gpu.reference.ImageDiff
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
@@ -65,6 +67,35 @@ class GpuExportAnalysisAndroidTest {
         return result
     }
 
+    @Test fun optionalTimingsCaptureInternalWaitAndReadbackWithoutChangingResults() = gpu { egl, ledger ->
+        var tick = 0L
+        val timings = GpuExportWorkTimings { tick++ }
+        texture(egl, ledger, 1, 1, floatArrayOf(0.5f)).use { input ->
+            val expected = GpuExportAnalysis.quantiles(egl, 1, 1, { false }) { it(input) }
+            val actual = GpuExportAnalysis.quantiles(egl, 1, 1, { false }, timings) { it(input) }
+            assertArrayEquals(expected, actual, 0.0)
+            assertEquals(2L, timings.sample(GpuExportDetail.FENCE_WAIT)?.nanos)
+            assertEquals(2L, timings.sample(GpuExportDetail.READBACK)?.nanos)
+            val broken = GpuExportWorkTimings { error("clock") }
+            assertArrayEquals(expected,
+                GpuExportAnalysis.quantiles(egl, 1, 1, { false }, broken) { it(input) }, 0.0)
+            val failure = IllegalStateException("producer")
+            assertSame(failure, assertThrows(IllegalStateException::class.java) {
+                GpuExportAnalysis.quantiles(egl, 1, 1, { false }, broken) { throw failure }
+            })
+        }
+        GpuTexture.create(egl, ledger, 1, 1, GpuTexture.Format.RGBA32F).use { input ->
+            input.upload(ByteBuffer.allocateDirect(16).order(ByteOrder.nativeOrder()).asFloatBuffer()
+                .apply { put(floatArrayOf(1f, 1f, 1f, 1f)); flip() })
+            val expected = GpuAnalysis.nearWhiteCount(input, 1, 1)
+            val countTiming = GpuExportWorkTimings { tick++ }
+            assertEquals(expected, GpuAnalysis.nearWhiteCount(input, 1, 1, countTiming))
+            assertEquals(1L, countTiming.sample(GpuExportDetail.FENCE_WAIT)?.nanos)
+            assertEquals(1L, countTiming.sample(GpuExportDetail.READBACK)?.nanos)
+            assertEquals(expected, GpuAnalysis.nearWhiteCount(input, 1, 1,
+                GpuExportWorkTimings { error("clock") }))
+        }
+    }
     @Test fun twoScansMatchFullFrameAndReportSortedReference() = gpu { egl, ledger ->
         val cases = listOf(
             1 to floatArrayOf(1f),

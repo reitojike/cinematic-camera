@@ -18,7 +18,7 @@ internal object GpuExportBands {
     const val HEIGHT = 256
     private data class Band(val origin: Int, val rows: Int, val rgba: FloatBuffer)
 
-    fun forEach(input: OriginalRaster, height: Int = HEIGHT, stop: () -> Boolean,
+    fun forEach(input: OriginalRaster, height: Int = HEIGHT, stop: () -> Boolean, timings: GpuExportWorkTimings? = null,
         consume: (originY: Int, rows: Int, rgba: FloatBuffer) -> Unit) {
         validateOriginalSize(input.width, input.height)
         require(height == HEIGHT || height == 64) { "Export band height must be explicit: 256 or test-only 64" }
@@ -39,6 +39,7 @@ internal object GpuExportBands {
                 free.poll(50, TimeUnit.MILLISECONDS)?.let { return it.apply { clear() } }
             }
         }
+        val readerTimings = timings?.fork()
         val reader = Thread({
             try {
                 var buffer = borrow()
@@ -46,24 +47,26 @@ internal object GpuExportBands {
                 val finiteRgb16 = input is OriginalRasterFile && input.isRgb16
                 var expectedY = 0
                 var origin = 0
-                input.rows(readerStop) { y, row ->
-                    originalCheckpoint(readerStop)
-                    check(y == expectedY && y < input.height) { "Original rows must be contiguous and ordered" }
-                    require(row.size == input.width * 3 && (finiteRgb16 || row.all { it.isFinite() }))
-                    for (x in 0 until input.width) {
-                        val rgb = x * 3; val rgba = x * 4
-                        rgbaRow[rgba] = row[rgb]; rgbaRow[rgba + 1] = row[rgb + 1]
-                        rgbaRow[rgba + 2] = row[rgb + 2]; rgbaRow[rgba + 3] = 1f
-                    }
-                    buffer.put(rgbaRow)
-                    expectedY++
-                    if (expectedY - origin == height || expectedY == input.height) {
+                gpuWork(readerTimings, GpuExportDetail.READER_TOTAL) {
+                    input.rows(readerStop) { y, row ->
                         originalCheckpoint(readerStop)
-                        buffer.flip()
-                        check(ready.offer(Band(origin, expectedY - origin, buffer)))
-                        origin = expectedY
-                        // Wait inside this callback, BEFORE rows() reads another row.
-                        if (expectedY < input.height) buffer = borrow()
+                        check(y == expectedY && y < input.height) { "Original rows must be contiguous and ordered" }
+                        require(row.size == input.width * 3 && (finiteRgb16 || row.all { it.isFinite() }))
+                        for (x in 0 until input.width) {
+                            val rgb = x * 3; val rgba = x * 4
+                            rgbaRow[rgba] = row[rgb]; rgbaRow[rgba + 1] = row[rgb + 1]
+                            rgbaRow[rgba + 2] = row[rgb + 2]; rgbaRow[rgba + 3] = 1f
+                        }
+                        buffer.put(rgbaRow)
+                        expectedY++
+                        if (expectedY - origin == height || expectedY == input.height) {
+                            originalCheckpoint(readerStop)
+                            buffer.flip()
+                            check(ready.offer(Band(origin, expectedY - origin, buffer)))
+                            origin = expectedY
+                            // Wait inside this callback, BEFORE rows() reads another row.
+                            if (expectedY < input.height) buffer = gpuWork(readerTimings, GpuExportDetail.INPUT_FREE_WAIT) { borrow() }
+                        }
                     }
                 }
                 check(expectedY == input.height && origin == expectedY) { "Original raster ended early" }
@@ -85,7 +88,7 @@ internal object GpuExportBands {
                     check(deliveredRows == input.height) { "Export rows ended early" }
                     break
                 }
-                val band = ready.poll(50, TimeUnit.MILLISECONDS) ?: continue
+                val band = gpuWork(timings, GpuExportDetail.INPUT_WAIT) { ready.poll(50, TimeUnit.MILLISECONDS) } ?: continue
                 originalCheckpoint(stop)
                 check(band.origin == deliveredRows && band.rows in 1..height)
                 consume(band.origin, band.rows, band.rgba) // GL stays on the caller.
@@ -103,6 +106,7 @@ internal object GpuExportBands {
                 try { reader.join() }
                 catch (_: InterruptedException) { interrupted = true; cancelled.set(true) }
             }
+            timings?.mergeInput(readerTimings)
             val readError = readerFailure.get()
             if (readError != null && readError !== failure) {
                 val internalStopOnly = cancelled.get() && readError is CancellationException && readError.suppressed.isEmpty()

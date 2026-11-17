@@ -112,3 +112,63 @@ adb -s <authorized-device> exec-out content read --uri content://dev.cinematic.p
 標準出力をホスト側でファイルへ保存する。`run-as`、root、アプリのdebuggable化は不要。
 開いている保存を停止せずsnapshotを取得でき、取得失敗を保存失敗とみなさない。
 抽出は記録を消さない。実機での取得可否は、合成AVDの受入結果と区別して記録する。
+
+
+## 詳細内訳の追加（Issue #457、提案）
+
+既存の時間行は schema 1 の8列を維持する。開始・終了の環境行だけ schema 2 の10列で、
+stage は `ENVIRONMENT_START` / `ENVIRONMENT_END`、nanos は NA、末尾に visibility と thermal を追加する。
+visibility は `FOREGROUND` / `BACKGROUND` / `UNKNOWN`。Application.ActivityLifecycleCallbacks の
+started Activity 数が1以上なら前面、0なら背面とする。onPauseのみでは背面にしない。
+これは画面の可視状態であり foreground service の状態やプロセス優先度ではない。
+thermal は PowerManager.currentThermalStatus の0〜6、取得不能は NA。途中の最大値は取得しない。
+Activity名、端末情報、温度、写真、URIは記録しない。開始取得時間は ATTEMPT に含み、終了取得時間は含まない。
+
+既存 span の SOURCE_VERIFY_BEFORE / SOURCE_SNAPSHOT / DECODE_CLOSE / ANALYSIS_REDUCE /
+CONTROL_PREPARE / JPEG_INSPECT / SOURCE_VERIFY_AFTER / SCRATCH_CLEANUP を保存記録へ接続し、
+既存 Bitmap.createBitmap 呼び出しだけを BITMAP_ALLOC で囲む。処理順や画像計算は変更しない。
+これらは重なりや計測外の制御処理を含むため、差分が必ず0になる保証はない。
+
+B1 / B2 / B3 / B4 / B5 / FINAL ごとに以下を追加する。
+
+- INPUT_WAIT: GL側が入力帯の準備を待つwall時間。
+- INPUT_READ_CONVERT: reader の rows 全体から後続の空きbuffer待ちだけを引いたwall時間。読込み、RGB16→Float変換、RGB→RGBA詰め替え、行検証、帯投入、EOF検査・closeを含む。初回buffer取得、帯buffer確保、reader threadの起動・joinは範囲外。純decode時間・純CPU時間ではない。
+- UPLOAD: GL転送API呼出しのCPU wall時間。GPUでの転送完了時間とは異なる。
+- FENCE_WAIT: renderer と B4/B1_QUANTILES 内部の既存明示fence待ち。ドライバ内部の暗黙待ちは別項目にも残り得る。
+
+B1_QUANTILES_FENCE_WAIT、B1_QUANTILES_READBACK、B4_READBACK、FINAL_READBACK、FINAL_ROW_PROCESS も記録する。
+GPUタイマー問い合わせ、新たなfence、glFinishは追加しない。reader とGLは並行するため単純加算禁止。
+readback APIに含まれる暗黙同期はREADBACK側に残る。not reached / skipped / unavailable と0を区別する。
+FINAL_ROW_PROCESS は帯内の行ループ全体（取消チェック、RGBA8→ARGB変換、consumer呼出し）をまとめたwall時間。行順・取消チェック位置は変更しない。
+INPUT_PACK と行単位の変換/consumer分離は未配布の詳細案から削除し、帯・走査単位だけで計測する。
+時計取得失敗・負の差分はNA、失敗した途中区間はINCOMPLETE。到達しなかったbuffer待ちだけは差引き0とする。
+ディスクI/Oは従来どおり終了後の一括書込み。
+
+記録上限1,024行・256KiBは変更しない。上記の15行/68回は旧形式の例であり、追加後の保持回数には使わない。
+既存N行、新規1回R行なら既存行を削らずに追加できる回数の目安は floor((1024-N)/R)。
+失敗・省略・再照合によりRは変わる。古いschema 1行は引き続き読める。
+
+公式API: [ActivityLifecycleCallbacks](https://developer.android.com/reference/android/app/Application.ActivityLifecycleCallbacks)、
+[PowerManager.getCurrentThermalStatus](https://developer.android.com/reference/android/os/PowerManager#getCurrentThermalStatus())。
+
+## 実Activity lifecycle の debug 限定回帰
+
+`SaveTimingLifecycleAndroidTest` は `androidTestDebug`、空の probe Activity と manifest は `debug` のみに置く。
+release の本体・manifest に probe を含めず、試験コードからも debug Activity の型を直接参照しない。
+
+既存の認可済み emulator に debug 本体と test APK を導入した後、通常の AndroidJUnitRunner に次を渡す。
+adb は必ず選択済み emulator serial を `-s` で指定し、他の Activity 試験やUI操作と同時実行しない。
+
+```text
+-e isolated true -e timingLifecycle true
+-e class dev.cinematic.p0.metrics.SaveTimingLifecycleAndroidTest
+```
+
+完全一致の class/method selector と opt-in を必須にし、複数classをまとめた実行は開始前に拒否する。
+各確認時には対象 Application 内の他Activityも検出し、干渉を通常の前面/背面結果に読み替えない。
+開始・pause・stop・再開・再作成・終了で状態を断定し、同一attemptの開始/終了の環境行も確認する。
+providerの自動登録を試すため、試験から `install()` は呼ばない。写真・カメラ・GPU・実保存は使わない。
+
+起動後の安定・crash/ANRゲートと試験前後のinstance照合を行う。ATDで発生したBluetooth native abortは
+アプリ導入前の環境阻害として記録し、ログ消去や無条件再試行で合格にしない。既存AOSPでの代替確認とは分ける。
+この試験は実機のthermal変化、保存速度、OSによる抑制を保証しない。

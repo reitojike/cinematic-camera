@@ -24,6 +24,7 @@ internal object GpuExportAnalysis {
         width: Int,
         height: Int,
         stop: () -> Boolean,
+        timings: GpuExportWorkTimings? = null,
         forEachBand: ((GpuTexture) -> Unit) -> Unit,
     ): DoubleArray {
         egl.requireCurrent()
@@ -76,14 +77,17 @@ internal object GpuExportAnalysis {
                 checkStopped()
                 check(rows == height) { "Export histogram bands are incomplete" }
                 // 帯ごとに readback せず、全帯を累積した後に一度だけ待機する。
-                GpuFence(egl).use { it.await(stop) }
-                GLES32.glBindBuffer(GLES32.GL_SHADER_STORAGE_BUFFER, names[0])
-                val mapped = GLES32.glMapBufferRange(GLES32.GL_SHADER_STORAGE_BUFFER, 0, bytes, GLES32.GL_MAP_READ_BIT)
-                    as? ByteBuffer ?: error("Cannot map export histogram")
-                val result = IntArray(length)
-                try { mapped.order(ByteOrder.nativeOrder()).asIntBuffer().get(result) }
-                finally { check(GLES32.glUnmapBuffer(GLES32.GL_SHADER_STORAGE_BUFFER)) { "Export histogram buffer corrupted" } }
-                egl.checkGl("read export histogram")
+                gpuWork(timings, GpuExportDetail.FENCE_WAIT) { GpuFence(egl).use { it.await(stop) } }
+                val result = gpuWork(timings, GpuExportDetail.READBACK) {
+                    GLES32.glBindBuffer(GLES32.GL_SHADER_STORAGE_BUFFER, names[0])
+                    val mapped = GLES32.glMapBufferRange(GLES32.GL_SHADER_STORAGE_BUFFER, 0, bytes, GLES32.GL_MAP_READ_BIT)
+                        as? ByteBuffer ?: error("Cannot map export histogram")
+                    val values = IntArray(length)
+                    try { mapped.order(ByteOrder.nativeOrder()).asIntBuffer().get(values) }
+                    finally { check(GLES32.glUnmapBuffer(GLES32.GL_SHADER_STORAGE_BUFFER)) { "Export histogram buffer corrupted" } }
+                    egl.checkGl("read export histogram")
+                    values
+                }
                 checkStopped()
                 return result
             }

@@ -91,6 +91,8 @@ class CaptureMessagesTest {
         }
         assertInvalid { message(MessageSlot.TOAST, CaptureChromeTone.FAILURE) }
         assertInvalid { message(MessageSlot.PROBLEM) }
+        assertInvalid { message(MessageSlot.PROBLEM, CaptureChromeTone.WARNING) }
+        assertInvalid { message(MessageSlot.PROBLEM, CaptureChromeTone.WARNING, "camera.permission").copy(title = null) }
         assertInvalid { message(MessageSlot.BANNER) }
         assertInvalid { warning.copy(inProgress = true, tone = CaptureChromeTone.FAILURE) }
         val action = MessageControl(MessageAction.RETRY, "再試行")
