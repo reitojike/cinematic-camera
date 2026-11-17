@@ -83,6 +83,7 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
         cancellation: CancellationSignal, deadline: dev.cinematic.p0.gpu.preview.GpuInputRequestDeadline,
         admitted: (Throwable?) -> Unit,
         guide: ((InitialPreviewFrame) -> Unit)? = null,
+        timing: dev.cinematic.p0.metrics.GpuPreviewTiming? = null,
         values: (PhotoRollOriginal) -> dev.cinematic.p0.photoedit.PhotoEditValues): GpuInput {
         check(developEngine == dev.cinematic.p0.gpu.DevelopEngine.GPU)
         val epoch = originalEpoch.get()
@@ -94,7 +95,7 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
                 InitialPreviewGuide.load(app, original, geometry, current, fd, signal,
                     initialCache, cacheGeneration,
                     if (dev.cinematic.p0.BuildConfig.DEBUG && dev.cinematic.p0.BuildConfig.INITIAL_HALF_GUIDE) half else null)?.let(guide)
-            }) { epoch != originalEpoch.get() },
+            }, timing = timing) { epoch != originalEpoch.get() },
             cancellation, awaitCancelledOwner = true)
         cancellation.throwIfCanceled()
         if (epoch != originalEpoch.get()) throw DngVerificationStopped()

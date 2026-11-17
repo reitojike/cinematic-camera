@@ -1,5 +1,6 @@
 package dev.cinematic.p0.photoroll
 
+import dev.cinematic.p0.metrics.*
 import android.graphics.Rect
 import android.graphics.Color
 import android.view.MotionEvent
@@ -211,7 +212,11 @@ class InitialPreviewSurfaceTimingAndroidTest {
         verifyParameterNodes: Boolean = true): Times {
         viewportLayout.set(null)
         val times=Times(fallback,capture)
+        val timingRows=AtomicReference<List<GpuPreviewTimingRecord>?>(null)
+        val timingBatches=AtomicInteger()
+        val timing=requireNotNull(GpuPreviewTiming.start(22, { timingRows.set(it); timingBatches.incrementAndGet(); Unit }))
         val owner=GpuPhotoRollSession(instrumentation.targetContext.assets)
+        owner.openTiming=timing
         owner.presentedForDiagnostics={ times.presented.compareAndSet(0,SystemClock.elapsedRealtimeNanos()); Unit }
         val guide=mutableStateOf<InitialPreviewFrame?>(null)
         val values=PhotoAdjustmentPolicy.defaults
@@ -287,17 +292,27 @@ class InitialPreviewSurfaceTimingAndroidTest {
                     }
                 times.start.set(SystemClock.elapsedRealtimeNanos())
                 val exact=Original24PreviewSession(source,scratch,{},geometry,
-                    beforeExactDecode=callback,
+                    beforeExactDecode=callback, timing=timing,
                     observeDecode={mode,start ->
                         val field=if(mode==PreviewRasterMode.FULL) {
                             if(start) times.fullStart else times.fullLinear
                         } else if(start) times.halfStart else times.halfLinear
                         field.compareAndSet(0,SystemClock.elapsedRealtimeNanos())
                     }) { input.inputStream() }.use { it.loadGpuAsShotInput() }
+                assertNull("not presented before submission",timingRows.get())
+                timing.firstFrameStarted()
                 owner.submit(values)
                 owner.renderer.openPhoto(exact)
                 await { owner.failure.value?.let { throw AssertionError("Exact GPU failure",it) }
                     owner.presented.value==values && times.presented.get()!=0L && guide.value==null }
+                val recorded=checkNotNull(timingRows.get()).associateBy { it.stage }
+                assertEquals(GpuPreviewTimingOutcome.PRESENTED,recorded.getValue(GpuPreviewTimingStage.OPEN).outcome)
+                for(stage in listOf(GpuPreviewTimingStage.SNAPSHOT,GpuPreviewTimingStage.NATIVE_DECODE,
+                    GpuPreviewTimingStage.BOX_REDUCE,GpuPreviewTimingStage.VERIFY_AFTER,GpuPreviewTimingStage.GPU_FIRST_FRAME)) {
+                    assertEquals(GpuPreviewTimingOutcome.COMPLETED,recorded.getValue(stage).outcome)
+                    assertTrue(checkNotNull(recorded.getValue(stage).nanos)>=0)
+                }
+                assertEquals(1,timingBatches.get())
                 assertTrue(times.fullStart.get()>times.start.get())
                 assertTrue(times.fullLinear.get()>=times.fullStart.get())
                 assertTrue(times.presented.get()>times.fullLinear.get())
