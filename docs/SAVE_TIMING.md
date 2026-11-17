@@ -150,3 +150,25 @@ INPUT_PACK と行単位の変換/consumer分離は未配布の詳細案から削
 
 公式API: [ActivityLifecycleCallbacks](https://developer.android.com/reference/android/app/Application.ActivityLifecycleCallbacks)、
 [PowerManager.getCurrentThermalStatus](https://developer.android.com/reference/android/os/PowerManager#getCurrentThermalStatus())。
+
+## 実Activity lifecycle の debug 限定回帰
+
+`SaveTimingLifecycleAndroidTest` は `androidTestDebug`、空の probe Activity と manifest は `debug` のみに置く。
+release の本体・manifest に probe を含めず、試験コードからも debug Activity の型を直接参照しない。
+
+既存の認可済み emulator に debug 本体と test APK を導入した後、通常の AndroidJUnitRunner に次を渡す。
+adb は必ず選択済み emulator serial を `-s` で指定し、他の Activity 試験やUI操作と同時実行しない。
+
+```text
+-e isolated true -e timingLifecycle true
+-e class dev.cinematic.p0.metrics.SaveTimingLifecycleAndroidTest
+```
+
+完全一致の class/method selector と opt-in を必須にし、複数classをまとめた実行は開始前に拒否する。
+各確認時には対象 Application 内の他Activityも検出し、干渉を通常の前面/背面結果に読み替えない。
+開始・pause・stop・再開・再作成・終了で状態を断定し、同一attemptの開始/終了の環境行も確認する。
+providerの自動登録を試すため、試験から `install()` は呼ばない。写真・カメラ・GPU・実保存は使わない。
+
+起動後の安定・crash/ANRゲートと試験前後のinstance照合を行う。ATDで発生したBluetooth native abortは
+アプリ導入前の環境阻害として記録し、ログ消去や無条件再試行で合格にしない。既存AOSPでの代替確認とは分ける。
+この試験は実機のthermal変化、保存速度、OSによる抑制を保証しない。
