@@ -157,36 +157,61 @@ class CameraRollBrowserAndroidTest {
     }
 
     @Test fun accessGuidancePreservesFullSelectedMixedNoneAndUnsupportedMeanings() = runFixture(Fixture(full)) { _, update, _ ->
-        await(emptyText)
-        assertNull(find("アクセスを許可"))
-        assertNull(find(full.description))
-        capture("full-empty")
-        val cases = listOf(selected,
+        val item = PhotoRollItem("content://synthetic/item", "SYNTHETIC.dng")
+        val cases = listOf(full, selected,
             CameraRollAccess(true, true, false, true), CameraRollAccess(true, false, true, true),
             CameraRollAccess(true, true, false, false), CameraRollAccess(true, false, true, false),
             CameraRollAccess(true, false, false, false), CameraRollAccess(false, false, false, false))
         for (access in cases) {
+            // Full access removes only the access banner, not the completed-empty CENTER actions.
+            // specs/library/spec.md and #187 deliberately specify these as separate contracts.
             update(Fixture(access))
-            await(if (access == selected) "選択した写真・動画だけにアクセスできます" else access.description)
-            await(if (access.selected) "選び直す" else "アクセスを許可")
-            await("設定")
+            await(emptyText)
+            await("アクセスを許可", true)
+            await("Filesで開く", true)
+            assertAccessBanner(access)
             capture("access-${access.supported}-${access.images}-${access.videos}-${access.selected}")
+
+            // Loading and populated lists must not borrow the completed-empty actions.
+            for (loading in listOf(true, false)) {
+                update(Fixture(access, loading = loading, items = if (loading) emptyList() else listOf(item)))
+                if (!loading) await(item.name)
+                assertNull(find(emptyText))
+                assertAccessBanner(access)
+                if (access == full) assertNull(find("アクセスを許可"))
+            }
         }
     }
 
-    @Test fun emptyActionsDispatchExactlyOnceAndDisabledActionsNeverDispatch() = runFixture(Fixture(selected)) { _, update, counts ->
-        assertTrue(await("アクセスを許可", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
-        assertTrue(await("Filesで開く", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
-        instrumentation.waitForIdleSync()
-        assertEquals(1 to 1, counts())
-        update(Fixture(selected, permission = false, files = false))
-        await("アクセスを許可", false).performAction(AccessibilityNodeInfo.ACTION_CLICK)
-        await("Filesで開く", false).performAction(AccessibilityNodeInfo.ACTION_CLICK)
-        instrumentation.waitForIdleSync()
-        assertEquals(1 to 1, counts())
-        capture("disabled-empty-actions")
+    private fun assertAccessBanner(access: CameraRollAccess) {
+        if (access == full) {
+            assertNull(find(full.description))
+            assertNull(find("設定"))
+            assertNull(find("選び直す"))
+        } else {
+            await(if (access == selected) "選択した写真・動画だけにアクセスできます" else access.description)
+            await(if (access.selected) "選び直す" else "アクセスを許可")
+            await("設定")
+        }
     }
 
+    @Test fun emptyActionsDispatchExactlyOnceAndDisabledActionsNeverDispatch() {
+        // Full access has no permission banner, so its action must come from the empty center.
+        // Selected access uses CHOOSE_AGAIN in the banner and GRANT_ACCESS in the center.
+        for (access in listOf(full, selected)) runFixture(Fixture(access)) { _, update, counts ->
+            await(emptyText)
+            assertTrue(await("アクセスを許可", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            assertTrue(await("Filesで開く", true).performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            instrumentation.waitForIdleSync()
+            assertEquals(1 to 1, counts())
+            update(Fixture(access, permission = false, files = false))
+            await("アクセスを許可", false).performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            await("Filesで開く", false).performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            instrumentation.waitForIdleSync()
+            assertEquals(1 to 1, counts())
+            capture("disabled-empty-actions-${access.selected}")
+        }
+    }
     @Test fun loadingNeverAnnouncesEmptyAndRetainsOldSyntheticTiles() = runFixture(Fixture(full, loading = true)) { _, update, _ ->
         await("カメラロール")
         assertNull(find(emptyText))
