@@ -42,6 +42,7 @@
 
 - JVM: `CameraRollMediaTest`（分類・SQL・共通cursor・read-only navigation）、`CameraRollAccessTest`、`CameraRollDateGroupsTest`、`CameraRollRefreshTest`、`CameraRollListingWorkTest`、`CameraRollDngThumbnailTest`。
 - 合成画面: [CameraRollBrowserAndroidTest](../app/src/androidTest/java/dev/cinematic/p0/photoroll/CameraRollBrowserAndroidTest.kt) は全面/部分/混合/未許可/非対応、空状態2操作と無効時0回、読込中の空表示抑止・既存タイル保持を合成fixtureで確認する。412×924dp、320×480dp、924×412dp、文字倍率1.3で操作とフッターへの到達を確認する。
+- 全面アクセスで省く対象はアクセス帯であり、読込完了後の空一覧中央操作ではない。JVMの LibraryMessagesTest では BANNER / CENTER の fact・action・有効条件を区別し、合成画面では全アクセス形態の空/非空/読込中と、全面/選択アクセスの空一覧操作（有効時1回・無効時0回）を確認する。#462 の期待値修正は製品の権限や表示を変更しない。
 - `CameraRollRepositoryAndroidTest` / `CameraRollPermissionsAndroidTest` はprovider・権限側の別試験。合成UIのcallback検証で代替せず、前提と対象端末を読んで個別に選ぶ。一覧/権限/ビューア試験をATD向けUI試験と一括実行しない。
 
 合成画面だけを再実行する場合は、既存の [共通GMD](MANAGED_DEVICES.md) に従い枠の割当、SDK/JDK、共有cache、枠専用AVD保存先を先に確認する。新しい手動AVDやタスク専用AVDは作らない。PowerShellでリポジトリrootから実行する:
