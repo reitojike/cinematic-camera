@@ -1,9 +1,8 @@
 # 実写 AHD / PPG 比較版
 
 ## 現在地
-main `f476442f`（#443 初回案内、#449 現像owner再利用、#450 保存進捗を含む）へ同期済み。#438 の比較用JNI・品質指定は保全した評価専用Draftで、PPGの製品採用やmainへのマージを意味しない。GitHub CI/canonicalの最終状態は PR #441 を参照。
-実写アクセス、Pixel操作、比較APKの配布/公開はまだ行っていない。本人が接続時に明示承認してから開始する。
-
+main `b49b4567`へ同期済み。実行sourceと限定再検証は末尾の2026-11-18節を参照する。評価専用Draftであり、PPGの製品採用やmainへのマージを意味しない。最終CI/canonicalはPR #441の現headで確認する。
+旧比較版では本人が実写3枚・4条件を目視し、気になる差なしと報告した。画素一致や現headの実機合格ではない。今回の追従では実写アクセス・Pixel操作・配布はしていない。今後も個別承認を得てから行う。
 ## 安全境界
 - 別アプリ ID: dev.cinematic.p0.previewcompare。通常の dev.cinematic.p0 と既存データを上書きしない。
 - 明示の -PcinematicPreviewCompare=true だけで比較画面/JNIを含める。
