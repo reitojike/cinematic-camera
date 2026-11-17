@@ -58,6 +58,37 @@ class LibraryMessagesTest {
         assertNull(libraryMessages(access.copy(images = true, videos = true), null, null,
             false, true, true, true).banner)
     }
+    @Test fun fullAccessHidesOnlyTheBannerWhileCompletedEmptyKeepsGuardedCenterActions() {
+        val full = CameraRollAccess(true, true, true, false)
+        val accesses = listOf(full, access, access.copy(images = true), access.copy(videos = true),
+            CameraRollAccess(true, true, false, false), CameraRollAccess(true, false, true, false),
+            CameraRollAccess(true, false, false, false), CameraRollAccess(false, false, false, false))
+        for (candidate in accesses) for (empty in listOf(false, true)) {
+            for (permission in listOf(false, true)) for (files in listOf(false, true)) {
+                val result = libraryMessages(candidate, null, null, empty, permission, files, false)
+                if (candidate == full) {
+                    assertNull(result.banner)
+                } else {
+                    assertEquals("library.access_limited", result.banner?.fact)
+                    assertEquals(MessageSlot.BANNER, result.banner?.slot)
+                    assertEquals(MessageAction.CHOOSE_AGAIN, result.banner?.primary?.action)
+                    assertEquals(permission, result.banner?.primary?.enabled)
+                    assertEquals(MessageAction.OPEN_SETTINGS, result.banner?.secondary?.action)
+                }
+                if (empty) {
+                    val center = requireNotNull(result.center)
+                    assertEquals("library.empty", center.fact)
+                    assertEquals(MessageSlot.CENTER, center.slot)
+                    assertEquals(MessageAction.GRANT_ACCESS, center.primary?.action)
+                    assertEquals(permission, center.primary?.enabled)
+                    assertEquals(MessageAction.OPEN_FILES, center.secondary?.action)
+                    assertEquals(files, center.secondary?.enabled)
+                } else {
+                    assertNull(result.center)
+                }
+            }
+        }
+    }
     @Test fun accessActionsSurviveEveryHigherPriorityBannerAndPreserveEnabledFlags() {
         val saves = listOf(save.copy(active = false), save, save.copy(stopping = true), save.copy(held = true))
         val accesses = listOf(access, access.copy(images = true), access.copy(videos = true), access.copy(selected = false))
