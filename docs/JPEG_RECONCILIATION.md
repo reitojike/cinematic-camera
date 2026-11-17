@@ -1,13 +1,16 @@
-# 保存結果不明の照合と別書き出し（#377、統合 checkpoint）
+# 保存結果不明の照合と別書き出し（#377）
 
-これは #377 の実装接続契約。レビュー済み #378 基盤に、未検証 #365 checkpoint
-`7ca7892` と保存 owner / GPU UI の接続を積んだ提案。統合試験完了・製品配布済みとは扱わない。
+これは #377 の実装接続契約。#378 基盤と #365 の確定契約（[#380](https://github.com/reitojike/cinematic-camera/pull/380)）を取り込み、
+保存 owner / GPU UI への接続は [#381](https://github.com/reitojike/cinematic-camera/pull/381) で main に統合済み。
+合成試験と配布の証拠は下記を参照し、実機 LMK 等の未確認事項とは区別する。
 同一行の完全一致は標準 publisher に接続し、書きかけ/異内容の再コピーは実装しない。
 
 ## 配布条件
 
 #260 で通常配布版のメモリ事前判定を緩める場合、#377 の救済全体を同じ配布版、
-またはそれ以前に含めることを必須とする。この未検証 checkpoint では条件を満たさない。
+またはそれ以前に含めることを必須とする。
+[v0.1.0-dev.3](https://github.com/reitojike/cinematic-camera/releases/tag/v0.1.0-dev.3) は
+#365 / #377 と #260 の変更を同版に含め、この同版・先行配布条件を満たした。今後も条件を維持する。
 計測専用版の記録のみ判定は別の診断であり、この配布条件の達成とは区別する。
 この変更で production メモリ guard・画質・CPU fallback は変更しない。
 
@@ -49,7 +52,7 @@ pending 公開前に実原本 hash を再確認する。新規 insert/再コピ�
 private JPEG 不在でも既存の完全な行を検証できる。公開済み receipt のみが残った境界では案 B を拒否する。
 pending の過去の観測だけでは公開結果を確定しない。書きかけ・同長改変・空の行は保留し、上書きしない。
 
-## 明示的な別書き出し（通常 GPU の接続案）
+## 明示的な別書き出し（通常 GPU への接続）
 
 初期状態は保留。「もう一度確認」「今は保存しない」「重複の可能性はあるが保存し直す」を区別する。
 最後の選択だけで、旧要求との関連を持つ独立した永続要求を作る。旧保存を成功／取消に偽装しない。
@@ -94,9 +97,8 @@ retained owner の再オープンも救済 UI を表示する。現在設定の 
 最後の cleanup と slot 解放後の CANCELLED_CLEAN、retry 前 STARTED(N+1) readback、
 旧 CPU 履歴維持と、旧 intent-only・公開不明・JPEG 入口後の HOLD を保つ。
 共有候補は `ManualOriginalTrialSaveOwner`、`AndroidManualOriginalTrialSaves`、request/cursor、
-storage file kind、cold-open UI。統合前に #365 の確定 head と codec/受付契約を照合する。
-
-現在は #365 の未検証 checkpoint を取り込んでおり、後続修正と最終契約に追従する。
+storage file kind、cold-open UI。#381 は #380 の確定契約を取り込み済み。
+今後の変更でも codec/受付契約を照合し、確認済取消と公開不明の救済を分離する。
 取消台帳、CLEAN 確定時点、通常 retry 証明を変更しない。
 
 ## 試験の境界
@@ -105,8 +107,19 @@ storage file kind、cold-open UI。統合前に #365 の確定 head と codec/�
 Android provider の実試験、実機 LMK は別々に記録する。読取専用基盤の試験だけで
 要求 idempotency・永続救済・UI・#365 回帰の完了を宣言しない。
 
-Android の準備済み試験は `SaveRecoveryFactoryAndroidTest`。`isolated=true saveRecovery=true`
+Android の factory 試験は `SaveRecoveryFactoryAndroidTest`。`isolated=true saveRecovery=true`
 を明示した emulator 専用で、小型合成 DNG の原本 hash、intent-only からの明示要求、prepared index、
-旧 owner の admission 拒否、公開済み receipt と seed 間の保留を検査する。実行は未実施。
+旧 owner の admission 拒否、公開済み receipt と seed 間の保留を検査する。
+#381 の先行 head では境界18件と cold-open/Compose/FGS 4件が成功。
+最終 head `caf2ef74d6ae07e3f5cd7591ce7d122a88d91b39` では、完成 pending と公開済みの
+cold UI 再確認、partial の保留から明示 B / FGS への3件（R1〜R3）を host force-stop・新 PID で確認し、
+公開 receipt 後 seed 前の B 拒否（factory 境界 R4）も成功した。先行 head の22件とは区別する。
 これは process 内 factory の試験であり、cold process・FGS・Compose UI・host kill の試験とは別。
 新しい fixture の原本/要求/台帳は削除せず保持する。CI での instrumentation APK compile は実行合格としない。
+
+#381 の初回 Google APIs R1 は System UI ANR、続く ATD R1 は ES 3.2 不足で失敗しており、
+前提是正後の成功と区別する。UNKNOWN は合成 seed → host kill → 新 PID の確認であり、
+UNKNOWN 発生瞬間の実 writer kill と同一ではない。実機 LMK、通知 UI 取消全般、
+全 GPU/OS の直積試験は未確認。配布済みであることをこれらの実機合格へ読み替えない。
+詳細な実行手順と証拠区分は [SAVE_RECOVERY_HOST_RESTART](SAVE_RECOVERY_HOST_RESTART.md) と
+[#381 の検証記録](https://github.com/reitojike/cinematic-camera/pull/381) を参照する。
