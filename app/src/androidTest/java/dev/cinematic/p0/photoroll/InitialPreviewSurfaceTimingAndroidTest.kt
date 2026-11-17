@@ -268,8 +268,8 @@ class InitialPreviewSurfaceTimingAndroidTest {
                             // A Compose draw record precedes accessibility publication; require both,
                             // just as the product Surface fixture does, without relaxing the label gate.
                             await { times.composeRecord.get()!=0L &&
-                                find("RAW基準の案内画像・調整は未反映")!=null }
-                            assertNotNull(find("RAW基準の案内画像・調整は未反映"))
+                                find("RAW基準の案内画像 · 調整は未反映")!=null }
+                            assertNotNull(find("RAW基準の案内画像 · 調整は未反映"))
                             assertFalse("comparison disabled before exact",hasComparisonAction())
                             assertNoGuideValueWarnings()
                             val save=actionNode(checkNotNull(find("JPEGを保存")))
@@ -308,7 +308,7 @@ class InitialPreviewSurfaceTimingAndroidTest {
                 } else assertEquals(0L,times.bitmapReady.get())
                 if(capture) {
                     await { hasComparisonAction() }
-                    assertNull(find("RAW基準の案内画像・調整は未反映"))
+                    assertNull(find("RAW基準の案内画像 · 調整は未反映"))
                     val exactCapture=screen(File(output,"exact.png"))
                     try {
                         assertFalse("guide and exact display differ",requireNotNull(guideCapture).sameAs(exactCapture))
@@ -360,7 +360,7 @@ class InitialPreviewSurfaceTimingAndroidTest {
                     await { !owner.renderer.surfaceAttached.value }
                     scenario.moveToState(Lifecycle.State.RESUMED)
                     await { owner.renderer.surfaceAttached.value && owner.presented.value==values }
-                    assertNull(find("RAW基準の案内画像・調整は未反映"))
+                    assertNull(find("RAW基準の案内画像 · 調整は未反映"))
                 }
             }
         } finally {
@@ -383,7 +383,7 @@ class InitialPreviewSurfaceTimingAndroidTest {
     }
     private fun recordNodeKinds(file: File) {
         val records=JSONArray()
-        val known=setOf("STRENGTH","色温度","明るさ","50","+0","+0.0")
+        val known=setOf("強さ","色温度","明るさ","50","+0","+0.0")
         fun walk(node: AccessibilityNodeInfo?) {
             if(node==null) return
             val bounds=Rect().also { node.getBoundsInScreen(it) }
@@ -403,7 +403,7 @@ class InitialPreviewSurfaceTimingAndroidTest {
             append(node.text?.toString().orEmpty()); append("\n")
             for(i in 0 until node.childCount) node.getChild(i)?.let { append(texts(it)) }
         }
-        val labels=listOf("STRENGTH" to "50", "色温度" to "+0", "明るさ" to "+0.0")
+        val labels=listOf("強さ" to "50", "色温度" to "+0", "明るさ" to "+0.0")
         val bounds=labels.map { (label,value) ->
             val matches=mutableListOf<AccessibilityNodeInfo>()
             fun walk(node: AccessibilityNodeInfo) {

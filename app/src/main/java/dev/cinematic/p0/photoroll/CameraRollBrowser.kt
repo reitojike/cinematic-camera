@@ -52,7 +52,7 @@ internal fun CameraRollBrowser(listing: PhotoRollListing, access: CameraRollAcce
             CaptureTextAction(MessageControl(MessageAction.RETRY, "↻", refreshEnabled, description = "更新"), { refresh() })
         }
         trial?.let { CaptureTextAction(MessageControl(MessageAction.CONFIRM, it + if (detail) " ▴" else " ▾"),
-            { detail = !detail }, tone = CaptureChromeTone.WARNING) }
+            { detail = !detail }, tone = CaptureChromeTone.NORMAL) }
         Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
             PhotoRollKindFilter.entries.forEach { candidate ->
                 TextButton(onClick = { chooseFilter(candidate) }, enabled = enabled, shape = RectangleShape,

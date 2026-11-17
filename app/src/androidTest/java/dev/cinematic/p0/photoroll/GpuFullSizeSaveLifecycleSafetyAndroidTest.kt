@@ -378,7 +378,7 @@ class GpuFullSizeSaveLifecycleSafetyAndroidTest {
         }
 
         fun assertEditsBlocked(save: AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle) {
-            listOf("STRENGTH", "色温度", "明るさ").forEach { label ->
+            listOf("強さ", "色温度", "明るさ").forEach { label ->
                 val node = requireNotNull(control(label)) { "Missing edit control: $label" }
                 assertFalse("Edit control must be disabled during export: $label", node.isEnabled)
                 // Exercise the disabled accessibility action. Its boolean is framework-specific;

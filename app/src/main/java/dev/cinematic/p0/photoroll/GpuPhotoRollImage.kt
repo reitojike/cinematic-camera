@@ -24,7 +24,7 @@ import dev.cinematic.p0.photoedit.PhotoEditValues
     updating: Boolean = false, initialGuide: InitialPreviewFrame? = null, header: (@Composable (Boolean) -> Unit)? = null) {
     var holding by remember(session, enabled) { mutableStateOf(false) }
     val before = enabled && (holding || comparing)
-    val caption = initialGuide?.let { developCaption(false, false).copy(body = it.label) }
+    val caption = initialGuide?.let { initialGuideCaption(it) }
         ?: developCaption(before, updating)
     SideEffect { session.submit(values, before) }
     Column(modifier.background(CaptureDesign.Ink)) {

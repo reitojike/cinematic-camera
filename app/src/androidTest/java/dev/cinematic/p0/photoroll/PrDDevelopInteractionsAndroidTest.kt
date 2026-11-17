@@ -179,13 +179,13 @@ class PrDDevelopInteractionsAndroidTest {
         visible("現像結果")
         val closed = rect(visible("現像結果（表示用）"))
         val surfaceClosed = surfaceBounds(scenario)
-        clickLabel("STRENGTH")
+        clickLabel("強さ")
         visible("現像調整パネル")
         val image = rect(visible("現像結果（表示用）"))
         val surface = surfaceBounds(scenario)
         assertEquals("Native Surface stays at the closed size while panel is open", surfaceClosed, surface)
         val panel = rect(visible("現像調整パネル"))
-        for (label in listOf("色温度", "明るさ", "STRENGTH")) {
+        for (label in listOf("色温度", "明るさ", "強さ")) {
             clickLabel(label)
             assertEquals("image bounds after parameter $label", image, rect(visible("現像結果（表示用）")))
             assertEquals("real SurfaceView bounds after parameter $label", surface, surfaceBounds(scenario))
@@ -225,7 +225,7 @@ class PrDDevelopInteractionsAndroidTest {
         assertEquals(native.right, closedOverlay.right)
         assertEquals(native.bottom, closedOverlay.bottom)
         repeat(3) { cycle ->
-            clickLabel("STRENGTH")
+            clickLabel("強さ")
             visible("現像調整パネル")
             val openOverlay = rect(visible("現像結果（表示用）"))
             assertEquals("Native bounds stay fixed while opening cycle $cycle", native, surfaceBounds(scenario))
@@ -233,7 +233,7 @@ class PrDDevelopInteractionsAndroidTest {
             assertEquals(native.top, openOverlay.top)
             assertEquals(native.right, openOverlay.right)
             assertTrue("Only the visible overlay shrinks", openOverlay.height() in 1 until closedOverlay.height())
-            for (label in listOf("色温度", "明るさ", "STRENGTH")) {
+            for (label in listOf("色温度", "明るさ", "強さ")) {
                 clickLabel(label)
                 assertEquals(openOverlay, rect(visible("現像結果（表示用）")))
                 assertEquals(native, surfaceBounds(scenario))

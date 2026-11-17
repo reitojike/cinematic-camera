@@ -58,10 +58,10 @@ class CaptureScreenMessagesTest {
             captureMessages(notice = CaptureNotice("別の完了文", CaptureChromeTone.ACCEPTED)).toast!!.tone)
     }
 
-    @Test fun permissionUsesFailureProblemAndOnlyExistingPermissionAction() {
+    @Test fun permissionUsesWarningProblemAndOnlyExistingPermissionAction() {
         val message = captureMessages(cameraPermissionMissing = true).center!!
         assertEquals(MessageSlot.PROBLEM, message.slot)
-        assertEquals(CaptureChromeTone.FAILURE, message.tone)
+        assertEquals(CaptureChromeTone.WARNING, message.tone)
         assertEquals("カメラを使えません", message.title)
         assertEquals("カメラの許可が必要です。", message.body)
         assertEquals(MessageAction.GRANT_ACCESS, message.primary!!.action)
@@ -95,5 +95,27 @@ class CaptureScreenMessagesTest {
         assertEquals("ISO を変更しています。", captureChangingMessage(listOf("ISO")))
         assertEquals("ISO と SHUTTER を変更しています。", captureChangingMessage(listOf("ISO", "SHUTTER")))
         assertEquals("ISO、SHUTTER と WB を変更しています。", captureChangingMessage(listOf("ISO", "SHUTTER", "WB")))
+    }
+    @Test fun permissionRetainsProblemPriorityButDoesNotReplaceRecovery() {
+        val permission = captureMessages(cameraPermissionMissing = true, captureFailed = true,
+            phase = "処理中", notice = CaptureNotice("保存しました", CaptureChromeTone.ACCEPTED))
+        assertEquals("camera.permission", permission.center!!.fact)
+        assertNull(permission.banner)
+        assertNull(permission.toast)
+        assertEquals("capture.recovery", captureMessages(cameraPermissionMissing = true,
+            captureRecovery = true).center!!.fact)
+        assertEquals("controls.recovery", captureMessages(cameraPermissionMissing = true,
+            controlRecovery = true).center!!.fact)
+    }
+
+    @Test fun recordingIsFilledWhileFailuresIncludingUnknownModeAreOutlined() {
+        assertEquals(CaptureDesign.Recording, captureChipBackground(CaptureChromeTone.RECORDING))
+        assertEquals(CaptureDesign.Ink, captureChipTextColor(
+            CaptureStatusChip("recording", "REC", tone = CaptureChromeTone.RECORDING)))
+        for (mode in listOf(false, true)) {
+            val failed = CaptureStatusChip("failure", "不明", tone = CaptureChromeTone.FAILURE, mode = mode)
+            assertEquals(androidx.compose.ui.graphics.Color.Transparent, captureChipBackground(failed.tone))
+            assertEquals(CaptureDesign.Failed, captureChipTextColor(failed))
+        }
     }
 }

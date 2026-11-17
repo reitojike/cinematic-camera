@@ -130,7 +130,7 @@ class GpuProductEditorAndroidTest {
                 await("first GPU presentation") { saveReady() }
                 val openedReads = provider.opens.get()
                 // PhotoEditBar exposes a normalized 0..1 accessibility range for every unit.
-                val controls = listOf(Triple("STRENGTH", .7f, "70"),
+                val controls = listOf(Triple("強さ", .7f, "70"),
                     Triple("色温度", .65f, "+30"), Triple("明るさ", .625f, "+0.5"))
                 for ((label, fraction, displayedValue) in controls) {
                     click(label)

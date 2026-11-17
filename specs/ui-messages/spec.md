@@ -50,13 +50,13 @@ TOAST の消去時刻、状態や資源、保存処理の所有権は既存側�
 
 | CaptureChromeTone | トークン | 意味 |
 | --- | --- | --- |
-| FAILURE | Failed (`#FF6B6B`) | 操作が必要なシステム側の失敗。撮影/保存/読込/復旧/GPU/メモリ/原本変化/権限/保存確認不能/保留 |
-| WARNING | Amber | 進行中・未反映・注意・ユーザー取消後。熱・録画前のマイク権限・アクセス制限・顔保護なし |
+| FAILURE | Failed (`#FF6B6B`) | 操作が必要なシステム側の失敗。撮影/保存/読込/復旧/GPU/メモリ/原本変化/読取権限喪失/保存確認不能/保留 |
+| WARNING | Amber | 進行中・未反映・注意・ユーザー取消後。熱・カメラ許可待ち・録画前のマイク権限・アクセス制限・初期案内画像 |
 | ACCEPTED | Accepted | 保存・受付・設定保持の完了 |
-| NORMAL | Muted | 平常の補足 |
-| RECORDING | RecordingText | 録画状態専用。メッセージには使用禁止 |
+| NORMAL | Muted | 平常の補足。顔保護なし・試験品質など常設の注記 |
+| RECORDING | Recording背景・枠 / Ink文字 | 録画状態専用。メッセージには使用禁止 |
 
-READY/DISABLED は既存の状態チップ用途だけに残す。PROBLEM は FAILURE、BANNER は FAILURE/WARNING、TOAST は ACCEPTED/NORMAL。
+READY/DISABLED は既存の状態チップ用途だけに残す。PROBLEM は FAILURE。ただしカメラ許可待ち（camera.permission）だけ WARNING を許可する。BANNER は FAILURE/WARNING、TOAST は ACCEPTED/NORMAL。
 熱で録画を開始できない場合、録画を試みた直後だけ FAILURE とする。判定方法は PR-B で記録し、録画の受付条件を変えない。
 
 ## 文言と操作
@@ -84,7 +84,7 @@ Scrim は Ink 90%、ScrimLight は70%。Body は既存 Explanation。行内背�
 - DevelopCaption: 1行・省略可。内容と更新中のトーンは呼出側で確定する。
 
 BANNER/PROBLEM/TOAST に Polite liveRegion、PROBLEM見出しに heading を付ける。
-全描画部品は modifier を受け、回転は呼出側の sensorRotation と既存横向き幅220dp/380dpで指定する。
+全描画部品は modifier を受け、回転は呼出側の sensorRotation で指定する。撮影 BANNER は縦向きで親の利用可能幅いっぱい（上限380dp）・中央配置、横向きは既存220dp幅と回転を維持する。TOAST は内容幅を維持する。
 本文2行＋操作1行を通常の目安とするが、拡大文字で安全説明や操作を切り捨てない。操作は狭幅で折り返し、ダイアログはスクロールする。
 
 ## 検証と適用境界
@@ -157,3 +157,13 @@ PR-Dではキャプションの「長押しで基準表示」を情報ダイア�
 - 通知への同じ進捗表示は可能だが、この変更案では通知の更新経路とFGS寿命を変更せず、既存通知を維持する。画像とAndroid回帰の確認前は採用済みとしない。
 
 - 工程名の下に「アプリを離れても続きます。」を表示する。取消中はこの継続案内を出さず、「保存を取り消しています」（句点なし）、中央は「保存を取り消しています · プレビューを止めています」とする。取消状態は既存FGS snapshotの読取専用入力で、取消/公開の権限を変えない。
+
+## PR-G UIの一貫性（Issue #460・本人の見た目承認前）
+
+- U1: REC は Recording の塗りと枠、文字は Ink。失敗チップと露出不明バッジは透明背景・Failed の枠/文字とし、塗りで録画と区別する。
+- U3: 現像ヘッダーはモード→保存状態→原本名→顔保護なし。横スクロールせず、原本名だけ残幅へ収めて1行省略する。全文は既存 INFO、保存状態の polite liveRegion は維持する。
+- U4/U5: 顔保護なしとロールの常設試験品質注記は NORMAL。カメラ許可待ちだけ WARNING PROBLEM とし、文言・操作・優先順位を変えない。失敗時の読取権限喪失等は FAILURE のまま。
+- U6/U8: 現像の STRENGTH は見た目・読み上げとも「強さ」。色温度の重複説明行を削除し、見出し「色温度 · 相対（K値ではありません）」に集約する。パネル最小高104dpを維持する。現像見出しは左右操作を除く残幅でLabelを折り返し、色温度見出しの実測高（最低48dp）を全パラメータで共有して切替時の高さを揃える。撮影の ISO/SS/EV/WB/FOCUS/LOOK と RESET は変更しない。
+- U9: 保存丸は67dp、ラベルを含む操作領域は幅76dp・最小高76dp。既存の保存行最小高96dpを維持する。ラベルは Label、有効時Text・無効時Disabled、保存中/確認中はAmber。READY・調整中・設定保存中・未準備・HOLDは「保存」、保存中は「保存中」、再照合中は「確認中」、PUBLISHEDは「開く」、CANCELLED/GPU_FAILEDは「再試行」、UNCONFIRMEDは「確認」。操作の可否とcallbackは既存入力のまま。
+- U11: 初期案内は WARNING CAPTION。保存済みJPEGは「保存済みJPEGの案内表示 · プレビュー準備中」、half案内は「RAW基準の案内画像 · 調整は未反映」、埋込案内は「撮影時の案内画像 · 調整は未反映」。InitialPreviewFrame.labelを正本とし、共通initialGuideCaptionで描く。案内→本表示のhandoffは変更しない。
+- U7は#454で実装済み。U10は実装せず、比較の3入口を維持する。全指定画面の変更前後比較、500dp/文字1.8倍の保存行、Android手動回帰、CI、独立レビューと本人の見た目承認をマージ条件にする。
