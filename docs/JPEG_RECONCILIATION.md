@@ -114,7 +114,8 @@ Android の factory 試験は `SaveRecoveryFactoryAndroidTest`。`isolated=true 
 最終 head `caf2ef74d6ae07e3f5cd7591ce7d122a88d91b39` では、完成 pending と公開済みの
 cold UI 再確認、partial の保留から明示 B / FGS への3件（R1〜R3）を host force-stop・新 PID で確認し、
 公開 receipt 後 seed 前の B 拒否（factory 境界 R4）も成功した。先行 head の22件とは区別する。
-これは process 内 factory の試験であり、cold process・FGS・Compose UI・host kill の試験とは別。
+`SaveRecoveryFactoryAndroidTest` は process 内 factory の試験であり、
+cold process・FGS・Compose UI・host kill の試験とは別。
 新しい fixture の原本/要求/台帳は削除せず保持する。CI での instrumentation APK compile は実行合格としない。
 
 #381 の初回 Google APIs R1 は System UI ANR、続く ATD R1 は ES 3.2 不足で失敗しており、
