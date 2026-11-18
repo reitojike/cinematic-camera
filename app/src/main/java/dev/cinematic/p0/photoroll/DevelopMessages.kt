@@ -101,7 +101,7 @@ internal fun developMessages(
             MessageSlot.PROBLEM, CaptureChromeTone.FAILURE,
             state.saveFailureMessage ?: "JPEGの保存に失敗しました。再試行してください。",
             "save.failure", title = "JPEGを保存できませんでした", primary = resume)
-        state.savePhase == PhotoRollSavePhase.CANCELLED -> candidates += UiMessage(
+        state.savePhase == PhotoRollSavePhase.CANCELLED && state.exportPaused -> candidates += UiMessage(
             MessageSlot.BANNER, CaptureChromeTone.WARNING,
             "保存を取り消しました。同じ設定で再試行するか、プレビューに戻って調整できます。",
             "save.cancelled", primary = resume)

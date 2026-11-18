@@ -243,7 +243,7 @@ class DevelopMessagesScreenshotAndroidTest {
 
     private fun fixtureState(state: DevelopMessageState) = state.copy(
         canLeave = !state.savingRecipe,
-        canResumePreview = state.foreground && !state.saving && !state.savingRecipe && gpuSaveCanResumePreview(state.savePhase),
+        canResumePreview = state.foreground && !state.saving && !state.savingRecipe && gpuSaveCanResumePreview(state.savePhase, state.exportPaused),
         retryEnabled = state.foreground && !state.saving && !state.savingRecipe,
     )
 

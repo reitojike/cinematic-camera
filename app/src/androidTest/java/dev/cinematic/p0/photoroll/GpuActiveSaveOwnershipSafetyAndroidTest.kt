@@ -57,7 +57,7 @@ class GpuActiveSaveOwnershipSafetyAndroidTest {
 
     @Test fun repeatedDuplicateStartsThenUiCancellationStopActualServiceAndGpuOwners() {
         repeat(2) {
-            withEditor { fixture, _, _ ->
+            withEditor { fixture, env, _ ->
                 val barrier = BandBarrier()
                 Original24GpuOutput.observeForDiagnostics(barrier.witness).use {
                     try {
@@ -91,6 +91,18 @@ class GpuActiveSaveOwnershipSafetyAndroidTest {
                             it.service.className == ForegroundExportService::class.java.name
                         }
                         await("actual FGS stops before another explicit save") { !serviceRunning() }
+                        click("プレビューを再開")
+                        await("cancelled preview reopens without a stale recovery action") {
+                            env.owners.size == 2 && env.owners.last().session.presented.value != null &&
+                                action("同じ設定で保存を再試行") != null
+                        }
+                        assertNull(action("プレビューを再開"))
+                        assertNull(find { it.text?.toString()?.startsWith("保存を取り消しました。") == true })
+                        assertEquals(ManualOriginalTrialSavePhase.CANCELLED, save.state.value.phase)
+                        assertArrayEquals(intent, fixture.intent(save).read(ManualOriginalTrialRequestCodec.MAX_BYTES))
+                        assertNull(ForegroundExports.gate.active())
+                        assertEquals(2, env.owners.size)
+
                     } finally { barrier.release.countDown() }
                 }
             }

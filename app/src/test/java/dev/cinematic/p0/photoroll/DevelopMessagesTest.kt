@@ -105,6 +105,25 @@ class DevelopMessagesTest {
         assertNull(result.center?.primary) // no duplicate resume action
     }
 
+    @Test fun cancelledHistoryDoesNotKeepRecoveryBannerAfterPreviewResumes() {
+        for (phase in listOf(PhotoRollPhase.CHECKING, PhotoRollPhase.DISPLAYED, PhotoRollPhase.PAUSED)) {
+            val state = state(PhotoRollSavePhase.CANCELLED).copy(phase = phase, exportPaused = false,
+                canResumePreview = false)
+            val result = developMessages(state)
+            assertNull(result.banner)
+            assertFalse(result.center?.primary?.action == MessageAction.RESUME_PREVIEW)
+            assertEquals("保存取消", developSavePresentation(state).label)
+            assertEquals("同じ設定で保存を再試行", developSavePresentation(state).description)
+        }
+    }
+
+    @Test fun resumedCancelledHistoryDoesNotHideAnotherPhotosActiveSave() {
+        val result = developMessages(state(PhotoRollSavePhase.CANCELLED), listOf(otherPhotoSaving()))
+        assertEquals("save.foreground_progress", result.banner?.fact)
+        assertEquals(MessageAction.CANCEL_SAVE, result.banner?.primary?.action)
+        assertNull(result.center)
+    }
+
     @Test fun saveFailureDoesNotTurnInputRetryIntoSaveRetry() {
         val result = developMessages(state(PhotoRollSavePhase.GPU_FAILED).copy(exportPaused = true))
         assertEquals(MessageSlot.PROBLEM, result.center?.slot)
