@@ -51,6 +51,10 @@ class PreviewCompareActivity : Activity() {
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }, 1)
         } })
+        column.addView(Button(this).apply { text = "速度を別に比較"; setOnClickListener {
+            cancelAndClear()
+            startActivity(Intent(this@PreviewCompareActivity, PerformanceCompareActivity::class.java))
+        } })
         val controls = LinearLayout(this)
         controls.addView(Button(this).apply { text = "FULL"; setOnClickListener { pair?.let { image.setImageBitmap(it.full); status.text = "FULL · $selectedEv EV · 強さ 0.5" } } })
         controls.addView(Button(this).apply { text = "HALF"; setOnClickListener { pair?.let { image.setImageBitmap(it.half); status.text = "HALF · $selectedEv EV · 強さ 0.5" } } })

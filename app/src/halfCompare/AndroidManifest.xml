@@ -18,5 +18,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity android:name="dev.cinematic.p0.halfcompare.PerformanceCompareActivity" android:exported="false" />
     </application>
 </manifest>

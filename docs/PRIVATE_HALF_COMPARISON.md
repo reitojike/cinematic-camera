@@ -55,3 +55,10 @@ This branch starts at #455 head 8f712d8a. Existing #455 emulator guards and its
 report script remain unchanged. #456 is neither merged nor duplicated here.
 Before integrating, reconcile the build.gradle opt-in blocks and rerun tests on
 the final combined head. This document is preparation, not completed validation.
+
+## 実写用の性能入口（準備中）
+
+品質画面の「速度を別に比較」から、同じ別ID内の非export Activityを開く。
+通常swapを終端とするABBA計測は品質readbackと分離する。詳細と実施条件は
+[実写比較手順](HALF_REAL_COMPARISON_RUNBOOK.md)を参照。既存の合成専用性能入口のガードは変更しない。
+実機導入・操作・採否は未承認、合成/CIの証拠はPR #464の最終headで確認する。

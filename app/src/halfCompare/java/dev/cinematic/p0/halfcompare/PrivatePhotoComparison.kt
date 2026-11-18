@@ -48,7 +48,9 @@ internal class PrivatePhotoComparison(
         override fun close() { full.recycle(); half.recycle() }
     }
 
-    fun compare(uri: Uri, stop: ComparisonStop, exposureEv: Double, progress: (String) -> Unit): Pair {
+    fun compare(uri: Uri, stop: ComparisonStop, exposureEv: Double, progress: (String) -> Unit): Pair = ComparisonLease.acquire().use { compareOwned(uri, stop, exposureEv, progress) }
+
+    private fun compareOwned(uri: Uri, stop: ComparisonStop, exposureEv: Double, progress: (String) -> Unit): Pair {
         require(exposureEv == 0.0 || exposureEv == -1.0 || exposureEv == -2.0)
         val memory = ActivityManager.MemoryInfo().also {
             context.getSystemService(ActivityManager::class.java).getMemoryInfo(it)
