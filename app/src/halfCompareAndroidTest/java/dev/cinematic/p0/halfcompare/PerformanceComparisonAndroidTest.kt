@@ -101,6 +101,8 @@ class PerformanceComparisonAndroidTest {
                     assertEquals(2, Regex("FULL thermal").findAll(result!!).count())
                 }
                 awaitIdle(); assertClean()
+                assertEquals(listOf("EFFECT_FULL", "EFFECT_HALF_CANDIDATE", "EFFECT_HALF_CANDIDATE", "EFFECT_FULL"),
+                    observations.filter { it.startsWith("EFFECT_") })
                 DngContentVerifier.verify(fingerprint, { file.inputStream() })
             } finally { PerformanceCompareActivity.observeSynthetic = null; PerformanceCompareActivity.createInput = factory; assertTrue(file.delete()) }
         }

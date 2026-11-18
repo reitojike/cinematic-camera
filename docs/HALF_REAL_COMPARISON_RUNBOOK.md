@@ -41,7 +41,8 @@ Issue #233 / PR #464。レーンA（dev.9普段使い→最終実機確認→v0.
 ## 計測の意味
 
 品質画面はGPU readback/Bitmapを使う見た目確認であり、待ち時間を性能値にしない。
-性能画面はBitmap/readbackなし、各回に新しいGPU ownerを作り、通常swap通知を終端とする。
+性能画面はBitmap/readbackなし、各回に新しいGPU ownerとViewを作り、通常swap通知を終端とする。
+各標本のViewは画面から外してから破棄し、旧compositionの再生成を防ぐ。
 写真選択・providerの最初の検証/コピーはOPEN外。同じ私有snapshotを4回使用する。
 各回のLaunchedEffect内のOPEN開始から、CHECK_ORIGINAL、PREFLIGHT、SNAPSHOT、NATIVE_DECODE、
 BOX_REDUCE、VERIFY_AFTER、GPU_FIRST_FRAMEを記録する。GUIDEは未到達。
@@ -69,7 +70,10 @@ native/GLの終了確認まで所有者を保持する。確認できなけれ�
 既存 `PreviewHalfPerformanceAndroidTest` は合成・emulator専用のまま維持する。
 新入口の `PerformanceComparisonAndroidTest` もemulatorと `privateHalfSynthetic=true` が必須。
 実写真は読まず、合成12/24MPでABBA完走・原本不変・同寸法・通常swapと工程記録・一時解放を確認する。
+各写真のEffect開始がFULL/HALF/HALF/FULLの4回だけであることも確認する。
 ローカル入力制限、取消/離脱、古い結果拒否、cleanup失敗時の停止も確認する。
+失敗した場合は最初の失敗を単独・新しいinstrumentationプロセスで調べ、
+cleanup停止後のBUSY等を別原因として数えない。失敗証拠は私有領域で保全する。
 既存品質15件の回帰、manifestの別ID/非export/ネットワーク権限なし/backupなしを確認する。
 重ビルド/AVDは既存資源管理に従い、レーンAと競合したら開始しない。
 

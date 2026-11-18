@@ -32,7 +32,8 @@ class PerformanceCompareActivity : ComponentActivity() {
     private val generation = CompareGeneration()
     private var stop: ComparisonStop? = null
     private lateinit var status: TextView
-    private lateinit var surface: ComposeView
+    private lateinit var surfaceHost: FrameLayout
+    private var activeSurface: ComposeView? = null
     private lateinit var local: CheckBox
     companion object {
         private val executor = Executors.newSingleThreadExecutor()
@@ -74,8 +75,8 @@ class PerformanceCompareActivity : ComponentActivity() {
         column.addView(Button(this).apply { text = "取消・閉じる"; setOnClickListener { cancel(); finish() } })
         status = TextView(this).apply { text = "既知のローカル写真だけを選択してください。結果はこの画面内のみです。" }
         column.addView(ScrollView(this).apply { addView(status) }, LinearLayout.LayoutParams(-1, 240))
-        surface = ComposeView(this)
-        column.addView(surface, LinearLayout.LayoutParams(-1, 0, 1f))
+        surfaceHost = FrameLayout(this)
+        column.addView(surfaceHost, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(column); column.requestApplyInsets()
     }
     @Deprecated("Standalone evaluation activity result")
@@ -125,6 +126,7 @@ class PerformanceCompareActivity : ComponentActivity() {
     private fun run(input: PerformanceInput, mode: PreviewRasterMode, stop: ComparisonStop, ticket: Long): String {
         GpuPhotoRollRetiredOwners.releaseBeforeOpen()
         val owner = GpuPhotoRollSession(assets)
+        var sampleSurface: ComposeView? = null
         val session = AtomicReference<Original24PreviewSession?>()
         val started = java.util.concurrent.atomic.AtomicBoolean()
         val drained = CountDownLatch(1)
@@ -137,9 +139,11 @@ class PerformanceCompareActivity : ComponentActivity() {
             stop.check()
             onMain {
                 check(generation.accepts(ticket) && !isDestroyed)
+                val surface = ComposeView(this).also { sampleSurface = it; activeSurface = it }
                 surface.setContent {
                     GpuPreviewSurface(owner.renderer, Modifier.fillMaxSize())
                     LaunchedEffect(owner) {
+                        observe("EFFECT_" + mode.name)
                         started.set(true)
                         val timing = checkNotNull(GpuPreviewTiming.start(1, {
                             thermalEnd = thermal.currentThermalStatus; result.complete(it); Unit
@@ -182,6 +186,7 @@ class PerformanceCompareActivity : ComponentActivity() {
                         finally { drained.countDown() }
                     }
                 }
+                surfaceHost.addView(surface, FrameLayout.LayoutParams(-1, -1))
             }
             val records = result.get(180, TimeUnit.SECONDS).associateBy { it.stage }
             observe("OPEN_" + records.getValue(GpuPreviewTimingStage.OPEN).outcome.name)
@@ -199,7 +204,12 @@ class PerformanceCompareActivity : ComponentActivity() {
             stop.signal.setOnCancelListener(null)
             session.get()?.requestStop()
             try {
-                onMain { surface.disposeComposition(); owner.close() }
+                onMain {
+                    // Detach first: an attached ComposeView can recreate its disposed old content on layout.
+                    sampleSurface?.let { surfaceHost.removeView(it); it.disposeComposition() }
+                    if (activeSurface === sampleSurface) activeSurface = null
+                    owner.close()
+                }
                 check(!started.get() || drained.await(30, TimeUnit.SECONDS))
                 session.get()?.let { it.close(); check(!it.hasUnreleasedResources); session.set(null) }
                 check(owner.renderer.awaitClosed(10_000))
@@ -212,6 +222,11 @@ class PerformanceCompareActivity : ComponentActivity() {
         }
     }
     private fun cancel() { generation.next(); stop?.cancel(); stop = null }
-    override fun onStop() { cancel(); if (::surface.isInitialized) surface.disposeComposition(); super.onStop() }
+    override fun onStop() {
+        cancel()
+        activeSurface?.let { surfaceHost.removeView(it); it.disposeComposition() }
+        activeSurface = null
+        super.onStop()
+    }
     override fun onDestroy() { cancel(); super.onDestroy() }
 }
