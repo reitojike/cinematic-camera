@@ -14,7 +14,9 @@ NETWORK_PERMISSIONS = {"android.permission.INTERNET", "android.permission.ACCESS
 def validate_permissions(flavor, permissions):
     """Allow SDK diagnostics only in ML Kit; reject all other platform permissions."""
     platform = {p for p in permissions if p.startswith("android.permission.")}
-    expected = NETWORK_PERMISSIONS if flavor in ("mlkit", "mlkitplay", "comparison") else set()
+    expected = NETWORK_PERMISSIONS if flavor in ("mlkit", "mlkitplay", "comparison", "realtime") else set()
+    if flavor == "realtime":
+        expected = expected | {"android.permission.CAMERA"}
     if platform != expected:
         raise ValueError("Unexpected platform permissions for evaluation flavor")
     # AndroidX may add only this package's signature-protected receiver permission.
@@ -23,9 +25,9 @@ def validate_permissions(flavor, permissions):
         raise ValueError("Unexpected custom permission")
 
 
-def audit(root):
+def audit(root, flavors=("baseline", "mlkit", "mlkitplay", "yunet", "comparison", "realtime")):
     result = {}
-    for flavor in ("baseline", "mlkit", "mlkitplay", "yunet", "comparison"):
+    for flavor in flavors:
         apk = root / f"outputs/apk/{flavor}/debug/benchmark-{flavor}-debug.apk"
         manifest = root / f"intermediates/merged_manifests/{flavor}Debug/process{flavor.capitalize()}DebugManifest/AndroidManifest.xml"
         xml = ET.parse(manifest).getroot()
@@ -50,9 +52,13 @@ def audit(root):
                           "components": [{"kind": n.tag, "name": n.get(ANDROID + "name"), "exported": n.get(ANDROID + "exported")}
                                          for n in app if n.tag in ("provider", "service", "receiver", "activity")]}
     for row in result.values():
-        row["delta_from_baseline_bytes"] = row["apk_bytes"] - result["baseline"]["apk_bytes"]
+        row["delta_from_baseline_bytes"] = row["apk_bytes"] - result["baseline"]["apk_bytes"] if "baseline" in result else None
     return result
 
 
 if __name__ == "__main__":
-    print(json.dumps(audit(Path(__file__).parent / "benchmark/build"), indent=2))
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--flavor", action="append", choices=("baseline", "mlkit", "mlkitplay", "yunet", "comparison", "realtime"))
+    args = parser.parse_args()
+    print(json.dumps(audit(Path(__file__).parent / "benchmark/build", args.flavor) if args.flavor else audit(Path(__file__).parent / "benchmark/build"), indent=2))

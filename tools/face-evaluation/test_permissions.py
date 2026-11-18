@@ -3,6 +3,16 @@ from audit import validate_permissions, NETWORK_PERMISSIONS
 
 
 class PermissionTest(unittest.TestCase):
+    def test_realtime_camera_is_scoped_to_realtime(self):
+        allowed = NETWORK_PERMISSIONS | {"android.permission.CAMERA"}
+        validate_permissions("realtime", allowed)
+        for extra in ("android.permission.RECORD_AUDIO", "android.permission.READ_MEDIA_IMAGES", "android.permission.READ_EXTERNAL_STORAGE"):
+            with self.assertRaises(ValueError):
+                validate_permissions("realtime", allowed | {extra})
+        for other in ("mlkit", "mlkitplay", "comparison", "baseline", "yunet"):
+            with self.assertRaises(ValueError):
+                validate_permissions(other, allowed)
+
     def test_mlkit_diagnostics_only(self):
         validate_permissions("mlkit", list(NETWORK_PERMISSIONS))
         validate_permissions("mlkit", list(NETWORK_PERMISSIONS) +

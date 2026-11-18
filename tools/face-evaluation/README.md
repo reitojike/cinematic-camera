@@ -1,5 +1,8 @@
 # 顔検出の独立評価構成（#79）
 
+連続入力とプレビュー影響の製品外準備版は [リアルタイム診断](REALTIME.md) を参照。
+実機導入・カメラ実行・配布・採用とは分ける。
+
 ML Kit は第一候補であり未採用。この Gradle project は製品 root settings から include しない。
 製品 app、診断 variant、保存/GPU/LibRaw/JNI/UI への参照はない。独立した applicationId、build 出力を使う。
 本構成を製品依存や製品 APK に組み込まない。
@@ -53,7 +56,8 @@ root製品CIは従来通り必須。本projectの検証は上記の独立コマ�
 [入力手順](PRIVATE_INPUT.md)、[公開素材候補](PUBLIC_DATA_CANDIDATES.md)、[再開手順](EVALUATION_PLAN.md)を参照。
 
 ML Kit flavor だけ INTERNET/ACCESS_NETWORK_STATE を持たせ、SDK の通常の診断通信を妨げない。
-baseline/YuNet は通信権限を持たず、全 flavor のカメラ・写真・連絡先等の権限は認めない。
+baseline/YuNet は通信権限を持たない。realtimeだけは後続のライブ診断用CAMERA権限を持つ。
+他flavorのカメラ権限、および全flavorの写真・連絡先等の権限は認めない。
 `audit.py` で完成 manifest の許可リストを検査する。固定 SDK/runtime/model は変更しない。
 Google 向け利用・診断情報（評価用アプリ/端末情報、インストール単位ID、処理時間、
 入力形式・解像度、イベント・エラー等）が通信対象。入力画像と顔結果は送信対象にしない。
@@ -155,7 +159,7 @@ SDK providerの利用診断通信は従前のML Kit許容範囲であり、無�
 ### Android comparison 初期実装
 
 `comparison` は bundled ML Kit FAST/ACCURATE と YuNet を同じ画像で評価する別IDの評価用APK。
-容量比較用4flavorとは分け、verifyEvaluation/auditは合計5flavorを検査する。
+容量比較用4flavorとは分ける。realtime準備版追加後のverifyEvaluation/auditは合計6flavorを検査する。
 端末内JPEG/PNG選択、3方式の枠表示、方式ごとの見逃し/誤検出の明示判定、app-private保存、
 集計だけの書出しを実装した。Play SDKはこのUIに含めない。製品/GPU/原本保存経路は非接続。
 

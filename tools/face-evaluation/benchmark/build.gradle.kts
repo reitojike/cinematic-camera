@@ -22,6 +22,7 @@ android {
         create("mlkitplay") { dimension = "detector"; applicationIdSuffix = ".mlkitplay" }
         create("yunet") { dimension = "detector"; applicationIdSuffix = ".yunet" }
         create("comparison") { dimension = "detector"; applicationIdSuffix = ".comparison"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
+        create("realtime") { dimension = "detector"; applicationIdSuffix = ".realtime"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -32,10 +33,11 @@ android {
         sourceSets.getByName(flavor).assets.srcDir(layout.buildDirectory.dir("model-assets").get().asFile)
         sourceSets.getByName(flavor).java.srcDir("src/sharedYunet/java")
     }
-    for (flavor in listOf("mlkit", "comparison")) {
+    for (flavor in listOf("mlkit", "comparison", "realtime")) {
         sourceSets.getByName(flavor).java.srcDir("src/sharedMlkit/java")
     }
     sourceSets.getByName("comparison").assets.srcDirs("src/mlkit/assets", "src/yunet/assets")
+    sourceSets.getByName("realtime").assets.srcDir("src/mlkit/assets")
 }
 dependencies {
     "mlkitImplementation"("com.google.mlkit:face-detection:16.1.7")
@@ -51,6 +53,15 @@ dependencies {
     "testComparisonImplementation"("org.json:json:20250517")
     "androidTestComparisonImplementation"("androidx.test:runner:1.7.0")
     "androidTestComparisonImplementation"("androidx.test.ext:junit:1.3.0")
+    "realtimeImplementation"("com.google.mlkit:face-detection:16.1.7")
+    "realtimeImplementation"("androidx.activity:activity:1.13.0")
+    "realtimeImplementation"("androidx.camera:camera-camera2:1.6.2")
+    "realtimeImplementation"("androidx.camera:camera-lifecycle:1.6.2")
+    "realtimeImplementation"("androidx.camera:camera-view:1.6.2")
+    "testRealtimeImplementation"("junit:junit:4.13.2")
+    "testRealtimeImplementation"("org.json:json:20250517")
+    "androidTestRealtimeImplementation"("androidx.test:runner:1.7.0")
+    "androidTestRealtimeImplementation"("androidx.test.ext:junit:1.3.0")
 }
 val stageModel = tasks.register("stageModel") {
     val model = providers.environmentVariable("FACE_EVAL_MODEL")
@@ -70,13 +81,13 @@ tasks.configureEach {
     if ((name.startsWith("mergeYunet") || name.startsWith("mergeComparison")) && name.endsWith("Assets")) dependsOn(stageModel)
 }
 tasks.register("verifyEvaluation") {
-    for (flavor in listOf("Baseline", "Mlkit", "Mlkitplay", "Yunet", "Comparison")) {
+    for (flavor in listOf("Baseline", "Mlkit", "Mlkitplay", "Yunet", "Comparison", "Realtime")) {
         dependsOn("assemble${flavor}Debug", "assemble${flavor}DebugAndroidTest", "lint${flavor}Debug")
-        if (flavor == "Comparison") dependsOn("testComparisonDebugUnitTest")
+        if (flavor == "Comparison" || flavor == "Realtime") dependsOn("test${flavor}DebugUnitTest")
     }
 }
 // Preserve license files at AAR roots: Android packaging does not copy these into assets itself.
-for (flavor in listOf("baseline", "mlkit", "mlkitplay", "yunet", "comparison")) {
+for (flavor in listOf("baseline", "mlkit", "mlkitplay", "yunet", "comparison", "realtime")) {
     val cap = flavor.replaceFirstChar { it.uppercaseChar() }
     val noticesDir = layout.buildDirectory.dir("notices/$flavor").get().asFile
     android.sourceSets.getByName(flavor).assets.srcDir(noticesDir)
