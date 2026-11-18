@@ -5,7 +5,7 @@ internal fun gpuSaveCanContinueWithoutPreview(phase: PhotoRollSavePhase?) = phas
     PhotoRollSavePhase.GPU_FAILED, PhotoRollSavePhase.CANCELLED, PhotoRollSavePhase.PUBLISHED, PhotoRollSavePhase.UNCONFIRMED)
 
 /** Never reopen GPU input while a save is active or its owners/publication remain unconfirmed. */
-internal fun gpuSaveCanResumePreview(phase: PhotoRollSavePhase?) = phase in setOf(
+internal fun gpuSaveCanResumePreview(phase: PhotoRollSavePhase?, exportPaused: Boolean) = exportPaused && phase in setOf(
     PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED, PhotoRollSavePhase.CANCELLED)
 
 /** A recreated editor may recover its handle, but may not display over an unresolved save. */

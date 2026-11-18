@@ -18,10 +18,16 @@ class GpuPhotoRollSavePolicyTest {
         }
         assertFalse(gpuSaveCanContinueWithoutPreview(null))
     }
+    @Test fun alreadyResumedPreviewNeverRestartsForRetainedSaveHistory() {
+        for (phase in PhotoRollSavePhase.entries) {
+            assertFalse(phase.name, gpuSaveCanResumePreview(phase, exportPaused = false))
+        }
+        assertFalse(gpuSaveCanResumePreview(null, exportPaused = false))
+    }
     @Test fun activeHeldOrUncertainSaveCannotStartAnotherPreview() {
         for (phase in PhotoRollSavePhase.entries) {
-            assertEquals(phase.name, phase in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED, PhotoRollSavePhase.CANCELLED), gpuSaveCanResumePreview(phase))
+            assertEquals(phase.name, phase in setOf(PhotoRollSavePhase.READY, PhotoRollSavePhase.PUBLISHED, PhotoRollSavePhase.CANCELLED), gpuSaveCanResumePreview(phase, exportPaused = true))
         }
-        assertFalse(gpuSaveCanResumePreview(null))
+        assertFalse(gpuSaveCanResumePreview(null, exportPaused = true))
     }
 }

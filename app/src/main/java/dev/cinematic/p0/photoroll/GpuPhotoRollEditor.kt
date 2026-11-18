@@ -395,9 +395,9 @@ import kotlinx.coroutines.flow.StateFlow
             } else { trimBlocked = false; retry++ }
         } }
     val resumePreview = {
-        if (foreground && !saving && !savingRecipe && gpuSaveCanResumePreview(saveState?.phase)) {
+        if (foreground && !saving && !savingRecipe && gpuSaveCanResumePreview(saveState?.phase, exportPaused)) {
             val owner = save
-            if (owner != null && !owner.canCancelForegroundSave && gpuSaveCanResumePreview(owner.snapshot.phase)) {
+            if (owner != null && !owner.canCancelForegroundSave && gpuSaveCanResumePreview(owner.snapshot.phase, exportPaused)) {
                 exportPaused = false
                 retry++
             }
@@ -412,7 +412,7 @@ import kotlinx.coroutines.flow.StateFlow
         saveStopping = foregroundMessageBinding.state.let { it.active && it.stopping && !it.held },
         saveFailureMessage = saveState?.gpuFailure?.description,
         canLeave = !savingRecipe,
-        canResumePreview = foreground && !saving && !savingRecipe && gpuSaveCanResumePreview(saveState?.phase),
+        canResumePreview = foreground && !saving && !savingRecipe && gpuSaveCanResumePreview(saveState?.phase, exportPaused),
         canRecover = metadataRestored && foreground && !saving && !savingRecipe && save?.canCancelForegroundSave != true,
         retryEnabled = foreground && !saving && !savingRecipe, rechecking = rechecking, justPublished = justPublished,
     )
