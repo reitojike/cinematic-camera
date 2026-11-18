@@ -17,7 +17,9 @@ internal class PerformanceInput private constructor(
 ) : AutoCloseable {
     fun verifyOriginal() = verifyProvider()
     override fun close() {
+        PerformanceCompareActivity.observe("INPUT_SOURCE_EXISTS_" + file.exists())
         check(!file.exists() || file.delete()) { "COMPARE_CLEANUP" }
+        PerformanceCompareActivity.observe("INPUT_CHILD_COUNT_" + (file.parentFile!!.list()?.size ?: -1))
         check(!file.parentFile!!.exists() || file.parentFile!!.delete()) { "COMPARE_CLEANUP" }
     }
     companion object {

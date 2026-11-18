@@ -76,9 +76,13 @@ class PerformanceComparisonAndroidTest {
         } finally { assertTrue(file.delete()) }
     }
     @Test fun abbaTwelveAndTwentyFourMegapixelsThroughNormalSwap() {
-        for ((width, height) in listOf(4000 to 3000, 6000 to 4000)) {
+        val sizes = if (InstrumentationRegistry.getArguments().getString("privateHalfMegapixels") == "12")
+            listOf(4000 to 3000) else listOf(4000 to 3000, 6000 to 4000)
+        for ((width, height) in sizes) {
             val file = fixture(width, height)
             val factory = PerformanceCompareActivity.createInput
+            val observations = java.util.concurrent.CopyOnWriteArrayList<String>()
+            PerformanceCompareActivity.observeSynthetic = { observations.add(it) }
             try {
                 val fingerprint = DngContentVerifier.identify(file.length(), { file.inputStream() })
                 PerformanceCompareActivity.createInput = { app, _, stop -> PerformanceInput.prepare(app, Uri.EMPTY, stop) { file.inputStream() } }
@@ -90,7 +94,7 @@ class PerformanceComparisonAndroidTest {
                         scenario.onActivity { result = status(it) }; Thread.sleep(100)
                     }
                     assertNotNull("No completion", result)
-                    assertTrue(result!!.startsWith("完了・"))
+                    assertTrue(observations.joinToString(" | "), result!!.startsWith("完了・"))
                     assertEquals(4, Regex("OPEN: .* PRESENTED").findAll(result!!).count())
                     assertEquals(4, Regex("GPU_FIRST_FRAME: .* COMPLETED").findAll(result!!).count())
                     assertEquals(2, Regex("HALF_CANDIDATE thermal").findAll(result!!).count())
@@ -98,7 +102,7 @@ class PerformanceComparisonAndroidTest {
                 }
                 awaitIdle(); assertClean()
                 DngContentVerifier.verify(fingerprint, { file.inputStream() })
-            } finally { PerformanceCompareActivity.createInput = factory; assertTrue(file.delete()) }
+            } finally { PerformanceCompareActivity.observeSynthetic = null; PerformanceCompareActivity.createInput = factory; assertTrue(file.delete()) }
         }
     }
     @Test fun backgroundWhileNativeRasterIsOwnedDrainsBeforeRetry() {

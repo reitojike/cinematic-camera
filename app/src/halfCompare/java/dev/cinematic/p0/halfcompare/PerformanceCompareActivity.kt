@@ -38,6 +38,12 @@ class PerformanceCompareActivity : ComponentActivity() {
         private val executor = Executors.newSingleThreadExecutor()
         @Volatile internal var createInput: (android.content.Context, Uri, ComparisonStop) -> PerformanceInput =
             { context, uri, stop -> PerformanceInput.prepare(context, uri, stop) }
+        // Test-only observation: fixed phases/types, never messages, paths, URIs or pixels.
+        @Volatile internal var observeSynthetic: ((String) -> Unit)? = null
+        internal fun observe(phase: String, error: Throwable? = null) {
+            if (android.os.Build.HARDWARE in setOf("ranchu", "goldfish"))
+                observeSynthetic?.invoke(phase + (error?.let { ":" + it.javaClass.simpleName } ?: ""))
+        }
         internal val order = listOf(PreviewRasterMode.FULL, PreviewRasterMode.HALF_CANDIDATE,
             PreviewRasterMode.HALF_CANDIDATE, PreviewRasterMode.FULL)
     }
@@ -92,16 +98,18 @@ class PerformanceCompareActivity : ComponentActivity() {
                 for ((index, mode) in order.withIndex()) {
                     cancellation.check()
                     update(ticket, "${index + 1}/4 ${mode.name} 計測中")
+                    observe("RUN_${index}_${mode.name}")
                     summary.append(run(input, mode, cancellation, ticket)).append('\n')
                 }
                 input.verifyOriginal()
                 input.close(); input = null
                 cancellation.check()
                 update(ticket, "完了・一時データ解放済み\n$summary")
-            } catch (_: Throwable) {
+            } catch (error: Throwable) {
+                observe("BODY_FAILED", error)
                 update(ticket, "計測を完了できませんでした。原本は変更していません。解放未確認の場合は再試行せず終了してください。")
             } finally {
-                if (!ComparisonLease.blocked) try { input?.close() } catch (_: Throwable) { ComparisonLease.retain(input!!) }
+                if (!ComparisonLease.blocked) try { input?.close() } catch (error: Throwable) { observe("INPUT_CLOSE_FAILED", error); ComparisonLease.retain(input!!) }
                 lease?.close()
             }
         }
@@ -170,12 +178,13 @@ class PerformanceCompareActivity : ComponentActivity() {
                             timing.firstFrameStarted()
                             owner.submit(PhotoAdjustmentPolicy.defaults)
                             owner.renderer.openPhoto(image)
-                        } catch (e: Throwable) { timing.failed(e) }
+                        } catch (e: Throwable) { observe("DECODE_OR_SUBMIT_FAILED", e); timing.failed(e) }
                         finally { drained.countDown() }
                     }
                 }
             }
             val records = result.get(180, TimeUnit.SECONDS).associateBy { it.stage }
+            observe("OPEN_" + records.getValue(GpuPreviewTimingStage.OPEN).outcome.name)
             check(records.getValue(GpuPreviewTimingStage.OPEN).outcome == GpuPreviewTimingOutcome.PRESENTED)
             check(records.getValue(GpuPreviewTimingStage.GUIDE).outcome == GpuPreviewTimingOutcome.NOT_REACHED)
             return buildString {
@@ -196,6 +205,7 @@ class PerformanceCompareActivity : ComponentActivity() {
                 check(owner.renderer.awaitClosed(10_000))
                 GpuPhotoRollRetiredOwners.releaseBeforeOpen()
             } catch (e: Throwable) {
+                observe("DRAIN_FAILED", e)
                 ComparisonLease.retain(listOf(owner, session, input))
                 throw e
             }
