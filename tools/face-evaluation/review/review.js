@@ -1,13 +1,14 @@
 'use strict';
 const $=id=>document.getElementById(id), C=FaceReview;
-let data=null, key='', labels={}, index=0, files=new Map(), generation=0, verified=false;
+let data=null, key='', labels={}, index=0, files=new Map(), generation=0, verified=false, datasetLoad=0;
 const status=t=>$('status').textContent=t;
 const hash=async bytes=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),b=>b.toString(16).padStart(2,'0')).join('');
 function persist(next) {localStorage.setItem(key,JSON.stringify(next));labels=next;}
 function current(){const s=data.samples[index];return [s,$('detector').value,s.results[$('detector').value]];}
 async function render(){
  const g=++generation;verified=false;$('save').disabled=true;$('clear').disabled=true;$('boxes').replaceChildren();$('canvas').width=0;$('canvas').height=0;
- if(!data)return;
+ $('prev').disabled=true;$('next').disabled=true;$('export').disabled=!data;
+ if(!data){$('position').textContent='';return;}
  const [s,d,r]=current();$('position').textContent=`${index+1} / ${data.samples.length}`;$('prev').disabled=index===0;$('next').disabled=index===data.samples.length-1;
  const l=labels[s.id]?.[d];$('missed').value=l?.missed??0;
  if(r.status!=='SUCCESS'){status(`未評価: ${r.status}。失敗を顔なしとして扱いません。`);return;}
@@ -22,7 +23,20 @@ async function render(){
   verified=true;$('save').disabled=false;$('clear').disabled=false;status(`${r.boxes.length} 個検出 / ${r.ms.toFixed(1)} ms / ${l?'判定済み':'未判定'}。同じ端末のブラウザー内に保存します。`);
  }catch(e){if(g===generation)status(e.message);}
 }
-$('dataset').onchange=async e=>{try{const f=e.target.files[0];if(!f)return;if(f.size>2*1024*1024)throw Error('JSON が大きすぎます');const raw=await f.arrayBuffer();const parsed=C.validate(JSON.parse(new TextDecoder().decode(raw)));const k='face-review-v1-'+await hash(raw);const saved=JSON.parse(localStorage.getItem(k)||'{}');C.aggregate(parsed,saved);data=parsed;key=k;labels=saved;index=0;await render();}catch(e){data=null;verified=false;await render();status('読込不可: '+e.message);}};
+$('dataset').onchange=async e=>{
+ const token=++datasetLoad, f=e.target.files[0];
+ data=null;key='';labels={};verified=false;render();
+ if(!f){status('評価JSONを選択してください。');return;}
+ status('評価JSONを読み込み中…');
+ try{
+  if(f.size>2*1024*1024)throw Error('JSON が大きすぎます');
+  const raw=await f.arrayBuffer();if(token!==datasetLoad)return;
+  const parsed=C.validate(JSON.parse(new TextDecoder().decode(raw)));
+  const digest=await hash(raw);if(token!==datasetLoad)return;
+  const k='face-review-v1-'+digest, saved=JSON.parse(localStorage.getItem(k)||'{}');
+  C.aggregate(parsed,saved);data=parsed;key=k;labels=saved;index=0;await render();
+ }catch(e){if(token!==datasetLoad)return;data=null;verified=false;await render();if(token===datasetLoad)status('読込不可: '+e.message);}
+};
 $('pixels').onchange=e=>{files=new Map(Array.from(e.target.files).map(f=>[f.name,f]));render();};
 $('prev').onclick=()=>{if(data&&index>0){index--;render();}};$('next').onclick=()=>{if(data&&index<data.samples.length-1){index++;render();}};$('detector').onchange=render;
 $('save').onclick=()=>{if(!data||!verified)return;try{if (!($('missed').value.trim()) || !$('missed').checkValidity()) throw Error('見逃し数を明示的に入力してください');const [s,d,r]=current(),l=C.label(r,{missed:Number($('missed').value),falseIndices:Array.from($('boxes').querySelectorAll('input:checked'),x=>Number(x.value))});persist({...labels,[s.id]:{...labels[s.id],[d]:l}});render();}catch(e){status('保存できません: '+e.message);}};
