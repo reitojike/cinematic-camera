@@ -23,6 +23,8 @@ import androidx.camera.core.resolutionselector.ResolutionSelector;
 import androidx.camera.core.resolutionselector.ResolutionStrategy;
 import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.view.PreviewView;
+import androidx.lifecycle.LiveData;
+import androidx.lifecycle.Observer;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -46,6 +48,8 @@ public final class RealtimeActivity extends ComponentActivity {
     private ProcessCameraProvider provider;
     private Preview cameraPreview;
     private ImageAnalysis analysis;
+    private LiveData<CameraState> cameraState;
+    private Observer<CameraState> cameraObserver;
     private Window.OnFrameMetricsAvailableListener frameMetrics;
     private Session session;
     private boolean foreground;
@@ -139,7 +143,10 @@ public final class RealtimeActivity extends ComponentActivity {
                     main.post(() -> firstInput(s));
                     process(s,image);
                 });
-                provider.bindToLifecycle(this,CameraSelector.DEFAULT_BACK_CAMERA,cameraPreview,analysis);
+                Camera camera=provider.bindToLifecycle(this,CameraSelector.DEFAULT_BACK_CAMERA,cameraPreview,analysis);
+                cameraState=camera.getCameraInfo().getCameraState();
+                cameraObserver=state -> {if(current(s) && state.getError()!=null) finishRun("CAMERA_ERROR");};
+                cameraState.observe(this,cameraObserver);
             } catch(Exception e) { finishRun("CAMERA_UNAVAILABLE"); }
         },getMainExecutor());
     }
@@ -188,6 +195,8 @@ public final class RealtimeActivity extends ComponentActivity {
         Session s=session; if(s==null || !s.active) return;
         s.active=false; stop.setEnabled(false);
         if(frameMetrics!=null) {getWindow().removeOnFrameMetricsAvailableListener(frameMetrics);frameMetrics=null;}
+        if(cameraState!=null && cameraObserver!=null) cameraState.removeObserver(cameraObserver);
+        cameraState=null; cameraObserver=null;
         long ended=SystemClock.elapsedRealtimeNanos();
         if(analysis!=null) analysis.clearAnalyzer();
         if(provider!=null && cameraPreview!=null && analysis!=null) provider.unbind(cameraPreview,analysis);

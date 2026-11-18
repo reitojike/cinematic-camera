@@ -20,6 +20,7 @@ SDKを含まないAPKとの容量・process起動比較とは違う。静止画�
 - 各runでdetectorを生成。停止・背景移行では入力を止め、SDK完了を待ってcloseする。
   解放失敗の画面では再開始しない。SDKが戻らない場合は解放待ちであり完了としない。
   停止後に遅延したprovider完了からカメラをbindしない。Activity再作成時も旧処理を先に完了する。
+  CameraXのCameraStateがエラーを通知した場合はCAMERA_ERRORとして停止し、自動再開しない。
 
 ## 計時契約（診断値、採用閾値なし）
 
