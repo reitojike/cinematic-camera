@@ -16,12 +16,36 @@ import java.util.concurrent.atomic.AtomicReference;
 /** No camera, private input, network calls, or model inference. Not device performance evidence. */
 @RunWith(AndroidJUnit4.class)
 public class RealtimeSyntheticTest {
+    private static void awaitIdle() throws InterruptedException {
+        long deadline=android.os.SystemClock.uptimeMillis()+5000;
+        while(!RealtimeActivity.OWNERSHIP.idle() && android.os.SystemClock.uptimeMillis()<deadline) Thread.sleep(20);
+        assertTrue("previous synthetic owner drained",RealtimeActivity.OWNERSHIP.idle());
+    }
+    @Test public void recreationDoesNotAdmitInputBeforeOldOwnerReleases() throws Exception {
+        awaitIdle();Object oldOwner=new Object();assertTrue(RealtimeActivity.OWNERSHIP.acquire(oldOwner));
+        boolean held=true;
+        try(var scenario=ActivityScenario.launch(RealtimeActivity.class)) {
+            for(int i=0;i<2;i++) {
+                scenario.onActivity(a -> {
+                    View root=a.getWindow().getDecorView();((Button)find(root,"30秒計測を開始")).performClick();
+                    assertNotNull(find(root,"前の計測が解放中"));assertFalse(find(root,"停止").isEnabled());
+                });
+                if(i==0) scenario.recreate();
+            }
+            RealtimeActivity.OWNERSHIP.release(oldOwner);held=false;
+            scenario.onActivity(a -> {
+                View root=a.getWindow().getDecorView();((Button)find(root,"30秒計測を開始")).performClick();
+                assertTrue(find(root,"停止").isEnabled());((Button)find(root,"停止")).performClick();
+            });
+        } finally {if(held) RealtimeActivity.OWNERSHIP.release(oldOwner);awaitIdle();}
+    }
     private static View find(View root,String text) {
         if(root instanceof TextView t && t.getText().toString().startsWith(text)) return root;
         if(root instanceof ViewGroup g) for(int i=0;i<g.getChildCount();i++) {View result=find(g.getChildAt(i),text);if(result!=null)return result;}
         return null;
     }
     @Test public void launchDoesNotStartAndBackgroundDrainsControlRun() throws Exception {
+        awaitIdle();
         try(var scenario=ActivityScenario.launch(RealtimeActivity.class)) {
             scenario.onActivity(a -> {
                 View root=a.getWindow().getDecorView();

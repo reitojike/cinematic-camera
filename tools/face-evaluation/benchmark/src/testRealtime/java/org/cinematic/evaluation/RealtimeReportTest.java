@@ -5,6 +5,17 @@ import java.nio.ByteBuffer;
 import static org.junit.Assert.*;
 
 public class RealtimeReportTest {
+    @Test public void recreatedOwnerCannotStartUntilOldDrainCompletes() {
+        var gate=new RunOwnership();Object oldRun=new Object(),newRun=new Object();
+        assertTrue(gate.acquire(oldRun));
+        // Stopping/recreating does not release ownership: only the serial cleanup completion does.
+        assertFalse(gate.idle());assertFalse(gate.acquire(newRun));
+        assertThrows(IllegalStateException.class,()->gate.release(newRun));
+        assertFalse(gate.acquire(newRun));
+        gate.release(oldRun);assertTrue(gate.idle());assertTrue(gate.acquire(newRun));
+        assertThrows(IllegalStateException.class,()->gate.release(oldRun));assertFalse(gate.idle());
+        gate.release(newRun);assertTrue(gate.idle());
+    }
     private JSONObject measurement(String status, String phase) throws Exception {
         return new JSONObject().put("status",status).put("phase",phase).put("sdk_ns",1000000L).put("adapter_ns",2000000L).put("total_ns",3000000L);
     }

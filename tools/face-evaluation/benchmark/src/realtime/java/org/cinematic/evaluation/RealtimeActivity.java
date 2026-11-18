@@ -39,6 +39,7 @@ import org.json.JSONObject;
 public final class RealtimeActivity extends ComponentActivity {
     // Serial across activity recreation: previous native calls drain before a new detector starts.
     private static final ExecutorService WORKER=Executors.newSingleThreadExecutor();
+    static final RunOwnership OWNERSHIP=new RunOwnership(); // package seam for synthetic recreation regression
     private final Handler main=new Handler(Looper.getMainLooper());
     private Spinner source, mode;
     private Button start, stop;
@@ -89,13 +90,16 @@ public final class RealtimeActivity extends ComponentActivity {
     private boolean current(Session s) { return session==s && s.active && foreground; }
     private void startRun() {
         if (session!=null || !foreground) return;
+        if(!OWNERSHIP.idle()) {status.setText("前の計測が解放中です。完了後に開始を押してください。まだ計時していません。");return;}
         boolean camera=source.getSelectedItemPosition()==1;
         if (camera && checkSelfPermission(Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.CAMERA},41);
             status.setText("許可後に、開始ボタンをもう一度押してください。自動では開始しません。"); return;
         }
         String condition=new String[]{"NONE","ACCURATE","ACCURATE_MIN005"}[mode.getSelectedItemPosition()];
-        Session s=new Session(camera ? "camera" : "synthetic",condition); session=s;
+        Session s=new Session(camera ? "camera" : "synthetic",condition);
+        if(!OWNERSHIP.acquire(s)) {status.setText("前の計測が解放中です。完了後に開始を押してください。まだ計時していません。");return;}
+        session=s;
         start.setEnabled(false); source.setEnabled(false); mode.setEnabled(false); stop.setEnabled(true);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         preview.setVisibility(camera ? View.VISIBLE : View.GONE); synthetic.setVisibility(camera ? View.GONE : View.VISIBLE);
@@ -219,6 +223,8 @@ public final class RealtimeActivity extends ComponentActivity {
                 summary=report.toString(2);
                 Files.write(new File(dir,UUID.randomUUID()+".json").toPath(),summary.getBytes(StandardCharsets.UTF_8),StandardOpenOption.CREATE_NEW);
             } catch(Exception e) {summary="集計の保存または検出器の解放に失敗。未合格です。";}
+            // Release only after all old work drained. A close failure keeps every activity locked.
+            if(released) OWNERSHIP.release(s);
             String text=summary;
             boolean canRestart=released;
             main.post(() -> {if(session==s) {if(canRestart) session=null;status.setText(text);start.setEnabled(canRestart);source.setEnabled(canRestart);mode.setEnabled(canRestart);}});
