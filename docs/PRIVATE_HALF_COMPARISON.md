@@ -51,9 +51,9 @@ Compile first; use the coordinated shared AVD GPU lane, not a connected phone.
 Run only the three `dev.cinematic.p0.halfcompare.PrivateComparison*` classes with
 `cinematicHalfCompare=true` and `privateHalfSynthetic=true` instrumentation flag.
 
-This branch starts at #455 head 8f712d8a. Existing #455 emulator guards and its
-report script remain unchanged. #456 is neither merged nor duplicated here.
-Before integrating, reconcile the build.gradle opt-in blocks and rerun tests on
+Historical pre-integration context (#459): the original branch started at #455 head 8f712d8a. Existing #455 emulator guards and its
+report script remain unchanged. #456 was not yet integrated at that point. PR #464 now combines these entries.
+For any further integration, reconcile the build.gradle opt-in blocks and rerun tests on
 the final combined head. This document is preparation, not completed validation.
 
 ## 実写用の性能入口（準備中）

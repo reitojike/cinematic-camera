@@ -27,6 +27,25 @@ class PrivateComparisonAndroidTest {
     private fun assertNoPrivateCopies() {
         assertTrue(app.cacheDir.listFiles().orEmpty().none { it.name.startsWith("private-half-compare-") })
     }
+    @Suppress("UNCHECKED_CAST")
+    private fun retainedOwners(): MutableList<Any> = ComparisonLease::class.java.getDeclaredField("retained")
+        .apply { isAccessible = true }.get(null) as MutableList<Any>
+    private fun releaseTestOwners() {
+        // Test fixtures explicitly close their injected owners before resetting process-only failure state.
+        for (group in retainedOwners()) for (owner in group as List<*>) when (owner) {
+            is dev.cinematic.p0.rawcapture.DngIoResources -> {
+                assertNull(owner.releaseAll()); assertFalse(owner.hasOpenResources)
+            }
+            is dev.cinematic.p0.jpegrender.original.Original24PreviewSession -> {
+                owner.close(); assertFalse(owner.hasUnreleasedResources)
+            }
+        }
+        retainedOwners().clear()
+        ComparisonLease::class.java.getDeclaredField("blocked").apply { isAccessible = true }.setBoolean(null, false)
+        (ComparisonLease::class.java.getDeclaredField("occupied").apply { isAccessible = true }.get(null)
+            as java.util.concurrent.atomic.AtomicBoolean).set(false)
+        PrivatePhotoComparison::class.java.getDeclaredField("cleanupBlocked").apply { isAccessible = true }.setBoolean(null, false)
+    }
     @Test fun staleGenerationCannotPublish() {
         val gate = CompareGeneration()
         val first = gate.next()
@@ -100,7 +119,7 @@ class PrivateComparisonAndroidTest {
         } finally {
             // Test-only obstacle, not an unresolved raster owner. Clear only what this test created.
             extra?.let { assertTrue(it.delete()); assertTrue(it.parentFile!!.delete()) }
-            PrivatePhotoComparison::class.java.getDeclaredField("cleanupBlocked").apply { isAccessible = true }.setBoolean(null, false)
+            releaseTestOwners()
             assertTrue(source.delete())
         }
         assertNoPrivateCopies()
@@ -109,16 +128,20 @@ class PrivateComparisonAndroidTest {
         val source = fixture()
         val raw = source.inputStream()
         var closes = 0
+        var allowClose = false
         try {
             val comparator = PrivatePhotoComparison(app, openRead = {
                 object : java.io.FilterInputStream(raw) {
-                    override fun close() { closes++; throw java.io.IOException("synthetic close failure") }
+                    override fun close() { closes++; if (allowClose) super.close() else throw java.io.IOException("synthetic close failure") }
                 }
             })
             assertThrows(java.io.IOException::class.java) {
                 comparator.compare(Uri.fromFile(source), ComparisonStop(), 0.0) {}
             }
             assertTrue(closes >= 2)
+            assertTrue(ComparisonLease.blocked)
+            assertTrue(retainedOwners().flatMap { it as List<*> }
+                .filterIsInstance<dev.cinematic.p0.rawcapture.DngIoResources>().any { it.hasOpenResources })
             assertTrue(PrivatePhotoComparison.cleanupBlocked)
             val work = app.cacheDir.listFiles()!!.single { it.name.startsWith("private-half-compare-") }
             assertTrue(File(work, "source.dng").exists())
@@ -126,11 +149,12 @@ class PrivateComparisonAndroidTest {
                 comparator.compare(Uri.fromFile(source), ComparisonStop(), 0.0) {}
             }
         } finally {
+            allowClose = true
             raw.close()
             app.cacheDir.listFiles().orEmpty().filter { it.name.startsWith("private-half-compare-") }.forEach {
                 assertTrue(File(it, "source.dng").delete()); assertTrue(it.delete())
             }
-            PrivatePhotoComparison::class.java.getDeclaredField("cleanupBlocked").apply { isAccessible = true }.setBoolean(null, false)
+            releaseTestOwners()
             assertTrue(source.delete())
         }
     }

@@ -155,6 +155,7 @@ internal class PrivatePhotoComparison(
                 cleanOwned(work)
             } catch (cleanup: Throwable) {
                 cleanupBlocked = true
+                ComparisonLease.retain(listOfNotNull(io, sessionOwner, work))
                 failure?.addSuppressed(cleanup) ?: throw cleanup
             }
         }
