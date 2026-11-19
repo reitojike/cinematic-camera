@@ -104,7 +104,7 @@ JPEGの標準ギャラリー可視性と、DNGの閲覧アプリ対応は別々�
 許可・lifecycle、AUTO JPEG、RAW5回、RAW+JPEG、ISO2値、時間2値、AUTO復帰、背景復帰、エラーを含む。
 DNGはPC viewerで全件開く。実機AC3/4が仕様上不可能なら根拠付きBLOCKEDとし、例外的な回避を追加しない。
 P1のGO / GO_WITH_LIMITATIONS / NO_GOは証拠と制約を基に判断し、最新の判断案は最終レポートを参照する。
-後続の製品優先順位とP0.5計画は[002 plan](../002-live-capture/plan.md)で扱い、P0のACを変更しない。
+後続の製品優先順位とP0.5計画は[Issue #8](https://github.com/reitojike/cinematic-camera/issues/8)で扱い、P0のACを変更しない。
 
 ### 文書の最小化
 

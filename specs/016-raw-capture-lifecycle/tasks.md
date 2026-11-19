@@ -8,7 +8,7 @@
 
 - [x] T001 `specs/016-raw-capture-lifecycle/spec.md`にUS/FR/SCと既存Issueとの境界を定義する。
 - [x] T002 `specs/016-raw-capture-lifecycle/plan.md`/`contracts.md`に保全・再開・公開・#78契約を定義する。
-- [x] T003 `.specify/memory/constitution.md`と`specs/002-live-capture/plan.md`へJPEG公開方針の変更を明記する。
+- [x] T003 [Constitution](../../.specify/memory/constitution.md)へJPEG公開方針の変更を明記する。
 - [x] T004 `specs/016-raw-capture-lifecycle/quickstart.md`に故障点と受入方法を対応付ける。
 - [ ] T005 `specs/016-raw-capture-lifecycle/`を対象に#89の設計Draft PRを公開し、#78担当とファイル/契約境界を合意する。
 
