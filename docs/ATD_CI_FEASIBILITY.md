@@ -63,3 +63,7 @@ GMDでの初回試行は、APK buildとKVM accel-checkまでは成功したが�
 ## #425後のmain同期
 
 main `7615d253`へ同期。Capture fixtureへカメラ権限なし・熱拒否直後・回転通常・回転録画中の4状態（各縦横）が加わったため、期待PNGは44枚から52枚へ増やした。実行method数は8件のまま。上述の44枚の記録は同期前の成功証拠であり、新しい52枚の合格を意味しない。同期後headでCIを再実行する。
+
+## 追加試行: GPU を使わない明示復旧の 1 件
+
+既存 allowlist に `SaveRecoveryFactoryAndroidTest#explicitRequestUpdatesPreparedIndexAndOldOwnerCannotStart` を加え、`saveRecovery=true` と `isolated=true` を指定する。本番 Factory と合成 DNG／MediaStore を使い、明示復旧で準備済みの要求が変わり旧要求を開始できないことを確認する。描画、実 FGS、ホストからのプロセス終了・再起動はこの 1 件に含まれない。既存 8 件との合計 9 件を exact match・skip なしで確認し、既存の software Canvas PNG 条件は変えない。公開 artifact は集計・SDK/emulator 版・合成画像に限り、未加工 logcat、Gradle ログ、JUnit 本文は公開しない。任意ジョブを維持し、異なる hosted run で再現性を確認してからローカル手順や必須 CI を見直す。

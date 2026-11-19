@@ -77,7 +77,7 @@ jobs:
           echo $! > atd-evidence/emulator.pid
           timeout 180 bash -c 'until [ "$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; do sleep 2; done'
           adb -s emulator-5554 shell getprop ro.build.fingerprint > atd-evidence/fingerprint.txt
-      - name: Run only eight selected methods on the selected ATD
+      - name: Run only the explicitly selected methods on the ATD
         env:
           ANDROID_SERIAL: emulator-5554
         run: |
@@ -86,6 +86,7 @@ jobs:
             -Pandroid.testInstrumentationRunnerArguments.class="$selection" \
             -Pandroid.testInstrumentationRunnerArguments.isolated=true \
             -Pandroid.testInstrumentationRunnerArguments.dngImportStorage=true \
+            -Pandroid.testInstrumentationRunnerArguments.saveRecovery=true \
             2>&1 | tee atd-evidence/gradle.txt
       - name: Record emulator diagnostics and stop only the CI ATD
         if: always()
@@ -110,9 +111,9 @@ jobs:
         with:
           name: atd-experiment-${{ github.run_attempt }}
           path: |
-            atd-evidence/
-            app/build/outputs/androidTest-results/
-            app/build/outputs/connected_android_test_additional_output/
-            app/build/reports/androidTests/
+            atd-evidence/verification.txt
+            atd-evidence/image.txt
+            atd-evidence/emulator.txt
+            app/build/outputs/connected_android_test_additional_output/**/*.png
           if-no-files-found: error
           retention-days: 7
