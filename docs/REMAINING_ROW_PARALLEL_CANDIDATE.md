@@ -58,5 +58,5 @@ OriginalRemainingRowsAndroidTest は隔離original24Probe/ATDで256×192の私�
 再開する場合は最新実機の支配段階、今回不足した条件、同じ案を再測定する理由を先に確認する。
 
 
-RAW4一括診断ではこの既定off候補を再利用する（docs/RAW_DIAGNOSTIC_BUILD.md）。
+旧RAW4一括診断での再利用は [当時の手順（履歴）](https://github.com/reitojike/cinematic-camera/issues/231#issuecomment-7003191598) を参照。
 小型単独試験の結果を本採用へ変更せず、固定した正逆10%基準で当該条件の採否を区切る。
