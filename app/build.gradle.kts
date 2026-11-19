@@ -9,6 +9,8 @@ val initialHalfGuide = providers.gradleProperty("initialHalfGuide").orNull == "t
 // Side-by-side internal comparison only; never changes the normal/release application identity.
 val initialPreviewCompare = providers.gradleProperty("initialPreviewCompare").orNull == "true"
 
+val authorityIntervalMs = providers.gradleProperty("saveAuthorityIntervalMs").orNull?.toInt() ?: 0
+require(authorityIntervalMs in setOf(0, 50, 100))
 val gpuMesa = providers.gradleProperty("cinematicGpuMesa").orNull == "true"
 
 // Draft opt-in: default debug builds require no signing inputs and remain unchanged.
@@ -34,6 +36,7 @@ android {
         manifestPlaceholders["cinematicAppLabel"] = "Cinematic Camera Probe"
         manifestPlaceholders["cinematicTestTarget"] = "dev.cinematic.p0"
         buildConfigField("boolean", "EDITOR_PREVIEW_DIAGNOSTIC", "false")
+        buildConfigField("int", "SAVE_AUTHORITY_INTERVAL_MS", "0")
         buildConfigField("boolean", "INITIAL_HALF_GUIDE", "false")
         minSdk = 33
         targetSdk = 37
@@ -61,6 +64,7 @@ android {
     }
     buildTypes {
         getByName("debug") {
+            buildConfigField("int", "SAVE_AUTHORITY_INTERVAL_MS", authorityIntervalMs.toString())
             buildConfigField("boolean", "INITIAL_HALF_GUIDE", initialHalfGuide.toString())
             if (initialPreviewCompare) {
                 applicationIdSuffix = ".initialpreviewcompare"

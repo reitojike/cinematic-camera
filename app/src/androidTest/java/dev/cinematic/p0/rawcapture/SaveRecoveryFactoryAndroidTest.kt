@@ -20,6 +20,7 @@ import org.junit.Test
 /** Emulator-only synthetic source and app-private records. No renderer/FGS/UI or host kill is claimed.
  * Invocation: isolated=true saveRecovery=true. Retain all fixture history, never delete held records. */
 class SaveRecoveryFactoryAndroidTest {
+    @get:org.junit.Rule val authorityInterval = dev.cinematic.p0.metrics.AuthorityIntervalTestRule()
     private val app get() = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
     private val geometry = Original24PreflightGeometry(256, 192, 256, 192, 1, 256, 192)
     private val allowed = AutoDevelopConditions(true, false, false, false, true, true, true, true, previewMemoryAvailable = true)

@@ -17,6 +17,7 @@ import org.junit.runner.RunWith
  */
 @RunWith(AndroidJUnit4::class)
 class Original24GpuBoundaryCancellationAndroidTest {
+    @get:org.junit.Rule val authorityInterval = dev.cinematic.p0.metrics.AuthorityIntervalTestRule()
     @Test fun cancelInsideSecondFinalBandRetriesSameGenerationAndReleasesTextures() = cancelAndRetry(insideBand = true)
     @Test fun cancelAfterSecondB1BandRetriesSameGenerationAndReleasesTextures() = cancelAndRetry(insideBand = false)
 

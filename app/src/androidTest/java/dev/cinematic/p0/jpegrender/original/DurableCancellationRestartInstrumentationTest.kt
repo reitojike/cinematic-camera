@@ -29,6 +29,7 @@ import org.junit.runner.RunWith
  */
 @RunWith(AndroidJUnit4::class)
 class DurableCancellationRestartInstrumentationTest {
+    @get:org.junit.Rule val authorityInterval = dev.cinematic.p0.metrics.AuthorityIntervalTestRule()
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val app get() = instrumentation.targetContext.applicationContext
     private fun checkpoint(): File {

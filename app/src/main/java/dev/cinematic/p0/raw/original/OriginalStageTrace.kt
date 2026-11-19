@@ -1,5 +1,7 @@
 package dev.cinematic.p0.raw.original
 
+import dev.cinematic.p0.rawcapture.SaveAuthorityBoundary
+
 /** Fixed diagnostic labels only. A successful span is not render/publication completion evidence. */
 internal enum class OriginalStage {
     SOURCE_VERIFY_BEFORE, SOURCE_SNAPSHOT, NATIVE_DECODE, DECODE_CLOSE, ANALYSIS_REDUCE, CONTROL_PREPARE,
@@ -16,7 +18,15 @@ internal fun interface OriginalStageTrace {
 }
 
 /** No clock/event work when disconnected. Observer faults cannot hide a primary producer failure. */
-internal inline fun <T> originalStage(trace: OriginalStageTrace?, stage: OriginalStage, action: () -> T): T {
+internal fun <T> originalStage(trace: OriginalStageTrace?, stage: OriginalStage, action: () -> T): T {
+    // Cleanup must execute even when authority is already uncertain. Check only after it closes.
+    if (stage !in setOf(OriginalStage.RESOURCE_CLOSE, OriginalStage.DECODE_CLOSE, OriginalStage.SCRATCH_CLEANUP))
+        SaveAuthorityBoundary.checkpoint()
+    val result = originalStageObserved(trace, stage, action)
+    SaveAuthorityBoundary.checkpoint()
+    return result
+}
+private fun <T> originalStageObserved(trace: OriginalStageTrace?, stage: OriginalStage, action: () -> T): T {
     if (trace == null) return action()
     val start = System.nanoTime()
     var completed = false

@@ -64,7 +64,7 @@ internal class RecoverablePhotoPublisher(
         checkContinue(stop)
         if (current == null) {
             verifyOriginal(resources, stop)
-            val inspection = inspector.inspect({ resources.input(input.openJpeg()) }, render.request.output.bytes, stop)
+            val inspection = checkedStage(stop) { inspector.inspect({ resources.input(input.openJpeg()) }, render.request.output.bytes, { SaveAuthorityBoundary.timed { stop() } }) }
             if (inspection.output != render.request.output || inspection.fingerprint.bytes != inspection.output.bytes) {
                 throw IOException("Completed JPEG metadata does not match the request")
             }
@@ -115,8 +115,8 @@ internal class RecoverablePhotoPublisher(
                 verifyOriginal(resources, stop)
                 checkContinue(stop)
                 if (!matches(record, true)) return unknown(record)
-                DngContentVerifier.copy(record.fingerprint, { resources.input(input.openJpeg()) },
-                    { resources.output(rows.openOutput(record.target, requireNotNull(record.uri))) }, { stopped(stop) })
+                checkedStage(stop) { DngContentVerifier.copy(record.fingerprint, { resources.input(input.openJpeg()) },
+                    { resources.output(rows.openOutput(record.target, requireNotNull(record.uri))) }, { stopped(stop) }) }
             }
             if (!matches(record, true)) return unknown(record)
             verifyRow(record, true, resources, stop)
@@ -152,13 +152,13 @@ internal class RecoverablePhotoPublisher(
         return record
     }
 
-    private fun verifyOriginal(resources: DngIoResources, stop: () -> Boolean) = DngContentVerifier.verify(
-        render.request.source.fingerprint, { resources.input(input.openOriginal(render.request.source)) }, { stopped(stop) })
+    private fun verifyOriginal(resources: DngIoResources, stop: () -> Boolean) = checkedStage(stop) { DngContentVerifier.verify(
+        render.request.source.fingerprint, { resources.input(input.openOriginal(render.request.source)) }, { stopped(stop) }) }
     private fun verifyPrivate(record: JpegPublicationRecord, resources: DngIoResources, stop: () -> Boolean) =
-        DngContentVerifier.verify(record.fingerprint, { resources.input(input.openJpeg()) }, { stopped(stop) })
+        checkedStage(stop) { DngContentVerifier.verify(record.fingerprint, { resources.input(input.openJpeg()) }, { stopped(stop) }) }
     private fun verifyRow(record: JpegPublicationRecord, pending: Boolean, resources: DngIoResources, stop: () -> Boolean) =
-        DngContentVerifier.verify(record.fingerprint,
-            { resources.input(rows.openRead(record.target, requireNotNull(record.uri), pending)) }, stop)
+        checkedStage(stop) { DngContentVerifier.verify(record.fingerprint,
+            { resources.input(rows.openRead(record.target, requireNotNull(record.uri), pending)) }, stop) }
     private fun verifyPublic(record: JpegPublicationRecord, resources: DngIoResources, stop: () -> Boolean) {
         if (record.phase != JpegPublicationPhase.PUBLISHED || !matches(record, false)) throw IOException("Published JPEG unavailable or changed")
         verifyRow(record, false, resources, stop)
@@ -169,7 +169,16 @@ internal class RecoverablePhotoPublisher(
     private fun matches(record: JpegPublicationRecord, pending: Boolean) = inspect(record)?.let { record.target.accepts(it, pending) } == true
     private fun unknown(record: JpegPublicationRecord) = journal.unknown(record.revision, record.uri)
     private fun stopped(stop: () -> Boolean) = stop() || !isCurrent()
-    private fun checkContinue(stop: () -> Boolean) { if (stopped(stop)) throw IOException("JPEG publication stopped or superseded") }
+    private fun <T> checkedStage(stop: () -> Boolean, action: () -> T): T {
+        if (!SaveAuthorityBoundary.enabled) return action()
+        checkContinue(stop)
+        val result = action()
+        checkContinue(stop)
+        return result
+    }
+    private fun checkContinue(stop: () -> Boolean) {
+        if (SaveAuthorityBoundary.durable { stopped(stop) }) throw IOException("JPEG publication stopped or superseded")
+    }
     private fun checkReleased(resources: DngIoResources) { if (resources.hasOpenResources) throw IOException("JPEG resources remain open") }
     private fun releaseHeld() {
         val resources = held ?: return

@@ -7,6 +7,29 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ManualOriginalTrialSaveOwnerTest {
+    @Test fun intervalAuthorityFailureSettlesOwnerInsteadOfLeavingSaving() {
+        for (ms in listOf(50L, 100L)) {
+            var broken = false
+            val window = SaveAuthorityWindow(ms * 1_000_000) {
+                if (broken) throw IOException("synthetic durable read failure")
+                true
+            }
+            val backend = Backend().also { it.beforeRender = {
+                broken = true
+                try { window.check(true) } catch (error: IOException) {
+                    throw GpuSaveRenderException(GpuSaveFailureReason.RENDER_FAILED, true, error)
+                }
+            } }
+            val owner = ManualOriginalTrialSaveOwner(request, backend, Storage()) { window.check(true) }
+            assertEquals(ManualOriginalTrialSavePhase.HOLD, owner.advance().phase)
+            owner.releaseResources()
+            assertFalse(owner.hasUnreleasedResources)
+            assertEquals(0, backend.publisherCreations)
+            assertFalse(window.check(false))
+            assertTrue(SaveAuthorityWindow(ms * 1_000_000) { true }.check(true))
+        }
+    }
+
     @Test fun publicationOnlyRecheckCannotStartReadyProducerOrWriteIntent() {
         val backend = Backend()
         val intent = Storage()

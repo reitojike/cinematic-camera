@@ -107,7 +107,31 @@ internal object AndroidManualOriginalTrialSaves {
         private fun consent(request: Original24Request) = recoveryConsents.getOrPut(request.generation) {
             ExplicitRecoveryExports(storage(request, CaptureJournalFile.EXPLICIT_RECOVERY_EXPORT))
         }
+        @Volatile private var window: Pair<Original24Request, SaveAuthorityWindow>? = null
         private fun authoritative(request: Original24Request): Boolean {
+            val current = window
+            return if (current != null && current.first == request) current.second.check(SaveAuthorityBoundary.force) {
+                currentRequest == request && !preflightResources.hasOpenResources
+            }
+                else authoritativeUnshared(request)
+        }
+        private fun withWindow(request: Original24Request, action: () -> ManualOriginalTrialSaveState): ManualOriginalTrialSaveState {
+            check(window == null)
+            val interval = SaveAuthorityIntervalExperiment.intervalNanos()
+            if (interval == 0L && !SaveAuthorityIntervalExperiment.measuring) return action()
+            val own = SaveAuthorityWindow(interval) { authoritativeUnshared(request) }
+            window = request to own
+            try {
+                if (interval == 0L) return action()
+                return SaveAuthorityBoundary.observing({
+                    if (!own.check(true)) throw CaptureJournalConflict()
+                }, action)
+            } finally {
+                window = null
+                SaveAuthorityIntervalExperiment.completed(own.stats())
+            }
+        }
+        private fun authoritativeUnshared(request: Original24Request): Boolean {
             if (currentRequest != request || preflightResources.hasOpenResources || !requests.isCurrent(request) || !consent(request).oldMayRun()) return false
             if (request.generation > 1) {
                 val predecessor = consent(request.copy(generation = request.generation - 1))
@@ -154,7 +178,8 @@ internal object AndroidManualOriginalTrialSaves {
                 val owner = ManualOriginalTrialSaveOwner(request, backend,
                     storage(request, CaptureJournalFile.MANUAL_REQUEST), attemptJournal(request)) { authoritative(request) }
                 owner.restoreDurableState()
-                ManualOriginalTrialHandle(queue, owner, requireNotNull(geometry), backend, isExplicitRecovery(request)) {
+                ManualOriginalTrialHandle(queue, owner, requireNotNull(geometry), backend, isExplicitRecovery(request),
+                    { action -> withWindow(request, action) }) {
                     authoritative(request)
                 }.also { it.explicitRecovery = { stop -> recoverExplicitly(queue, request, stop) } }
             }
@@ -405,6 +430,7 @@ internal object AndroidManualOriginalTrialSaves {
         val geometry: Original24PreflightGeometry,
         private val backend: Backend,
         val isExplicitRecoveryRequest: Boolean,
+        private val withAuthorityWindow: (() -> ManualOriginalTrialSaveState) -> ManualOriginalTrialSaveState,
         private val revalidate: () -> Boolean,
     ) {
         val request get() = owner.request
@@ -468,8 +494,8 @@ internal object AndroidManualOriginalTrialSaves {
                 ?: throw IOException("Trial save admission blocked")
             slot = admitted
             DevelopExecution.registerStop(admitted, backend::requestStop)
-            try { owner.advance(retryGpuFailure = retryGpuFailure, retryCancellation = retryCancellation,
-                publicationOnly = publicationOnly) { stop() || DevelopExecution.shouldStop(admitted) } }
+            try { withAuthorityWindow { owner.advance(retryGpuFailure = retryGpuFailure, retryCancellation = retryCancellation,
+                publicationOnly = publicationOnly) { stop() || DevelopExecution.shouldStop(admitted) } } }
             catch (failure: OutOfMemoryError) { throw IOException("Original rendering memory unavailable", failure) }
             finally {
                 try { owner.releaseResources() }

@@ -28,6 +28,7 @@ import org.junit.Test
  * not a GPU-render kill claim. B uses the real factory except the explicitly seeded consent seam.
  * Host must kill while armed, prove PID absence, and invoke resume in a different process. */
 class SaveRecoveryRestartTest {
+    @get:org.junit.Rule val authorityInterval = dev.cinematic.p0.metrics.AuthorityIntervalTestRule()
     private val app get() = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
     private val args get() = InstrumentationRegistry.getArguments()
     private val geometry = Original24PreflightGeometry(256, 192, 256, 192, 1, 256, 192)

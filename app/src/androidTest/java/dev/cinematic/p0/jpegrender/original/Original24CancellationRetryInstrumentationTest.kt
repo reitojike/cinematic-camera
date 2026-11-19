@@ -30,6 +30,7 @@ import org.junit.runner.RunWith
  */
 @RunWith(AndroidJUnit4::class)
 class Original24CancellationRetryInstrumentationTest {
+    @get:org.junit.Rule val authorityInterval = dev.cinematic.p0.metrics.AuthorityIntervalTestRule()
     @get:org.junit.Rule val isolatedUi = dev.cinematic.p0.photoroll.SyntheticFixtureRule()
 
     @Test fun normalGpuSaveCancellationRequiresExplicitRetryBeforePublication() = runCase(DevelopEngine.GPU, ordinary = true)
