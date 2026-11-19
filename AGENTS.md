@@ -20,7 +20,7 @@
 - 変更に応じて `./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug --no-daemon` と `git diff --check` を実行します。Windows は `.\gradlew.bat` を使います。必須検証の正本は [Android CI](.github/workflows/android.yml) であり、文書のみの変更でもサーバー側の必須 CI を免除しません。ローカル未実行・環境不成立は明記します。
 - 共有端末の利用は [MANAGED_DEVICES](docs/MANAGED_DEVICES.md) に従います。実機確認待ちだけで独立した限定作業を止めませんが、重大な欠陥・失敗・権限判断・範囲拡大では停止して報告します。
 
-## 作業台帳と権限
+## 作業管理と権限
 
 - 作業の稼働状況は Dot が管理する。着手前に担当・対象・共有試験枠の所有を確認し、保留・引き継ぎ・再開・終了時に実際の状態と検証結果を更新する。Windows GPU 測定枠は単独、未確認を終了済みと扱わない。[#489](https://github.com/reitojike/cinematic-camera/issues/489) は過去の記録で、新規の稼働記録は追記しない。公開する Issue／PR には個人用パス、実写、URI、端末識別子、内部スレッド URL、生ログを書かない。
 - 本人の継続承認の範囲：作業ブランチへの push（main 直接 push を除く）、Draft PR の作成・更新・ready for review 化、Issue／PR へのコメント（レビュー依頼を含む）、Issue 作成。独自実装から公式根拠のある標準実装への移行は、コード量・複雑性を過度に増やさない範囲で、必要な実装・PR・レビュー・マージを進めてよい。ただし既存 CI、独立レビュー、main 保護の条件は維持する。通常のマージは合意した範囲の承認を確認する。
