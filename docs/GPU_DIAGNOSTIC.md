@@ -124,4 +124,4 @@ Hubの「CPU候補3工程（合成1/2比較）」は1024×768の合成入力の�
 
 Hubの「CPUプレビューの確認（Filesから選択）」では、実編集の256px DRAFT/1024px EXACTに既存3工程候補を接続する。画像上の診断スイッチは既定OFF。調整を閉じた確定表示でON/OFFを切り替えると同じ値で再計算する。通常版・保存の既定は変えず、GPU処理も使用しない。
 
-`RawPreviewTiming`には各回のworkers、maxEdge、DRAFT/EXACT、全体/工程時間をINFO出力する。`PreviewTiming`は要求受付からUI状態採用を別に出す。ログ取得・反復条件・計測外の範囲は[プレビュー診断手順](PREVIEW_DIAGNOSTICS.md#統合診断版の実編集で12並列を比較する)に従う。50msのOS提示判定は未確認である。
+`RawPreviewTiming`には各回のworkers、maxEdge、DRAFT/EXACT、全体/工程時間をINFO出力する。`PreviewTiming`は要求受付からUI状態採用を別に出す。50msのOS提示判定は未確認である。
