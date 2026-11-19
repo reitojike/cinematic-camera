@@ -42,7 +42,7 @@ OR RawDiagnosticActivity
 
 1. **移行① M1: 入力・preview・GPU基盤**。46元メソッドの安全assertを通常androidTestへまとめる。native preflight/crop/AS_SHOT/BOX、入力取消・close所有権・source fence、picker/surface/Activity・GPU失敗/再試行、実gestureを含む。通常の実GPU/context、合成DNG、test専用hostを使い、廃止予定Activityを通常製品へ昇格させない。CPU worker/cache/比較bitmapの固有機構は再実装しない。
 2. **移行② M2: 保存・所有権・故障**。49元メソッド（通常側保持4件を含む）の安全assertをまとめる。observer/consumer/codec/close失敗、同世代明示retry、新世代保存、原本/intent/journal、A保存中のB/C入力、FGS/Home/screen off、実12MP×5と24MPの成功/取消を含む。共有rasterの安全保証も保持し、CPU worker専用パリティは移さない。
-3. **削除①: 診断host/variant/probe**。M1/M2の必要保証とEの対応先が実走済みになってから診断Activity/service/sourceSets/manifest/build入口・旧probeと対象重複試験を整理する。#397導入済みの通常1024px性能試験と引数検証を保持。#379元source/branchと [メモリ再実行手順](MEMORY_MEASUREMENT_REPLAY.md) は保持する。
+3. **削除①: 診断host/variant/probe**。M1/M2の必要保証とEの対応先が実走済みになってから診断Activity/service/sourceSets/manifest/build入口・旧probeと対象重複試験を整理する。#397導入済みの通常1024px性能試験と引数検証を保持。#379の元ソース・ブランチの保持は [#379 の記録](https://github.com/reitojike/cinematic-camera/pull/379#issuecomment-6998052024) を参照。
 4. **削除②: CPU preview/save renderer と不要参照**。M/Eの実走証拠を照合後にCPU render分岐、試験専用の旧renderer、CPU比較fixtureを整理。旧CPU保存intent/codec識別・読取りと再照合、GPU共有型・V1正本/生成器・LibRaw/JNI/AS_SHOT/入力解析・OriginalRasterを保持。旧CPU保存のGPU再生成、HOLD解除、二重保存を導入しない。
 
 各移行PRの新テストのmethod名・実行件数・引数は実装差分確定後に追記する。統合した場合は本表のどの元メソッドのassertをどのmethodが担当するかを逆引き可能にする。名称を変えただけ、compileだけ、実行0件、skipは移行完了ではない。
