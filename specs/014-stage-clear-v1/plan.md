@@ -1,7 +1,7 @@
 # Implementation Plan: Stage Clear v1（PC基準の定義）
 
 **Branch**: `feat/028-stage-clear-v1` | **Date**: 2026-11-04 | **Spec**: [spec.md](spec.md)
-**Input**: [Issue #77](https://github.com/reitojike/cinematic-camera/issues/77)、[002計画](../002-live-capture/plan.md)のStage Clear評価設計。
+**Input**: [Issue #77](https://github.com/reitojike/cinematic-camera/issues/77)（Stage Clear評価設計）。
 
 ## Summary
 

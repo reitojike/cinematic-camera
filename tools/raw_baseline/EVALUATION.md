@@ -35,4 +35,4 @@
 
 ## 将来の評価UX
 
-[002計画の後続RAW現像UX](../../specs/002-live-capture/plan.md)を採用方針とする。撮影時の軽量近似preview、ギャラリーで必要な写真だけの画面サイズlook生成・キャッシュ、明示フル解像度書き出しを別評価にする。撮影復帰時の閲覧現像の停止／新規抑止と撮影応答を受け入れ条件にし、RAW decode負荷や即時cancelを測定前に保証しない。previewへNR・細部・飽和復元の厳密一致を求めず、原本／派生／look版の対応は後続最小設計。手動現像必須の閲覧や撮影直後の重いqueueは採用せず、このPC PoCにAndroidギャラリー・background queueを実装しない。
+このPC PoCの対象に Android のギャラリーやバックグラウンド現像は含まれない。アプリの現行契約は [Living Spec](../../specs/README.md) を参照する。
