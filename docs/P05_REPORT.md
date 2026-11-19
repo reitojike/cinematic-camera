@@ -2,7 +2,7 @@
 
 対象: `dev.cinematic.p0` / `0.0.10-p05` / CameraX **1.6.2**
 
-関連: [Issue #8](https://github.com/reitojike/cinematic-camera/issues/8) / [spec](../specs/002-live-capture/spec.md) / [plan](../specs/002-live-capture/plan.md)
+関連: [Issue #8](https://github.com/reitojike/cinematic-camera/issues/8)
 
 **実装候補と自動検証の結果であり、Pixel 9aの動画・音声・fps・HDR・画質・熱の実機合格ではない。**
 P0のユーザー成功報告と不足資料は[P0_REPORT](P0_REPORT.md)とIssue #4を維持する。
