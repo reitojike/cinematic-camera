@@ -1,7 +1,7 @@
 # Implementation Plan: PC RAW基準現像と比較PoC
 
 **Branch**: `feat/013-p1a-raw-baseline` | **Date**: 2026-11-02 | **Spec**: [spec.md](spec.md)
-**Input**: [Issue #49](https://github.com/reitojike/cinematic-camera/issues/49)、[002計画](../002-live-capture/plan.md)のP1基準現像候補。
+**Input**: [Issue #49](https://github.com/reitojike/cinematic-camera/issues/49)（P1基準現像候補）。
 
 ## Summary
 
