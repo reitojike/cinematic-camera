@@ -161,7 +161,7 @@ JPEG全byteのSHA/長さ/向き、保存・公開順序、journal遷移・確定
 実行ごとに変わるID/URI/時刻を同値比較せず対応と順序を照合する。旧 #309 の部分試験をこの完了証拠にしない。
 実行commit/test/条件/pass/fail/skip/未確認を残し、serial対照を改善前の速度値として使わない。
 
-合成エミュレーターでの受入は [#325](https://github.com/reitojike/cinematic-camera/pull/325) で完了し、main `b3ac4e5beafe3085f23bee4213899ac39a819920` へマージ済み。最終head `50fe792be7c4a5bd1b03213a5e4ccde30256b633` の既存API37 Google APIsエミュレーターへの直接instrumentationで1 test・内部2条件AB/BAが成功し、全JPEG bytes、公開順序、journal全7状態、再要求2回、原本不変と資源解放を確認した。GMD/ATD実行や製品factory/FGS/UI配線・実機・実写真・速度の合格とは区別する。詳細な再実行手順は [RAW_DIAGNOSTIC_BUILD](RAW_DIAGNOSTIC_BUILD.md) とPRに集約し、同じ受入を未完として重複実施しない。追加の実機保存確認を行う場合だけ、別の範囲と許可を固定する。
+合成エミュレーターでの受入は [#325](https://github.com/reitojike/cinematic-camera/pull/325) で完了し、main `b3ac4e5beafe3085f23bee4213899ac39a819920` へマージ済み。最終head `50fe792be7c4a5bd1b03213a5e4ccde30256b633` の既存API37 Google APIsエミュレーターへの直接instrumentationで1 test・内部2条件AB/BAが成功し、全JPEG bytes、公開順序、journal全7状態、再要求2回、原本不変と資源解放を確認した。GMD/ATD実行や製品factory/FGS/UI配線・実機・実写真・速度の合格とは区別する。詳細な再実行手順は [当時の手順（履歴）](https://github.com/reitojike/cinematic-camera/issues/231#issuecomment-7003191598) とPRに集約し、同じ受入を未完として重複実施しない。追加の実機保存確認を行う場合だけ、別の範囲と許可を固定する。
 
 ## 8. 結果整理
 
