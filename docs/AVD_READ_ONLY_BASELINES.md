@@ -84,6 +84,7 @@ Emulator/image/AVD設定の更新でsnapshotは無効化され得る。基準を
 - 完了時は所有が一致する予約済み serial にだけ `adb -s emulator-<port> emu kill` を送り、終了を待つ。
   終了しない場合だけ `Get-Process -Id` で開始時刻を再照合し、起動時に記録した同一プロセスだけを停止する。
   所有不明・PID 再利用・別プロセスのポート残留では、その対象に停止命令を送らず担当へ報告する。
+  自分のプロセス終了後、ADB 一覧からの消失を最大15秒待つ。別 transport の出現は中断し、終了命令は送らない。
   自分のプロセスとポートの終了が確認できてから運用枠を返却する。`adb kill-server` や全体 kill はしない。
   AVD なしの確認は `pwsh -NoProfile -File tools/local-avd/test_session_identity.ps1`。
 

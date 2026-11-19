@@ -172,8 +172,23 @@ try {
         }
         if ($launcherId) { StopRecorded $launcherId }
         if ($launcherId) {
-            if (AdbDevice) { throw 'Residual ADB serial: inspect without stopping an unregistered process.' }
-            Assert-PortPairFree
+            # ADB can retain the closed transport briefly after both owned processes exit.
+            # Observe only: never kill a residual/replacement device or restart the daemon.
+            $settle = [Diagnostics.Stopwatch]::StartNew()
+            while ($true) {
+                $residual = AdbDevice
+                if (!$residual) {
+                    Assert-PortPairFree
+                    break
+                }
+                if ($transport -and $residual.Transport -and $residual.Transport -cne $transport) {
+                    throw 'Replacement ADB transport detected: leave it untouched.'
+                }
+                if ($settle.Elapsed.TotalSeconds -ge 15) {
+                    throw 'Residual ADB serial after timeout: inspect without stopping an unregistered process.'
+                }
+                Start-Sleep -Milliseconds 250
+            }
         }
     } finally {
         $env:ANDROID_AVD_HOME = $oldHome
