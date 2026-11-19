@@ -64,7 +64,7 @@ GPU側の必要な連続計測時間と合わせて**操作時間・回数・採
 
 ### 記録する時間と解釈
 
-ログの取得と区間定義は [プレビュー診断](PREVIEW_DIAGNOSTICS.md)、
+ログの取得と区間定義は [当時のプレビュー診断（固定版・現行手順ではない）](https://github.com/reitojike/cinematic-camera/blob/d50c4588d93dd4d6e512dda66ff254ed90c27838/docs/PREVIEW_DIAGNOSTICS.md)、
 処理側の集計は [既存の補助集計](../tools/preview-timing/README.md) を使い、計測器を新設しない。
 調査用の `GpuSurfaceProbe` / `DngInputProbe` は性能計測ではOFF（DEBUG無効）を確認する。
 surface/frame/受付の追加計時や追加AFD/getType読取りを含む調査走行は速度集計へ混ぜない。
@@ -189,7 +189,7 @@ source/tree・APK hash・既存署名証明書hash・manifest・最適化条件�
 
 #268後のVERIFY_BEFORE/AFTERはmetadata・読取権限の軽量確認で、未知mtimeはSHAへfallbackする。以前の全文SHA区間と同じ内容の速度比較にしない。全体値を比べる際もsource、provider、cold/warm、操作、充電/温度を合わせ、変更された安全性の境界を併記する。metadataだけから内容一致を主張しない。#269を含む場合でも初回decodeと保存の768MiB条件は維持され、warm条件変更を初回必要RAMの実測と扱わない。
 
-同じ操作で `R7StageTiming:I` も採取する（#271、追加操作なし）。同sessionのkind/sequence/workersでRawPreviewTimingと対応付け、r7Visitedとoutcomeを確認する。保持済みbaseではSETUPのみ/r7Visited=false、DRAFTではEXACTの自動EVを共有するためMETER区間がない場合がある。未訪問stageを0ms実行へ補完せず、R7内側totalを外側FOUNDATIONへ足さない。R7が成功しても後続Lookが失敗したrenderはRaw側outcomeで除外する。詳しいstage定義は [プレビュー診断](PREVIEW_DIAGNOSTICS.md) を参照する。 #271の追加計時・ログの負担も今回の条件に含むため、旧版との差を#268単独の改善量と断定しない。
+同じ操作で `R7StageTiming:I` も採取する（#271、追加操作なし）。同sessionのkind/sequence/workersでRawPreviewTimingと対応付け、r7Visitedとoutcomeを確認する。保持済みbaseではSETUPのみ/r7Visited=false、DRAFTではEXACTの自動EVを共有するためMETER区間がない場合がある。未訪問stageを0ms実行へ補完せず、R7内側totalを外側FOUNDATIONへ足さない。R7が成功しても後続Lookが失敗したrenderはRaw側outcomeで除外する。詳しいstage定義は [当時のR7工程定義（固定版・現行手順ではない）](https://github.com/reitojike/cinematic-camera/blob/d50c4588d93dd4d6e512dda66ff254ed90c27838/docs/PREVIEW_DIAGNOSTICS.md#非重複の分類) を参照する。 #271の追加計時・ログの負担も今回の条件に含むため、旧版との差を#268単独の改善量と断定しない。
 
 ### 保存3候補の採取内容
 

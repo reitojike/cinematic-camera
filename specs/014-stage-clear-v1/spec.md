@@ -3,7 +3,7 @@
 **Feature Branch**: `feat/028-stage-clear-v1`
 **Created**: 2026-11-04
 **Status**: 確定（Issue #77）。PC基準実装と合成テストまで。Android移植・preview・編集UIは後続。
-**Input**: [Issue #77](https://github.com/reitojike/cinematic-camera/issues/77)、[002 US2](../002-live-capture/spec.md)、
+**Input**: [Issue #77](https://github.com/reitojike/cinematic-camera/issues/77)、
 PC RAWの第7回〜第11回でユーザーが比較選択した結果。
 
 ## User Scenarios & Testing
