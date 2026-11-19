@@ -3,22 +3,15 @@
 ## 現在使える範囲
 
 `summarize_processing.py` は既存 `RawPreviewTiming` の処理セッション時間を集計する。
-DRAFT は現在の最大256px経路、EXACT は正確なプレビュー経路。出力は計算だけでなく
-受付待ち・入力確認・Bitmap化・後片付けを含む、既存ログの `totalNs` である。
+入力のDRAFT/EXACTはログの処理区分であり、現在の製品GPUで同じ経路を選べることを意味しない。出力は処理のほか受付待ち・入力確認・Bitmap化・後片付けを含むログの `totalNs` である。
 **操作から画面提示までの時間ではなく、50msの応答目標の合否には使わない。**
-実表示自動計測の代替合格ではなく、準備中に取得できる参考値に限定する。
+現行製品のGPU診断入口は [プレビューの診断と計測](../../docs/PREVIEW_DIAGNOSTICS.md) を参照する。
 
-## 取得条件
+## 入力の準備
 
-- 使用者が許可した診断端末・同じAPK・同じ入力を使用する。既定で実機を操作しない。
-- 操作別（強さ・色温度・明るさ）、設定別、セッション別にログを分ける。
-- 通常版の計測器の有効化は `PreviewTiming` のDEBUG設定、ログ取得フィルターは `RawPreviewTiming` である。両者を混同しない。`RawPreviewTiming` だけを有効化しても計測器は作られない。対象アプリのPIDと `RawPreviewTiming:D` を指定して取得する。
-  有効化だけでは過去の記録は生成されない。計測後は元の設定へ戻す。
-- 統合診断版の実編集ではタグ設定変更なしでINFO出力する。`workers=1/2` と `maxEdge=256/1024` が付く。対象PIDと `RawPreviewTiming:I` を指定して取得する。
-- 開始前に、試験操作で非空の `kind=DRAFT` / `outcome=SUCCESS` が出ることを確認する。
-  空ログのまま次の操作へ進めない。途中の再起動・画面離脱・入力切替も記録し、別セッションとする。
-- 捨て計測の回数を事前に決め、端末温度・充電状態・ビルド条件を別途記録する。
-- 時間取得中にPSSの反復取得や他の負荷試験を重ねない。実写・生ログ・個人用パスを公開しない。
+- このツールは既に採取された形式対応のログを読むだけで、端末操作や現在のGPUアプリへのログ取得設定を行わない。
+- ビルド、入力、操作別（強さ・色温度・明るさ）、設定、セッションを分ける。観測途中の再起動・画面離脱・入力切替は別セッションとする。
+- 空ログ・対象kindの正常記録なしを計測結果としない。捨て計測の回数は事前に決める。実写・生ログ・個人用パスを公開しない。
 
 ```text
 python tools/preview-timing/summarize_processing.py capture.log --kind DRAFT --warmup 1
@@ -44,7 +37,7 @@ FrameTimingMetric、UI状態採用、FrameCommitの時刻を提示時刻の代�
 - https://perfetto.dev/docs/data-sources/frametimeline
 - https://developer.android.com/reference/android/view/ViewTreeObserver#registerFrameCommitCallback(java.lang.Runnable)
 
-## 診断編集の各回と1/2の分離
+## 入力ログに含まれるworker数による分離
 
 ```text
 python tools/preview-timing/summarize_processing.py capture.log --kind DRAFT --workers 1 --warmup 1
