@@ -104,7 +104,7 @@ jobs:
       - name: Require exact methods, zero skips and all software Canvas images
         shell: bash
         if: ${{ !cancelled() }}
-        run: python3 tools/atd-ci/verify.py app/build | tee atd-evidence/verification.txt
+        run: python3 tools/atd-ci/verify.py app/build 2>&1 | tee atd-evidence/verification.txt
       - name: Keep evidence (software Canvas is not screen/GPU output)
         if: always()
         uses: actions/upload-artifact@v7

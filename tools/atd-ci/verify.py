@@ -2,6 +2,7 @@
 import collections
 import json
 from pathlib import Path
+import re
 import struct
 import sys
 import xml.etree.ElementTree as ET
@@ -9,24 +10,59 @@ import zlib
 from PIL import Image
 
 
+class ResultVerificationError(ValueError):
+    """Public diagnostics assembled only from the checked-in allowlist and counters."""
+
+
+_SAFE_ERROR_TYPES = {
+    'java.lang.AssertionError',
+    'java.lang.IllegalArgumentException',
+    'java.lang.IllegalStateException',
+    'java.lang.NullPointerException',
+    'java.lang.SecurityException',
+    'java.io.FileNotFoundException',
+    'java.io.IOException',
+    'kotlinx.coroutines.TimeoutCancellationException',
+    'org.junit.AssumptionViolatedException',
+    'org.junit.ComparisonFailure',
+}
+
+
 def verify_tests(paths, expected):
-    actual = []
+    wanted = collections.Counter((c, m) for c, methods in expected.items() for m in methods)
+    actual, failures, rejected_suites = [], [], 0
     for path in paths:
         root = ET.parse(path).getroot()
         for node in root.iter():
             if node.tag in ('testsuite', 'testsuites'):
-                for key in ('failures', 'errors', 'skipped', 'disabled'):
-                    if float(node.get(key, '0')) != 0:
-                        raise ValueError(f'{path}: {key} != 0')
+                if any(float(node.get(key, '0')) != 0 for key in ('failures', 'errors', 'skipped', 'disabled')):
+                    rejected_suites += 1
         for case in root.iter('testcase'):
-            if any(case.find(tag) is not None for tag in ('failure', 'error', 'skipped')):
-                raise ValueError(f'{path}: non-success testcase')
-            actual.append((case.get('classname'), case.get('name')))
-    wanted = collections.Counter((c, m) for c, methods in expected.items() for m in methods)
+            key = (case.get('classname'), case.get('name'))
+            actual.append(key)
+            for tag in ('failure', 'error', 'skipped'):
+                detail = case.find(tag)
+                if detail is None:
+                    continue
+                if key not in wanted:
+                    failures.append(f'unexpected method: {tag}')
+                    continue
+                # Names come from the checked-in exact allowlist; error type is a fixed enum.
+                # No raw JUnit text, arbitrary frames, exception message, path or URI is emitted.
+                cls, method = key
+                source = cls.rsplit('.', 1)[-1]
+                line = re.search(r'\(' + re.escape(source) + r'\.kt:(\d{1,6})\)', detail.text or '')
+                error = detail.get('type')
+                kind = error if error in _SAFE_ERROR_TYPES else 'unclassified'
+                hint = f' test_line={line.group(1)}' if line else ''
+                failures.append(f'{cls}#{method}: {tag} type={kind}{hint}')
+    if failures:
+        raise ResultVerificationError('ATD_METHOD_FAILURE ' + '; '.join(failures))
+    if rejected_suites:
+        raise ResultVerificationError(f'ATD_SUITE_FAILURE rejected={rejected_suites} (no per-method diagnosis)')
     if collections.Counter(actual) != wanted:
-        raise ValueError(f'Expected exactly {wanted}, got {collections.Counter(actual)}')
+        raise ResultVerificationError(f'ATD_METHOD_COUNT_MISMATCH expected={sum(wanted.values())} observed={len(actual)}')
     return len(actual)
-
 
 def verify_png(path):
     data = path.read_bytes()
@@ -84,4 +120,14 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except ET.ParseError:
+        print('ATD_INVALID_RESULT_XML', file=sys.stderr)
+        sys.exit(1)
+    except ResultVerificationError as error:
+        print(error, file=sys.stderr)
+        sys.exit(1)
+    except (ValueError, OSError):
+        print('ATD_VERIFICATION_FAILURE', file=sys.stderr)
+        sys.exit(1)

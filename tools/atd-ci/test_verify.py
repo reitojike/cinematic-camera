@@ -25,6 +25,24 @@ class VerificationTest(unittest.TestCase):
             with self.subTest(body=body), self.assertRaises(ValueError):
                 self.check_xml('<testsuite>' + body + '</testsuite>')
 
+    def test_only_allowlisted_diagnostics_are_reported(self):
+        xml = ('<testsuite failures="1"><testcase classname="Example" name="works">'
+               '<failure type="java.lang.IllegalStateException" message="PRIVATE_TEXT">'
+               'PRIVATE_URI at Example.works(Example.kt:47)</failure>'
+               '</testcase></testsuite>')
+        with self.assertRaises(ValueError) as ctx:
+            self.check_xml(xml)
+        self.assertEqual('ATD_METHOD_FAILURE Example#works: failure type=java.lang.IllegalStateException test_line=47',
+                         str(ctx.exception))
+        self.assertNotIn('PRIVATE', str(ctx.exception))
+
+    def test_unexpected_method_fields_are_not_reported(self):
+        xml = ('<testsuite failures="1"><testcase classname="PRIVATE_CLASS" name="PRIVATE_METHOD">'
+               '<failure type="PRIVATE_TYPE">PRIVATE_FRAME</failure></testcase></testsuite>')
+        with self.assertRaises(ValueError) as ctx:
+            self.check_xml(xml)
+        self.assertEqual('ATD_METHOD_FAILURE unexpected method: failure', str(ctx.exception))
+
     def test_suite_error_fails(self):
         with self.assertRaises(ValueError):
             self.check_xml('<testsuite errors="1"><testcase classname="Example" name="works"/></testsuite>')
