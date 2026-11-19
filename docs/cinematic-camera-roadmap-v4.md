@@ -23,7 +23,7 @@
 
 ### v0.1.1 の後はホスト型 CI の GPU 回帰を優先
 
-- #475 の安全確認・採否と v0.1.1 の公開が済んだら、次に [#470](https://github.com/reitojike/cinematic-camera/issues/470) を優先する。既存の製品 shader・renderer を使う全工程の GPU golden 比較を、Mesa の実バージョンを固定した GitHub Actions のホスト型 CI で再現できるようにする。実行環境・対象件数・基準画像の識別情報を記録し、再現性を確認してから、日常の GPU 回帰ゲートをクラウド CI へ移す。それまでは既存の回帰・保存安全条件を省かず、基準の自動更新もしない。
+- #475 の安全確認・採否と v0.1.1 の公開が済んだら、次に [#470](https://github.com/reitojike/cinematic-camera/issues/470) を優先する。D2 の入力／GL 境界分離で既存の製品 shader・renderer を共有し、全工程の GPU golden 比較を固定版 Mesa の GitHub Actions ホスト型 CI で再現する。Mesa 実版・driver・実 ES、入力と試験条件の manifest・基準 hash・必須件数を記録し、0 件・欠落・skip を成功扱いにしない。全条件の再現性と Android との画素差を照合して #470 の受入を満たしてから、日常の GPU 回帰ゲートをクラウド CI へ移す。それまでは既存の Android ゲートを省かず、保存安全条件と基準の採用・更新ルールは維持する。
 - Pixel は節目で Android とクラウドの画素差を照合し、実機性能を測る。Mesa で通過しても、Pixel の画質や性能の合格とは扱わない。Windows のローカル GPU AVD は日常ゲートにせず、切り分けが必要なときだけ範囲を限定し、使用の都度承認を得て単独で使う。
 - #464 の half の採否は #470 と独立に判断する。[#491](https://github.com/reitojike/cinematic-camera/pull/491) は非 GPU の明示復旧を対象とする任意の試行のままとし、必須の GPU 回帰ゲートや公開条件には加えない。
 
