@@ -7,6 +7,9 @@
       "unfinishedReplacementCannotConsumeCleanProofAndCommittedStartedCannotRestoreIt",
       "beforeCommitAfterCommitAndReadbackFailuresPreserveTheExactDurableOutcome"
     ],
+    "dev.cinematic.p0.rawcapture.SaveRecoveryFactoryAndroidTest": [
+      "explicitRequestUpdatesPreparedIndexAndOldOwnerCannotStart"
+    ],
     "dev.cinematic.p0.rawcapture.DngImportStorageAndroidTest": [
       "pendingCopyPublishesExactlyOneSharedOriginalAndCanReopen",
       "publishResponseLossReconcilesSameUriAfterJournalReopen",
