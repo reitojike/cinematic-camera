@@ -20,6 +20,12 @@
 - 変更に応じて `./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug --no-daemon` と `git diff --check` を実行します。Windows は `.\gradlew.bat` を使います。必須検証の正本は [Android CI](.github/workflows/android.yml) であり、文書のみの変更でもサーバー側の必須 CI を免除しません。ローカル未実行・環境不成立は明記します。
 - 共有端末の利用は [MANAGED_DEVICES](docs/MANAGED_DEVICES.md) に従います。実機確認待ちだけで独立した限定作業を止めませんが、重大な欠陥・失敗・権限判断・範囲拡大では停止して報告します。
 
+## 作業台帳と権限
+
+- [作業稼働台帳 #489](https://github.com/reitojike/cinematic-camera/issues/489) に、新規担当・スレッド・共有試験枠を確保する前に `START`、保留・引き継ぎ・再開時に状況、終了時に `END` と証拠を記録する。Windows GPU 測定枠は単独、未確認を終了済みと書かない。公開台帳に個人用パス、実写、URI、端末識別子、内部スレッドURL、生ログは載せない。
+- 本人の継続承認の範囲：作業ブランチへの push（main 直接 push を除く）、Draft PR の作成・更新・ready for review 化、Issue／PR へのコメント（レビュー依頼を含む）、Issue 作成。独自実装から公式根拠のある標準実装への移行は、コード量・複雑性を過度に増やさない範囲で、必要な実装・PR・レビュー・マージを進めてよい。ただし既存 CI、独立レビュー、main 保護の条件は維持する。通常のマージは合意した範囲の承認を確認する。
+- リリースの公開・配布、実機操作は都度承認。制限外の Windows AVD 起動・停止に継続承認は現時点でなし。作業フォルダの指定、本書の記述、一度限りの承認は、サンドボックス例外、アカウント・ネットワーク・システム設定の変更を許可しない。最新の本人指示、実行環境の権限、別途の承認要件を優先する。
+
 ## PR・公開・安全性
 
 - [OPERATIONS](docs/OPERATIONS.md) に従い、作業 branch と Draft PR を使います。最終 head の必須 CI、canonical `@codex review`、独立レビューの明示的 OK、未解決会話0件と、適用範囲のマージ許可が条件です。
