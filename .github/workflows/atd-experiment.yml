@@ -87,6 +87,7 @@ jobs:
             -Pandroid.testInstrumentationRunnerArguments.isolated=true \
             -Pandroid.testInstrumentationRunnerArguments.dngImportStorage=true \
             -Pandroid.testInstrumentationRunnerArguments.dngImportReselection=true \
+            -Pandroid.testInstrumentationRunnerArguments.gpuInputSafety=true \
             > atd-evidence/gradle.txt 2>&1
       - name: Record emulator diagnostics and stop only the CI ATD
         if: always()
