@@ -102,16 +102,23 @@ jobs:
           mkdir -p atd-evidence
           find "$ANDROID_HOME/system-images" -name source.properties -exec cat {} \; > atd-evidence/images.txt 2>/dev/null || true
       - name: Require exact methods, zero skips and all software Canvas images
+        id: verify_atd
         shell: bash
         if: ${{ !cancelled() }}
-        run: python3 tools/atd-ci/verify.py app/build 2>&1 | tee atd-evidence/verification.txt
-      - name: Keep evidence (software Canvas is not screen/GPU output)
+        run: python3 tools/atd-ci/verify.py app/build atd-evidence/approved-canvas 2>&1 | tee atd-evidence/verification.txt
+      - name: Keep sanitized verification summary
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: atd-experiment-${{ github.run_attempt }}
-          path: |
-            atd-evidence/verification.txt
-            app/build/outputs/connected_android_test_additional_output/**/*.png
+          path: atd-evidence/verification.txt
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Keep only approved software Canvas fixtures
+        if: ${{ success() && steps.verify_atd.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: atd-canvas-${{ github.run_attempt }}
+          path: atd-evidence/approved-canvas/
           if-no-files-found: error
           retention-days: 7

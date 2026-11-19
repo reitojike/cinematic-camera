@@ -128,6 +128,10 @@ class DngImportReselectionAndroidTest {
         write(ownPublished(a), bytesB)
         val modified = select(same)
         assertEquals(DngImportMessageKind.FAILURE, modified.messageKind)
+        assertTrue(
+            "Expected the stored-byte mismatch result",
+            modified.message == "原本のサイズまたは内容を確認できません。64MiB以下の同じDNGを選び直してください",
+        )
         assertNull(modified.readyUri)
         assertTrue(!imports.consumeReady(sharedA))
         assertEquals(2, importRowCount())
@@ -138,6 +142,10 @@ class DngImportReselectionAndroidTest {
         assertTrue(rows.find(a.target).isEmpty())
         val missing = select(same)
         assertEquals(DngImportMessageKind.FAILURE, missing.messageKind)
+        assertTrue(
+            "Expected the existing-destination HOLD result",
+            missing.message == "取り込み先の状態を確認できません。追加コピーせず保留しています",
+        )
         assertNull(missing.readyUri)
         assertTrue(!imports.consumeReady(sharedA))
         assertEquals(1, importRowCount())

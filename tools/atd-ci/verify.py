@@ -1,7 +1,8 @@
 """Reject missing, extra, duplicated or skipped tests and missing software-Canvas PNGs."""
 import collections
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from shutil import copyfile
 import re
 import struct
 import sys
@@ -100,6 +101,32 @@ def verify_png(path):
     return w, h
 
 
+def verify_and_stage_canvas(root, expected, stage):
+    resolved_root = root.resolve()
+    pngs = [p for p in root.rglob('*.png')
+            if p.is_file() and not p.is_symlink() and p.resolve().is_relative_to(resolved_root)]
+    approved = []
+    for suffix in expected:
+        relative = PurePosixPath(suffix)
+        if (relative.is_absolute() or '..' in relative.parts
+                or relative.as_posix() != suffix or relative.suffix != '.png'):
+            raise ValueError('Invalid reviewed image path')
+        matches = [p for p in pngs if p.relative_to(root).as_posix() == suffix
+                   or p.relative_to(root).as_posix().endswith('/' + suffix)]
+        if len(matches) != 1:
+            raise ValueError('Missing or duplicate expected Canvas image')
+        size = verify_png(matches[0])
+        if min(size) < 320:
+            raise ValueError('Unexpectedly small Canvas fixture')
+        approved.append((matches[0], relative, size))
+    stage.mkdir(parents=True, exist_ok=False)
+    for path, relative, size in approved:
+        target = stage / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        copyfile(path, target)
+        print(f'SOFTWARE_CANVAS {relative}: {size}')
+
+
 def main():
     spec = json.loads(Path(__file__).with_name('allowlist.json').read_text())
     if len(sys.argv) == 2 and sys.argv[1] == '--selection':
@@ -108,15 +135,8 @@ def main():
     build = Path(sys.argv[1])
     paths = list((build / 'outputs/androidTest-results/connected').rglob('TEST-*.xml'))
     count = verify_tests(paths, spec['tests'])
-    pngs = list((build / 'outputs').rglob('*.png'))
-    for suffix in spec['images']:
-        matches = [p for p in pngs if p.as_posix().endswith('/' + suffix)]
-        if len(matches) != 1:
-            raise ValueError(f'{suffix}: expected one artifact, got {matches}')
-        size = verify_png(matches[0])
-        if min(size) < 320:
-            raise ValueError(f'{suffix}: unexpectedly small fixture: {size}')
-        print(f'SOFTWARE_CANVAS {suffix}: {size}')
+    verify_and_stage_canvas(build / 'outputs/connected_android_test_additional_output',
+                            spec['images'], Path(sys.argv[2]))
     print(f'ATD_EXPERIMENT_PASS tests={count} failures=0 errors=0 skipped=0 PNGs={len(spec["images"])}')
     print('Software Canvas fixtures only; NOT display compositor / camera / GPU regression evidence.')
 
@@ -130,6 +150,6 @@ if __name__ == '__main__':
     except ResultVerificationError as error:
         print(error, file=sys.stderr)
         sys.exit(1)
-    except (ValueError, OSError):
+    except (ValueError, OSError, struct.error, zlib.error):
         print('ATD_VERIFICATION_FAILURE', file=sys.stderr)
         sys.exit(1)

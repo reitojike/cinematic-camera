@@ -3,7 +3,8 @@ import unittest
 import struct
 import zlib
 from pathlib import Path
-from verify import verify_tests, verify_png
+from PIL import Image
+from verify import verify_tests, verify_png, verify_and_stage_canvas
 
 
 class VerificationTest(unittest.TestCase):
@@ -71,3 +72,27 @@ class VerificationTest(unittest.TestCase):
                 else:
                     with self.assertRaises((ValueError, OSError)):
                         verify_png(p)
+
+    def test_only_approved_canvas_is_staged_under_the_reviewed_name(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            root, stage = base / 'additional', base / 'approved'
+            approved = root / 'runner-device' / 'canvas' / 'expected.png'
+            approved.parent.mkdir(parents=True)
+            Image.new('RGB', (320, 320)).save(approved)
+            Image.new('RGB', (320, 320)).save(approved.with_name('unexpected.png'))
+            verify_and_stage_canvas(root, ['canvas/expected.png'], stage)
+            self.assertEqual(['canvas/expected.png'], [p.relative_to(stage).as_posix()
+                                                       for p in stage.rglob('*.png')])
+            self.assertEqual(approved.read_bytes(), (stage / 'canvas/expected.png').read_bytes())
+
+    def test_expected_canvas_outside_input_root_does_not_allow_partial_publication(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            root, stage = base / 'additional', base / 'approved'
+            root.mkdir()
+            Image.new('RGB', (320, 320)).save(root / 'present.png')
+            Image.new('RGB', (320, 320)).save(base / 'outside.png')
+            with self.assertRaises(ValueError):
+                verify_and_stage_canvas(root, ['present.png', 'outside.png'], stage)
+            self.assertFalse(stage.exists())
