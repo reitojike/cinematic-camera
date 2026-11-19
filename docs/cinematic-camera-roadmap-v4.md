@@ -19,6 +19,8 @@
 - [#406](https://github.com/reitojike/cinematic-camera/pull/406) は製品外の診断のまま。合成確認済み。実機のリアルタイム処理時間とプレビューへの影響を測った後に採否を決め、製品依存への追加は先行しない。
 - 埋め込み JPEG の追加診断（[#241](https://github.com/reitojike/cinematic-camera/issues/241)）は既存上限・構造検査・フォールバックを維持。現像 owner の prewarm、Mist の同期除去は別変更。保存 GPU owner は再利用しない。
 
+- [#474](https://github.com/reitojike/cinematic-camera/pull/474) の CameraX 1.7.0 更新候補は open のまま v0.1.1 に含めず、#470 の進行も妨げない。v0.1.1 公開後に別枠で Pixel の静止画撮影と動画録画の回帰を確認し、その結果をもとに本人が採否を判断する。それまでは CameraX 1.6.2 を維持する。
+
 ## 3. 継続する回帰と限定残件
 
 ### v0.1.1 の後はホスト型 CI の GPU 回帰を優先
