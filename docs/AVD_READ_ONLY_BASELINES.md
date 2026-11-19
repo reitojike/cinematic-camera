@@ -54,16 +54,24 @@ Emulator/image/AVD設定の更新でsnapshotは無効化され得る。基準を
 
 - 担当、基準名、偶数のconsole port、serial、worktree、出力先を先に予約する。
 - 各taskは別worktree、別port、別出力ディレクトリ。`ANDROID_SERIAL` を設定し、adbは常に `-s` を付ける。
-- 起動例（変数は担当が確認した値。`Start-Process` は非表示で実行する）：
+- #475 等のローカル回帰では、PowerShell 7.3 以上で [run_owned_avd.ps1](../tools/local-avd/run_owned_avd.ps1) を使う。通常権限で実行し、CIM/WMI は使わない。
+  ポート予約は起動から終了確認まで維持する。起動前に `adb devices -l` で対象 serial を確認し、ADB 未接続でも
+  既に使用中の console／隣の ADB ポートを見落とさないよう、短い排他的な bind で両方の空きを確認する。
+  `Start-Process -PassThru` で起動した PID と開始時刻を私有出力に記録する。
+  SDK の [`-report-console`](https://developer.android.com/studio/run/emulator-commandline) から、
+  起動ごとに確保した loopback socket へ予約ポートの通知を受け、`Get-Process` で同じランチャーの QEMU 子プロセスを照合する。
+  serial と ADB transport ID を固定し、read-only インスタンス内の合成試験領域に一時マーカーを置いて接続先を確認する。
+  所有不明・通知欠損・transport 切替・マーカー不一致は中断し、serial 一致だけを根拠に操作しない。
+- 例（`$runTests` はあらかじめ内容を確認したローカル試験の scriptblock。`param($adb,$serial)` で受け取る）：
 
   ```powershell
-  $env:ANDROID_SERIAL = "emulator-$port"
-  Start-Process $emulator -WindowStyle Hidden -ArgumentList @(
-    '-avd', $baseline, '-port', $port, '-cores', 2, '-memory', 4096,
-    '-snapshot', 'prepared_v1', '-read-only', '-no-snapshot-save',
-    '-no-window', '-no-audio', '-no-boot-anim'
-  )
+  ./tools/local-avd/run_owned_avd.ps1 -SdkRoot $sdk -AvdHome $avdHome -AvdName $baseline `
+    -Port $port -Mode AtdSnapshot -OutputDirectory $newPrivateOutput -Run $runTests
   ```
+
+  `AospGpu` は #475 などの単独 GPU 回帰用の cold boot。GPU golden の専用採取手順の代替ではない。
+  callback の adb は渡された `$serial` に対してのみ実行し（常に `-s`）、別の AVD を起動しない。試験コマンドが失敗したら例外で終了する。
+  速度比較は他の AVD と同時に実行しない。ローカルの PID・パス・未加工ログを公開しない。
 
 - 起動後 `sys.boot_completed=1` を確認。保存したUUIDと現在の `/proc/sys/kernel/random/boot_id`
   を読み、両方が有効なUUIDで完全一致しなければ停止する。snapshot欠落・cold bootへのfallbackを黙認しない。
@@ -73,8 +81,11 @@ Emulator/image/AVD設定の更新でsnapshotは無効化され得る。基準を
   liveではUUIDの一致を根拠にし、終了時にflushされた復帰ログも保全する。欠測を成功とみなさない。
 - 自分のworktreeでhead/APK hashを記録し、対象classと安全引数を明示してinstall/instrumentする。
   既定の全androidTestを無条件実行しない。実機へ同じ引数を流用しない。
-- 完了後 `adb -s $env:ANDROID_SERIAL emu kill`。自分のprocessが消えたら枠を返却する。
-  別担当のinstanceを止めたり、全体killや `cleanManagedDevices` を実行したりしない。
+- 完了時は所有が一致する予約済み serial にだけ `adb -s emulator-<port> emu kill` を送り、終了を待つ。
+  終了しない場合だけ `Get-Process -Id` で開始時刻を再照合し、起動時に記録した同一プロセスだけを停止する。
+  所有不明・PID 再利用・別プロセスのポート残留では、その対象に停止命令を送らず担当へ報告する。
+  自分のプロセスとポートの終了が確認できてから運用枠を返却する。`adb kill-server` や全体 kill はしない。
+  AVD なしの確認は `pwsh -NoProfile -File tools/local-avd/test_session_identity.ps1`。
 
 ## 負荷とストレージ
 
@@ -115,6 +126,7 @@ Emulator/image/AVD設定の更新でsnapshotは無効化され得る。基準を
 2026-11-15、`b82a9cd9` の instance 別起動証跡を使い、同一AOSP基準の cold boot 2台を実証した。
 ATDのsnapshot方式とは別で、GPUにはsnapshotを使わない。
 
+- 以下は GPU golden の起動・採取証跡専用で、上記の CIM なしの回帰手順とは別。採取の証拠条件は変更しない。
 - `start_gpu_instance.ps1` と `capture_android.ps1 -InstanceRecord` をセットで導入する。
   [具体的な起動・採取手順](../tools/gpu-golden/README.md)に従い、
   同一AVDの起動登録は全担当がwrapperを使う。基準変更は全instance停止後のみ。
