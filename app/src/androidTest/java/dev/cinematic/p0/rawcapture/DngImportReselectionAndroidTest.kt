@@ -76,6 +76,9 @@ class DngImportReselectionAndroidTest {
         }
         fun select(uri: Uri): DngImportScreenState {
             check(!imports.state.value.busy && imports.state.value.readyUri == null)
+            // This isolated fixture has no screen observer. Publish the same synthetic facts
+            // to the process coordinator, which also checks the prior global observation.
+            DevelopExecution.updateConditions(allowed)
             imports.select(uri, 0) { allowed }
             return runBlocking { withTimeout(30_000) { imports.state.first { !it.busy } } }
         }

@@ -51,10 +51,12 @@ def verify_tests(paths, expected):
                 # No raw JUnit text, arbitrary frames, exception message, path or URI is emitted.
                 cls, method = key
                 source = cls.rsplit('.', 1)[-1]
-                line = re.search(r'\(' + re.escape(source) + r'\.kt:(\d{1,6})\)', detail.text or '')
+                lines = re.findall(r'\(' + re.escape(source) + r'\.kt:([0-9]{1,6})\)', detail.text or '')
                 error = detail.get('type')
                 kind = error if error in _SAFE_ERROR_TYPES else 'unclassified'
-                hint = f' test_line={line.group(1)}' if line else ''
+                hint = f' test_line={lines[0]}' if lines else ''
+                if len(lines) > 1:
+                    hint += f' caller_line={lines[1]}'
                 failures.append(f'{cls}#{method}: {tag} type={kind}{hint}')
     if failures:
         raise ResultVerificationError('ATD_METHOD_FAILURE ' + '; '.join(failures))
