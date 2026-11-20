@@ -14,7 +14,7 @@ import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 
-/** Synthetic input only. Half is a guide, never returned as the session's exact input. */
+/** Synthetic input only. Covers the old comparison and the single HALF editor input. */
 class InitialHalfSessionAndroidTest {
     @Test fun halfAndFullShareSnapshotButReleaseEachRasterAndReturnExactPixels() = fixture { file, root, source, geometry ->
         val baseline = Original24PreviewSession(source, File(root, "baseline"), {}, geometry) { file.inputStream() }
@@ -62,6 +62,30 @@ class InitialHalfSessionAndroidTest {
             assertFalse(it.hasUnreleasedResources)
             assertFalse(scratch.exists())
         }
+    }
+
+    @Test fun cancellationDuringHalfEditorInputNeverStartsFullOrRestarts() = fixture { file, root, source, geometry ->
+        val scratch = File(root, "cancel-half-editor")
+        val modes = mutableListOf<PreviewRasterMode>()
+        var guides = 0
+        lateinit var session: Original24PreviewSession
+        session = Original24PreviewSession(source, scratch, {}, geometry,
+            rasterMode = PreviewRasterMode.HALF_CANDIDATE,
+            beforeExactDecode = { fd, _, half ->
+                assertTrue(fd >= 0)
+                assertNull("HALF input cannot also open a HALF guide", half)
+                guides++
+            },
+            observeDecode = { mode, begin -> if (begin) { modes += mode; session.requestStop() } }) { file.inputStream() }
+        session.use {
+            assertNotNull(runCatching { it.loadGpuAsShotInput() }.exceptionOrNull())
+            assertThrows(IllegalStateException::class.java) { it.loadGpuAsShotInput() }
+            assertEquals(1, guides)
+            assertEquals(listOf(PreviewRasterMode.HALF_CANDIDATE), modes)
+            assertFalse(it.hasUnreleasedResources)
+            assertFalse(scratch.exists())
+        }
+        DngContentVerifier.verify(source.fingerprint, { file.inputStream() })
     }
 
     @Test fun stoppingAfterGuideSuppressesFullAndReclaimsTheSnapshot() = fixture { file, root, source, geometry ->
