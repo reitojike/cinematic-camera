@@ -87,7 +87,7 @@ Standard generated `gradle/wrapper/gradle-wrapper.jar` SHA-256:
 3B8A25775A69158B5AD2B1D17A80A88DC7B40A352A73EB27D06C612A7CE68E98
 ```
 
-The digest above identifies the initial reviewed local P0 debug APK, before the user authorized repository creation and APK distribution. No device installation or photography was performed. Pixel 9a availability could not be confirmed because `adb devices -l` failed to connect to its daemon. All device ACs remain unverified; see [P0_REPORT.md](P0_REPORT.md). Repository/CI and subsequent distribution follow [OPERATIONS.md](OPERATIONS.md); each distributed APK has its own run-specific digest and signing certificate.
+The digest above identifies the initial reviewed local P0 debug APK, before the user authorized repository creation and APK distribution. No device installation or photography was performed. Pixel 9a availability could not be confirmed because `adb devices -l` failed to connect to its daemon. No device AC was verified in this build; see [Issue #4](https://github.com/reitojike/cinematic-camera/issues/4) for the final P0 disposition. Repository/CI and subsequent distribution follow [OPERATIONS.md](OPERATIONS.md); each distributed APK has its own run-specific digest and signing certificate.
 
 ## Bounded independent final review
 
