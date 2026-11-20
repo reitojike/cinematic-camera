@@ -138,6 +138,9 @@ class InitialPreviewSavedJpegTest {
             assertTrue(sidecar.delete())
         }
         assertNull(InitialPreviewSavedJpeg.readBase(root,"a/missing.bin",3))
-        assertNull(InitialPreviewSavedJpeg.readBase(root,"../outside.bin",3))
+        val outside = File(root.parentFile, "outside.bin").apply { writeBytes(byteArrayOf(7)) }
+        assertNull(InitialPreviewSavedJpeg.readBase(root, "../outside.bin", 3))
+        assertNull(InitialPreviewSavedJpeg.readBase(root, outside.absolutePath, 3))
+        assertArrayEquals(byteArrayOf(7), outside.readBytes())
     }
 }

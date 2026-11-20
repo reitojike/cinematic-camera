@@ -124,13 +124,19 @@ internal object InitialPreviewSavedJpeg {
     /** Bounded, non-recovering base read. Sidecars, replacement, redirection and cleanup are misses.
      * This observes immutable bytes; it does not claim a lock against a later legitimate save. */
     internal fun readBase(root: File, relative: String, limit: Int): ByteArray? {
+        if (File(relative).isAbsolute || relative.split('/', '\\').any { it.isEmpty() || it == "." || it == ".." })
+            return null
         // Typical first open: no cursor. A no-follow stat is enough to miss without
         // canonicalizing, opening a record, or touching the saved-JPEG provider.
-        val file = File(root.absoluteFile, relative)
-        if (!Files.isRegularFile(file.toPath(), LinkOption.NOFOLLOW_LINKS)) return null
+        val observed = File(root.absoluteFile, relative)
+        if (!Files.isRegularFile(observed.toPath(), LinkOption.NOFOLLOW_LINKS)) return null
+        // The framework-supplied private root can be an Android alias. Resolve that
+        // trusted anchor as the writer does; redirects below it are never accepted.
         val canonical = root.canonicalFile
+        val file = File(canonical, relative)
         fun pathsSafe(): Boolean {
-            if (root.absoluteFile != canonical || !Files.isDirectory(canonical.toPath(), LinkOption.NOFOLLOW_LINKS)) return false
+            if (root.canonicalFile != canonical || !Files.isDirectory(canonical.toPath(), LinkOption.NOFOLLOW_LINKS))
+                return false
             var current = file
             while (current != canonical) {
                 if (current.parentFile == null || !current.toPath().startsWith(canonical.toPath()) ||
