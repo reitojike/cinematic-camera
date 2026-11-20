@@ -174,28 +174,6 @@ assembleDebug/testDebugUnitTest/lintDebug成功（53秒）。単体73件、failu
 期限hintはメモリ内の保守的な待ち予算のみで、現在センサー状態や実測の証拠ではない。既知の長秒をstop/rebindで失わず、別cameraへ混用しない。
 添付の正規転送は再準備後1回再試行しても失敗し、実画像/動画/ログは未確認。実機の15s非反映の直接原因と修正効果は未検証。repeating request自体の長秒によるpreview低fpsや撮影/preview露出分離はこの修正で解決したと扱わない。実機T009は未完了。
 
-## 固定pair二段階露出simulation（Issue #42）
-
-CameraX1.6.2公開APIでassembleDebug/testDebugUnitTest/lintDebug成功（最終候補70秒）。単体100件、failure/error/skip 0。追加27件は二段階計算17件、専用receipt/intent/epoch/保存後復帰/退出/背景化/AE・gain欠落の状態10件。実カメラの代用ではない。
-
-lint errors 0 / warnings 15 / hints 2。warningはExifInterface 7、UseKtx 6、portrait固定のLockedOrientationActivity/DiscouragedApi各1。hintsは既存state boxing2。チェック無効化やbaseline追加なし。Framework Exifは既存と同じ標準読取で、ISO/露光metadataも実画像の輝度一致やfull RAW decodeの証拠にはしない。
-
-STILLの明示opt-in固定pair、Builder単発設定とruntime preview補償、対応時だけ共通postRAW boost100をcompile確認。通常preferences/receiptと専用preview receiptを分離し、STILL intentはpreview sampleへ混入させない。保存と新PREVIEW復帰を分離、旧epoch/不完全AE・gain/退出/背景をpure stateと静的確認で検証。
-
-検証範囲はspecs/006-exposure-simulationへ追跡。Spec Kitのspec/plan/tasks/read-only整合分析を行い、FR9件/SC3件に対応。実機T009は未完了。初回bind長秒混入、動的pair変更時の再bind、輝度/階調/noise/clippingの近似、実sensor周期/描画fps、単発設定・保存metadata、RAW/動画回帰は未実機。
-
-コンパイル成功/同じISO×時間/READY表示を、露出分離や画質の実機成立としない。機能は通常OFF、pair変更は検証終了後、終了は保存済み通常設定へ再bind。第3描画mode/露出計/GPU/NDK/依存/新権限/署名変更なし。
-# 通常STILL二段階preview・ISO/SS操作部（Issue #44 / #45）
-
-- 検証source head: `74982af58021f1a9809d05dde2b38f21e9f3d8b6`。CameraX 1.6.2の公開APIを維持。
-- `assembleDebug / testDebugUnitTest / lintDebug` 成功（69秒、53 tasks、18 executed / 35 up-to-date）。22 suites / 143 tests、failure・error・skip 0。
-- lintはerror 0 / warning 15 / hint 2。ExifInterface 7、UseKtx 6、縦固定に関する2件、state boxing hints 2。抑制・baseline・チェック無効化なし。
-- 新しい検証はpreview/capture/restore所有権、旧epoch/revision/receipt、準備失敗・timeout・保存と復帰、32ms最新要求置換、AUTO一時設定のkey/epoch/one-shot、背景復帰の未受付最新target保持/同scope再試行/要求identity/新ACK解除、RAW+JPEG callback順序/重複/失敗/IO所有権、狭幅/密度/横持ちText測定。
-- 独立レビューのAUTO一時設定持越しと横持ちSS省略、およびcanonicalレビューの背景化前未受付target巻戻りを修正した。未受付targetは受付済みpreferencesと別のmemory-only要求で保持し、新sessionのACK後だけ保存・解除する。AUTO/reset受理時は失敗した旧MANUAL入力も無条件破棄し、UNKNOWNの明示AUTOは背景復帰へ保持する。3巡目補正前にqueue/live/selected/prefs/resumeのauthorityと破棄境界を読み取り分析し、この有限familyのみ補正した。core修正とUIそれぞれ独立レビューの明示OKを得た。最終headのcanonical/CIはPRへ記録する。
-- 初期Preview seedは補償pairのみ、ImageCaptureに固定露出overrideなし。unbind前の保持Interop clear、AUTO例外再bind、背景停止とforeground復帰の呼出境界を静的に照合した。CameraXとの実際の相互作用をJVM test成功だけで保証しない。
-- 通常経路のPixel 9a実機、全formatの撮影metadata、初回/復帰、明るさ/階調/描画fpsは未確認。runtime撮影pairのACK自体がrepeating結果待ちなので、長秒では撮影開始前・実撮影・復帰にセンサー由来の待ちが生じ得る。
-- HTML参照は構造/CSSのみ確認。ブラウザがfileプロトコル表示を拒否したため、参照実描画との比較は未実施。縦横の測定モデルの機械検証と実機の見た目一致は別とする。ISO/SS以外の監査差分はPO判断待ちで実装していない。
-
 ## 撮影UIの状態・MF/WB・設定診断（Issue #47、最新PO反映）
 
 - 検証source: `8d89db8ec3dfdd4bb4187981a1f46c6a9335d3be`。assembleDebug/testDebugUnitTest/lintDebug成功76秒、53 tasks（16 executed / 37 up-to-date）。27 suites / 189 tests、failure/error/skip 0。
