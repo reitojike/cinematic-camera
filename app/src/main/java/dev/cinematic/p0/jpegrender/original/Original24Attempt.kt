@@ -1,5 +1,7 @@
 package dev.cinematic.p0.jpegrender.original
 
+import dev.cinematic.p0.rawcapture.SaveAuthorityBoundary
+
 import android.graphics.Bitmap
 import dev.cinematic.p0.saveprogress.SaveProgressSink
 import dev.cinematic.p0.saveprogress.SaveProgressPhase
@@ -72,8 +74,8 @@ internal class Original24Attempt(context: Context, private val request: Original
             check(Looper.myLooper() != Looper.getMainLooper())
             check(!started && !closed); started = true
             require(request.source.fingerprint.bytes <= 64L * 1024 * 1024)
-            val stop = { signal.isCanceled || shouldStop() }
-            fun checkpoint() = originalCheckpoint(stop)
+            val stop = { SaveAuthorityBoundary.timed { signal.isCanceled || shouldStop() } }
+            fun checkpoint() = SaveAuthorityBoundary.durable { originalCheckpoint(stop) }
             fun verify() = DngContentVerifier.verify(request.source.fingerprint, { resources.input(io.openOriginal()) }, stop)
             checkpoint(); Original24Resources.requireAvailable(context)
             originalStage(trace, OriginalStage.SOURCE_VERIFY_BEFORE) { verify() }
@@ -170,10 +172,10 @@ internal class Original24Attempt(context: Context, private val request: Original
                     val bounded = object : OutputStream() {
                         override fun write(value: Int) = write(byteArrayOf(value.toByte()), 0, 1)
                         override fun write(bytes: ByteArray, offset: Int, count: Int) {
-                            checkpoint()
+                            originalCheckpoint(stop)
                             if (count < 0 || count.toLong() > JpegOutputDescription.MAX_JPEG_BYTES - encodedBytes) throw IOException("Original JPEG byte limit")
                             output.write(bytes, offset, count); digest.update(bytes, offset, count); encodedBytes += count
-                            checkpoint()
+                            originalCheckpoint(stop)
                         }
                         override fun flush() = output.flush()
                         override fun close() = throw IOException("Codec must not close owner output")

@@ -73,6 +73,7 @@ internal class AndroidAtomicJournalStorage(
     }
 
     override fun replace(contents: ByteArray) {
+        SaveAuthorityBoundary.checkpoint() // Actual durable verification, not just a force marker.
         require(contents.size in 1..capacity)
         checkPath()
         val parent = requireNotNull(file.parentFile)

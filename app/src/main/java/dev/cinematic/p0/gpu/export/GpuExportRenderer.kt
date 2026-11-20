@@ -1,5 +1,7 @@
 package dev.cinematic.p0.gpu.export
 
+import dev.cinematic.p0.rawcapture.SaveAuthorityBoundary
+
 import dev.cinematic.p0.gpu.constants.R7BaseV1
 import dev.cinematic.p0.gpu.constants.StageClearCharacterV1
 import dev.cinematic.p0.gpu.constants.StageClearOrtonV1
@@ -56,7 +58,7 @@ internal class GpuExportRenderer(
         require(externalEv.isFinite() && gain.isFinite() && gain > 0f)
         require(bandHeight == 256 || bandHeight == 64)
         require(ledger.budgetBytes <= GpuMemoryLedger.EXPORT_BUDGET) { "Export budget must not exceed 192 MiB" }
-        originalCheckpoint(stop)
+        SaveAuthorityBoundary.durable { originalCheckpoint(stop) }
         val capabilities = GlCapabilities.inspect(egl)
         capabilities.requireSupported()
         require(input.width <= capabilities.maxTextureSize && input.height <= capabilities.maxTextureSize)
@@ -99,7 +101,7 @@ internal class GpuExportRenderer(
             return field(w, h, format)
         }
         private fun boundary(name: String, action: () -> Unit) {
-            originalCheckpoint(stop)
+            SaveAuthorityBoundary.durable { originalCheckpoint(stop) }
             val start = System.nanoTime()
             boundaryName = name
             workTimings = timings?.detail(name)
@@ -110,7 +112,7 @@ internal class GpuExportRenderer(
                 times[name] = System.nanoTime() - start
                 completed = true
             } finally { timings?.finished(name, times[name] ?: (System.nanoTime() - start), completed) }
-            originalCheckpoint(stop)
+            SaveAuthorityBoundary.durable { originalCheckpoint(stop) }
         }
         private fun scan(action: (Band) -> Unit) {
             GpuExportBands.forEach(input, bandHeight, stop, workTimings) { origin, rows, rgba ->
@@ -140,13 +142,13 @@ internal class GpuExportRenderer(
             boundary("B1_QUANTILES") {
                 quantiles = GpuExportAnalysis.quantiles(egl, width, height, stop, timings = workTimings) { consume ->
                     for (origin in 0 until height step bandHeight) {
-                        originalCheckpoint(stop)
+                        SaveAuthorityBoundary.durable { originalCheckpoint(stop) }
                         tone.band(origin, minOf(bandHeight, height - origin)).use { band ->
                             consume(band)
                             gpuWork(workTimings, GpuExportDetail.FENCE_WAIT) { GpuFence(egl).use { it.await(stop) } }
                         }
                         onBandComplete?.invoke(boundaryName, origin, minOf(bandHeight, height - origin))
-                        originalCheckpoint(stop)
+                        SaveAuthorityBoundary.durable { originalCheckpoint(stop) }
                     }
                 }
             }
