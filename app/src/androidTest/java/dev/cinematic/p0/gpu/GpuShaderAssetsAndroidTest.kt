@@ -28,7 +28,7 @@ class GpuShaderAssetsAndroidTest {
                     val capabilities = GlCapabilities.inspect(egl)
                     Log.i(TAG, "capabilities=$capabilities; assets=${paths.size}")
                     capabilities.requireSupported()
-                    ShaderLibrary(egl, assets).use { library ->
+                    ShaderLibrary(egl, androidGpuShaderSource(assets)).use { library ->
                         val verified = linkedSetOf<String>()
                         var programs = 0
                         fun verify(path: String, includeOnly: Boolean = false) {
