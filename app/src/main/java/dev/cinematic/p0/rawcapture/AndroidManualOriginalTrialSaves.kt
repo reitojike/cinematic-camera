@@ -100,7 +100,12 @@ internal object AndroidManualOriginalTrialSaves {
         private fun generationFiles(request: Original24Request) = RenderedJpegFiles(root, id, request.generation)
         private fun storage(request: Original24Request, kind: CaptureJournalFile): AtomicJournalStorage {
             val directory = generationFiles(request).generationRoot()
-            return AndroidAtomicJournalStorage(requireNotNull(directory.parentFile), request.generation.toString(), kind)
+            val storage = AndroidAtomicJournalStorage(requireNotNull(directory.parentFile), request.generation.toString(), kind)
+            return when (kind) {
+                CaptureJournalFile.MANUAL_REQUEST, CaptureJournalFile.MANUAL_ATTEMPT,
+                CaptureJournalFile.JPEG_PUBLICATION -> storage.checkingSaveAuthority()
+                else -> storage
+            }
         }
         private fun journal(request: Original24Request) = JpegPublicationJournal(id, request.generation,
             storage(request, CaptureJournalFile.JPEG_PUBLICATION))
@@ -120,9 +125,7 @@ internal object AndroidManualOriginalTrialSaves {
             val own = SaveAuthorityWindow { authoritativeUnshared(request) }
             window = request to own
             try {
-                return SaveAuthorityBoundary.observing({
-                    if (!own.check(true)) throw CaptureJournalConflict()
-                }, action)
+                return SaveAuthorityBoundary.observing({ own.check(true) }, action)
             } finally {
                 window = null
             }
@@ -322,6 +325,7 @@ internal object AndroidManualOriginalTrialSaves {
         private fun recoveryStorage(kind: CaptureJournalFile): AtomicJournalStorage {
             val directory = RenderedJpegFiles(File(app.noBackupFilesDir, "raw-captures"), request.captureId, request.generation).generationRoot()
             return AndroidAtomicJournalStorage(requireNotNull(directory.parentFile), request.generation.toString(), kind)
+                .checkingSaveAuthority()
         }
         private val recoveryJournal = JpegPublicationJournal(request.captureId, request.generation, recoveryStorage(CaptureJournalFile.JPEG_RECOVERY))
         private val reconciliation = ReconciledJpegPublication(journal(request), recoveryJournal,

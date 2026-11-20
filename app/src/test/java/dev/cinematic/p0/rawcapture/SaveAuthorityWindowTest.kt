@@ -68,7 +68,7 @@ class SaveAuthorityWindowTest {
         } } catch (_: IOException) { }
         assertTrue(SaveAuthorityBoundary.force)
         var reads = 0
-        SaveAuthorityBoundary.observing({ reads++ }) { SaveAuthorityBoundary.checkpoint() }
+        SaveAuthorityBoundary.observing({ reads++; true }) { SaveAuthorityBoundary.checkpoint() }
         SaveAuthorityBoundary.checkpoint(); assertEquals(1, reads)
     }
     @Test fun concurrentTimedChecksHaveOnlyOneFlightAndForceDoesNotCoalesce() {
@@ -95,13 +95,32 @@ class SaveAuthorityWindowTest {
         assertFalse(stop()); assertFalse(stop()); cancelled = true; assertTrue(stop())
         assertEquals(3, checks); assertEquals(1, reads)
     }
-    @Test fun stageWithoutTraceStillChecksButFailedAuthorityCannotSkipCleanup() {
-        var checks = 0; var closed = false
-        SaveAuthorityBoundary.observing({ checks++; throw IOException("synthetic") }) {
-            try { dev.cinematic.p0.raw.original.originalStage(null,
-                dev.cinematic.p0.raw.original.OriginalStage.RESOURCE_CLOSE) { closed = true }; fail() }
-            catch (_: IOException) { }
+    @Test fun failedAuthorityNeverAddsAFalseCleanupFailure() {
+        val primary = IOException("primary render failure")
+        var checks = 0
+        var closed = false
+        val actual = assertThrows(IOException::class.java) {
+            SaveAuthorityBoundary.observing({ checks++; false }) {
+                try {
+                    throw primary
+                } finally {
+                    dev.cinematic.p0.raw.original.originalStage(null,
+                        dev.cinematic.p0.raw.original.OriginalStage.RESOURCE_CLOSE) { closed = true }
+                }
+            }
         }
-        assertTrue(closed); assertEquals(1, checks)
+        assertSame(primary, actual)
+        assertTrue(closed)
+        assertTrue(actual.suppressed.isEmpty())
+        assertEquals(0, checks)
+    }
+
+    @Test fun ordinaryStageWithoutTraceStillForcesAuthority() {
+        var checks = 0
+        SaveAuthorityBoundary.observing({ checks++; true }) {
+            dev.cinematic.p0.raw.original.originalStage(null,
+                dev.cinematic.p0.raw.original.OriginalStage.SOURCE_VERIFY_BEFORE) { assertEquals(1, checks) }
+        }
+        assertEquals(2, checks)
     }
 }

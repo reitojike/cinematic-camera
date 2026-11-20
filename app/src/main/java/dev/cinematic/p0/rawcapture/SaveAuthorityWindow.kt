@@ -1,5 +1,6 @@
 package dev.cinematic.p0.rawcapture
 
+import java.io.IOException
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -50,7 +51,7 @@ internal class SaveAuthorityWindow(
 internal object SaveAuthorityBoundary {
     private val timedDepth = ThreadLocal<Int>()
     private val forceDepth = ThreadLocal<Int>()
-    private val verifier = ThreadLocal<() -> Unit>()
+    private val verifier = ThreadLocal<() -> Boolean>()
 
     // The actual durable observer belongs to the serial IO owner, never the GPU reader.
     val isObserving: Boolean get() = verifier.get() != null
@@ -68,11 +69,28 @@ internal object SaveAuthorityBoundary {
         }
     }
 
-    fun checkpoint() { verifier.get()?.invoke() }
+    fun checkpoint() {
+        val check = verifier.get() ?: return
+        val current = try { check() } catch (failure: IOException) {
+            // This observer reads authority; it is not the journal's durable-proof comparison.
+            throw IOException("Save authority could not be observed", failure)
+        }
+        if (!current) throw IOException("Save authority no longer current")
+    }
 
-    fun <T> observing(check: () -> Unit, action: () -> T): T {
+    fun <T> observing(check: () -> Boolean, action: () -> T): T {
         check(verifier.get() == null)
         verifier.set(check)
         try { return action() } finally { verifier.remove() }
     }
 }
+
+// Only the manual-save intent, attempt and JPEG journals opt in. Their revision/record
+// comparisons still throw their own CaptureJournalConflict, unchanged.
+internal fun AtomicJournalStorage.checkingSaveAuthority(): AtomicJournalStorage =
+    object : AtomicJournalStorage by this {
+        override fun replace(contents: ByteArray) {
+            SaveAuthorityBoundary.checkpoint()
+            this@checkingSaveAuthority.replace(contents)
+        }
+    }
