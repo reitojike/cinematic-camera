@@ -13,7 +13,7 @@ internal data class InitialPreviewIdentity(
 }
 
 internal enum class InitialPreviewKind {
-    SAVED_CACHE, SAVED_JPEG, EMBEDDED_JPEG, HALF_GUIDE;
+    SAVED_CACHE, SAVED_JPEG, HALF_GUIDE;
     val edited get() = this == SAVED_CACHE || this == SAVED_JPEG
 }
 
