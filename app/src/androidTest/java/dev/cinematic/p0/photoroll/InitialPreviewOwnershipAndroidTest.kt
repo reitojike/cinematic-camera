@@ -21,7 +21,7 @@ class InitialPreviewOwnershipAndroidTest {
     private val record=JpegPublicationRecord(JpegPublicationTarget(request.captureId,1,"2".repeat(32)),render,
         fingerprint,7,JpegPublicationPhase.PUBLISHED,"content://media/external_primary/images/media/1")
     private fun bitmap()=Bitmap.createBitmap(64,32,Bitmap.Config.ARGB_8888).apply { eraseColor(Color.GREEN) }
-    private fun frame()=InitialPreviewFrame(bitmap(),InitialPreviewKind.EMBEDDED_JPEG,identity)
+    private fun frame()=InitialPreviewFrame(bitmap(),InitialPreviewKind.SAVED_JPEG,identity)
 
     @Test fun cacheOwnsPrivateCopyAndClearDoesNotRecycleUiOrProducerPixels() {
         val cache=InitialPreviewSavedCache()

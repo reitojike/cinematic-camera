@@ -94,9 +94,9 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
         val compareHalfGuide = BuildConfig.DEBUG && BuildConfig.INITIAL_HALF_GUIDE
         val rasterMode = if (compareHalfGuide) PreviewRasterMode.FULL else PreviewRasterMode.HALF_CANDIDATE
         val loaded = awaitTrialPreview(GpuPhotoRollInputs.open(app, resources, repository, uri, fromFiles,
-            maxSourceBytes, cancellation, deadline, admitted, rasterMode, beforeExactDecode = if (guide == null) null else { original, geometry, fd, signal, half ->
+            maxSourceBytes, cancellation, deadline, admitted, rasterMode, beforeExactDecode = if (guide == null) null else { original, geometry, _, signal, half ->
                 val current = values(original).also { selectedValues = it }
-                InitialPreviewGuide.load(app, original, geometry, current, fd, signal,
+                InitialPreviewGuide.load(app, original, geometry, current, signal,
                     initialCache, cacheGeneration,
                     if (compareHalfGuide) half else null)?.let(guide)
             }) { epoch != originalEpoch.get() },

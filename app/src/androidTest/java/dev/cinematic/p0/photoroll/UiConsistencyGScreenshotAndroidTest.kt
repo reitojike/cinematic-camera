@@ -84,7 +84,7 @@ class UiConsistencyGScreenshotAndroidTest {
             Scene("capture-permission"),
             Scene("guide-saved", guide = InitialPreviewKind.SAVED_JPEG),
             Scene("guide-raw", guide = InitialPreviewKind.HALF_GUIDE),
-            Scene("guide-embedded", guide = InitialPreviewKind.EMBEDDED_JPEG), Scene("roll-list"))
+            Scene("roll-list"))
         val selected = args.getString("uiGCases")?.split(",")?.toSet()
         val selectedLayouts = args.getString("uiGLayouts")?.split(",")?.toSet()
         val cases = layouts.filter { selectedLayouts == null || it.name in selectedLayouts }.flatMap { layout ->
