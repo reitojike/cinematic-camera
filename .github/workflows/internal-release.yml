@@ -52,6 +52,12 @@ jobs:
             echo '指定tagは既に存在します' >&2
             exit 1
           fi
+          # Read only the reviewed workflow-control revision, not the older APK source tree.
+          if [[ "$RELEASE_TAG" != *-* ]]; then
+            git show "$GITHUB_SHA:tools/release/compose_stable_release_notes.py" > "$RUNNER_TEMP/compose_stable_release_notes.py"
+            git show "$GITHUB_SHA:release-notes/$RELEASE_TAG.md" | \
+              python3 "$RUNNER_TEMP/compose_stable_release_notes.py" "$RELEASE_TAG" "$RELEASE_COMMIT"
+          fi
           git checkout --detach "$RELEASE_COMMIT"
           echo "CINEMATIC_RELEASE_COMMIT=$RELEASE_COMMIT" >> "$GITHUB_ENV"
       - name: 過去の固定署名版より大きいversionCodeを要求
@@ -142,7 +148,9 @@ jobs:
           cd "$RUNNER_TEMP/cinematic-internal-release"
           sha256sum cinematic-camera-internal.apk > SHA256SUMS.txt
           {
-            printf '# Cinematic Camera internal probe\n\n'
+            if [[ "$RELEASE_TAG" == *-* ]]; then
+              printf '# Cinematic Camera internal probe\n\n'
+            fi
             printf '<!-- cinematic-internal-release: versionCode=%s certSha256=%s -->\n\n' "$RELEASE_VERSION_CODE" "$actual_cert"
             printf -- '- source main: `%s`\n' "$CINEMATIC_RELEASE_COMMIT"
             printf -- '- versionName: `%s`; versionCode: `%s`\n' "$RELEASE_TAG" "$RELEASE_VERSION_CODE"
@@ -150,8 +158,16 @@ jobs:
             printf -- '- 初回は旧debug版と署名が異なり上書き不可。必要データの退避を確認できるまで旧アプリを削除しないでください。設定の自動移行はありません。\n'
             printf -- '- 実機での確認済み範囲と未確認事項は、対象版にひもづく検証記録（関連 Issue / PR）を参照してください。署名・ハッシュの照合は実機確認を代替しません。\n'
             printf -- '- workflow: https://github.com/%s/actions/runs/%s\n' "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
-          } > RELEASE_NOTES.md
-          cat SHA256SUMS.txt SIGNING.txt >> RELEASE_NOTES.md
+          } > RELEASE_GENERATED.md
+          cat SHA256SUMS.txt SIGNING.txt >> RELEASE_GENERATED.md
+          if [[ "$RELEASE_TAG" != *-* ]]; then
+            # Re-read both blobs after the app build and validate again before creating the release.
+            git -C "$GITHUB_WORKSPACE" show "$GITHUB_SHA:tools/release/compose_stable_release_notes.py" > "$RUNNER_TEMP/compose_stable_release_notes.py"
+            git -C "$GITHUB_WORKSPACE" show "$GITHUB_SHA:release-notes/$RELEASE_TAG.md" | \
+              python3 "$RUNNER_TEMP/compose_stable_release_notes.py" "$RELEASE_TAG" "$CINEMATIC_RELEASE_COMMIT" RELEASE_GENERATED.md > RELEASE_NOTES.md
+          else
+            mv RELEASE_GENERATED.md RELEASE_NOTES.md
+          fi
       - name: tag形式に応じたReleaseへ保存
         env:
           GH_TOKEN: ${{ github.token }}

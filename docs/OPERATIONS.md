@@ -162,6 +162,14 @@ Play App Signingの鍵再設定や署名rotationはこの経路には導入し�
 [GitHub run_number / run_attempt](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts)、
 [Gradle Actions cache設定](https://github.com/gradle/actions/blob/main/docs/setup-gradle.md)。
 
+## 正式版の公開本文を先にレビューする
+
+正式タグ `vX.Y.Z` の[公開本文](../release-notes/v0.1.1.md) は `release-notes/<tag>.md` に置きます。先頭行は `<!-- cinematic-notes-source: <APKの40桁main SHA> -->`、その直後は版名入り見出しと公開する本文です。この行は公開本文には含めません。本文は UTF-8/LF とし、検証情報用の予約マーカーを含めません。
+
+対象版の本文をレビューしてから、そのファイルを含む main の workflow 側 SHA を実行対象にします。APK をビルドする main の SHA は引数 `commit` で別に固定します。ノートや検証ツールを載せたコミットに、APK ソースを置き換える必要はありません。正式版は本文ファイルの欠落・不正・APKソース不一致なら署名前に停止し、公開直前にも同じ workflow SHA の入力を再検証します。初回公開時からレビュー済みの本文と実測の署名・版・ハッシュ情報が同じ GitHub Release に載ります。開発版・アルファ版は既存の定型文のままです。
+
+workflow の整備と本文のレビューは、対象版の公開承認を代替しません。この変更は署名済み成果物の Draft 化と二段階承認（#476 の残り）を実装するものではありません。
+
 ## v0.1.0 正式版の配布方法（公開は個別承認）
 
 `internal-release.yml` の同じ固定署名経路で正式版と開発版を配布する。正式タグへの対応だけで v0.1.0 の公開条件が満たされたとは扱わない。
