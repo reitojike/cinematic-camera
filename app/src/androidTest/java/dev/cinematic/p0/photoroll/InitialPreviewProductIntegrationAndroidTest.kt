@@ -34,14 +34,27 @@ class InitialPreviewProductIntegrationAndroidTest {
         if (dev.cinematic.p0.BuildConfig.DEBUG && dev.cinematic.p0.BuildConfig.INITIAL_HALF_GUIDE)
             InitialPreviewKind.HALF_GUIDE else null
 
-    @Test fun savedThenCacheAndRecipeMismatchFallsThroughToEmbedded() {
+    @Test fun savedThenCacheAndRecipeMismatchSkipsJpegGuide() {
         InitialPreviewProductFixture(true).use { f ->
             f.publish()
             f.expect(InitialPreviewKind.SAVED_JPEG)
             val reads=f.provider.jpegReads.get()
             f.expect(InitialPreviewKind.SAVED_CACHE)
             assertTrue("cache still revalidates publication bytes", f.provider.jpegReads.get()>reads)
-            f.expect(InitialPreviewKind.EMBEDDED_JPEG,PhotoEditValues(.7,0.0,0.0))
+            val lookups = f.provider.jpegQueries.get()
+            val opens = f.provider.jpegReads.get()
+            f.expect(halfCandidate(),PhotoEditValues(.7,0.0,0.0))
+            assertEquals(lookups, f.provider.jpegQueries.get())
+            assertEquals(opens, f.provider.jpegReads.get())
+            f.verify()
+        }
+    }
+    @Test fun firstOpenIgnoresEmbeddedThumbnailAndNeverTouchesSavedProvider() {
+        for (embedded in listOf(false, true)) InitialPreviewProductFixture(embedded).use { f ->
+            f.expect(halfCandidate())
+            assertEquals(0, f.provider.jpegQueries.get())
+            assertEquals(0, f.provider.jpegReads.get())
+            assertFalse(f.cursor.exists())
             f.verify()
         }
     }
@@ -177,7 +190,7 @@ internal class InitialPreviewProductFixture(embedded: Boolean) : AutoCloseable {
         val originalFingerprint=DngContentVerifier.identify(original.length(),{original.inputStream()})
         val jpegFingerprint=DngContentVerifier.identify(saved.length(),{saved.inputStream()})
         lateinit var record: JpegPublicationRecord
-        val jpegReads=AtomicInteger(); val writes=AtomicInteger()
+        val jpegQueries=AtomicInteger(); val jpegReads=AtomicInteger(); val writes=AtomicInteger()
         val readers=CopyOnWriteArrayList<ParcelFileDescriptor>()
         private val owner=context.packageName
         init { attachInfo(context,ProviderInfo().apply { authority="media"; exported=false }) }
@@ -210,6 +223,7 @@ internal class InitialPreviewProductFixture(embedded: Boolean) : AutoCloseable {
         override fun getType(uri: Uri)=if(uri==uri(1)) "image/x-adobe-dng" else "image/jpeg"
         override fun query(uri: Uri,projection: Array<out String>?,selection: String?,args: Array<out String>?,sort: String?): Cursor {
             val id=ContentUris.parseId(uri).toInt(); check(id in 1..2)
+            if(id==2) jpegQueries.incrementAndGet()
             val file=if(id==1) original else saved
             val columns=checkNotNull(projection)
             return MatrixCursor(columns).apply { addRow(Array<Any?>(columns.size) { when(columns[it]) {

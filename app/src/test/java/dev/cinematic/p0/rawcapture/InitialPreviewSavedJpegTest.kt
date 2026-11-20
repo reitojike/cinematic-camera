@@ -51,6 +51,18 @@ class InitialPreviewSavedJpegTest {
         assertEquals(record,found.publication); assertEquals(request,found.request)
         assertEquals(fingerprint,found.encoded.fingerprint); assertEquals(1,reader.opened)
     }
+    @Test fun missingCursorDoesNotReadAnyLaterRecordOrTouchMediaStore() {
+        val reader = object : InitialPreviewSavedJpeg.Reader {
+            override fun cursor(): ByteArray? = null
+            override fun intent(generation: Long): ByteArray? = error("unexpected intent")
+            override fun publication(generation: Long): ByteArray? = error("unexpected publication")
+            override fun inspect(uri: String): DngPendingRow? = error("unexpected MediaStore inspection")
+            override fun open(record: JpegPublicationRecord): java.io.InputStream = error("unexpected JPEG read")
+        }
+        assertNull(InitialPreviewSavedJpeg.read(source, geometry, request.recipe, reader, { false }) {
+            error("unexpected JPEG inspection")
+        })
+    }
     @Test fun pendingForeignGenerationAndMissingIntentNeverReadJpeg() {
         val reader = Reader()
         reader.journalBytes = JpegPublicationCodec.encode(record.copy(phase=JpegPublicationPhase.PUBLISHING))

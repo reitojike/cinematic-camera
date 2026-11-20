@@ -9,19 +9,14 @@ import dev.cinematic.p0.photoedit.PhotoEditValues
 import dev.cinematic.p0.raw.LinearSrgbImage
 import dev.cinematic.p0.jpegrender.original.Original24Resources
 import dev.cinematic.p0.jpegrender.original.Original24MemoryStage
-import dev.cinematic.p0.raw.NativeEmbeddedJpeg
-import dev.cinematic.p0.raw.NativeEmbeddedJpegResult
 import dev.cinematic.p0.rawcapture.*
 
 /** UI receives exclusive pixels. After publication, discard references rather than recycling a
  * bitmap that Compose/RenderThread may still draw. Unpublished pixels may be recycled by caller. */
 internal data class InitialPreviewFrame(val bitmap: Bitmap, val kind: InitialPreviewKind,
     val identity: InitialPreviewIdentity) {
-    val label get() = when {
-        kind.edited -> "保存済みJPEGの案内表示 · プレビュー準備中"
-        kind == InitialPreviewKind.HALF_GUIDE -> "RAW基準の案内画像 · 調整は未反映"
-        else -> "撮影時の案内画像 · 調整は未反映"
-    }
+    val label get() = if (kind.edited) "保存済みJPEGの案内表示 · プレビュー準備中"
+        else "RAW基準の案内画像 · 調整は未反映"
 }
 
 /** One saved-JPEG-only producer. No GPU readback or unsaved edit cache. A hit is used only after
@@ -53,15 +48,15 @@ internal class InitialPreviewSavedCache {
 }
 
 internal object InitialPreviewGuide {
-    /** Synchronous on the existing admitted input owner. Snapshot FD belongs to exact session. */
+    /** Synchronous on the existing admitted input owner. Only the explicit debug HALF supplier may borrow the snapshot. */
     fun load(context: Context, original: PhotoRollOriginal, geometry: Original24PreflightGeometry,
-        values: PhotoEditValues, fd: Int, signal: CancellationSignal, cache: InitialPreviewSavedCache,
+        values: PhotoEditValues, signal: CancellationSignal, cache: InitialPreviewSavedCache,
         cacheGeneration: Long, half: (() -> LinearSrgbImage)? = null): InitialPreviewFrame? {
         fun admit() {
             signal.throwIfCanceled()
             Original24Resources.requireAvailable(context, Original24MemoryStage.BOUNDED_PREVIEW, checkMemory = true)
         }
-        admit()
+        signal.throwIfCanceled()
         val recipe = ManualOriginalTrialRender.recipe(values.strength, PhotoAdjustmentPolicy.adjustments(values))
         val identity = InitialPreviewIdentity(original.reference, geometry, recipe.schema + ":" + recipe.payload)
         cache.select(identity, cacheGeneration)
@@ -79,19 +74,10 @@ internal object InitialPreviewGuide {
                 return checked(it, InitialPreviewKind.SAVED_JPEG, identity, signal)
             }
         }
-        signal.throwIfCanceled()
-        admit()
-        val embedded = NativeEmbeddedJpeg.extract(fd, original.reference.fingerprint, signal)
-        if (embedded.status == NativeEmbeddedJpegResult.Status.FOUND) {
-            admit()
-            InitialPreviewJpeg.decodeEmbedded(requireNotNull(embedded.jpeg), embedded.width, embedded.height,
-                embedded.orientation, signal)?.let {
-                return checked(it, InitialPreviewKind.EMBEDDED_JPEG, identity, signal)
-            }
-        }
         // Local candidate: the same admitted owner serially completes this native work before FULL.
         // Its measured exact-start cost remains a separate acceptance decision; never run in parallel.
         if (half != null) {
+            admit()
             val linear = half()
             signal.throwIfCanceled()
             Original24Resources.requireAvailable(context, Original24MemoryStage.BOUNDED_PREVIEW, checkMemory = true)

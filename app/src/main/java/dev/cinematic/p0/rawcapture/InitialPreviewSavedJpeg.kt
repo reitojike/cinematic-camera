@@ -35,7 +35,7 @@ internal object InitialPreviewSavedJpeg {
         check(Looper.myLooper() != Looper.getMainLooper()) { "Saved guide lookup requires IO" }
         val app = context.applicationContext
         val id = ManualOriginalTrialRequests.identity(source)
-        val rows = MediaStoreJpegRows(app)
+        val rows by lazy(LazyThreadSafetyMode.NONE) { MediaStoreJpegRows(app) }
         val root = app.noBackupFilesDir
         val reader = object : Reader {
             override fun cursor() = readBase(root, "manual-original24-requests/$id/manual-request.bin",
@@ -111,8 +111,11 @@ internal object InitialPreviewSavedJpeg {
     /** Bounded, non-recovering base read. Sidecars, replacement, redirection and cleanup are misses.
      * This observes immutable bytes; it does not claim a lock against a later legitimate save. */
     internal fun readBase(root: File, relative: String, limit: Int): ByteArray? {
+        // Typical first open: no cursor. A no-follow stat is enough to miss without
+        // canonicalizing, opening a record, or touching the saved-JPEG provider.
+        val file = File(root.absoluteFile, relative)
+        if (!Files.isRegularFile(file.toPath(), LinkOption.NOFOLLOW_LINKS)) return null
         val canonical = root.canonicalFile
-        val file = File(canonical, relative)
         fun pathsSafe(): Boolean {
             if (root.absoluteFile != canonical || !Files.isDirectory(canonical.toPath(), LinkOption.NOFOLLOW_LINKS)) return false
             var current = file
