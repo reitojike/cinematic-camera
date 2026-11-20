@@ -29,8 +29,8 @@ GitHub Actions の標準 Ubuntu runner 上で、API37.0 Google ATDの限定8件�
 4. 同じATD imageを小さいuserdata・snapshot無しで直接1台起動。`ANDROID_SERIAL=emulator-5554`を固定し、`:app:connectedDebugAndroidTest`に上記class/methodだけ指定。全androidTestは実行しない。
 5. emulatorに`-gpu swiftshader_indirect`、Gradleは`--max-workers=1`、shardなし、`--rerun`。ATDをGPU評価へ転用しない。
 6. 初回はPR限定の実験workflow（必須aggregateと独立、最大30分、concurrencyで旧実験のみcancel）。成功後も同じ固定headで再現性を確認してから常設化判断。
-7. JUnit XMLで8methodが各1回・failure/error/skip0かを検査。未実行/UP-TO-DATE/欠測/assumption skipは成功扱いにしない。
-8. HTML/XML、起動/実行ログ、fingerprint・image revision・emulator版、生成PNGをartifactへ。PNGが実在しdecode可能で、ケース数が一致し、PNGをdecodeでき、画面画像としての最小寸法（320px）を満たすことを確認。寸法は記録するが、Windows版とのピクセル寸法一致はこの試行の条件にしない。合成画像と明記し短い保存期間（例7日）。
+7. JUnit XMLで許可リストのメソッドが各1回・failure/error/skip0かを検査。未実行/UP-TO-DATE/欠測/assumption skipは成功扱いにしない。
+8. 公開する試験証跡は、許可リストに基づく検証要約と、成功時に限り、追加出力フォルダで個別に検証した合成 Canvas PNG に分ける。検証失敗時は安全な要約のみ。生ログ、JUnit XML/HTML、端末識別情報や未許可の PNG は公開しない。PNG の復号と最小寸法（320px）を検証する。Windows との寸法・画素一致はこの試行の条件にしない。保持は7日。
 
 画像は`app/build/outputs/connected_android_test_additional_output/`へ回収された。既存試験の`additionalTestOutputDir`はconnected runnerが供給する。GMDが管理する端末を手動複製しない。使い捨てCIでは毎回snapshot無しの独立AVDを作り、ローカルの基準AVD/read-only並列運用とは分ける。
 
