@@ -156,7 +156,8 @@ internal class Original24Attempt(context: Context, private val request: Original
                     var gpuCompleted = false
                     try { measured(saveTiming, SaveTimingStage.GPU_RENDER) {
                         bestEffort { progress?.phase(SaveProgressPhase.DEVELOPING) }
-                        gpu.render(source, ev, gains, request.strength, stop, gpuTimings, progress) { y, row ->
+                        gpu.render(source, ev, gains, request.strength, stop, gpuTimings, progress,
+                            forceReaderBoundaries = SaveAuthorityBoundary.isObserving) { y, row ->
                             packed.setPixels(row, 0, width, 0, y, width, 1)
                         }
                         gpuCompleted = true

@@ -328,7 +328,8 @@ internal object AndroidManualOriginalTrialSaves {
                 .checkingSaveAuthority()
         }
         private val recoveryJournal = JpegPublicationJournal(request.captureId, request.generation, recoveryStorage(CaptureJournalFile.JPEG_RECOVERY))
-        private val reconciliation = ReconciledJpegPublication(journal(request), recoveryJournal,
+        private val forwardJournal = journal(request)
+        private val reconciliation = ReconciledJpegPublication(forwardJournal, recoveryJournal,
             JpegReconciliationReceipt(recoveryStorage(CaptureJournalFile.JPEG_RECONCILIATION)),
             MediaStoreJpegRows(app), recoveryResources, isCurrent)
         override val hasUnreleasedResources get() = attempt?.hasUnreleasedResources == true || outputCleanupPending || recoveryResources.hasOpenResources
@@ -391,7 +392,7 @@ internal object AndroidManualOriginalTrialSaves {
         }
         override fun publisher(render: ManualOriginalTrialRender): ManualOriginalTrialPublication {
             val publisher = operation.publisher(render, setOf(ManualOriginalTrialRender.CONTRACT), isCurrent,
-                recoveryJournal.takeIf { it.read() != null })
+                recoveryJournal = recoveryJournal.takeIf { it.read() != null }, forwardJournal = forwardJournal)
             return object : ManualOriginalTrialPublication {
                 override val hasUnreleasedResources get() = publisher.hasUnreleasedResources
                 override fun advance(stop: () -> Boolean) = try {

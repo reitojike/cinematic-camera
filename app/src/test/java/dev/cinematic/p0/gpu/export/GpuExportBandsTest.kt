@@ -1,6 +1,7 @@
 package dev.cinematic.p0.gpu.export
 
 import dev.cinematic.p0.raw.original.OriginalRaster
+import dev.cinematic.p0.rawcapture.SaveAuthorityBoundary
 import org.junit.Assert.*
 import org.junit.Test
 import java.nio.FloatBuffer
@@ -36,6 +37,35 @@ class GpuExportBandsTest {
         }
         assertEquals(listOf(0 to 256, 256 to 256, 512 to 1), bands)
         buffers.forEach { assertEquals(3 * 256 * 4, it.capacity()) }
+    }
+
+    @Test fun callerCapabilityReachesReaderWithoutInheritingIoThreadObserver() {
+        for (active in listOf(false, true)) {
+            val pool = java.util.concurrent.Executors.newSingleThreadExecutor()
+            val forcedAtRows = mutableListOf<Int>()
+            val forcedReader = AtomicInteger()
+            val source = raster(4, 257) { forcedAtRows += forcedReader.get() }
+            val stop = {
+                if (Thread.currentThread().name == "gpu-export-band-reader" && SaveAuthorityBoundary.force)
+                    forcedReader.incrementAndGet()
+                false
+            }
+            try {
+                val io = {
+                    val forceReaderBoundaries = SaveAuthorityBoundary.isObserving
+                    pool.submit {
+                        assertFalse(SaveAuthorityBoundary.isObserving)
+                        GpuExportBands.forEach(source, stop = { stop() },
+                            forceReaderBoundaries = forceReaderBoundaries) { _, _, _ -> }
+                    }.get(10, TimeUnit.SECONDS)
+                }
+                if (active) SaveAuthorityBoundary.observing({ true }, io) else io()
+                assertEquals(if (active) 2 else 1, forcedAtRows[0])
+                assertEquals(if (active) 261 else 259, forcedAtRows[256])
+            } finally {
+                pool.shutdownNow()
+            }
+        }
     }
 
     @Test fun explicit64RowBandsKeepOriginalOrder() {

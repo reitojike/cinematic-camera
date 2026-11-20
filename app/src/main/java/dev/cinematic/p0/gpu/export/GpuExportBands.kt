@@ -21,6 +21,7 @@ internal object GpuExportBands {
     private data class Band(val origin: Int, val rows: Int, val rgba: FloatBuffer)
 
     fun forEach(input: OriginalRaster, height: Int = HEIGHT, stop: () -> Boolean, timings: GpuExportWorkTimings? = null,
+        forceReaderBoundaries: Boolean = false,
         consume: (originY: Int, rows: Int, rgba: FloatBuffer) -> Unit) {
         validateOriginalSize(input.width, input.height)
         require(height == HEIGHT || height == 64) { "Export band height must be explicit: 256 or test-only 64" }
@@ -42,10 +43,9 @@ internal object GpuExportBands {
             }
         }
         val readerTimings = timings?.fork()
-        val authorityWindowActive = SaveAuthorityBoundary.isObserving
         val reader = Thread({
             try {
-                if (authorityWindowActive) SaveAuthorityBoundary.durable { originalCheckpoint(readerStop) }
+                if (forceReaderBoundaries) SaveAuthorityBoundary.durable { originalCheckpoint(readerStop) }
                 var buffer = borrow()
                 val rgbaRow = FloatArray(input.width * 4)
                 val finiteRgb16 = input is OriginalRasterFile && input.isRgb16
@@ -71,7 +71,7 @@ internal object GpuExportBands {
                             // Wait inside this callback, BEFORE rows() reads another row.
                             if (expectedY < input.height) {
                                 buffer = gpuWork(readerTimings, GpuExportDetail.INPUT_FREE_WAIT) { borrow() }
-                                if (authorityWindowActive) SaveAuthorityBoundary.durable { originalCheckpoint(readerStop) }
+                                if (forceReaderBoundaries) SaveAuthorityBoundary.durable { originalCheckpoint(readerStop) }
                             }
                         }
                     }

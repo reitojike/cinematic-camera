@@ -42,6 +42,7 @@ internal class GpuExportRenderer(
         tap: ((GpuStageTap.Point, Int, GpuTexture) -> Unit)? = null,
         onBandComplete: ((String, Int, Int) -> Unit)? = null,
         timings: GpuExportTimings? = null,
+        forceReaderBoundaries: Boolean = false,
         consumeRow: (Int, IntArray) -> Unit): Result {
         egl.requireCurrent()
         check(!rendering) { "Export renderer is already running" }
@@ -64,7 +65,8 @@ internal class GpuExportRenderer(
         require(input.width <= capabilities.maxTextureSize && input.height <= capabilities.maxTextureSize)
         rendering = true
         try {
-            return Session(input, gain, warmthGains.copyOf(), strength, stop, tap, onBandComplete, toneWidth, toneHeight, timings).use { it.run(consumeRow) }
+            return Session(input, gain, warmthGains.copyOf(), strength, stop, tap, onBandComplete, toneWidth, toneHeight, timings,
+                forceReaderBoundaries).use { it.run(consumeRow) }
         } finally { rendering = false }
     }
 
@@ -72,7 +74,8 @@ internal class GpuExportRenderer(
         val strength: Double, val stop: () -> Boolean,
         val tap: ((GpuStageTap.Point, Int, GpuTexture) -> Unit)?,
         val onBandComplete: ((String, Int, Int) -> Unit)?,
-        val toneWidth: Int, val toneHeight: Int, val timings: GpuExportTimings?) : AutoCloseable {
+        val toneWidth: Int, val toneHeight: Int, val timings: GpuExportTimings?,
+        val forceReaderBoundaries: Boolean) : AutoCloseable {
         val width = input.width; val height = input.height
         // Limit idle retention independently of the total (active + idle) 192 MiB ledger.
         val pool = if (reuseTextures) GpuTexturePool(egl, ledger, minOf(64L * 1024 * 1024, ledger.budgetBytes)) else null
@@ -115,7 +118,7 @@ internal class GpuExportRenderer(
             SaveAuthorityBoundary.durable { originalCheckpoint(stop) }
         }
         private fun scan(action: (Band) -> Unit) {
-            GpuExportBands.forEach(input, bandHeight, stop, workTimings) { origin, rows, rgba ->
+            GpuExportBands.forEach(input, bandHeight, stop, workTimings, forceReaderBoundaries) { origin, rows, rgba ->
                 val upload = GpuTexture.create(egl, ledger, width, rows, GpuTexture.Format.RGBA32F, pool)
                 try { gpuWork(workTimings, GpuExportDetail.UPLOAD) { upload.upload(rgba) } } catch (failure: Throwable) { upload.close(); throw failure }
                 Band(origin, upload).use { band ->
