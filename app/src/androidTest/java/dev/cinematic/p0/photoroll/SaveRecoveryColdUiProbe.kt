@@ -70,7 +70,7 @@ internal object SaveRecoveryColdUiProbe {
                     val positive = boundary in setOf("unknown-complete", "unknown-public")
                     await("recheck result through product owner") {
                         if (positive) handle.state.value.phase == ManualOriginalTrialSavePhase.PUBLISHED &&
-                            action("保存したJPEGを照合して開く") != null
+                            action("保存したJPEGを開く（開く前に照合します）") != null
                         else action("保存結果を確認") != null
                     }
                     assertArrayEquals(before, intent(app, expected))

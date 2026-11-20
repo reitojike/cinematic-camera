@@ -150,6 +150,58 @@ class RenderedJpegInstrumentationTest {
         }
     }
 
+    @Test fun factoryForwardJournalDenialKeepsReceiptUnwrittenAndAllowsOnePublication() {
+        val id = "jpeg_authority_${UUID.randomUUID().toString().replace("-", "")}"
+        val generation = 1L
+        val operation = AndroidRenderedJpegOperation.get(context, id, generation)
+        val directory = File(context.noBackupFilesDir, "raw-captures/$id")
+        val files = RenderedJpegFiles(File(context.noBackupFilesDir, "raw-captures"), id, generation)
+        val jpeg = syntheticJpeg()
+        val original = "synthetic source for authority test".toByteArray()
+        val nativeOriginal = MediaStoreDngPendingRows(context)
+        val originalTarget = DngPublicationTarget(id, UUID.randomUUID().toString().replace("-", ""))
+        val originalUri = requireNotNull(nativeOriginal.insert(originalTarget))
+        val journal = JpegPublicationJournal(id, generation,
+            AndroidAtomicJournalStorage(requireNotNull(files.generationRoot().parentFile),
+                generation.toString(), CaptureJournalFile.JPEG_PUBLICATION).checkingSaveAuthority())
+        try {
+            nativeOriginal.openOutput(originalTarget, originalUri).use { it.write(original) }
+            nativeOriginal.publish(originalTarget, originalUri)
+            operation.createOutput().use { it.write(jpeg) }
+            val render = CompletedRender(RenderedJpegRequest(id, generation,
+                SharedOriginalReference(originalUri, fingerprint(original), OriginalGrant.APP_OWNED),
+                RenderRecipeSnapshot("synthetic-v1", "synthetic-only"),
+                JpegOutputDescription(16, 12, 1, "sRGB", jpeg.size.toLong())),
+                "synthetic-renderer-v1", RenderedResultKind.COMPLETE_STAGE_CLEAR,
+                RenderedFaceState.VERIFIED_NONE, RenderedExposureState.SUPPORTED)
+            val publisher = operation.publisher(render,
+                setOf(RendererPublicationContract("synthetic-renderer-v1", "synthetic-v1")), { true },
+                forwardJournal = journal)
+            assertThrows(IOException::class.java) {
+                SaveAuthorityBoundary.observing({
+                    journal.read()?.phase != JpegPublicationPhase.PUBLISHING
+                }) { publisher.advance() }
+            }
+            val interrupted = requireNotNull(journal.read())
+            assertEquals(JpegPublicationPhase.PUBLISHING, interrupted.phase)
+            val rows = MediaStoreJpegRows(context)
+            val uri = requireNotNull(interrupted.uri)
+            assertFalse(requireNotNull(rows.inspect(uri)?.pending))
+            val done = SaveAuthorityBoundary.observing({ true }) { publisher.advance() }
+            assertEquals(JpegPublicationPhase.PUBLISHED, done.phase)
+            assertEquals(uri, done.uri)
+            assertEquals(1, rows.find(done.target).size)
+            assertArrayEquals(jpeg, rows.openRead(done.target, uri, false).use { it.readBytes() })
+            DngContentVerifier.verify(fingerprint(original), {
+                requireNotNull(context.contentResolver.openInputStream(Uri.parse(originalUri)))
+            })
+        } finally {
+            journal.read()?.uri?.let { context.contentResolver.delete(Uri.parse(it), null, null) }
+            context.contentResolver.delete(Uri.parse(originalUri), null, null)
+            directory.deleteRecursively()
+        }
+    }
+
     @Test fun androidFactoryRequiresClosedProducerAndRetainedPublisher() {
         val id = "jpeg_factory_${UUID.randomUUID().toString().replace("-", "")}"
         val operation = AndroidRenderedJpegOperation.get(context, id, 1)

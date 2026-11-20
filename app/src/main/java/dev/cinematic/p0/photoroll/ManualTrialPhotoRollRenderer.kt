@@ -5,6 +5,8 @@ import android.annotation.TargetApi
 import android.net.Uri
 import android.os.CancellationSignal
 import android.os.OperationCanceledException
+import dev.cinematic.p0.BuildConfig
+import dev.cinematic.p0.jpegrender.original.PreviewRasterMode
 import dev.cinematic.p0.rawcapture.AndroidManualOriginalTrialSaves
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.TimeUnit
@@ -88,12 +90,15 @@ internal class ManualTrialPhotoRollRenderer(context: Context,
         val epoch = originalEpoch.get()
         var selectedValues: dev.cinematic.p0.photoedit.PhotoEditValues? = null
         val cacheGeneration = initialCache.generation()
+        // Retain the explicit debug-only HALF-guide → FULL comparison. Normal builds use HALF directly.
+        val compareHalfGuide = BuildConfig.DEBUG && BuildConfig.INITIAL_HALF_GUIDE
+        val rasterMode = if (compareHalfGuide) PreviewRasterMode.FULL else PreviewRasterMode.HALF_CANDIDATE
         val loaded = awaitTrialPreview(GpuPhotoRollInputs.open(app, resources, repository, uri, fromFiles,
-            maxSourceBytes, cancellation, deadline, admitted, beforeExactDecode = if (guide == null) null else { original, geometry, fd, signal, half ->
+            maxSourceBytes, cancellation, deadline, admitted, rasterMode, beforeExactDecode = if (guide == null) null else { original, geometry, fd, signal, half ->
                 val current = values(original).also { selectedValues = it }
                 InitialPreviewGuide.load(app, original, geometry, current, fd, signal,
                     initialCache, cacheGeneration,
-                    if (dev.cinematic.p0.BuildConfig.DEBUG && dev.cinematic.p0.BuildConfig.INITIAL_HALF_GUIDE) half else null)?.let(guide)
+                    if (compareHalfGuide) half else null)?.let(guide)
             }) { epoch != originalEpoch.get() },
             cancellation, awaitCancelledOwner = true)
         cancellation.throwIfCanceled()

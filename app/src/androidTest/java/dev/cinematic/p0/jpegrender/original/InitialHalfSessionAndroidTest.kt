@@ -14,7 +14,7 @@ import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 
-/** Synthetic input only. Half is a guide, never returned as the session's exact input. */
+/** Synthetic input only. Covers the old comparison and the single HALF editor input. */
 class InitialHalfSessionAndroidTest {
     @Test fun halfAndFullShareSnapshotButReleaseEachRasterAndReturnExactPixels() = fixture { file, root, source, geometry ->
         val baseline = Original24PreviewSession(source, File(root, "baseline"), {}, geometry) { file.inputStream() }
@@ -24,16 +24,17 @@ class InitialHalfSessionAndroidTest {
         val scratch = File(root, "guide-full")
         Original24PreviewSession(source, scratch, {}, geometry,
             beforeExactDecode = { fd, _, half ->
-                escaped = half
+                val decodeHalf = requireNotNull(half)
+                escaped = decodeHalf
                 val before = ParcelFileDescriptor.fromFd(fd).use { android.system.Os.fstat(it.fileDescriptor) }
-                val guide = half()
+                val guide = decodeHalf()
                 assertEquals(geometry.outputWidth / 2, guide.width)
                 assertEquals(geometry.outputHeight / 2, guide.height)
                 assertFalse(File(scratch, "source-linear.rgb16").exists())
                 val after = ParcelFileDescriptor.fromFd(fd).use { android.system.Os.fstat(it.fileDescriptor) }
                 assertEquals(before.st_ino, after.st_ino)
                 assertEquals(before.st_size, after.st_size)
-                assertThrows(IllegalStateException::class.java) { half() }
+                assertThrows(IllegalStateException::class.java) { decodeHalf() }
             }, observeDecode = { mode, begin -> events += mode to begin }) { file.inputStream() }.use {
             val exact = it.loadGpuAsShotInput()
             assertEquals(baseline.width, exact.width)
@@ -53,7 +54,7 @@ class InitialHalfSessionAndroidTest {
         val modes = mutableListOf<PreviewRasterMode>()
         lateinit var session: Original24PreviewSession
         session = Original24PreviewSession(source, scratch, {}, geometry,
-            beforeExactDecode = { _, _, half -> runCatching { half() }; Unit },
+            beforeExactDecode = { _, _, half -> runCatching { requireNotNull(half).invoke() }; Unit },
             observeDecode = { mode, begin -> if (begin) { modes += mode; session.requestStop() } }) { file.inputStream() }
         session.use {
             assertNotNull(runCatching { it.loadGpuAsShotInput() }.exceptionOrNull())
@@ -63,12 +64,36 @@ class InitialHalfSessionAndroidTest {
         }
     }
 
+    @Test fun cancellationDuringHalfEditorInputNeverStartsFullOrRestarts() = fixture { file, root, source, geometry ->
+        val scratch = File(root, "cancel-half-editor")
+        val modes = mutableListOf<PreviewRasterMode>()
+        var guides = 0
+        lateinit var session: Original24PreviewSession
+        session = Original24PreviewSession(source, scratch, {}, geometry,
+            rasterMode = PreviewRasterMode.HALF_CANDIDATE,
+            beforeExactDecode = { fd, _, half ->
+                assertTrue(fd >= 0)
+                assertNull("HALF input cannot also open a HALF guide", half)
+                guides++
+            },
+            observeDecode = { mode, begin -> if (begin) { modes += mode; session.requestStop() } }) { file.inputStream() }
+        session.use {
+            assertNotNull(runCatching { it.loadGpuAsShotInput() }.exceptionOrNull())
+            assertThrows(IllegalStateException::class.java) { it.loadGpuAsShotInput() }
+            assertEquals(1, guides)
+            assertEquals(listOf(PreviewRasterMode.HALF_CANDIDATE), modes)
+            assertFalse(it.hasUnreleasedResources)
+            assertFalse(scratch.exists())
+        }
+        DngContentVerifier.verify(source.fingerprint, { file.inputStream() })
+    }
+
     @Test fun stoppingAfterGuideSuppressesFullAndReclaimsTheSnapshot() = fixture { file, root, source, geometry ->
         val scratch = File(root, "stop-after-guide")
         val modes = mutableListOf<PreviewRasterMode>()
         lateinit var session: Original24PreviewSession
         session = Original24PreviewSession(source, scratch, {}, geometry,
-            beforeExactDecode = { _, _, half -> half(); session.requestStop() },
+            beforeExactDecode = { _, _, half -> requireNotNull(half).invoke(); session.requestStop() },
             observeDecode = { mode, begin -> if (begin) modes += mode }) { file.inputStream() }
         session.use {
             assertThrows(CancellationException::class.java) { it.loadGpuAsShotInput() }
@@ -86,8 +111,8 @@ class InitialHalfSessionAndroidTest {
                 val start = System.nanoTime()
                 var guideReady = -1L
                 var exactStart = -1L
-                val hook: ((Int, CancellationSignal, () -> LinearSrgbImage) -> Unit)? =
-                    if (guideEnabled) { _, _, half -> half(); guideReady = System.nanoTime() - start; Unit } else null
+                val hook: ((Int, CancellationSignal, (() -> LinearSrgbImage)?) -> Unit)? =
+                    if (guideEnabled) { _, _, half -> requireNotNull(half).invoke(); guideReady = System.nanoTime() - start; Unit } else null
                 Original24PreviewSession(source, File(root, "timing-$index"), {}, geometry,
                     beforeExactDecode = hook,
                     observeDecode = { mode, begin -> if (begin && mode == PreviewRasterMode.FULL) exactStart = System.nanoTime() - start }) {

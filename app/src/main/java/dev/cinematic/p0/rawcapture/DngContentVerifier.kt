@@ -95,6 +95,6 @@ internal object DngContentVerifier {
     }
 
     private fun checkContinue(shouldStop: () -> Boolean) {
-        if (shouldStop()) throw DngVerificationStopped()
+        if (SaveAuthorityBoundary.timed { shouldStop() }) throw DngVerificationStopped()
     }
 }

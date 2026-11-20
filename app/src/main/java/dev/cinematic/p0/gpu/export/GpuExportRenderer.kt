@@ -1,5 +1,7 @@
 package dev.cinematic.p0.gpu.export
 
+import dev.cinematic.p0.rawcapture.SaveAuthorityBoundary
+
 import dev.cinematic.p0.gpu.constants.R7BaseV1
 import dev.cinematic.p0.gpu.constants.StageClearCharacterV1
 import dev.cinematic.p0.gpu.constants.StageClearOrtonV1
@@ -40,6 +42,7 @@ internal class GpuExportRenderer(
         tap: ((GpuStageTap.Point, Int, GpuTexture) -> Unit)? = null,
         onBandComplete: ((String, Int, Int) -> Unit)? = null,
         timings: GpuExportTimings? = null,
+        forceReaderBoundaries: Boolean = false,
         consumeRow: (Int, IntArray) -> Unit): Result {
         egl.requireCurrent()
         check(!rendering) { "Export renderer is already running" }
@@ -56,13 +59,14 @@ internal class GpuExportRenderer(
         require(externalEv.isFinite() && gain.isFinite() && gain > 0f)
         require(bandHeight == 256 || bandHeight == 64)
         require(ledger.budgetBytes <= GpuMemoryLedger.EXPORT_BUDGET) { "Export budget must not exceed 192 MiB" }
-        originalCheckpoint(stop)
+        SaveAuthorityBoundary.durable { originalCheckpoint(stop) }
         val capabilities = GlCapabilities.inspect(egl)
         capabilities.requireSupported()
         require(input.width <= capabilities.maxTextureSize && input.height <= capabilities.maxTextureSize)
         rendering = true
         try {
-            return Session(input, gain, warmthGains.copyOf(), strength, stop, tap, onBandComplete, toneWidth, toneHeight, timings).use { it.run(consumeRow) }
+            return Session(input, gain, warmthGains.copyOf(), strength, stop, tap, onBandComplete, toneWidth, toneHeight, timings,
+                forceReaderBoundaries).use { it.run(consumeRow) }
         } finally { rendering = false }
     }
 
@@ -70,7 +74,8 @@ internal class GpuExportRenderer(
         val strength: Double, val stop: () -> Boolean,
         val tap: ((GpuStageTap.Point, Int, GpuTexture) -> Unit)?,
         val onBandComplete: ((String, Int, Int) -> Unit)?,
-        val toneWidth: Int, val toneHeight: Int, val timings: GpuExportTimings?) : AutoCloseable {
+        val toneWidth: Int, val toneHeight: Int, val timings: GpuExportTimings?,
+        val forceReaderBoundaries: Boolean) : AutoCloseable {
         val width = input.width; val height = input.height
         // Limit idle retention independently of the total (active + idle) 192 MiB ledger.
         val pool = if (reuseTextures) GpuTexturePool(egl, ledger, minOf(64L * 1024 * 1024, ledger.budgetBytes)) else null
@@ -99,7 +104,7 @@ internal class GpuExportRenderer(
             return field(w, h, format)
         }
         private fun boundary(name: String, action: () -> Unit) {
-            originalCheckpoint(stop)
+            SaveAuthorityBoundary.durable { originalCheckpoint(stop) }
             val start = System.nanoTime()
             boundaryName = name
             workTimings = timings?.detail(name)
@@ -110,10 +115,10 @@ internal class GpuExportRenderer(
                 times[name] = System.nanoTime() - start
                 completed = true
             } finally { timings?.finished(name, times[name] ?: (System.nanoTime() - start), completed) }
-            originalCheckpoint(stop)
+            SaveAuthorityBoundary.durable { originalCheckpoint(stop) }
         }
         private fun scan(action: (Band) -> Unit) {
-            GpuExportBands.forEach(input, bandHeight, stop, workTimings) { origin, rows, rgba ->
+            GpuExportBands.forEach(input, bandHeight, stop, workTimings, forceReaderBoundaries) { origin, rows, rgba ->
                 val upload = GpuTexture.create(egl, ledger, width, rows, GpuTexture.Format.RGBA32F, pool)
                 try { gpuWork(workTimings, GpuExportDetail.UPLOAD) { upload.upload(rgba) } } catch (failure: Throwable) { upload.close(); throw failure }
                 Band(origin, upload).use { band ->
@@ -140,13 +145,13 @@ internal class GpuExportRenderer(
             boundary("B1_QUANTILES") {
                 quantiles = GpuExportAnalysis.quantiles(egl, width, height, stop, timings = workTimings) { consume ->
                     for (origin in 0 until height step bandHeight) {
-                        originalCheckpoint(stop)
+                        SaveAuthorityBoundary.durable { originalCheckpoint(stop) }
                         tone.band(origin, minOf(bandHeight, height - origin)).use { band ->
                             consume(band)
                             gpuWork(workTimings, GpuExportDetail.FENCE_WAIT) { GpuFence(egl).use { it.await(stop) } }
                         }
                         onBandComplete?.invoke(boundaryName, origin, minOf(bandHeight, height - origin))
-                        originalCheckpoint(stop)
+                        SaveAuthorityBoundary.durable { originalCheckpoint(stop) }
                     }
                 }
             }
