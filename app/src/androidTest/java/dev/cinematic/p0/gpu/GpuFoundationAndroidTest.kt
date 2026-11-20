@@ -40,7 +40,7 @@ class GpuFoundationAndroidTest {
         val data = FloatArray(width * height * 4) { i -> (i % 4093 - 2046).toFloat() / 128f }
         val source = floats(data.size).apply { put(data); rewind() }
         val ledger = GpuMemoryLedger()
-        ShaderLibrary(egl, instrumentation.context.assets).use { shaders ->
+        ShaderLibrary(egl, androidGpuShaderSource(instrumentation.context.assets)).use { shaders ->
             PassGraph(egl).use { graph ->
                 GpuTexture.create(egl, ledger, width, height, GpuTexture.Format.RGBA32F).use { input ->
                     GpuTexture.create(egl, ledger, width, height, GpuTexture.Format.RGBA32F).use { output ->
@@ -163,7 +163,7 @@ void main() { o_first=vec4(-0.5, 1.25, 0.25, 1.0); o_second=vec4(2.0, 0.5, -0.25
         assertTrue(expanded.startsWith("#version 320 es\n#define "))
         assertTrue(expanded.contains("float example = SC_GLOW_THRESHOLD;"))
         assertThrows(IllegalStateException::class.java) { ShaderSource({ "#include \"cycle\"" }).expand("cycle") }
-        ShaderLibrary(egl, instrumentation.context.assets).use { shaders ->
+        ShaderLibrary(egl, androidGpuShaderSource(instrumentation.context.assets)).use { shaders ->
             val failure = assertThrows(IllegalStateException::class.java) {
                 shaders.fragmentSource("deliberately-invalid", "#version 320 es\nthis is invalid GLSL")
             }
@@ -175,7 +175,7 @@ void main() { o_first=vec4(-0.5, 1.25, 0.25, 1.0); o_second=vec4(2.0, 0.5, -0.25
 
     @Test fun computePassWritesFloatImageAndBarrierMakesItReadable() = gpu { egl ->
         val ledger = GpuMemoryLedger()
-        ShaderLibrary(egl, instrumentation.context.assets).use { shaders ->
+        ShaderLibrary(egl, androidGpuShaderSource(instrumentation.context.assets)).use { shaders ->
             shaders.computeSource("constant-compute", """#version 320 es
 precision highp float;
 precision highp int;
