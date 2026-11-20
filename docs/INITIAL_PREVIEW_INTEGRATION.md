@@ -1,12 +1,12 @@
-# 初回案内表示の製品接続候補
+# 初回案内表示と通常 GPU プレビュー
 
-Refs #233 / #241。最新ユーザー判断を基準に実装中。#442 の main `f2c94cc0` を統合済み。画面比較・実走・最終レビューは未完了で、採用/マージ済みを意味しない。exact は FULL AHD、原寸保存は不変。#438/#441 の PPG 判定には依存しない。
+Refs #233 / #241 / #464。
 
-## Half comparison build policy (2026-11-15)
+## 現行方針
 
-Half adoption is deferred to the next approved Pixel check. Normal builds skip the half candidate and start exact after cache/saved/embedded miss. Only a debug build with `-PinitialHalfGuide=true` enables the retained comparison path; release always has `INITIAL_HALF_GUIDE=false`, even with the property. No recipe, save, or user setting changes. The earlier half timing and screenshots describe the comparison-ON build, not the default product path.
+通常 debug/release の編集プレビューは、照合済み原本を LibRaw `half_size` で一度だけ展開し、従来どおり調整を反映した GPU 表示へ渡します。案内画像の優先順（保存済みcache → 照合済み保存JPEG → 埋め込みJPEG）はそのままです。案内用に別の HALF は展開せず、取消・失敗時にも FULL へ暗黙に再試行しません。原寸の保存は従来の経路で同じ原本・設定・原寸 geometry を使い、プレビュー入力を再利用しません。#441 の PPG 変更も含みません。
 
-The product E2E runs against both settings: absent or invalid saved/embedded evidence produces no guide in the default build, and HALF_GUIDE in comparison builds; both complete exact. Saved/cache/embedded priority remains unchanged. Visual comparison evidence is in [ui-review/initial-preview-guide](ui-review/initial-preview-guide/README.md).
+明示的に `-PinitialHalfGuide=true` を指定した debug のみ、旧検証用の HALF 案内 → FULL 編集入力を維持します。release ではこの比較経路は無効です。以下にある FULL・half→FULL の計測は従来の比較資料で、通常版 HALF の計測ではありません。
 
 ## 候補と根拠
 
@@ -15,13 +15,13 @@ The product E2E runs against both settings: absent or invalid saved/embedded evi
 | 保存済みcache | 照合済み保存JPEGの縮小像だけを1枚保持。hit時も原本/recipe/geometry/公開記録/JPEG SHAを再照合 | 新GPU readbackなし。未保存GPU編集のcacheではない |
 | 保存済みJPEG | 正規publication v3/PUBLISHED、cursorと世代intent、完全recipe・既知renderer・原本SHA・geometry/fullCoverage・公開所有行・JPEG SHA/headerを照合 | read-only baseのみ、AtomicFile recovery/保存queue/世代作成/公開を使わない。未知・欠損・不一致はmiss |
 | embedded JPEG | 同一照合済snapshot FDからLibRaw thumbs_listを得て直接slice。8MiB、4096辺/4MP、原本未回転寸法以下、range/SOI/EOI/SOS構造と明示向きを検査 | JPEG自身の向きでFit。RAW default cropとの画角/色一致を保証しない |
-| half案内像 | 同じsnapshot FD、共有1枠の同期hook内で一度だけHALF_CANDIDATE、raster解放後にFULL AHDへ | exactの入力へ流用しない。追加遅延の採否は対照計測・本人判断前 |
+| half案内像 | 同じsnapshot FD、共有1枠の同期hook内で一度だけHALF_CANDIDATE、raster解放後にFULL AHDへ | 明示指定した旧debug比較のみ。通常版では案内としては生成しない |
 
 saved JPEGのcrop座標が明示保存されていないことだけを理由に全件missとはしない。既知の整数DNG契約では、同じ原本bytesの一意CFA IFD/ActiveArea/DefaultCropOrigin/Sizeからcropを導出できる。履歴監査で既知contractと原本/寸法/向き/fullCoverageを照合する限定根拠を確認した。未知contractは推測しない。新manifestや保存codecは追加しない。
 
 ## snapshot / native / memory
 
-`Original24PreviewSession` が作成・fingerprint照合したread-only FDを同期hookに貸し、guide処理が戻ってから同FDでFULLを実行する。入力IO workerと既存共有tokenを保持し、opaque native退出/cleanup確認前に解放しない。取消/half失敗を握りつぶしてFULLへ進むことは禁止。失敗したcloseは既存ownerで保持する。原本事後照合とFULL geometry検査は維持。
+`Original24PreviewSession` が作成・fingerprint照合したread-only FDを同期hookに貸し、guide処理が戻ってから同FDで通常はHALFを実行する（旧debug比較のみFULL）。入力IO workerと既存共有tokenを保持し、opaque native退出/cleanup確認前に解放しない。取消/half失敗を握りつぶしてFULLへ進むことは禁止。失敗したcloseは既存ownerで保持する。原本事後照合・原寸geometryの検査と、HALF入力の寸法検査は維持。
 
 抽出器は `unpack_thumb_ex` を使わずsnapshot範囲を直接コピーする。既存appのLibRaw raw targetを再利用し、共通macro・dng_decoder本体は不変。入力64MiB、JPEG8MiB上限を維持する。旧実装もunpack呼出前に8MiB検査済みで、既定512MiBをそのまま確保していたという意味ではない。
 

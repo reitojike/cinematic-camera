@@ -24,7 +24,7 @@ import kotlin.math.max
 import kotlin.math.min
 import org.json.JSONObject
 
-/** Explicit comparison candidate only; all product callers retain FULL until owner approval. */
+/** Raster selection applies only to editor input, never to original-size saving. */
 internal enum class PreviewRasterMode(val halfSize: Int, val scope: String) {
     FULL(0, "PRELIMINARY_ORIGINAL_NO_FACE_NO_VERIFIED_EV"),
     HALF_CANDIDATE(1, "HALF_PREVIEW_CANDIDATE_NOT_SAVE_INPUT"),
@@ -45,7 +45,7 @@ internal class Original24PreviewSession(
     private val checkPreviewSource: ((DngIoResources, () -> Boolean) -> Unit)? = null,
     private val rasterMode: PreviewRasterMode = PreviewRasterMode.FULL,
     /** Synchronous borrowed snapshot; caller must not close/retain the FD or overlap native work. */
-    private val beforeExactDecode: ((Int, CancellationSignal, () -> LinearSrgbImage) -> Unit)? = null,
+    private val beforeExactDecode: ((Int, CancellationSignal, (() -> LinearSrgbImage)?) -> Unit)? = null,
     /** Anonymous stage observation for synthetic diagnostics; no new queue or native owner. */
     private val observeDecode: ((PreviewRasterMode, Boolean) -> Unit)? = null,
     private val openOriginal: () -> InputStream,
@@ -123,20 +123,24 @@ internal class Original24PreviewSession(
         }, stop)
         sourceFd = ParcelFileDescriptor.open(snapshotFile, ParcelFileDescriptor.MODE_READ_ONLY)
         if (beforeExactDecode != null) {
-            check(rasterMode == PreviewRasterMode.FULL) { "A guide may only precede exact FULL input" }
             resourceAdmission(Original24MemoryStage.ORIGINAL_DECODE)
             val thread = Thread.currentThread()
             val borrowing = AtomicBoolean(true)
             val halfUsed = AtomicBoolean(false)
             var halfFailure: Throwable? = null
             try {
-                beforeExactDecode.invoke(requireNotNull(sourceFd).fd, signal) {
-                    check(Thread.currentThread() === thread && borrowing.get() && halfUsed.compareAndSet(false, true)) {
-                        "Half guide must run once synchronously on its snapshot owner"
+                // An optional HALF guide is only meaningful ahead of a FULL comparison.
+                // A HALF editor input may still use saved and embedded JPEG guides.
+                val halfGuide: (() -> LinearSrgbImage)? = if (rasterMode != PreviewRasterMode.FULL) null else {
+                    {
+                        check(Thread.currentThread() === thread && borrowing.get() && halfUsed.compareAndSet(false, true)) {
+                            "Half guide must run once synchronously on its snapshot owner"
+                        }
+                        try { decodeRaster(PreviewRasterMode.HALF_CANDIDATE, stop, selectSize) }
+                        catch (error: Throwable) { halfFailure = error; throw error }
                     }
-                    try { decodeRaster(PreviewRasterMode.HALF_CANDIDATE, stop, selectSize) }
-                    catch (error: Throwable) { halfFailure = error; throw error }
                 }
+                beforeExactDecode.invoke(requireNotNull(sourceFd).fd, signal, halfGuide)
             } finally { borrowing.set(false) }
             // A caller cannot turn a failed native/cleanup attempt into permission to decode again.
             halfFailure?.let { throw it }

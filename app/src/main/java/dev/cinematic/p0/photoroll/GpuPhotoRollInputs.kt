@@ -12,6 +12,7 @@ import dev.cinematic.p0.jpegrender.original.Original24Preflight
 import dev.cinematic.p0.jpegrender.original.Original24PreflightGeometry
 import dev.cinematic.p0.jpegrender.original.Original24PreviewSession
 import dev.cinematic.p0.jpegrender.original.Original24Resources
+import dev.cinematic.p0.jpegrender.original.PreviewRasterMode
 import dev.cinematic.p0.raw.LinearSrgbImage
 import dev.cinematic.p0.rawcapture.*
 import java.io.File
@@ -31,6 +32,8 @@ internal object GpuPhotoRollInputs {
     internal interface DiagnosticObserver {
         /** Called with a real private snapshot/FD retained, before native preflight. */
         fun preflightOpened() {}
+        /** Observes the actual native raster invocation, without original or device identifiers. */
+        fun nativeDecodeStarted(mode: PreviewRasterMode) {}
         /** Called only after the exact input token and every IO/native owner is closed. */
         fun released() {}
     }
@@ -47,7 +50,8 @@ internal object GpuPhotoRollInputs {
     fun open(context: Context, resources: () -> PhotoRollResources, repository: PhotoRollRepository,
         uri: Uri, fromFiles: Boolean, maxSourceBytes: Long, cancellation: CancellationSignal,
         deadline: GpuInputRequestDeadline, admitted: (Throwable?) -> Unit,
-        beforeExactDecode: ((PhotoRollOriginal, Original24PreflightGeometry, Int, CancellationSignal, () -> LinearSrgbImage) -> Unit)? = null,
+        rasterMode: PreviewRasterMode = PreviewRasterMode.HALF_CANDIDATE,
+        beforeExactDecode: ((PhotoRollOriginal, Original24PreflightGeometry, Int, CancellationSignal, (() -> LinearSrgbImage)?) -> Unit)? = null,
         stale: () -> Boolean): CompletableFuture<Input> {
         val app = context.applicationContext
         // Capture the initial restore future, not a barrier enqueued after an active export.
@@ -74,7 +78,7 @@ internal object GpuPhotoRollInputs {
                     admitted(null)
                     val original = repository.check(uri, fromFiles, owner::stopped, maxSourceBytes, owner.readers)
                     val geometry = owner.inspect(original.reference)
-                    val image = owner.load(original, geometry, beforeExactDecode) { readers, stop ->
+                    val image = owner.load(original, geometry, rasterMode, beforeExactDecode) { readers, stop ->
                         repository.verifyPreview(original, stop, readers)
                     }
                     repository.verifyPreview(original, owner::stopped, readers = owner.readers)
@@ -135,19 +139,21 @@ internal object GpuPhotoRollInputs {
             return geometry
         }
 
-        fun load(original: PhotoRollOriginal, geometry: Original24PreflightGeometry,
-            guide: ((PhotoRollOriginal, Original24PreflightGeometry, Int, CancellationSignal, () -> LinearSrgbImage) -> Unit)?,
+        fun load(original: PhotoRollOriginal, geometry: Original24PreflightGeometry, rasterMode: PreviewRasterMode,
+            guide: ((PhotoRollOriginal, Original24PreflightGeometry, Int, CancellationSignal, (() -> LinearSrgbImage)?) -> Unit)?,
             checkSource: (DngIoResources, () -> Boolean) -> Unit): LinearSrgbImage {
             if (stopped()) throw DngVerificationStopped()
             val source = original.reference
             val parent = checkedDirectory("manual-original24-previews")
             val current = Original24PreviewSession(source, File(parent, UUID.randomUUID().toString()),
                 { stage -> Original24Resources.requireAvailable(app, stage, geometry.outputWidth.toLong() * geometry.outputHeight) }, geometry,
-                checkSource, beforeExactDecode = if (guide == null) null else { fd, cancellation, half ->
+                checkSource, rasterMode, beforeExactDecode = if (guide == null) null else { fd, cancellation, half ->
                     if (stopped()) throw DngVerificationStopped()
                     guide.invoke(original, geometry, fd, cancellation, half)
                     if (stopped()) throw DngVerificationStopped()
-                }) { this.original(source) }.also { session = it }
+                }, observeDecode = diagnostic?.let { observer -> { mode, start ->
+                    if (start) observer.nativeDecodeStarted(mode)
+                } }) { this.original(source) }.also { session = it }
             if (stopped()) current.requestStop()
             return current.loadGpuAsShotInput(::stopped)
         }
