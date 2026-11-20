@@ -4,6 +4,8 @@ import android.content.ContentUris
 import android.content.ContentValues
 import android.graphics.Bitmap
 import android.os.Build
+import android.os.Bundle
+import android.os.ParcelFileDescriptor
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -17,6 +19,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.BuildConfig
 import dev.cinematic.p0.gpu.*
+import dev.cinematic.p0.jpegrender.original.PreviewRasterMode
 import dev.cinematic.p0.photoedit.AndroidPhotoEditRecipes
 import dev.cinematic.p0.photoedit.PhotoEditValues
 import dev.cinematic.p0.raw.PhotoAdjustments
@@ -24,6 +27,7 @@ import dev.cinematic.p0.rawcapture.*
 import dev.cinematic.p0.testing.writeSyntheticTrialDng
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.*
@@ -32,10 +36,31 @@ import org.junit.Test
 /** Ordinary app, real list/editor/Surface/GPU/FGS/JPEG. Synthetic source only; no engine injection. */
 class OrdinaryGpuPreviewSaveAndroidTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
-    @Test fun ordinaryGpuListPreviewPresentsPixelsThenUiSavePublishesSameSource() {
+    @Test fun ordinaryGpuListPreviewPresentsPixelsThenUiSavePublishesSameSource() =
+        exercise(256, 192, orientation = 1, parity = false)
+
+    @Test fun optIn12MpOriginalJpegParity() = exercise(4000, 3000, orientation = 1, parity = true)
+    @Test fun optIn24MpRotatedOriginalJpegParity() = exercise(6000, 4000, orientation = 6, parity = true)
+
+    private fun exercise(width: Int, height: Int, orientation: Int, parity: Boolean) {
+        val arguments = InstrumentationRegistry.getArguments()
+        if (parity) org.junit.Assume.assumeTrue(arguments.getString("halfPreviewJpegParity") == "true")
         check(BuildConfig.BUILD_TYPE == "debug")
         check(Build.HARDWARE in setOf("ranchu", "goldfish"))
-        check(InstrumentationRegistry.getArguments().getString("isolated") == "true")
+        check(arguments.getString("isolated") == "true")
+        val expectedDecodes = if (parity) {
+            check(Build.VERSION.SDK_INT == 37) { "Parity requires the dedicated API 37 GPU AVD" }
+            fun property(name: String) = ParcelFileDescriptor.AutoCloseInputStream(
+                instrumentation.uiAutomation.executeShellCommand("getprop $name")
+            ).bufferedReader().use { it.readText().trim() }
+            val avdName = property("ro.boot.qemu.avd_name").ifEmpty { property("qemu.avd_name") }
+            check(avdName == "dot-base-aosp37") { "Wrong AVD for the opt-in parity test" }
+            // The caller must label the pair explicitly; the build setting is a separate assertion.
+            val expected = checkNotNull(arguments.getString("halfPreviewExpectedMode"))
+            check(expected == "HALF" || expected == "FULL")
+            check(BuildConfig.INITIAL_HALF_GUIDE == (expected == "FULL"))
+            expected
+        } else null
         val app = instrumentation.targetContext.applicationContext
         check(app.packageName == "dev.cinematic.p0")
         val setting = DevelopEngineSetting(app)
@@ -50,7 +75,7 @@ class OrdinaryGpuPreviewSaveAndroidTest {
                 put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/Cinematic Camera Synthetic Tests/")
                 put(MediaStore.MediaColumns.IS_PENDING, 1)
             }))
-        val bytes = requireNotNull(resolver.openOutputStream(original, "w")).use { writeSyntheticTrialDng(it, 256, 192, 1) }
+        val bytes = requireNotNull(resolver.openOutputStream(original, "w")).use { writeSyntheticTrialDng(it, width, height, orientation) }
         check(resolver.update(original, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null) == 1)
         val fingerprint = DngContentVerifier.identify(bytes, { requireNotNull(resolver.openInputStream(original)) })
         val source = SharedOriginalReference(original.toString(), fingerprint, OriginalGrant.APP_OWNED)
@@ -61,12 +86,26 @@ class OrdinaryGpuPreviewSaveAndroidTest {
         var handle: AndroidManualOriginalTrialSaves.ManualOriginalTrialHandle? = null
         var output: Pair<android.net.Uri, String>? = null
         var success = false
+        var parityEvidence: String? = null
         try {
             instrumentation.runOnMainSync { camera = AndroidPhotoRollCameraObservations.register { PhotoRollCameraSnapshot(false, false, false, false) } }
             ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
-                click(name)
-                // Production save-enable requires presented == requested and displayed == requested.
-                await("presented GPU preview and enabled save") { action("JPEGを保存") != null }
+                fun openEditor() {
+                    click(name)
+                    // Production save-enable requires presented == requested and displayed == requested.
+                    await("presented GPU preview and enabled save") { action("JPEGを保存") != null }
+                }
+                if (parity) {
+                    val modes = CopyOnWriteArrayList<PreviewRasterMode>()
+                    GpuPhotoRollInputs.observeForDiagnostics(object : GpuPhotoRollInputs.DiagnosticObserver {
+                        override fun nativeDecodeStarted(mode: PreviewRasterMode) { modes += mode }
+                    }).use { openEditor() }
+                    val full = listOf(PreviewRasterMode.FULL)
+                    val half = listOf(PreviewRasterMode.HALF_CANDIDATE)
+                    if (expectedDecodes == "FULL") assertTrue("FULL control must actually reach final FULL exactly once",
+                        modes == full || modes == half + full)
+                    else assertEquals("HALF editor must decode exactly once, without FULL", half, modes)
+                } else openEditor()
                 var surface: SurfaceView? = null
                 fun locate(view: View) {
                     if (view is SurfaceView && view.isShown && view.width > 0 && view.height > 0) surface = view
@@ -92,7 +131,7 @@ class OrdinaryGpuPreviewSaveAndroidTest {
                 assertEquals(ManualOriginalTrialSavePhase.READY, save.state.value.phase)
                 assertNull(save.state.value.uri)
                 click("JPEGを保存")
-                await("same owner publication and FGS completion", 180_000) {
+                await("same owner publication and FGS completion", if (parity) 600_000 else 180_000) {
                     save.state.value.phase == ManualOriginalTrialSavePhase.PUBLISHED && ForegroundExports.gate.active() == null
                 }
                 assertEquals(request, save.request)
@@ -113,10 +152,16 @@ class OrdinaryGpuPreviewSaveAndroidTest {
                 val inspection = AndroidJpegInspector().inspect({ requireNotNull(resolver.openInputStream(jpeg)) }, record.fingerprint.bytes) { false }
                 assertEquals(record.fingerprint, inspection.fingerprint)
                 assertEquals(proof.request.output, inspection.output)
-                assertEquals(256, inspection.output.width)
-                assertEquals(192, inspection.output.height)
+                val outputWidth = if (orientation == 6) height else width
+                val outputHeight = if (orientation == 6) width else height
+                assertEquals(outputWidth, inspection.output.width)
+                assertEquals(outputHeight, inspection.output.height)
                 assertEquals(fingerprint, DngContentVerifier.verify(fingerprint, { requireNotNull(resolver.openInputStream(original)) }))
                 await("published UI") { action("保存したJPEGを照合して開く") != null }
+                if (parity) parityEvidence = "input=${width}x${height} orientation=$orientation " +
+                    "output=${outputWidth}x${outputHeight} recipe=0.65,20.0,0.3 mode=$expectedDecodes " +
+                    "rawSha256=${fingerprint.sha256} rawBytes=${fingerprint.bytes} " +
+                    "jpegSha256=${inspection.fingerprint.sha256} jpegBytes=${inspection.fingerprint.bytes}"
             }
             AndroidManualOriginalTrialSaves.discardPreview(app).get(60, TimeUnit.SECONDS)
             GpuPhotoRollRetiredOwners.releaseBeforeOpen()
@@ -135,6 +180,9 @@ class OrdinaryGpuPreviewSaveAndroidTest {
                 }
             } // Failure retains this test's synthetic rows/journals; no blind retry.
         }
+        if (parity) instrumentation.sendStatus(0, Bundle().apply {
+            putString("halfPreviewJpegParity", checkNotNull(parityEvidence))
+        })
     }
     private fun action(label: String): AccessibilityNodeInfo? {
         fun find(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
