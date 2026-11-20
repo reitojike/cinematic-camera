@@ -41,7 +41,7 @@ FOCUS追加はAF CaptureResult近似/明示MF選択/AUTO復帰に限定し、幅
 
 ### Documentation (this feature)
 
-`specs/013-live-control-intent/{spec.md,plan.md,tasks.md}`。標準template resolver/setup-plan/setup-tasksを使用する。`docs/SPEC_KIT.md`に従いresearch/data-modelは本planへ統合、quickstartは既存README/P0_REPORTを参照する。外部API契約や別checklistは増やさず、spec品質は会話で照合する。旧009/012には置換リンクだけを追加し、時系列作業ログを蓄積しない。
+`specs/013-live-control-intent/{spec.md,plan.md,tasks.md}`。標準template resolver/setup-plan/setup-tasksを使用する。`docs/SPEC_KIT.md`に従いresearch/data-modelは本planへ統合、quickstartは既存READMEと関連Issue #47/#37を参照する。外部API契約や別checklistは増やさず、spec品質は会話で照合する。旧009/012には置換リンクだけを追加し、時系列作業ログを蓄積しない。
 
 ### Source Code (repository root)
 
@@ -86,7 +86,7 @@ FOCUS追加はAF CaptureResult近似/明示MF選択/AUTO復帰に限定し、幅
 
 ## Validation / Quickstart References
 
-既存[README](../../README.md)、[P0_REPORT](../../docs/P0_REPORT.md)、[BUILD_VALIDATION](../../docs/BUILD_VALIDATION.md)を参照する。機械確認は通常unit/lint/assemble、`git diff --check`と公開情報検査。queueは遅い中間ACK、200操作のcoalescing上限、失敗/timeout、epoch/background、ISO/SSとEV/WB/MFの相互保持を確認する。EV 0→+1/WB連続/MF往復、同値/端点/標準haptic、AUTO正常→欠落/期限/旧epoch、表示丸め非書戻しを回帰確認する。
+既存[README](../../README.md)、[BUILD_VALIDATION](../../docs/BUILD_VALIDATION.md)を参照する。機械確認は通常unit/lint/assemble、`git diff --check`と公開情報検査。queueは遅い中間ACK、200操作のcoalescing上限、失敗/timeout、epoch/background、ISO/SSとEV/WB/MFの相互保持を確認する。EV 0→+1/WB連続/MF往復、同値/端点/標準haptic、AUTO正常→欠落/期限/旧epoch、表示丸め非書戻しを回帰確認する。
 
 追加回帰は正常AUTO更新streamと押下/dragの交差、表示clockより新しいsampleが届く境界、更新中のISO/SS候補維持、真に古いpairの拒否、MANUAL移行後の最新intent保持を扱う。6キーは縦/左右横×fontScale 1.0/1.3/2.0×最長/最短値で各cellと合計幅、LOOK端部、ラベル/数値/単位と操作領域を確認する。機械テストで使う非線形fontScaleモデルは実TextMeasurerや実描画の代替証明にしない。
 
