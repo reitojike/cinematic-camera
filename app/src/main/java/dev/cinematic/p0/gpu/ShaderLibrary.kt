@@ -1,6 +1,5 @@
 package dev.cinematic.p0.gpu
 
-import android.content.res.AssetManager
 import android.opengl.GLES32
 
 /** ローダーを分離し、同じinclude規則をJVM試験でも検証する。パスはgpu/からの相対。 */
@@ -25,7 +24,7 @@ internal class ShaderSource(private val read: (String) -> String, private val de
     companion object { private val INCLUDE = Regex("\\s*#include\\s+\"([^\"]+)\"\\s*(?://.*)?") }
 }
 
-internal class GpuProgram internal constructor(private val egl: EglContexts, private var handle: Int, val compute: Boolean,
+internal class GpuProgram internal constructor(private val egl: GpuResourceContext, private var handle: Int, val compute: Boolean,
     private val onClose: () -> Unit = {}) : AutoCloseable {
     private val uniformLocations = mutableMapOf<String, Int>()
     internal val cachedUniformCount: Int get() { id; return uniformLocations.size }
@@ -34,9 +33,9 @@ internal class GpuProgram internal constructor(private val egl: EglContexts, pri
         val program = id // Validate ownership/lifetime even on a cache hit.
         return uniformLocations.getOrPut(name) { GLES32.glGetUniformLocation(program, name) }
     }
-    internal fun requireContext(expected: EglContexts) { check(egl === expected) { "Program belongs to another context" }; id }
+    internal fun requireContext(expected: GpuResourceContext) { check(egl === expected) { "Program belongs to another context" }; id }
     override fun close() {
-        egl.glThread.requireCurrent()
+        egl.requireOwnerThread()
         if (handle == 0) return
         // A live but non-current context may reject cleanup. Preserve ownership for retry.
         egl.releaseResource { GLES32.glDeleteProgram(handle) }
@@ -44,8 +43,7 @@ internal class GpuProgram internal constructor(private val egl: EglContexts, pri
     }
 }
 
-internal class ShaderLibrary(private val egl: EglContexts, assets: AssetManager) : AutoCloseable {
-    private val source = ShaderSource({ path -> assets.open("gpu/$path").bufferedReader().use { it.readText() } })
+internal class ShaderLibrary(private val egl: GpuResourceContext, private val source: ShaderSource) : AutoCloseable {
     private val programs = mutableMapOf<Pair<Boolean, String>, GpuProgram>()
     private val linkedPrograms = mutableMapOf<Int, GpuProgram>()
     private var closed = false
@@ -91,7 +89,7 @@ internal class ShaderLibrary(private val egl: EglContexts, assets: AssetManager)
         }
     }
     override fun close() {
-        egl.glThread.requireCurrent()
+        egl.requireOwnerThread()
         if (closed) return
         programs.values.forEach { it.close() }; programs.clear(); linkedPrograms.clear(); closed = true
     }
