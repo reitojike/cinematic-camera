@@ -32,4 +32,4 @@
 - 作者の自己レビューを独立承認に数えません。formal APPROVE の代行、admin merge、チェック免除、保護回避はしません。[REPOSITORY_STATUS](docs/REPOSITORY_STATUS.md) と実際の設定を確認します。
 - [PUBLICATION_REVIEW](docs/PUBLICATION_REVIEW.md) に従い、秘密・認証情報・署名秘密・個人情報・個人用絶対パス・非公開サービス先・会話ログ・写真本体を Git / ZIP に入れません。
 - 実機撮影、固定署名秘密の新規生成・継続利用設定、他プロジェクトの鍵の流用を無断で行いません。DNG原本は非破壊で扱います。
-- P0 の調査範囲・実測は [P0_REPORT](docs/P0_REPORT.md) と [Issue #4](https://github.com/reitojike/cinematic-camera/issues/4) の歴史的文脈です。当時の対象外一覧を後続で実装済みの RAW / NDK / UI 等の禁止へ読み替えません。
+- 実装範囲は現行仕様で確認します。過去の調査の対象外を、現在の機能の禁止事項にしません。

@@ -1,6 +1,6 @@
-# リポジトリ運用とP0 APK配布
+# リポジトリ運用とAPK配布
 
-最新計画は [ロードマップ v3](cinematic-camera-roadmap-v3.md)。レーン5の規則・部品のみのPR-Aは追加の見た目承認不要だが、
+現行計画は [ロードマップ v4](cinematic-camera-roadmap-v4.md)。以下は共通メッセージ改修の個別規則です。レーン5の規則・部品のみのPR-Aは追加の見た目承認不要だが、
 最終headのrequired CI・canonical/独立レビュー・必須Android手動回帰の証拠をそれぞれ記録する。
 PR-B〜Eは主要状態のscreenshotと文言差一覧に対する本人承認前にマージしない。未実施検証は合格扱いしない。
 原文指示は [共通メッセージ改修指示書](DEVELOP_UI_REFACTOR_INSTRUCTIONS.md) を参照する。
@@ -74,35 +74,12 @@ private時はプラン制約で403となり停止した。公開は別途得た�
 
 think-canvasのclassic branch-protection APIは接続機能の権限で403となったため、その経路での確認は未完了。上記は読み取り成功した実rulesetを根拠にしている。作成後の実際の設定状態はGitHub側で確認し、作業結果に記録する。
 
-## 最小CI
+## Android CI
 
-[Android checks](../.github/workflows/android.yml)はPR、main push、mainからの手動実行に対応する。JDK 25、SDK 37.0 / Build Tools 36.0.0、Gradle wrapper、lint / unit / assembleDebugを使う点をthink-canvasに揃える。
+[Android checks](../.github/workflows/android.yml) は製品の lint・単体試験・ビルド、rawprobe の単体試験・ビルド、両APKのJNI分離、Mesa のシェーダー・画素回帰を別々に実行し、必須の全体チェックで結果を集約する。各runの結果とartifactを確認する。
 
-- P0用の一時debug署名APKを`cinematic-camera-p0-debug-apk-ephemeral` artifactへ保存（7日）。SHA-256と署名証明書を記録する。
-- `CINEMATIC_VERSION_NAME=<現在のprobe版>.ci.<run_number>`、`versionCode=run_number`。正確な版はworkflowとAPK metadataで確認する。
-- 権限は`contents: read`。外部リポジトリの秘密を使わない。
-- GMD、実機テスト、Room schema、隔離テスト、製品固有の公開境界スクリプトは移植しない。現行JVMテストの件数と保証範囲は[P05_REPORT](P05_REPORT.md)、P0は[P0_REPORT](P0_REPORT.md)を確認する。
-- CI greenをPixel 9aの実機合格へ読み替えない。
-
-## P0 pre-release
-
-[P0 APK release](../.github/workflows/p0-release.yml)はmainからの明示的な手動実行のみ。think-canvasと同じく、新しい`vX.Y.Z-alpha.N` / `vX.Y.Z-dev.N`とmainに含まれる40桁commit SHAを指定する。既存tagの上書きは拒否する。
-
-指定commitのlint / unit / debug buildを再確認し、署名とapplicationId / versionCodeを検証して、repoのpre-releaseへ次を添付する。
-
-- `cinematic-camera-p0.apk`
-- `SHA256SUMS.txt`
-- `SIGNING.txt`（公開証明書のfingerprintのみ。秘密鍵は含まない）
-
-versionNameはtag、versionCodeはこのrelease workflowのrun_numberとする。同じrunの再実行は同じversionCode。固定ファイル名、明示tag、commit・run・hashによる識別、`releases/latest`を使わない点をthink-canvasに揃える。release jobだけ`contents: write`を使い、GitHubが発行するそのrunの標準tokenでReleaseを保存する。
-
-**旧P0配布経路ではrunnerの一時debug署名を使う。現在の固定署名配布とは別経路。** think-canvasの固定PR鍵・internal鍵は一切流用しない。新しい固定鍵の生成・保管・Secrets登録・継続利用は別途確認が必要なため実行しない。通常製品のinternal release buildやObtainiumによる継続更新は、旧P0経路導入時の対象外だった。
-
-同じapplicationIdでも、別runやローカル版と署名が違うと上書き更新できない。旧P0配布版の一時鍵は
-継続用として保持していない。今回の旧内部テスト写真についてだけ、利用者が消失を許可した。
-署名が違う候補を試す場合は、上書き不可と旧内部写真/ログが失われることを説明し、利用者自身が
-旧アプリを削除・再インストールする。一般的なデータ消失の許可には広げず、こちらから端末を操作しない。
-固定鍵生成/継続利用の条件は変えない。新しいMediaStore保存画像はアプリ内ファイルとは別に扱う。
+- 製品の一時debug署名APKとテストレポートはCI runのartifactであり、固定署名の配布APKに使わない。
+- Mesa・単体試験・CIの成功は、Pixel 9a での実機確認を代替しない。
 
 ## 専用固定署名の配布
 
@@ -137,11 +114,8 @@ local-onlyで既存当projectのdebug keyをfixtureとして使う場合も、�
 承認後はEnvironmentのmain限定policyを先に適用し、専用keyを安全にバックアップして4Secretsと公開pinを登録する。
 値をログ/コマンド引数へ出さず、正規CLIのstdin等で登録する。新しいtag/承認済みmain SHAで手動dispatchし、
 署名/ハッシュ/上書き更新を確認する。internal workflowのversionCodeはそのworkflow内のrun_numberを使う。
-全ページの既存Release（draftを含む）のうち`cinematic-camera-internal.apk`を持つものを照合し、
-Release本文の`<!-- cinematic-internal-release: versionCode=N certSha256=HEX -->`の最大番号以下なら署名前に停止する。
-markerを持つReleaseも資産名にかかわらず検査し、履歴の証明書SHA-256が公開pinと違う場合は停止する。
-本文のmarkerが欠落・不正・重複した場合やAPI取得失敗も停止する。旧runの再実行やworkflowの作り直しで番号が後退したら、
-既存の最大番号を越える採番方針を別途reviewする。過去の固定署名Release・APK・番号markerを削除/改変して回避しない。
+全ページの既存Release（draftを含む）の固定署名履歴を、[採番検査](../tools/release/check_internal_version_code.py) に従い照合する。Release本文の有効な番号・証明書markerと `RELEASE_METADATA.md` の両形式を受け付け、両方ある場合は一致を要求する。メタデータ資産を使う場合はタグ・版番号とAPKのdigestも照合する。
+有効な根拠がない場合、照合不一致、重複番号またはAPI取得失敗では停止する。候補が履歴の最大番号を超えなければ署名前に停止する。過去のRelease・APK・番号記録を削除・改変して回避しない。
 
 最初の固定署名版は現在の一時debug版と署名が異なるため、上書き更新できない。必要な写真/ログ/設定の退避と
 初回の手動移行は本人が判断する。以後も同じ鍵と増加versionCodeを維持する。端末の削除/インストールは自動実行しない。
@@ -213,14 +187,9 @@ workflow の正式タグ対応は配布許可ではない。鍵・署名設定�
 
 ## Pixel 9aで受け取る
 
-1. Androidのブラウザーで該当pre-releaseを開く。現在はpublic。Actions artifactはGitHubのrun画面から取得する。
-2. 固定署名配布ではAssetsの`cinematic-camera-internal.apk`と`SHA256SUMS.txt`を取得する。旧P0配布のAPK名は`cinematic-camera-p0.apk`であり混同しない。正確なtagのページを使う。artifactを使う場合はActions runのArtifactsからZIPを取得・展開する。
-3. 初回はダウンロードに使ったアプリの「不明なアプリのインストール」をAndroid設定で許可する。署名不一致なら、既存P0の撮影物・ログを先に退避する。
-4. APKを手動インストールし、Camera permissionを許可する。P0の撮影は利用者の操作で行う。
-5. [P0_REPORT.md](P0_REPORT.md)の許可・lifecycle・AUTO・RAW5回・ISO2値・露光時間2値・AUTO復帰を実施する。DNGはPC viewerで全件開く。
-
-P0のユーザー報告と未取得証拠は[P0_REPORT](P0_REPORT.md)、P0.5の実機未確認条件は[P05_REPORT](P05_REPORT.md)を確認する。
-P0のP1判断案GO_WITH_LIMITATIONSは、P0.5の実機合格やP1実装完了を意味しない。配布URLとhashは実Release / runへ記録する。
+1. GitHub Releases で承認済みの正確なタグを開き、対象ソースを確認する。Assets の `cinematic-camera-internal.apk`、`SHA256SUMS.txt`、`SIGNING.txt` を使用する。通常のCI artifactや旧debug署名APKと混同しない。
+2. インストール前に、APK の SHA-256、署名、applicationId、版名と versionCode を対象版に照合する。既存版を更新する場合は同じ署名・applicationIdと、より大きい versionCode を確認する。署名不一致なら停止し、上書きできないことを報告する。既存アプリや写真・設定は削除しない。
+3. 実機操作は対象版の個別承認後に行う。確認項目は対象版ごとに決め、正式配布前の最低限の本人確認は上記のプレビュー・保存を各1回とする。実施した結果と未確認条件を分け、関連Issue／PRと対象版のリリースノートから辿れるようにする。
 
 ## 読み取った参照元
 
