@@ -157,7 +157,7 @@ class OrdinaryGpuPreviewSaveAndroidTest {
                 assertEquals(outputWidth, inspection.output.width)
                 assertEquals(outputHeight, inspection.output.height)
                 assertEquals(fingerprint, DngContentVerifier.verify(fingerprint, { requireNotNull(resolver.openInputStream(original)) }))
-                await("published UI") { action("保存したJPEGを照合して開く") != null }
+                await("published UI") { action("保存したJPEGを開く（開く前に照合します）") != null }
                 if (parity) parityEvidence = "input=${width}x${height} orientation=$orientation " +
                     "output=${outputWidth}x${outputHeight} recipe=0.65,20.0,0.3 mode=$expectedDecodes " +
                     "rawSha256=${fingerprint.sha256} rawBytes=${fingerprint.bytes} " +
