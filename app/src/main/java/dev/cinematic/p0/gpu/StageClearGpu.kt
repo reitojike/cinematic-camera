@@ -10,10 +10,8 @@ import dev.cinematic.p0.gpu.r7.R7Gpu
 import dev.cinematic.p0.gpu.resample.GpuResample
 import dev.cinematic.p0.raw.LinearSrgbImage
 import dev.cinematic.p0.raw.PhotoAdjustments
-import dev.cinematic.p0.raw.R7PreviewInputs
 import dev.cinematic.p0.raw.StageClearColor
 import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.util.concurrent.CancellationException
 
 /** 写真1枚ぶんの GPU 側の状態。GlThread 上でのみ生成・使用・解放する。 */
@@ -108,24 +106,14 @@ internal class DefaultStageClearGpu(
             capabilitiesChecked = true
         }
         // Initial preparation is excluded from criterion ①. Neither mode re-meters this photo.
-        val prepared = R7PreviewInputs.prepare(R7PreviewInputs.AsShotInput(input,
-            R7PreviewInputs.Source.LIBRAW_PRELIMINARY_AS_SHOT), emptyList(), stop)
-        val analysis = GpuPhotoAnalysis(prepared.exposure.externalBaseEv, prepared.exposure.centralP97)
+        val analysis = StageClearPreviewInput.analyze(input, stop)
         photoAnalysisCount++
         checkpoint(stop)
         val pool = GpuTexturePool(egl, ledger)
         val texture = GpuTexture.create(egl, ledger, input.width, input.height, GpuTexture.Format.RGBA32F, pool)
         try {
-            val rgba = ByteBuffer.allocateDirect(Math.multiplyExact(input.pixelCount, 16))
-                .order(ByteOrder.nativeOrder()).asFloatBuffer()
-            for (y in 0 until input.height) {
-                checkpoint(stop)
-                for (x in 0 until input.width) {
-                    val i = (y * input.width + x) * 3
-                    rgba.put(input[i]); rgba.put(input[i + 1]); rgba.put(input[i + 2]); rgba.put(1f)
-                }
-            }
-            rgba.flip(); texture.upload(rgba)
+            val rgba = StageClearPreviewInput.packRgba(input) { checkpoint(stop) }
+            texture.upload(rgba)
             checkpoint(stop)
             return Photo(texture, analysis, pool).also { photos += it }
         } catch (failure: Throwable) {
