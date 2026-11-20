@@ -9,8 +9,11 @@ import android.opengl.GLES32
 import android.view.Surface
 import dev.cinematic.p0.gpu.preview.GpuSurfaceProbe
 
+internal fun androidGpuShaderSource(assets: AssetManager): ShaderSource =
+    ShaderSource({ path -> assets.open("gpu/$path").bufferedReader().use { it.readText() } })
+
 /** 1個の ES 3.2 context を pbuffer と表示面で共有する。全操作は GlThread 上。 */
-internal class EglContexts(val glThread: GlThread, private val assets: AssetManager? = null) : AutoCloseable {
+internal class EglContexts(val glThread: GlThread, private val assets: AssetManager? = null) : GpuResourceContext, AutoCloseable {
     private var display = EGL14.EGL_NO_DISPLAY
     private var context = EGL14.EGL_NO_CONTEXT
     private var pbuffer = EGL14.EGL_NO_SURFACE
@@ -25,7 +28,8 @@ internal class EglContexts(val glThread: GlThread, private val assets: AssetMana
     /** Context-owned resources: callers borrow these and must not close them individually. */
     fun shaders(): ShaderLibrary {
         requireCurrent()
-        return shaderLibrary ?: ShaderLibrary(this, checkNotNull(assets) { "Shader assets were not provided" })
+        return shaderLibrary ?: ShaderLibrary(this,
+            androidGpuShaderSource(checkNotNull(assets) { "Shader assets were not provided" }))
             .also { shaderLibrary = it }
     }
     fun passes(): PassGraph {
@@ -67,7 +71,9 @@ internal class EglContexts(val glThread: GlThread, private val assets: AssetMana
         }
     }
 
-    fun requireCurrent() {
+    override fun requireOwnerThread() = glThread.requireCurrent()
+
+    override fun requireCurrent() {
         glThread.requireCurrent()
         check(!closed) { "EGL contexts are closed" }
         if (lost) throw GpuContextLostException("EGL context was lost")
@@ -113,13 +119,13 @@ internal class EglContexts(val glThread: GlThread, private val assets: AssetMana
         throw GpuUnavailableException("$operation failed: EGL 0x${error.toString(16)}")
     }
 
-    internal fun checkGl(operation: String) {
+    override fun checkGl(operation: String) {
         val error = GLES32.glGetError()
         if (error == 0x0507) { lost = true; throw GpuContextLostException("$operation: GL_CONTEXT_LOST") }
         check(error == GLES32.GL_NO_ERROR) { "$operation failed: GL 0x${error.toString(16)}" }
     }
 
-    internal fun releaseResource(block: () -> Unit) {
+    override fun releaseResource(block: () -> Unit) {
         glThread.requireCurrent()
         // Context destruction/loss already frees its GL names. Always allow accounting cleanup.
         if (!closed && !lost) { requireCurrent(); block() }
