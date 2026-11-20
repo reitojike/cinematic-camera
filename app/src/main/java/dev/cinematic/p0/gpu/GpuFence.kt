@@ -3,7 +3,7 @@ package dev.cinematic.p0.gpu
 import android.opengl.GLES32
 import java.util.concurrent.CancellationException
 
-internal class GpuFence(private val egl: EglContexts) : AutoCloseable {
+internal class GpuFence(private val egl: GpuResourceContext) : AutoCloseable {
     private var sync: Long
     init {
         egl.requireCurrent()
@@ -23,7 +23,7 @@ internal class GpuFence(private val egl: EglContexts) : AutoCloseable {
         }
     }
     override fun close() {
-        egl.glThread.requireCurrent()
+        egl.requireOwnerThread()
         if (sync == 0L) return
         egl.releaseResource { GLES32.glDeleteSync(sync) }; sync = 0
     }
