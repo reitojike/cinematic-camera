@@ -77,7 +77,7 @@ jobs:
           echo $! > atd-evidence/emulator.pid
           timeout 180 bash -c 'until [ "$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; do sleep 2; done'
           adb -s emulator-5554 shell getprop ro.build.fingerprint > atd-evidence/fingerprint.txt
-      - name: Run only eight selected methods on the selected ATD
+      - name: Run explicitly selected methods on the selected ATD
         env:
           ANDROID_SERIAL: emulator-5554
         run: |
@@ -86,14 +86,15 @@ jobs:
             -Pandroid.testInstrumentationRunnerArguments.class="$selection" \
             -Pandroid.testInstrumentationRunnerArguments.isolated=true \
             -Pandroid.testInstrumentationRunnerArguments.dngImportStorage=true \
-            2>&1 | tee atd-evidence/gradle.txt
+            -Pandroid.testInstrumentationRunnerArguments.dngImportReselection=true \
+            -Pandroid.testInstrumentationRunnerArguments.gpuInputSafety=true \
+            > atd-evidence/gradle.txt 2>&1
       - name: Record emulator diagnostics and stop only the CI ATD
         if: always()
         run: |
           mkdir -p atd-evidence
           df -h > atd-evidence/disk-after.txt
           getfacl /dev/kvm > atd-evidence/kvm-acl-after.txt || true
-          adb -s emulator-5554 logcat -d > atd-evidence/logcat.txt 2>&1 || true
           adb -s emulator-5554 emu kill || true
       - name: Record installed image revisions
         if: always()
@@ -101,18 +102,23 @@ jobs:
           mkdir -p atd-evidence
           find "$ANDROID_HOME/system-images" -name source.properties -exec cat {} \; > atd-evidence/images.txt 2>/dev/null || true
       - name: Require exact methods, zero skips and all software Canvas images
+        id: verify_atd
         shell: bash
         if: ${{ !cancelled() }}
-        run: python3 tools/atd-ci/verify.py app/build | tee atd-evidence/verification.txt
-      - name: Keep evidence (software Canvas is not screen/GPU output)
+        run: python3 tools/atd-ci/verify.py app/build atd-evidence/approved-canvas 2>&1 | tee atd-evidence/verification.txt
+      - name: Keep sanitized verification summary
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: atd-experiment-${{ github.run_attempt }}
-          path: |
-            atd-evidence/
-            app/build/outputs/androidTest-results/
-            app/build/outputs/connected_android_test_additional_output/
-            app/build/reports/androidTests/
+          path: atd-evidence/verification.txt
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Keep only approved software Canvas fixtures
+        if: ${{ success() && steps.verify_atd.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: atd-canvas-${{ github.run_attempt }}
+          path: atd-evidence/approved-canvas/
           if-no-files-found: error
           retention-days: 7

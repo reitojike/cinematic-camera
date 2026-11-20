@@ -17,6 +17,16 @@
     ],
     "dev.cinematic.p0.photoroll.DevelopMessagesScreenshotAndroidTest": [
       "captureProductMessageStatesWithSyntheticImage"
+    ],
+    "dev.cinematic.p0.rawcapture.DngImportReselectionAndroidTest": [
+      "settledSelectionsReuseOnlyVerifiedBytes"
+    ],
+    "dev.cinematic.p0.raw.DngPreviewDecoderTest": [
+      "rejectsNonDngAndHugeDimensionsAndRecoversForNextRequest",
+      "rejectsEncodedByteLimitBeforeAllocatingSnapshot"
+    ],
+    "dev.cinematic.p0.jpegrender.original.Original24PreflightInstrumentationTest": [
+      "existingNativeParserRejectsCyclesAmbiguousRawIfdsAndDuplicateCriticalTags"
     ]
   },
   "images": [
