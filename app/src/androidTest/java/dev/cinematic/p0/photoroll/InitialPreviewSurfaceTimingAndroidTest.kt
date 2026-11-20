@@ -256,9 +256,9 @@ class InitialPreviewSurfaceTimingAndroidTest {
         try {
             ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
                 await { owner.renderer.surfaceAttached.value }
-                val callback: ((Int,CancellationSignal,()->dev.cinematic.p0.raw.LinearSrgbImage)->Unit)? =
+                val callback: ((Int,CancellationSignal,(() -> dev.cinematic.p0.raw.LinearSrgbImage)?)->Unit)? =
                     if(!fallback) null else { _,signal,half ->
-                        val linear=half()
+                        val linear=requireNotNull(half).invoke()
                         val pixels=TrialDisplayPixels.encode(linear,1024) { signal.isCanceled }
                         val bitmap=Bitmap.createBitmap(pixels,linear.width,linear.height,Bitmap.Config.ARGB_8888)
                         allocated.add(bitmap)
