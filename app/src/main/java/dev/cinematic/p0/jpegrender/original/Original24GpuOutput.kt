@@ -29,7 +29,8 @@ internal class Original24GpuOutput(private val assets: AssetManager) : AutoClose
     val hasUnreleasedResources get() = held
 
     fun render(source: OriginalRaster, ev: Double, gains: DoubleArray, strength: Double,
-        stop: () -> Boolean, timings: GpuExportTimings? = null, progress: SaveProgressSink? = null, consume: (Int, IntArray) -> Unit) {
+        stop: () -> Boolean, timings: GpuExportTimings? = null, progress: SaveProgressSink? = null,
+        forceReaderBoundaries: Boolean = false, consume: (Int, IntArray) -> Unit) {
         check(!started); started = true
         // Freeze one observer for this attempt. Release/internal builds cannot register or invoke it.
         val observer = if (observationsAllowed) diagnosticObserver.get() else null
@@ -61,7 +62,7 @@ internal class Original24GpuOutput(private val assets: AssetManager) : AutoClose
                                 // Existing post-fence boundary; product telemetry never invokes diagnostics.
                                 bestEffort { workProgress?.let { progress?.developed(it.bandCompleted(rows)) } }
                                 observer?.bandComplete(boundary, origin, rows, snapshot())
-                            }, timings = timings, consumeRow = consume)
+                            }, timings = timings, forceReaderBoundaries = forceReaderBoundaries, consumeRow = consume)
                     } catch (caught: Throwable) { error = caught; throw caught }
                     finally {
                         // Renderer.use has returned/unwound. Observe before EGL teardown; this is

@@ -100,14 +100,37 @@ internal object AndroidManualOriginalTrialSaves {
         private fun generationFiles(request: Original24Request) = RenderedJpegFiles(root, id, request.generation)
         private fun storage(request: Original24Request, kind: CaptureJournalFile): AtomicJournalStorage {
             val directory = generationFiles(request).generationRoot()
-            return AndroidAtomicJournalStorage(requireNotNull(directory.parentFile), request.generation.toString(), kind)
+            val storage = AndroidAtomicJournalStorage(requireNotNull(directory.parentFile), request.generation.toString(), kind)
+            return when (kind) {
+                CaptureJournalFile.MANUAL_REQUEST, CaptureJournalFile.MANUAL_ATTEMPT,
+                CaptureJournalFile.JPEG_PUBLICATION -> storage.checkingSaveAuthority()
+                else -> storage
+            }
         }
         private fun journal(request: Original24Request) = JpegPublicationJournal(id, request.generation,
             storage(request, CaptureJournalFile.JPEG_PUBLICATION))
         private fun consent(request: Original24Request) = recoveryConsents.getOrPut(request.generation) {
             ExplicitRecoveryExports(storage(request, CaptureJournalFile.EXPLICIT_RECOVERY_EXPORT))
         }
+        @Volatile private var window: Pair<Original24Request, SaveAuthorityWindow>? = null
         private fun authoritative(request: Original24Request): Boolean {
+            val current = window
+            return if (current != null && current.first == request) current.second.check(SaveAuthorityBoundary.force) {
+                currentRequest == request && !preflightResources.hasOpenResources
+            }
+                else authoritativeUnshared(request)
+        }
+        private fun withWindow(request: Original24Request, action: () -> ManualOriginalTrialSaveState): ManualOriginalTrialSaveState {
+            check(window == null)
+            val own = SaveAuthorityWindow { authoritativeUnshared(request) }
+            window = request to own
+            try {
+                return SaveAuthorityBoundary.observing({ own.check(true) }, action)
+            } finally {
+                window = null
+            }
+        }
+        private fun authoritativeUnshared(request: Original24Request): Boolean {
             if (currentRequest != request || preflightResources.hasOpenResources || !requests.isCurrent(request) || !consent(request).oldMayRun()) return false
             if (request.generation > 1) {
                 val predecessor = consent(request.copy(generation = request.generation - 1))
@@ -154,7 +177,8 @@ internal object AndroidManualOriginalTrialSaves {
                 val owner = ManualOriginalTrialSaveOwner(request, backend,
                     storage(request, CaptureJournalFile.MANUAL_REQUEST), attemptJournal(request)) { authoritative(request) }
                 owner.restoreDurableState()
-                ManualOriginalTrialHandle(queue, owner, requireNotNull(geometry), backend, isExplicitRecovery(request)) {
+                ManualOriginalTrialHandle(queue, owner, requireNotNull(geometry), backend, isExplicitRecovery(request),
+                    { action -> withWindow(request, action) }) {
                     authoritative(request)
                 }.also { it.explicitRecovery = { stop -> recoverExplicitly(queue, request, stop) } }
             }
@@ -301,9 +325,11 @@ internal object AndroidManualOriginalTrialSaves {
         private fun recoveryStorage(kind: CaptureJournalFile): AtomicJournalStorage {
             val directory = RenderedJpegFiles(File(app.noBackupFilesDir, "raw-captures"), request.captureId, request.generation).generationRoot()
             return AndroidAtomicJournalStorage(requireNotNull(directory.parentFile), request.generation.toString(), kind)
+                .checkingSaveAuthority()
         }
         private val recoveryJournal = JpegPublicationJournal(request.captureId, request.generation, recoveryStorage(CaptureJournalFile.JPEG_RECOVERY))
-        private val reconciliation = ReconciledJpegPublication(journal(request), recoveryJournal,
+        private val forwardJournal = journal(request)
+        private val reconciliation = ReconciledJpegPublication(forwardJournal, recoveryJournal,
             JpegReconciliationReceipt(recoveryStorage(CaptureJournalFile.JPEG_RECONCILIATION)),
             MediaStoreJpegRows(app), recoveryResources, isCurrent)
         override val hasUnreleasedResources get() = attempt?.hasUnreleasedResources == true || outputCleanupPending || recoveryResources.hasOpenResources
@@ -366,7 +392,7 @@ internal object AndroidManualOriginalTrialSaves {
         }
         override fun publisher(render: ManualOriginalTrialRender): ManualOriginalTrialPublication {
             val publisher = operation.publisher(render, setOf(ManualOriginalTrialRender.CONTRACT), isCurrent,
-                recoveryJournal.takeIf { it.read() != null })
+                recoveryJournal = recoveryJournal.takeIf { it.read() != null }, forwardJournal = forwardJournal)
             return object : ManualOriginalTrialPublication {
                 override val hasUnreleasedResources get() = publisher.hasUnreleasedResources
                 override fun advance(stop: () -> Boolean) = try {
@@ -405,6 +431,7 @@ internal object AndroidManualOriginalTrialSaves {
         val geometry: Original24PreflightGeometry,
         private val backend: Backend,
         val isExplicitRecoveryRequest: Boolean,
+        private val withAuthorityWindow: (() -> ManualOriginalTrialSaveState) -> ManualOriginalTrialSaveState,
         private val revalidate: () -> Boolean,
     ) {
         val request get() = owner.request
@@ -468,8 +495,8 @@ internal object AndroidManualOriginalTrialSaves {
                 ?: throw IOException("Trial save admission blocked")
             slot = admitted
             DevelopExecution.registerStop(admitted, backend::requestStop)
-            try { owner.advance(retryGpuFailure = retryGpuFailure, retryCancellation = retryCancellation,
-                publicationOnly = publicationOnly) { stop() || DevelopExecution.shouldStop(admitted) } }
+            try { withAuthorityWindow { owner.advance(retryGpuFailure = retryGpuFailure, retryCancellation = retryCancellation,
+                publicationOnly = publicationOnly) { stop() || DevelopExecution.shouldStop(admitted) } } }
             catch (failure: OutOfMemoryError) { throw IOException("Original rendering memory unavailable", failure) }
             finally {
                 try { owner.releaseResources() }

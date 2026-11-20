@@ -104,7 +104,8 @@ internal class AndroidRenderedJpegOperation private constructor(context: Context
     }
 
     @Synchronized fun publisher(render: JpegPublicationRender, supportedContracts: Set<RendererPublicationContract>, isCurrent: () -> Boolean,
-        recoveryJournal: JpegPublicationJournal? = null): RecoverablePhotoPublisher {
+        recoveryJournal: JpegPublicationJournal? = null,
+        forwardJournal: JpegPublicationJournal? = null): RecoverablePhotoPublisher {
         if (publisherOwner != null && (recoveryJournal == null || publisherOwner?.hasUnreleasedResources == true))
             throw IOException("Retain the existing JPEG publisher for retries")
         require(render.request.captureId == captureId && render.request.generation == generation)
@@ -115,7 +116,7 @@ internal class AndroidRenderedJpegOperation private constructor(context: Context
         JpegOperationOwners.registry.claim(app.noBackupFilesDir.canonicalPath, captureId, generation, this)
         val directory = files.generationRoot()
         val root = requireNotNull(directory.parentFile)
-        val journal = recoveryJournal ?: JpegPublicationJournal(captureId, generation,
+        val journal = recoveryJournal ?: forwardJournal ?: JpegPublicationJournal(captureId, generation,
             AndroidAtomicJournalStorage(root, generation.toString(), CaptureJournalFile.JPEG_PUBLICATION))
         return RecoverablePhotoPublisher(journal, MediaStoreJpegRows(app), render, supportedContracts.toSet(),
             object : RenderedJpegInput {

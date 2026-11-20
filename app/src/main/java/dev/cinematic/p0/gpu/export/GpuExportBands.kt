@@ -1,5 +1,7 @@
 package dev.cinematic.p0.gpu.export
 
+import dev.cinematic.p0.rawcapture.SaveAuthorityBoundary
+
 import dev.cinematic.p0.raw.original.OriginalRaster
 import dev.cinematic.p0.raw.original.OriginalRasterFile
 import dev.cinematic.p0.raw.original.originalCheckpoint
@@ -19,10 +21,11 @@ internal object GpuExportBands {
     private data class Band(val origin: Int, val rows: Int, val rgba: FloatBuffer)
 
     fun forEach(input: OriginalRaster, height: Int = HEIGHT, stop: () -> Boolean, timings: GpuExportWorkTimings? = null,
+        forceReaderBoundaries: Boolean = false,
         consume: (originY: Int, rows: Int, rgba: FloatBuffer) -> Unit) {
         validateOriginalSize(input.width, input.height)
         require(height == HEIGHT || height == 64) { "Export band height must be explicit: 256 or test-only 64" }
-        originalCheckpoint(stop)
+        SaveAuthorityBoundary.durable { originalCheckpoint(stop) }
         val free = ArrayBlockingQueue<FloatBuffer>(2)
         repeat(2) {
             free.add(ByteBuffer.allocateDirect(Math.multiplyExact(input.width * minOf(height, input.height), 16))
@@ -42,6 +45,7 @@ internal object GpuExportBands {
         val readerTimings = timings?.fork()
         val reader = Thread({
             try {
+                if (forceReaderBoundaries) SaveAuthorityBoundary.durable { originalCheckpoint(readerStop) }
                 var buffer = borrow()
                 val rgbaRow = FloatArray(input.width * 4)
                 val finiteRgb16 = input is OriginalRasterFile && input.isRgb16
@@ -60,17 +64,20 @@ internal object GpuExportBands {
                         buffer.put(rgbaRow)
                         expectedY++
                         if (expectedY - origin == height || expectedY == input.height) {
-                            originalCheckpoint(readerStop)
+                            SaveAuthorityBoundary.durable { originalCheckpoint(readerStop) }
                             buffer.flip()
                             check(ready.offer(Band(origin, expectedY - origin, buffer)))
                             origin = expectedY
                             // Wait inside this callback, BEFORE rows() reads another row.
-                            if (expectedY < input.height) buffer = gpuWork(readerTimings, GpuExportDetail.INPUT_FREE_WAIT) { borrow() }
+                            if (expectedY < input.height) {
+                                buffer = gpuWork(readerTimings, GpuExportDetail.INPUT_FREE_WAIT) { borrow() }
+                                if (forceReaderBoundaries) SaveAuthorityBoundary.durable { originalCheckpoint(readerStop) }
+                            }
                         }
                     }
                 }
                 check(expectedY == input.height && origin == expectedY) { "Original raster ended early" }
-                originalCheckpoint(readerStop)
+                SaveAuthorityBoundary.durable { originalCheckpoint(readerStop) }
             } catch (failure: Throwable) { readerFailure.set(failure) }
             finally { done.set(true) } // rows() EOF checks and resource close have completed.
         }, "gpu-export-band-reader")
@@ -89,11 +96,11 @@ internal object GpuExportBands {
                     break
                 }
                 val band = gpuWork(timings, GpuExportDetail.INPUT_WAIT) { ready.poll(50, TimeUnit.MILLISECONDS) } ?: continue
-                originalCheckpoint(stop)
+                SaveAuthorityBoundary.durable { originalCheckpoint(stop) }
                 check(band.origin == deliveredRows && band.rows in 1..height)
                 consume(band.origin, band.rows, band.rgba) // GL stays on the caller.
                 deliveredRows += band.rows
-                originalCheckpoint(stop)
+                SaveAuthorityBoundary.durable { originalCheckpoint(stop) }
                 check(free.offer(band.rgba)) // Return only after the complete GL callback.
             }
         } catch (caught: Throwable) {
@@ -120,6 +127,6 @@ internal object GpuExportBands {
             }
         }
         failure?.let { throw it }
-        originalCheckpoint(stop)
+        SaveAuthorityBoundary.durable { originalCheckpoint(stop) }
     }
 }
