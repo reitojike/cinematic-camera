@@ -7,6 +7,27 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ManualOriginalTrialSaveOwnerTest {
+    @Test fun intervalAuthorityFailureSettlesOwnerInsteadOfLeavingSaving() {
+        var broken = false
+        val window = SaveAuthorityWindow {
+            if (broken) throw IOException("synthetic durable read failure")
+            true
+        }
+        val backend = Backend().also { it.beforeRender = {
+            broken = true
+            try { window.check(true) } catch (error: IOException) {
+                throw GpuSaveRenderException(GpuSaveFailureReason.RENDER_FAILED, true, error)
+            }
+        } }
+        val owner = ManualOriginalTrialSaveOwner(request, backend, Storage()) { window.check(true) }
+        assertEquals(ManualOriginalTrialSavePhase.HOLD, owner.advance().phase)
+        owner.releaseResources()
+        assertFalse(owner.hasUnreleasedResources)
+        assertEquals(0, backend.publisherCreations)
+        assertFalse(window.check(false))
+        assertTrue(SaveAuthorityWindow { true }.check(true))
+    }
+
     @Test fun publicationOnlyRecheckCannotStartReadyProducerOrWriteIntent() {
         val backend = Backend()
         val intent = Storage()
@@ -1161,6 +1182,44 @@ class ManualOriginalTrialSaveOwnerTest {
         assertEquals(ManualOriginalTrialSavePhase.PUBLISHED, owner.advance().phase)
         assertEquals(2, backend.reconciliationCalls)
         assertEquals(0, backend.renders)
+    }
+
+    @Test fun publicationReceiptDenialRemainsRecheckableButRevisionConflictHolds() {
+        for (fault in listOf("denied", "read failed", "revision conflict")) {
+            val wrongRevision = fault == "revision conflict"
+            val bytes = Storage()
+            val publishing = record(JpegPublicationPhase.PUBLISHING)
+            bytes.bytes = JpegPublicationCodec.encode(publishing)
+            val journal = JpegPublicationJournal(request.captureId, request.generation, bytes.checkingSaveAuthority())
+            val backend = Backend().also { it.existing = publishing }
+            var revision = if (wrongRevision) publishing.revision + 1L else publishing.revision
+            backend.publication.afterAdvance = {
+                journal.advance(revision, JpegPublicationPhase.PUBLISHING, JpegPublicationPhase.PUBLISHED)
+            }
+            val owner = ManualOriginalTrialSaveOwner(request, backend, Storage()) { true }
+            var observations = 0
+            val result = SaveAuthorityBoundary.observing({
+                observations++
+                if (fault == "read failed") throw IOException("Synthetic authority read failed")
+                false
+            }) { owner.advance(publicationOnly = true) }
+            assertEquals(if (wrongRevision) ManualOriginalTrialSavePhase.HOLD
+                else ManualOriginalTrialSavePhase.UNCONFIRMED, result.phase)
+            assertEquals(if (wrongRevision) 0 else 1, observations)
+            assertEquals(JpegPublicationPhase.PUBLISHING, journal.read()?.phase)
+            assertEquals(0, bytes.writes)
+            assertEquals(0, backend.renders)
+
+            revision = publishing.revision
+            val retry = SaveAuthorityBoundary.observing({ observations++; true }) { owner.advance(publicationOnly = true) }
+            assertEquals(if (wrongRevision) ManualOriginalTrialSavePhase.HOLD
+                else ManualOriginalTrialSavePhase.PUBLISHED, retry.phase)
+            assertEquals(if (wrongRevision) JpegPublicationPhase.PUBLISHING else JpegPublicationPhase.PUBLISHED,
+                journal.read()?.phase)
+            assertEquals(if (wrongRevision) 0 else 1, bytes.writes)
+            assertEquals(if (wrongRevision) 0 else 2, observations)
+            assertEquals(0, backend.renders)
+        }
     }
 
     private fun confirmedCancellation() = ConfirmedSaveCancellationException(CancellationException("Producer stopped"))

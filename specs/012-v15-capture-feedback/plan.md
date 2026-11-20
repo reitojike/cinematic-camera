@@ -29,7 +29,7 @@
 
 ### Documentation (this feature)
 
-`specs/012-v15-capture-feedback/{spec.md,plan.md,tasks.md}`。標準resolver/setup-plan/setup-tasksを使用。`docs/SPEC_KIT.md`に従いresearch/データ構造は本planへ統合し、quickstartはREADME/P0_REPORTへ参照、外部API contractsと別checklistは増やさない。品質checkはspecの全必須節・テスト可能性・スコープ・曖昧語・技術非依存SCを会話内で照合する。
+`specs/012-v15-capture-feedback/{spec.md,plan.md,tasks.md}`。標準resolver/setup-plan/setup-tasksを使用。`docs/SPEC_KIT.md`に従いresearch/データ構造は本planへ統合し、quickstartはREADMEとIssue #47を参照、外部API contractsと別checklistは増やさない。品質checkはspecの全必須節・テスト可能性・スコープ・曖昧語・技術非依存SCを会話内で照合する。
 
 ### Source Code (repository root)
 
@@ -56,9 +56,9 @@
 
 ## Validation / Quickstart References
 
-既存[README](../../README.md)、[P0_REPORT](../../docs/P0_REPORT.md)、[BUILD_VALIDATION](../../docs/BUILD_VALIDATION.md)を参照する。機械確認は通常の `./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug --no-daemon`（Windowsは`gradlew.bat`）、`git diff --check`と公開情報検査。CI結果は実際のAndroid workflowを根拠とし、実行していない検証を合格にしない。
+既存[README](../../README.md)、[BUILD_VALIDATION](../../docs/BUILD_VALIDATION.md)を参照する。機械確認は通常の `./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug --no-daemon`（Windowsは`gradlew.bat`）、`git diff --check`と公開情報検査。CI結果は実際のAndroid workflowを根拠とし、実行していない検証を合格にしない。
 
-実機はspecのUS1〜4とSC1〜4を独立に照合する。2秒期限/旧epochと最新target、58/48内円、EV/WB即時busy、MF適用/取消、標準触覚と端点、OFF/ON×4方向・設定途中切替・復帰・録画1本/出力開始方向を確認する。6件の結果をIssue/PRコメントへ記録し、既存v15案内4点の確認で代替しない。最終結果だけ必要時P0_REPORTへ反映する。
+実機はspecのUS1〜4とSC1〜4を独立に照合する。2秒期限/旧epochと最新target、58/48内円、EV/WB即時busy、MF適用/取消、標準触覚と端点、OFF/ON×4方向・設定途中切替・復帰・録画1本/出力開始方向を確認する。6件の結果をIssue/PRコメントへ記録し、既存v15案内4点の確認で代替しない。
 
 ## Complexity Tracking
 
