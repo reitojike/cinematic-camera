@@ -155,7 +155,9 @@ jobs:
             printf -- '- source main: `%s`\n' "$CINEMATIC_RELEASE_COMMIT"
             printf -- '- versionName: `%s`; versionCode: `%s`\n' "$RELEASE_TAG" "$RELEASE_VERSION_CODE"
             printf -- '- applicationId: `dev.cinematic.p0`; fixed signer SHA-256: `%s`\n' "$actual_cert"
-            printf -- '- 初回は旧debug版と署名が異なり上書き不可。必要データの退避を確認できるまで旧アプリを削除しないでください。設定の自動移行はありません。\n'
+            if [[ "$RELEASE_TAG" == *-* ]]; then
+              printf -- '- 初回は旧debug版と署名が異なり上書き不可。必要データの退避を確認できるまで旧アプリを削除しないでください。設定の自動移行はありません。\n'
+            fi
             printf -- '- 実機での確認済み範囲と未確認事項は、対象版にひもづく検証記録（関連 Issue / PR）を参照してください。署名・ハッシュの照合は実機確認を代替しません。\n'
             printf -- '- workflow: https://github.com/%s/actions/runs/%s\n' "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
           } > RELEASE_GENERATED.md
