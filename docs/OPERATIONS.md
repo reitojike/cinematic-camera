@@ -1,6 +1,6 @@
 # リポジトリ運用とAPK配布
 
-最新計画は [ロードマップ v3](cinematic-camera-roadmap-v3.md)。レーン5の規則・部品のみのPR-Aは追加の見た目承認不要だが、
+現行計画は [ロードマップ v4](cinematic-camera-roadmap-v4.md)。以下は共通メッセージ改修の個別規則です。レーン5の規則・部品のみのPR-Aは追加の見た目承認不要だが、
 最終headのrequired CI・canonical/独立レビュー・必須Android手動回帰の証拠をそれぞれ記録する。
 PR-B〜Eは主要状態のscreenshotと文言差一覧に対する本人承認前にマージしない。未実施検証は合格扱いしない。
 原文指示は [共通メッセージ改修指示書](DEVELOP_UI_REFACTOR_INSTRUCTIONS.md) を参照する。
@@ -114,11 +114,8 @@ local-onlyで既存当projectのdebug keyをfixtureとして使う場合も、�
 承認後はEnvironmentのmain限定policyを先に適用し、専用keyを安全にバックアップして4Secretsと公開pinを登録する。
 値をログ/コマンド引数へ出さず、正規CLIのstdin等で登録する。新しいtag/承認済みmain SHAで手動dispatchし、
 署名/ハッシュ/上書き更新を確認する。internal workflowのversionCodeはそのworkflow内のrun_numberを使う。
-全ページの既存Release（draftを含む）のうち`cinematic-camera-internal.apk`を持つものを照合し、
-Release本文の`<!-- cinematic-internal-release: versionCode=N certSha256=HEX -->`の最大番号以下なら署名前に停止する。
-markerを持つReleaseも資産名にかかわらず検査し、履歴の証明書SHA-256が公開pinと違う場合は停止する。
-本文のmarkerが欠落・不正・重複した場合やAPI取得失敗も停止する。旧runの再実行やworkflowの作り直しで番号が後退したら、
-既存の最大番号を越える採番方針を別途reviewする。過去の固定署名Release・APK・番号markerを削除/改変して回避しない。
+全ページの既存Release（draftを含む）の固定署名履歴を、[採番検査](../tools/release/check_internal_version_code.py) に従い照合する。Release本文の有効な番号・証明書markerと `RELEASE_METADATA.md` の両形式を受け付け、両方ある場合は一致を要求する。メタデータ資産を使う場合はタグ・版番号とAPKのdigestも照合する。
+有効な根拠がない場合、照合不一致、重複番号またはAPI取得失敗では停止する。候補が履歴の最大番号を超えなければ署名前に停止する。過去のRelease・APK・番号記録を削除・改変して回避しない。
 
 最初の固定署名版は現在の一時debug版と署名が異なるため、上書き更新できない。必要な写真/ログ/設定の退避と
 初回の手動移行は本人が判断する。以後も同じ鍵と増加versionCodeを維持する。端末の削除/インストールは自動実行しない。
