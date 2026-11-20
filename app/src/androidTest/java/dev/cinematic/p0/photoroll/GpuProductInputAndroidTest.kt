@@ -11,7 +11,9 @@ import android.os.*
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import androidx.test.platform.app.InstrumentationRegistry
+import dev.cinematic.p0.BuildConfig
 import dev.cinematic.p0.gpu.*
+import dev.cinematic.p0.jpegrender.original.PreviewRasterMode
 import dev.cinematic.p0.gpu.preview.GpuInputRequestDeadline
 import dev.cinematic.p0.gpu.preview.GpuPreviewSnapshot
 import dev.cinematic.p0.photoedit.*
@@ -86,12 +88,30 @@ class GpuProductInputAndroidTest {
                     check(release.await(30, TimeUnit.SECONDS)) { "Input waited for export metadata IO" }
                 } else null
                 if (blocked != null) assertTrue(entered.await(30, TimeUnit.SECONDS))
+                val decodes = CopyOnWriteArrayList<PreviewRasterMode>()
                 val loaded = try {
-                    renderer.openGpu(repository, provider.uri(id), false,
-                        CancellationSignal(), GpuInputRequestDeadline(nowMillis = SystemClock::elapsedRealtime),
-                        { failure -> assertNull(failure); admitted.incrementAndGet() }) { PhotoAdjustmentPolicy.defaults }
-                        .also { if (blocked != null) assertFalse("Photo input must finish before save IO", blocked.isDone) }
+                    GpuPhotoRollInputs.observeForDiagnostics(object : GpuPhotoRollInputs.DiagnosticObserver {
+                        override fun nativeDecodeStarted(mode: PreviewRasterMode) { decodes += mode }
+                    }).use {
+                        renderer.openGpu(repository, provider.uri(id), false,
+                            CancellationSignal(), GpuInputRequestDeadline(nowMillis = SystemClock::elapsedRealtime),
+                            { failure -> assertNull(failure); admitted.incrementAndGet() }, guide = {}) { PhotoAdjustmentPolicy.defaults }
+                            .also { if (blocked != null) assertFalse("Photo input must finish before save IO", blocked.isDone) }
+                    }
                 } finally { release.countDown(); blocked?.get(30, TimeUnit.SECONDS) }
+                val compareHalfGuide = BuildConfig.DEBUG && BuildConfig.INITIAL_HALF_GUIDE
+                if (compareHalfGuide) {
+                    assertTrue("The explicit comparison must end with one FULL decode",
+                        decodes == listOf(PreviewRasterMode.FULL) ||
+                            decodes == listOf(PreviewRasterMode.HALF_CANDIDATE, PreviewRasterMode.FULL))
+                } else {
+                    assertEquals("The normal editor must decode HALF only once, even with guides",
+                        listOf(PreviewRasterMode.HALF_CANDIDATE), decodes)
+                }
+                if (width <= 1024 && height <= 1024 && !compareHalfGuide) {
+                    assertEquals((loaded.geometry.outputWidth + 1) / 2, loaded.input.width)
+                    assertEquals((loaded.geometry.outputHeight + 1) / 2, loaded.input.height)
+                }
                 assertEquals(1, admitted.get())
                 assertEquals(width, loaded.geometry.rawWidth); assertEquals(height, loaded.geometry.rawHeight)
                 assertEquals(width, loaded.geometry.sourceWidth); assertEquals(height, loaded.geometry.sourceHeight)
