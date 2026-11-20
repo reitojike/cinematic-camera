@@ -10,7 +10,7 @@ class InitialPreviewPolicyTest {
     private val identity = InitialPreviewIdentity(source, Original24PreflightGeometry(10, 8, 10, 8, 1, 10, 8), "recipe-v1:all-values")
     @Test fun candidatePriorityIsExplicitAndStable() {
         assertEquals(listOf(InitialPreviewKind.SAVED_CACHE, InitialPreviewKind.SAVED_JPEG,
-            InitialPreviewKind.EMBEDDED_JPEG, InitialPreviewKind.HALF_GUIDE), InitialPreviewPolicy.priority)
+            InitialPreviewKind.HALF_GUIDE), InitialPreviewPolicy.priority)
     }
     @Test fun savedImagesRequireCompleteMatchingRecipeAndOrientationEvidence() {
         for (kind in listOf(InitialPreviewKind.SAVED_CACHE, InitialPreviewKind.SAVED_JPEG)) {
@@ -29,8 +29,8 @@ class InitialPreviewPolicyTest {
         for (kind in InitialPreviewKind.entries) for (other in others)
             assertFalse(InitialPreviewPolicy.eligible(identity, other, kind, true, true))
     }
-    @Test fun cameraGuidesAreNotRepresentedAsEditedResults() {
-        for (kind in listOf(InitialPreviewKind.EMBEDDED_JPEG, InitialPreviewKind.HALF_GUIDE)) {
+    @Test fun debugRawGuideIsNotRepresentedAsAnEditedResult() {
+        for (kind in listOf(InitialPreviewKind.HALF_GUIDE)) {
             assertFalse(kind.edited)
             assertTrue(InitialPreviewPolicy.eligible(identity, identity.copy(canonicalRecipe = "unapplied"), kind, false, true))
             assertFalse(InitialPreviewPolicy.eligible(identity, identity, kind, false, false))
@@ -38,7 +38,7 @@ class InitialPreviewPolicyTest {
     }
     @Test fun exactFrameWinsEvenWhenLateGuideHasTheSameIdentity() {
         val gate = InitialPreviewGate(); val ticket = gate.begin(identity)
-        assertTrue(gate.accept(ticket, InitialPreviewKind.EMBEDDED_JPEG))
+        assertTrue(gate.accept(ticket, InitialPreviewKind.HALF_GUIDE))
         gate.exact(ticket)
         for (kind in InitialPreviewKind.entries) assertFalse(gate.accept(ticket, kind))
     }
@@ -46,7 +46,7 @@ class InitialPreviewPolicyTest {
         val gate = InitialPreviewGate(); val ticket = gate.begin(identity)
         assertTrue(gate.accept(ticket, InitialPreviewKind.HALF_GUIDE))
         assertTrue(gate.accept(ticket, InitialPreviewKind.SAVED_JPEG))
-        assertFalse(gate.accept(ticket, InitialPreviewKind.EMBEDDED_JPEG))
+        assertFalse(gate.accept(ticket, InitialPreviewKind.HALF_GUIDE))
         assertFalse(gate.accept(ticket, InitialPreviewKind.SAVED_JPEG))
         assertTrue(gate.accept(ticket, InitialPreviewKind.SAVED_CACHE))
     }

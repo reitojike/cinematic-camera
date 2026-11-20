@@ -2,9 +2,12 @@ package dev.cinematic.p0.rawcapture
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.system.Os
+import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.jpegrender.original.Original24PreflightGeometry
 import dev.cinematic.p0.jpegrender.original.Original24Request
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.security.MessageDigest
 import org.junit.Assert.*
 import org.junit.Test
@@ -18,6 +21,55 @@ class InitialPreviewSavedJpegAndroidTest {
             return ByteArrayOutputStream().also { assertTrue(bitmap.compress(Bitmap.CompressFormat.JPEG,95,it)) }.toByteArray()
         } finally { bitmap.recycle() }
     }
+    @Test fun trustedRootAliasReadsJournalButRejectsDescendantRedirectAndSidecars() {
+        val target = InstrumentationRegistry.getInstrumentation().targetContext
+        val privateRoot = File.createTempFile("saved-guide-alias-", ".test", target.cacheDir.canonicalFile)
+        assertTrue(privateRoot.delete() && privateRoot.mkdir())
+        val root = File(privateRoot, "real").apply { check(mkdir()) }
+        val alias = File(privateRoot, "alias")
+        val directory = File(root, "request").apply { check(mkdir()) }
+        val journal = File(directory, "manual-request.bin")
+        val outside = File(privateRoot, "outside").apply { check(mkdir()) }
+        val foreign = File(outside, "manual-request.bin")
+        val data = byteArrayOf(1, 2, 3)
+        val path = "request/manual-request.bin"
+        val redirected = File(root, "redirected")
+        val linkedLeaf = File(directory, "linked.bin")
+        try {
+            Os.symlink(root.path, alias.path)
+            assertNotEquals(alias.absoluteFile, alias.canonicalFile)
+            assertEquals(root, alias.canonicalFile)
+            // Cold miss through the alias is still a no-op.
+            assertNull(InitialPreviewSavedJpeg.readBase(alias, path, 3))
+            journal.writeBytes(data)
+            foreign.writeBytes(data)
+            assertArrayEquals(data, InitialPreviewSavedJpeg.readBase(root, path, 3))
+            assertArrayEquals(data, InitialPreviewSavedJpeg.readBase(alias, path, 3))
+
+            Os.symlink(outside.path, redirected.path)
+            Os.symlink(foreign.path, linkedLeaf.path)
+            assertNull(InitialPreviewSavedJpeg.readBase(alias, "redirected/manual-request.bin", 3))
+            assertNull(InitialPreviewSavedJpeg.readBase(alias, "request/linked.bin", 3))
+            assertNull(InitialPreviewSavedJpeg.readBase(alias, "../outside/manual-request.bin", 3))
+            assertNull(InitialPreviewSavedJpeg.readBase(alias, foreign.absolutePath, 3))
+            assertArrayEquals(data, foreign.readBytes())
+
+            for (suffix in listOf(".bak", ".new")) {
+                val sidecar = File(journal.path + suffix).apply { writeBytes(byteArrayOf(4)) }
+                assertNull(InitialPreviewSavedJpeg.readBase(alias, path, 3))
+                assertArrayEquals(data, journal.readBytes())
+                assertArrayEquals(byteArrayOf(4), sidecar.readBytes())
+                assertTrue(sidecar.delete())
+            }
+        } finally {
+            // Never recurse through a test-owned symlink.
+            linkedLeaf.delete()
+            redirected.delete()
+            alias.delete()
+            check(privateRoot.deleteRecursively())
+        }
+    }
+
     @Test fun publishedSnapshotIsInspectedWithoutReopeningTheJpeg() {
         check(jpeg(), expected=true, wrongHeader=false)
     }

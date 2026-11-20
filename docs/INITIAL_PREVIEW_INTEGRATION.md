@@ -4,40 +4,17 @@ Refs #233 / #241 / #464。
 
 ## 現行方針
 
-通常 debug/release の編集プレビューは、照合済み原本を LibRaw `half_size` で一度だけ展開し、従来どおり調整を反映した GPU 表示へ渡します。案内画像の優先順（保存済みcache → 照合済み保存JPEG → 埋め込みJPEG）はそのままです。案内用に別の HALF は展開せず、取消・失敗時にも FULL へ暗黙に再試行しません。原寸の保存は従来の経路で同じ原本・設定・原寸 geometry を使い、プレビュー入力を再利用しません。#441 の PPG 変更も含みません。
+通常 debug/release の編集プレビューは、照合済み原本を LibRaw `half_size` で一度だけ展開し、調整を反映した GPU 表示へ渡します。案内として使用するのは、現在の写真と編集条件に一致する照合済み保存JPEGだけです。1枚だけ保持する縮小キャッシュも、同じ公開記録とJPEGの再照合後に限り使用します。保存候補のない初回オープンでは、存在確認から直ちにHALFへ進み、保存JPEGやその公開記録を読みません。候補との不一致も、可能な最初の照合で案内なしに進みます。原本の照合、向き・crop、展開・取消・資源制限は従来どおりです。
 
-明示的に `-PinitialHalfGuide=true` を指定した debug のみ、旧検証用の HALF 案内 → FULL 編集入力を維持します。release ではこの比較経路は無効です。以下にある FULL・half→FULL の計測は従来の比較資料で、通常版 HALF の計測ではありません。
+埋め込みJPEGの抽出・照合・デコード、撮影時の案内文言、アプリの専用JNI接続は廃止します。ロール一覧の画像、DNGの向き処理、原寸AHDの保存とJPEG公開、明示指定したdebug専用のHALF案内→FULL比較は変更しません。保存案内は操作を許可せず、同じ要求の調整済みGPU表示が届くと外れます。
 
-## 候補と根拠
+## 保存JPEGの同一性と所有権
 
-| 優先 | ローカル候補の実装 | 制約 |
-| --- | --- | --- |
-| 保存済みcache | 照合済み保存JPEGの縮小像だけを1枚保持。hit時も原本/recipe/geometry/公開記録/JPEG SHAを再照合 | 新GPU readbackなし。未保存GPU編集のcacheではない |
-| 保存済みJPEG | 正規publication v3/PUBLISHED、cursorと世代intent、完全recipe・既知renderer・原本SHA・geometry/fullCoverage・公開所有行・JPEG SHA/headerを照合 | read-only baseのみ、AtomicFile recovery/保存queue/世代作成/公開を使わない。未知・欠損・不一致はmiss |
-| embedded JPEG | 同一照合済snapshot FDからLibRaw thumbs_listを得て直接slice。8MiB、4096辺/4MP、原本未回転寸法以下、range/SOI/EOI/SOS構造と明示向きを検査 | JPEG自身の向きでFit。RAW default cropとの画角/色一致を保証しない |
-| half案内像 | 同じsnapshot FD、共有1枠の同期hook内で一度だけHALF_CANDIDATE、raster解放後にFULL AHDへ | 明示指定した旧debug比較のみ。通常版では案内としては生成しない |
+- 正規のPUBLISHED v3、cursorと世代intent、完全recipeと既知renderer、原本fingerprint・geometry・full coverage、公開所有行、JPEG SHAと出力体裁を照合します。読み取り専用で、AtomicFileの復旧、保存queue、世代作成、公開は実行しません。未知・欠損・不一致は案内なしです。
+- 原本preflightが同じ原本bytesから整数DNGのcropを確定します。原寸に対応するJPEGを、長辺1024以下のsRGB Bitmapへ縮小します。キャッシュは独立コピーのみ。未保存編集のGPU readbackはキャッシュしません。
+- 案内の照合とHALFは同じ専用入力worker上で直列です。選択・再試行・背景化・trimでは古い要求を閉じ、遅い案内を表示しません。公開済みBitmapの後処理、原本の事後照合、メモリおよび所有権管理は維持します。
 
-saved JPEGのcrop座標が明示保存されていないことだけを理由に全件missとはしない。既知の整数DNG契約では、同じ原本bytesの一意CFA IFD/ActiveArea/DefaultCropOrigin/Sizeからcropを導出できる。履歴監査で既知contractと原本/寸法/向き/fullCoverageを照合する限定根拠を確認した。未知contractは推測しない。新manifestや保存codecは追加しない。
-
-## snapshot / native / memory
-
-`Original24PreviewSession` が作成・fingerprint照合したread-only FDを同期hookに貸し、guide処理が戻ってから同FDで通常はHALFを実行する（旧debug比較のみFULL）。入力IO workerと既存共有tokenを保持し、opaque native退出/cleanup確認前に解放しない。取消/half失敗を握りつぶしてFULLへ進むことは禁止。失敗したcloseは既存ownerで保持する。原本事後照合・原寸geometryの検査と、HALF入力の寸法検査は維持。
-
-抽出器は `unpack_thumb_ex` を使わずsnapshot範囲を直接コピーする。既存appのLibRaw raw targetを再利用し、共通macro・dng_decoder本体は不変。入力64MiB、JPEG8MiB上限を維持する。旧実装もunpack呼出前に8MiB検査済みで、既定512MiBをそのまま確保していたという意味ではない。
-
-LibRaw constructor flags/progress取消と `max_raw_memory_mb=512` は現行Original24経路に合わせる。WB metadataを捕捉するAsShot callbackはJPEG抽出には登録しない。先行preflightはcallback登録とgeometry検証を行うがWB意味検証前に戻るため、WBの正しさを検証済みとはしない。FULLが従来WB検証と原本事後照合を行う。全設定完全一致やmetadata累積hardcapは主張しない。2026-11-15の本人判断により、旧総hardcap必須条件をこの限定条件へ更新した。
-
-JPEG完全entropy検出は要求しない。構造検査と標準codecが報告するエラー拒否は維持するが、回復可能なentropy警告は成功し得る。新codec依存・独自entropy parserなし。0.02 byte/pixel等の極端下限はPixel/SIGMA fpの承認済実データ未取得につき未採用。
-
-各Bitmapは長辺1024以下/ARGB8888/最大4MiB。decode回転中は2枚、cache専有は1枚、現requestのUI公開は1枚。halfは最大1024のlinear入力と表示変換IntArrayを一時使用する。原寸Bitmapは作らない。cacheコピー/guide処理とFULL開始前に既存OS memory admissionを再確認する。これらは明示所有と配置上限であって、退場中Compose/RenderThreadやGC待ちを含むプロセス総量の厳密capではない。反復切替の保持/実メモリ観測を別途行う。
-
-## 表示と寿命
-
-photoroll側Compose Bitmap overlayを使い、GPU Surfaceは背面で維持する。GPU画素処理/presenterファイルは変更しない。保存像、撮影時案内像、RAW基準案内像を別ラベルで表示し、編集未反映を明示する。比較/編集/保存の有効化は従来exact gateのまま。
-
-exact presentedの同request値を観測したらoverlayを不可逆に外す。選択/再試行/背景化/trimは旧handoffを閉じ、post失敗・取消・late結果の未公開Bitmapはrecycleする。公開済BitmapはCompose/RenderThreadが参照し得るので明示recycleせず参照を落とす。cacheは独立copyのみをrecycleし、trim/retryはcache世代を更新して遅い書込を拒否する。UIへ渡した結果を再cache化しない。
-
-## 検証の区別
+## 過去の検証記録（廃止したJPEG案内・旧debug比較を含む）
 
 - 旧契約の `ffe3b5a6`：lint/unit/APK build成功、Android合成10件中9成功/1失敗。SOS後entropy2bytes＋EOIをImageDecoderが受理したため、完全拒否契約に失敗した。この履歴を消さず、新条件の合格には読み替えない。
 - 新条件：直接sliceと構造/容量/向き、同snapshot half→FULL、原本不変・cleanup・取消・exact置換・late callback・cache寿命・saved lookup世代/TOCTOUを別試験する。

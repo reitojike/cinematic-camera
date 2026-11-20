@@ -51,6 +51,34 @@ class InitialPreviewSavedJpegTest {
         assertEquals(record,found.publication); assertEquals(request,found.request)
         assertEquals(fingerprint,found.encoded.fingerprint); assertEquals(1,reader.opened)
     }
+    @Test fun missingCursorDoesNotReadAnyLaterRecordOrTouchMediaStore() {
+        val reader = object : InitialPreviewSavedJpeg.Reader {
+            override fun cursor(): ByteArray? = null
+            override fun intent(generation: Long): ByteArray? = error("unexpected intent")
+            override fun publication(generation: Long): ByteArray? = error("unexpected publication")
+            override fun inspect(uri: String): DngPendingRow? = error("unexpected MediaStore inspection")
+            override fun open(record: JpegPublicationRecord): java.io.InputStream = error("unexpected JPEG read")
+        }
+        assertNull(InitialPreviewSavedJpeg.read(source, geometry, request.recipe, reader, { false },
+            beforeSnapshot = { error("unexpected JPEG admission") }) {
+            error("unexpected JPEG inspection")
+        })
+    }
+    @Test fun savedCandidateRequiresAdmissionBeforeProviderOpenAndPropagatesFailure() {
+        val reader = Reader()
+        val failure = java.io.IOException("test admission failure")
+        val attempt = runCatching {
+            InitialPreviewSavedJpeg.read(source, geometry, request.recipe, reader, { false },
+                beforeSnapshot = { throw failure }) { error("unexpected JPEG inspection") }
+        }
+        assertSame(failure, attempt.exceptionOrNull())
+        assertEquals(0, reader.opened)
+        var admitted = false
+        reader.afterRead = { assertTrue("admission happens before JPEG open", admitted) }
+        assertNotNull(InitialPreviewSavedJpeg.read(source, geometry, request.recipe, reader, { false },
+            beforeSnapshot = { admitted = true }) { JpegInspection(output, it.fingerprint) })
+        assertEquals(1, reader.opened)
+    }
     @Test fun pendingForeignGenerationAndMissingIntentNeverReadJpeg() {
         val reader = Reader()
         reader.journalBytes = JpegPublicationCodec.encode(record.copy(phase=JpegPublicationPhase.PUBLISHING))
@@ -110,6 +138,9 @@ class InitialPreviewSavedJpegTest {
             assertTrue(sidecar.delete())
         }
         assertNull(InitialPreviewSavedJpeg.readBase(root,"a/missing.bin",3))
-        assertNull(InitialPreviewSavedJpeg.readBase(root,"../outside.bin",3))
+        val outside = File(root.parentFile, "outside.bin").apply { writeBytes(byteArrayOf(7)) }
+        assertNull(InitialPreviewSavedJpeg.readBase(root, "../outside.bin", 3))
+        assertNull(InitialPreviewSavedJpeg.readBase(root, outside.absolutePath, 3))
+        assertArrayEquals(byteArrayOf(7), outside.readBytes())
     }
 }
