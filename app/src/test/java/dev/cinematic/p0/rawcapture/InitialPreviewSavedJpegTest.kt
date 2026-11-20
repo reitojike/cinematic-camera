@@ -59,9 +59,25 @@ class InitialPreviewSavedJpegTest {
             override fun inspect(uri: String): DngPendingRow? = error("unexpected MediaStore inspection")
             override fun open(record: JpegPublicationRecord): java.io.InputStream = error("unexpected JPEG read")
         }
-        assertNull(InitialPreviewSavedJpeg.read(source, geometry, request.recipe, reader, { false }) {
+        assertNull(InitialPreviewSavedJpeg.read(source, geometry, request.recipe, reader, { false },
+            beforeSnapshot = { error("unexpected JPEG admission") }) {
             error("unexpected JPEG inspection")
         })
+    }
+    @Test fun savedCandidateRequiresAdmissionBeforeProviderOpenAndPropagatesFailure() {
+        val reader = Reader()
+        val failure = java.io.IOException("test admission failure")
+        val attempt = runCatching {
+            InitialPreviewSavedJpeg.read(source, geometry, request.recipe, reader, { false },
+                beforeSnapshot = { throw failure }) { error("unexpected JPEG inspection") }
+        }
+        assertSame(failure, attempt.exceptionOrNull())
+        assertEquals(0, reader.opened)
+        var admitted = false
+        reader.afterRead = { assertTrue("admission happens before JPEG open", admitted) }
+        assertNotNull(InitialPreviewSavedJpeg.read(source, geometry, request.recipe, reader, { false },
+            beforeSnapshot = { admitted = true }) { JpegInspection(output, it.fingerprint) })
+        assertEquals(1, reader.opened)
     }
     @Test fun pendingForeignGenerationAndMissingIntentNeverReadJpeg() {
         val reader = Reader()

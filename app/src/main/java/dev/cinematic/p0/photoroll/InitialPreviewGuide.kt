@@ -60,7 +60,7 @@ internal object InitialPreviewGuide {
         val recipe = ManualOriginalTrialRender.recipe(values.strength, PhotoAdjustmentPolicy.adjustments(values))
         val identity = InitialPreviewIdentity(original.reference, geometry, recipe.schema + ":" + recipe.payload)
         cache.select(identity, cacheGeneration)
-        val saved = InitialPreviewSavedJpeg.read(context, original.reference, geometry, recipe) { signal.isCanceled }
+        val saved = InitialPreviewSavedJpeg.read(context, original.reference, geometry, recipe, beforeSnapshot = ::admit) { signal.isCanceled }
         if (saved != null) {
             admit()
             cache.copy(identity, saved.publication, cacheGeneration)?.let {

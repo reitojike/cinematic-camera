@@ -31,7 +31,7 @@ internal object InitialPreviewSavedJpeg {
     }
 
     fun read(context: Context, source: SharedOriginalReference, geometry: Original24PreflightGeometry,
-        recipe: RenderRecipeSnapshot, shouldStop: () -> Boolean): Candidate? {
+        recipe: RenderRecipeSnapshot, beforeSnapshot: () -> Unit, shouldStop: () -> Boolean): Candidate? {
         check(Looper.myLooper() != Looper.getMainLooper()) { "Saved guide lookup requires IO" }
         val app = context.applicationContext
         val id = ManualOriginalTrialRequests.identity(source)
@@ -47,46 +47,59 @@ internal object InitialPreviewSavedJpeg {
             override fun inspect(uri: String) = rows.inspect(uri)
             override fun open(record: JpegPublicationRecord) = rows.openRead(record.target, requireNotNull(record.uri), false)
         }
-        return read(source, geometry, recipe, reader, shouldStop) { snapshot ->
+        return read(source, geometry, recipe, reader, shouldStop, beforeSnapshot) { snapshot ->
             AndroidJpegInspector().inspectSnapshot(snapshot, shouldStop)
         }
     }
 
     internal fun read(source: SharedOriginalReference, geometry: Original24PreflightGeometry,
         recipe: RenderRecipeSnapshot, reader: Reader, shouldStop: () -> Boolean,
+        beforeSnapshot: () -> Unit = {},
         inspect: (EncodedJpegSnapshot) -> JpegInspection): Candidate? {
         fun checkpoint() { if (shouldStop()) throw CancellationException("Saved guide stopped") }
         checkpoint()
-        return try {
-            val cursor = reader.cursor() ?: return null
+        fun <T> recoverableMiss(read: () -> T?): T? = try { read() }
+        catch (_: IOException) { checkpoint(); null }
+        catch (_: SecurityException) { checkpoint(); null }
+        catch (_: IllegalArgumentException) { checkpoint(); null }
+        data class BoundPublication(val cursor: ByteArray, val request: Original24Request,
+            val intent: ByteArray, val journal: ByteArray, val record: JpegPublicationRecord,
+            val uri: String, val row: DngPendingRow)
+        val saved = recoverableMiss {
+            val cursor = reader.cursor() ?: return@recoverableMiss null
             val request = ManualOriginalTrialRequestCodec.decode(cursor)
             if (request.source != source || request.captureId != ManualOriginalTrialRequests.identity(source) ||
-                request.recipe != recipe) return null
-            val intent = reader.intent(request.generation) ?: return null
-            if (!intent.contentEquals(cursor)) return null
-            val journal = reader.publication(request.generation) ?: return null
+                request.recipe != recipe) return@recoverableMiss null
+            val intent = reader.intent(request.generation) ?: return@recoverableMiss null
+            if (!intent.contentEquals(cursor)) return@recoverableMiss null
+            val journal = reader.publication(request.generation) ?: return@recoverableMiss null
             // Publication v3 is the only codec carrying the admitted manual-original contract.
-            if (journal.size < 8 || ByteBuffer.wrap(journal).getInt(4) != 3) return null
+            if (journal.size < 8 || ByteBuffer.wrap(journal).getInt(4) != 3) return@recoverableMiss null
             val record = JpegPublicationCodec.decode(journal)
-            if (!matches(request, geometry, record)) return null
+            if (!matches(request, geometry, record)) return@recoverableMiss null
             val uri = requireNotNull(record.uri)
-            val row = reader.inspect(uri) ?: return null
-            if (row.uri != uri || !record.target.accepts(row, pending = false)) return null
+            val row = reader.inspect(uri) ?: return@recoverableMiss null
+            if (row.uri != uri || !record.target.accepts(row, pending = false)) return@recoverableMiss null
+            BoundPublication(cursor, request, intent, journal, record, uri, row)
+        } ?: return null
+        checkpoint()
+        // Admission failures are authoritative, not a recovery/missing-publication event.
+        beforeSnapshot()
+        val (cursor, request, intent, journal, record, uri, row) = saved
+        return recoverableMiss {
             checkpoint()
             val snapshot = EncodedJpegSnapshot.read({ reader.open(record) }, record.fingerprint.bytes, shouldStop)
-            if (snapshot.fingerprint != record.fingerprint) return null
+            if (snapshot.fingerprint != record.fingerprint) return@recoverableMiss null
             val observed = inspect(snapshot)
-            if (observed.fingerprint != record.fingerprint || observed.output != record.render.request.output) return null
+            if (observed.fingerprint != record.fingerprint || observed.output != record.render.request.output) return@recoverableMiss null
             checkpoint()
             // Re-observe the same identities, never mix an older publication with a newer cursor.
             if (reader.inspect(uri) != row || reader.publication(request.generation)?.contentEquals(journal) != true ||
                 reader.intent(request.generation)?.contentEquals(intent) != true || reader.cursor()?.contentEquals(cursor) != true)
-                return null
+                return@recoverableMiss null
             checkpoint()
             Candidate(snapshot, observed.output.width, observed.output.height, request, record)
-        } catch (_: IOException) { checkpoint(); null }
-          catch (_: SecurityException) { checkpoint(); null }
-          catch (_: IllegalArgumentException) { checkpoint(); null }
+        }
     }
 
     internal fun matches(request: Original24Request, geometry: Original24PreflightGeometry,
