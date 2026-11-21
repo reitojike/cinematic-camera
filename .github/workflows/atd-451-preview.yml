@@ -1,0 +1,187 @@
+name: "#451 isolated ATD diagnostics"
+on:
+  pull_request:
+    types: [opened]
+    paths:
+      - '.github/workflows/atd-451-preview.yml'
+      - 'tools/atd-451/**'
+permissions:
+  contents: read
+concurrency:
+  group: atd-451-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  one-test:
+    if: github.run_attempt == 1 && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.ref == 'test/451-compact-font-repro' && github.event.pull_request.head.ref == 'test/451-hosted-diagnostics-once'
+    name: "#451 short / font 2× (non-GPU Canvas evidence)"
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      ANDROID_SERIAL: emulator-5554
+      SELECTOR: dev.cinematic.p0.photoroll.DevelopCompactAccessibilityAndroidTest#shortViewportAtSystemDoubleFontReachesSaveAndComparison
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Require the exact reviewed fixture parent and workflow-only payload
+        run: |
+          set -euo pipefail
+          parent=b863bbb379a8a1cce8e82fa5281b62aa24e8e69f
+          test "$(git rev-parse HEAD^)" = "$parent"
+          expected=$'.github/workflows/atd-451-preview.yml\ntools/atd-451/collect.py\ntools/atd-451/verify.py'
+          test "$(git diff --name-only "$parent" HEAD | LC_ALL=C sort)" = "$expected"
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: android-actions/setup-android@v4
+        with:
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+      - name: Provision disposable hosted emulator prerequisites
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test -c /dev/kvm
+          if ! /sbin/ldconfig -p | grep -F 'libpulse.so.0 ' >/dev/null ||
+             { ! { test -r /dev/kvm && test -w /dev/kvm; } && ! command -v setfacl >/dev/null; }; then
+            sudo apt-get update
+            sudo apt-get install -y libpulse0 acl
+          fi
+          if ! { test -r /dev/kvm && test -w /dev/kvm; }; then
+            sudo setfacl -m "u:$(id -u):rw" /dev/kvm
+          fi
+      - name: Verify hosted emulator prerequisites
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          if ! { test -c /dev/kvm && test -r /dev/kvm && test -w /dev/kvm; }; then
+            echo "::error::Hosted runner lacks existing read/write KVM access after prerequisite setup."
+            exit 1
+          fi
+          if ! /sbin/ldconfig -p | grep -F 'libpulse.so.0 ' >/dev/null; then
+            echo "::error::Hosted runner lacks libpulse.so.0 after prerequisite setup."
+            exit 1
+          fi
+      - name: Install job-local ATD and Python dependencies
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/atd-451-venv"
+          "$RUNNER_TEMP/atd-451-venv/bin/python" -m pip install Pillow==12.0.0
+          sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0' 'ndk;29.0.14206865' 'cmake;3.22.1' 'emulator' 'system-images;android-37.0;google_atd;x86_64'
+          "$ANDROID_HOME/emulator/emulator" -accel-check
+      - name: Build only reviewed debug fixture before boot
+        run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon --max-workers=2
+      - name: Diagnose boot, prerequisites and the one selected test
+        run: |
+          set -Eeuo pipefail
+          phase=avd-create
+          trap 'rc=$?; printf "::error::451 phase=%s exit=%s\n" "$phase" "$rc"' ERR
+          echo "451 phase=avd-create start"
+          echo no | avdmanager create avd --name ci_451 --package 'system-images;android-37.0;google_atd;x86_64'
+          config="$HOME/.android/avd/ci_451.avd/config.ini"
+          test -f "$config"
+          awk '!/^[[:space:]]*(hw\.ramSize|hw\.cpu\.ncore|disk\.dataPartition\.size|hw\.lcd\.(width|height|density))[[:space:]]*=/' "$config" > "$config.next"
+          cat >> "$config.next" <<'CFG'
+          hw.ramSize=2048
+          hw.cpu.ncore=2
+          disk.dataPartition.size=2G
+          hw.lcd.width=1080
+          hw.lcd.height=2424
+          hw.lcd.density=400
+          CFG
+          mv -- "$config.next" "$config"
+          echo "451 phase=avd-create pass"
+          phase=adb-empty
+          test -z "$(adb devices | awk 'NR>1 && NF {print}')"
+          echo "451 phase=adb-empty pass"
+          phase=boot
+          "$ANDROID_HOME/emulator/emulator" -avd ci_451 -port 5554 -no-snapshot -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -accel on > "$RUNNER_TEMP/atd-451-emulator.log" 2>&1 &
+          owned=$!
+          stop() {
+            if kill -0 "$owned" 2>/dev/null; then
+              if [ "$(timeout -k 2s 5s adb -s "$ANDROID_SERIAL" emu avd name 2>/dev/null | head -1 | tr -d '\r')" = ci_451 ]; then
+                timeout -k 2s 5s adb -s "$ANDROID_SERIAL" emu kill >/dev/null 2>&1 || true
+              fi
+              kill "$owned" 2>/dev/null || true
+              for ((tries=0; tries<10; tries++)); do
+                if ! kill -0 "$owned" 2>/dev/null; then break; fi
+                sleep 0.2
+              done
+              if kill -0 "$owned" 2>/dev/null; then kill -KILL "$owned" 2>/dev/null || true; fi
+              if ! kill -0 "$owned" 2>/dev/null; then wait "$owned" 2>/dev/null || true; fi
+            fi
+          }
+          trap stop EXIT
+          timeout 180 bash -c 'until [ "$(adb -s "$ANDROID_SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; do sleep 2; done'
+          echo "451 phase=boot pass"
+          phase=adb-inventory
+          test "$(adb devices | awk 'NR>1 && NF {print $1}')" = "$ANDROID_SERIAL"
+          echo "451 phase=adb-inventory pass"
+          phase=owned-avd-name
+          test "$(adb -s "$ANDROID_SERIAL" emu avd name | head -1 | tr -d '\r')" = ci_451
+          echo "451 phase=owned-avd-name pass"
+          phase=font-write
+          adb -s "$ANDROID_SERIAL" shell settings put system font_scale 2.0
+          echo "451 phase=font-write pass"
+          phase=font-readback
+          test "$(adb -s "$ANDROID_SERIAL" shell settings get system font_scale | tr -d '\r')" = 2.0
+          echo "451 phase=font-readback pass"
+          phase=instrumentation
+          echo "451 phase=instrumentation start"
+          rc=0
+          ./gradlew :app:connectedDebugAndroidTest --rerun --no-daemon --max-workers=1 --console=plain \
+            -Pandroid.testInstrumentationRunnerArguments.class="$SELECTOR" \
+            -Pandroid.testInstrumentationRunnerArguments.isolated=true \
+            -Pandroid.testInstrumentationRunnerArguments.developCompact451=true \
+            > "$RUNNER_TEMP/atd-451-gradle.log" 2>&1 || rc=$?
+          python3 -B - <<'PYTHON'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          counts = dict(matched=0, failure=0, error=0, skipped=0, unreadable=0)
+          tags = set()
+          markers = {"No unique visible fixture node": "accessibility-node",
+                     "Strength row is reachable": "strength-unreachable",
+                     "bottom comparison segment becomes selected": "comparison-state",
+                     "managed additional-test-output channel": "fixture-output-channel"}
+          for path in Path("app/build/outputs/androidTest-results/connected").rglob("TEST-*.xml"):
+              try:
+                  root = ET.parse(path).getroot()
+              except ET.ParseError:
+                  counts["unreadable"] += 1
+                  continue
+              for test in root.iter("testcase"):
+                  if (test.get("name") != "shortViewportAtSystemDoubleFontReachesSaveAndComparison"
+                      or test.get("classname") != "dev.cinematic.p0.photoroll.DevelopCompactAccessibilityAndroidTest"):
+                      continue
+                  counts["matched"] += 1
+                  for key in ("failure", "error", "skipped"):
+                      node = test.find(key)
+                      if node is not None:
+                          counts[key] += 1
+                          content = node.get("message", "") + (node.text or "")
+                          tags.update(tag for marker, tag in markers.items() if marker in content)
+          print("451 exact-method " + " ".join(f"{k}={v}" for k,v in counts.items())
+                + " tags=" + (",".join(sorted(tags)) or "none"))
+          PYTHON
+          if [ "$rc" != 0 ]; then
+            printf '::error::451 phase=instrumentation exit=%s\n' "$rc"
+            exit "$rc"
+          fi
+          echo "451 phase=instrumentation pass"
+      - name: Reject missing or skipped exact test; stage only synthetic evidence
+        run: '"$RUNNER_TEMP/atd-451-venv/bin/python" -B tools/atd-451/verify.py app/build "$RUNNER_TEMP/review-451"'
+      - name: Upload only passed synthetic Canvas evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: atd-451-canvas-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/review-451/
+          if-no-files-found: error
+          retention-days: 7
