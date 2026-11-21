@@ -115,6 +115,29 @@ class DevelopCompactAccessibilityAndroidTest {
             assertTrue(node.performAction(AccessibilityNodeInfo.ACTION_CLICK))
             settle()
         }
+        // Samples only the visible image viewport, mapped from screen to the captured decor.
+        // Nine rows by nine columns; at least 12 interior hits and at most 2 opposite hits.
+        fun verifyPreviewColor(scenario: ActivityScenario<PhotoRollActivity>, expected: Int, other: Int) {
+            val viewport = bounds(awaitMatch("現像画像の表示領域"))
+            val offset = IntArray(2)
+            scenario.onActivity { it.window.decorView.getLocationOnScreen(offset) }
+            viewport.offset(-offset[0], -offset[1])
+            val shot = fixture.captureSoftware()
+            try {
+                check(viewport.intersect(0, 0, shot.width, shot.height))
+                check(viewport.width() >= 36 && viewport.height() >= 36)
+                var expectedHits = 0
+                var otherHits = 0
+                for (y in 1..9) for (x in 1..9) {
+                    val color = shot.getPixel(viewport.left + x * viewport.width() / 10,
+                        viewport.top + y * viewport.height() / 10)
+                    if (color == expected) expectedHits++
+                    if (color == other) otherHits++
+                }
+                assertTrue("Synthetic preview colors expected=$expectedHits opposite=$otherHits of 81",
+                    expectedHits >= 12 && otherHits <= 2)
+            } finally { shot.recycle() }
+        }
         fun capturePng(name: String) {
             val shot = fixture.captureSoftware()
             try {
@@ -138,6 +161,11 @@ class DevelopCompactAccessibilityAndroidTest {
                     val viewport = awaitMatch("現像画像の表示領域")
                     assertEquals(Triple(360f, 480f, 2f), configuration.get())
                     capturePng("360x480-font2-initial")
+                    // Defer comparison color assertions until after independently exercising save.
+                    var initialBlueFailure: Throwable? = null
+                    try { verifyPreviewColor(scenario, Color.BLUE, Color.GRAY) }
+                    catch (failure: AssertionError) { initialBlueFailure = failure }
+                    catch (failure: IllegalStateException) { initialBlueFailure = failure }
                     var outer = requireNotNull(viewport.parent)
                     while (!outer.isScrollable) outer = requireNotNull(outer.parent)
                     val reachedStrength = { matching("強さ").isNotEmpty() }
@@ -157,17 +185,34 @@ class DevelopCompactAccessibilityAndroidTest {
                     }
                     capturePng("360x480-font2-after-scroll")
                     assertTrue("Strength row is reachable during real outer scrolling", strengthSeen)
+                    clickNode(awaitMatch("JPEGを保存"))
+                    assertEquals(1, saved.get())
                     val display = awaitMatch("表示")
                     val displayY = bounds(display).centerY()
                     val compare = awaitMatch("比較") { bounds(it).top <= displayY && displayY < bounds(it).bottom }
                     clickNode(compare)
-                    val selectedComparison = awaitMatch("比較") { bounds(it).top <= displayY && displayY < bounds(it).bottom }
-                    assertTrue("The bottom comparison segment becomes selected",
-                        selectedComparison.isSelected || selectedComparison.parent?.isSelected == true)
-                    clickNode(awaitMatch("JPEGを保存"))
-                    assertEquals(1, saved.get())
+                    // Recover the same top position even if the viewport scrolled out when reaching Save.
+                    // Scroll to the start, not just until a partial preview becomes visible.
+                    for (attempt in 0 until 12) {
+                        check(outer.refresh())
+                        if (!outer.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) break
+                        SystemClock.sleep(250)
+                        settle()
+                    }
+                    initialBlueFailure?.let { throw it }
+                    val deadline = SystemClock.uptimeMillis() + 3_000L
+                    while (true) {
+                        try {
+                            verifyPreviewColor(scenario, Color.GRAY, Color.BLUE)
+                            break
+                        } catch (failure: AssertionError) {
+                            if (SystemClock.uptimeMillis() >= deadline) throw failure
+                            SystemClock.sleep(100)
+                        }
+                    }
+                    capturePng("360x480-font2-comparison")
                     File(output, "360x480-font2-checks.txt").writeText(
-                        "viewportDp=360x480\nfontScale=2.0\nouterScrollReachedSave=true\ncomparisonSelected=true\nsaveCallbacks=1\nvisualReview=pending\n")
+                        "viewportDp=360x480\nfontScale=2.0\nouterScrollReachedSave=true\ncomparisonPixels=blue-to-gray\nsaveCallbacks=1\nvisualReview=pending\n")
                 } catch (failure: AssertionError) {
                     retainFailureImage(failure)
                     throw failure
