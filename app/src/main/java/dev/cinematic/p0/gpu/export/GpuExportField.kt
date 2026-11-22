@@ -1,6 +1,5 @@
 package dev.cinematic.p0.gpu.export
 
-import android.opengl.GLES32
 import dev.cinematic.p0.gpu.*
 import dev.cinematic.p0.gpu.resample.GpuResample
 import dev.cinematic.p0.raw.StageClearBlur
@@ -9,7 +8,7 @@ import dev.cinematic.p0.raw.StageClearBlur
  * The caller owns resample and every returned expanded band. No full-size intermediate is retained.
  */
 internal class GpuExportField(
-    private val egl: EglContexts,
+    private val egl: GpuExecutionContext,
     private val ledger: GpuMemoryLedger,
     private val resample: GpuResample,
     val imageWidth: Int,
@@ -20,6 +19,8 @@ internal class GpuExportField(
     private val interpolation: StageClearBlur.Filter = StageClearBlur.Filter.BILINEAR,
     private val pool: GpuTexturePool? = null,
 ) : AutoCloseable {
+    private val commands = egl.passOperations
+
     // Match GpuResample/StageClearBlur's axis order. The vertical-first temporary
     // is imageWidth x reducedHeight, never imageWidth x imageHeight.
     private val verticalFirst = imageHeight.toLong() - height > 0 &&
@@ -38,10 +39,7 @@ internal class GpuExportField(
             require(interpolation != StageClearBlur.Filter.BOX)
             accumulation = GpuTexture.create(egl, ledger, accumulationWidth, height, format, pool)
             scratch = GpuTexture.create(egl, ledger, accumulationWidth, height, format, pool)
-            GLES32.glBindFramebuffer(GLES32.GL_FRAMEBUFFER, accumulation!!.framebufferId)
-            GLES32.glDisable(GLES32.GL_SCISSOR_TEST)
-            GLES32.glColorMask(true, true, true, true)
-            GLES32.glClearBufferfv(GLES32.GL_COLOR, 0, floatArrayOf(0f, 0f, 0f, 0f), 0)
+            commands.clearColorToZero(accumulation!!.framebufferId)
             egl.checkGl("clear export field")
         } catch (failure: Throwable) { close(); throw failure }
     }
@@ -61,19 +59,19 @@ internal class GpuExportField(
             val weights = resample.weights(imageHeight, height, StageClearBlur.Filter.BOX)
             val path = if (format == GpuTexture.Format.R32F) "export/accumulate_plane.comp" else "export/accumulate_rgb.comp"
             // A recycled allocation can have earlier sampling commands queued on this context.
-            if (pool != null) GLES32.glMemoryBarrier(GLES32.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT)
+            if (pool != null) commands.memoryBarrier(GPU_SHADER_IMAGE_ACCESS_BARRIER_BIT)
             egl.passes().run(ComputePass(egl.shaders().compute(path),
                 listOf(TextureInput("s_band", horizontal, 0), TextureInput("s_weights", weights.values, 1),
                     TextureInput("s_first", weights.first, 2), TextureInput("s_previous", previous, 3)),
                 (accumulationWidth + 7) / 8, (height + 7) / 8,
                 uniforms = { program ->
-                    GLES32.glUniform1i(GLES32.glGetUniformLocation(program, "u_originY"), originY)
-                    GLES32.glUniform1i(GLES32.glGetUniformLocation(program, "u_bandHeight"), input.height)
-                    GLES32.glUniform2i(GLES32.glGetUniformLocation(program, "u_fieldSize"), accumulationWidth, height)
+                    commands.uniform1i(egl.shaders().uncachedUniformLocation(program, "u_originY"), originY)
+                    commands.uniform1i(egl.shaders().uncachedUniformLocation(program, "u_bandHeight"), input.height)
+                    commands.uniform2i(egl.shaders().uncachedUniformLocation(program, "u_fieldSize"), accumulationWidth, height)
                 }, bindResources = {
                     // RGBA32F read-write images are not legal in GLES 3.2. Read the
                     // previous texture and write a distinct texture, then swap after the barrier.
-                    GLES32.glBindImageTexture(0, destination.textureId, 0, false, 0, GLES32.GL_WRITE_ONLY, format.internalFormat)
+                    commands.bindWriteImage2d(0, destination.textureId, format.internalFormat)
                 }))
             accumulation = destination
             scratch = previous
@@ -105,7 +103,7 @@ internal class GpuExportField(
                 listOf(TextureInput("s_field", completeField, 0), TextureInput("s_xWeights", x.values, 1),
                     TextureInput("s_xFirst", x.first, 2), TextureInput("s_yWeights", y.values, 3),
                     TextureInput("s_yFirst", y.first, 4)), output,
-                uniforms = { GLES32.glUniform1i(GLES32.glGetUniformLocation(it, "u_originY"), originY) }))
+                uniforms = { commands.uniform1i(egl.shaders().uncachedUniformLocation(it, "u_originY"), originY) }))
             return output
         } catch (failure: Throwable) { output.close(); throw failure }
     }
