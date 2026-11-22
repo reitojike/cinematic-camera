@@ -411,7 +411,7 @@ EGL/GLES bindingは [LWJGL公式](https://www.lwjgl.org/guide) と
 
 #### D0 と D1〜Dn、CPU 整理の順序（ロードマップ v3）
 
-最新の順序は [計画 v3](cinematic-camera-roadmap-v3.md)。レーン5を v0.1.0 の範囲に含め、
+最新の順序は [計画 v3](archive/cinematic-camera-roadmap-v3.md)。レーン5を v0.1.0 の範囲に含め、
 [改修指示書](DEVELOP_UI_REFACTOR_INSTRUCTIONS.md) と [共通メッセージ仕様](../specs/ui-messages/spec.md) に従う。
 PR-A は規則・型・描画部品だけで画面を変更しない。A完了後にB（撮影/設定）とE（ロール/取り込み）を並行する。
 C（現像表示）は #380/#381/#260 の表示マージ後、D（現像配置）はCPU削除後かつD1〜Dn前。
