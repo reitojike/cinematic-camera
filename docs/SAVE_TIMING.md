@@ -175,16 +175,15 @@ providerの自動登録を試すため、試験から `install()` は呼ばな�
 
 ## PUBLICATION 内訳の診断
 
-`c1f616d` を基準に設計した一時診断。計測版は、既存の固定内部署名を使った release として
-ビルドする。署名用の環境変数を設定して次を実行する。[固定内部署名の手順](OPERATIONS.md)
+`c1f616d` を基準に設計した一時診断。計測版は既定の `ephemeral_debug` モードで
+ビルドし、release APK に既存の debug 署名を使う。`CINEMATIC_SIGNING_MODE` を含む
+署名用の環境変数を解除した状態で、次を実行する。
 
 ```bash
-CINEMATIC_SIGNING_MODE=stable_internal \
-  ./gradlew :app:assembleRelease -PcinematicPublicationDiagnostic=true --no-configuration-cache
+./gradlew :app:assembleRelease -PcinematicPublicationDiagnostic=true
 ```
 
-診断の既定値は無効。release で診断を有効にする場合は固定内部署名が必須で、
-versionName に `-pubdiag` が付く。
+診断の既定値は無効。release で診断を有効にすると versionName に `-pubdiag` が付く。
 
 計測版の applicationId は `dev.cinematic.p0.pubdiag`。承認済みの端末に次のコマンドで
 本体と並べてインストールし、ランチャーから `Cinematic Camera Probe (PubDiag)` を起動する。

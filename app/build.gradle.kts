@@ -82,7 +82,11 @@ android {
                 manifestPlaceholders["cinematicAppLabel"] = "Cinematic Camera Probe (PubDiag)"
                 manifestPlaceholders["cinematicTestTarget"] = "dev.cinematic.p0.pubdiag"
             }
-            if (stableInternalSigning) signingConfig = signingConfigs.getByName("cinematicInternal")
+            if (stableInternalSigning) {
+                signingConfig = signingConfigs.getByName("cinematicInternal")
+            } else if (publicationDiagnostic) {
+                signingConfig = signingConfigs.getByName("debug")
+            }
         }
     }
     compileOptions {
@@ -132,11 +136,14 @@ android {
     }
 }
 if (publicationDiagnostic) {
-    // Check the release build task so the existing debug opt-in still works.
-    tasks.matching { it.name == "preReleaseBuild" }.configureEach {
-        doFirst {
-            require(stableInternalSigning) {
-                "Release PUBLICATION diagnostics require CINEMATIC_SIGNING_MODE=stable_internal"
+    androidComponents {
+        finalizeDsl { androidDsl ->
+            val release = androidDsl.buildTypes.getByName("release")
+            require(
+                androidDsl.defaultConfig.applicationId == "dev.cinematic.p0" &&
+                    release.applicationIdSuffix == ".pubdiag"
+            ) {
+                "Release PUBLICATION diagnostics require applicationId dev.cinematic.p0.pubdiag"
             }
         }
     }
