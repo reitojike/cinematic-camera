@@ -123,15 +123,21 @@ internal class Original24Attempt(context: Context, private val request: Original
                 throw IOException("Original raster observations differ")
             val source = OriginalRasterFile(raw, width, height, 2).also { rawRaster = it }
             val scale = min(1.0, 1024.0 / max(width, height))
-            val analysis = originalStage(trace, OriginalStage.ANALYSIS_REDUCE) {
-                OriginalFields.reduce(source, max(4, floor(width * scale).toInt()), max(4, floor(height * scale).toInt()),
-                    3, stop) { rgb, out -> rgb.copyInto(out) }.reducedRgb()
+            val outW = max(4, floor(width * scale).toInt())
+            val outH = max(4, floor(height * scale).toInt())
+            val centralRgb = originalStage(trace, OriginalStage.ANALYSIS_REDUCE) {
+                OriginalFields.reduceCentralRgb(source, outW, outH, stop)
             }
-            val controls = originalStage(trace, OriginalStage.CONTROL_PREPARE) {
-                R7PreviewInputs.prepare(R7PreviewInputs.AsShotInput(analysis,
-                    R7PreviewInputs.Source.LIBRAW_PRELIMINARY_AS_SHOT), emptyList(), stop)
+            val exposure = originalStage(trace, OriginalStage.CONTROL_PREPARE) {
+                R7PreviewInputs.meterCentralRgb(
+                    centralRgb,
+                    outW,
+                    outH,
+                    R7PreviewInputs.Source.LIBRAW_PRELIMINARY_AS_SHOT,
+                    stop,
+                )
             }
-            val ev = controls.exposure.externalBaseEv + request.adjustments.exposureEv
+            val ev = exposure.externalBaseEv + request.adjustments.exposureEv
             // Match the bounded preview's relative WB BEFORE R7 without a full-frame Float copy.
             val red = 2.0.pow(request.adjustments.warmth / 200.0)
             val blue = 2.0.pow(-request.adjustments.warmth / 200.0)

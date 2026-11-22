@@ -110,6 +110,50 @@ internal class OriginalRasterFile internal constructor(
         }
     }
 
+    /** Reads only [startRow, endRow) x [startCol, endCol) from an RGB16 file into a borrowed row buffer. */
+    fun readRgb16Window(
+        startRow: Int,
+        endRow: Int,
+        startCol: Int,
+        endCol: Int,
+        stop: () -> Boolean,
+        consume: (Int, FloatArray) -> Unit,
+    ) {
+        require(isRgb16)
+        require(startRow in 0 until endRow && endRow <= height)
+        require(startCol in 0 until endCol && endCol <= width)
+        check(!hasPendingOwners)
+        owners.using(FileChannel.open(file.toPath(), StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) { channel ->
+            if (channel.size() != bytes) throw IOException("Original raster length differs")
+            val sliceWidth = endCol - startCol
+            val rawBytes = ByteArray(sliceWidth * 6)
+            val buffer = ByteBuffer.wrap(rawBytes)
+            val row = FloatArray(sliceWidth * 3)
+            val lut = u16ToFloat
+            val rowStride = width.toLong() * 6L
+            val colOffset = startCol.toLong() * 6L
+            for (y in startRow until endRow) {
+                originalCheckpoint(stop)
+                var pos = y.toLong() * rowStride + colOffset
+                buffer.clear()
+                while (buffer.hasRemaining()) {
+                    val n = channel.read(buffer, pos)
+                    if (n <= 0) throw IOException("Short original raster")
+                    pos += n
+                }
+                var byteIndex = 0
+                for (i in 0 until row.size) {
+                    val sample = (rawBytes[byteIndex].toInt() and 0xFF) or
+                        ((rawBytes[byteIndex + 1].toInt() and 0xFF) shl 8)
+                    row[i] = lut[sample]
+                    byteIndex += 2
+                }
+                consume(y, row)
+            }
+            if (channel.size() != bytes) throw IOException("Original raster changed")
+        }
+    }
+
     private fun <T> withRows(stop: () -> Boolean, setup: () -> T, consume: (FileChannel, Int, T) -> Unit) {
         check(!hasPendingOwners)
         owners.using(FileChannel.open(file.toPath(), StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) { channel ->
@@ -125,6 +169,13 @@ internal class OriginalRasterFile internal constructor(
 
     private fun readRow(channel: FileChannel, buffer: ByteBuffer) {
         while (buffer.hasRemaining()) if (channel.read(buffer) <= 0) throw IOException("Short original raster")
+    }
+
+    private companion object {
+        // Every uint16 sample divides identically to (sample and 65535) / 65535f.
+        val u16ToFloat: FloatArray by lazy(LazyThreadSafetyMode.PUBLICATION) {
+            FloatArray(65536) { it / 65535f }
+        }
     }
 }
 

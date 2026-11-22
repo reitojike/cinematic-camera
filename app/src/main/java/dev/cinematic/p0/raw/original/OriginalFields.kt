@@ -170,6 +170,163 @@ internal object OriginalFields {
             checkProjection = false, project = project).single()
     }
 
+    /**
+     * Global-coordinate BOX reduction restricted to the central quarter [width/4, 3*width/4) x
+     * [height/4, 3*height/4). Uses the exact full-frame BOX weights, axis order, and Float32
+     * intermediate rounding so every central RGB sample is bit-identical to reduce(...).reducedRgb().
+     */
+    fun reduceCentralRgb(input: OriginalRaster, width: Int, height: Int, stop: () -> Boolean): FloatArray {
+        validateGrid(input, width, height, 3)
+        val x0 = width / 4
+        val x1 = 3 * width / 4
+        val y0 = height / 4
+        val y1 = 3 * height / 4
+        require(x1 > x0 && y1 > y0) { "Central metering region must be nonempty" }
+        val centralWidth = x1 - x0
+        val centralHeight = y1 - y0
+        val columns = originalWeights(input.width, width, OriginalFilter.BOX)
+        val vertical = originalWeights(input.height, height, OriginalFilter.BOX)
+        var sxStart = input.width
+        var sxEnd = 0
+        for (x in x0 until x1) {
+            val sample = columns[x]
+            if (sample.first < sxStart) sxStart = sample.first
+            val sampleEnd = sample.first + sample.weights.size
+            if (sampleEnd > sxEnd) sxEnd = sampleEnd
+        }
+        val sliceWidth = sxEnd - sxStart
+        require(sliceWidth > 0) { "Central horizontal support must be nonempty" }
+        val contributors = Array<ArrayList<RowContribution>?>(input.height) { null }
+        var syStart = input.height
+        var syEnd = 0
+        for (dy in y0 until y1) {
+            val weights = vertical[dy]
+            val localDy = dy - y0
+            val wArr = weights.weights
+            for (offset in wArr.indices) {
+                val w = wArr[offset]
+                if (w != 0.0) {
+                    val sy = weights.first + offset
+                    var list = contributors[sy]
+                    if (list == null) {
+                        list = ArrayList(2)
+                        contributors[sy] = list
+                    }
+                    list.add(RowContribution(localDy, w))
+                    if (sy < syStart) syStart = sy
+                    if (sy + 1 > syEnd) syEnd = sy + 1
+                }
+            }
+        }
+        require(syStart < syEnd) { "Central vertical support must be nonempty" }
+        val verticalFirst = isVerticalFirst(input, width, height)
+        val intermediateWidth = if (verticalFirst) sliceWidth else centralWidth
+        val accum = DoubleArray(intermediateWidth * centralHeight * 3)
+        val horizontal = if (verticalFirst) null else FloatArray(centralWidth * 3)
+        val sliceSize = sliceWidth * 3
+        fun acceptRow(sy: Int, sliceRgb: FloatArray) {
+            val contribs = contributors[sy] ?: return
+            if (!verticalFirst) {
+                val h = requireNotNull(horizontal)
+                for (lx in 0 until centralWidth) {
+                    val sample = columns[x0 + lx]
+                    val wArr = sample.weights
+                    var base = (sample.first - sxStart) * 3
+                    var r = 0.0
+                    var g = 0.0
+                    var b = 0.0
+                    for (dx in 0 until wArr.size) {
+                        val w = wArr[dx]
+                        r += sliceRgb[base] * w
+                        g += sliceRgb[base + 1] * w
+                        b += sliceRgb[base + 2] * w
+                        base += 3
+                    }
+                    val outBase = lx * 3
+                    h[outBase] = r.toFloat()
+                    h[outBase + 1] = g.toFloat()
+                    h[outBase + 2] = b.toFloat()
+                }
+                val hSize = h.size
+                for (k in 0 until contribs.size) {
+                    val entry = contribs[k]
+                    val weight = entry.weight
+                    val dstBase = entry.localDy * hSize
+                    for (i in 0 until hSize) {
+                        accum[dstBase + i] += h[i] * weight
+                    }
+                }
+            } else {
+                for (k in 0 until contribs.size) {
+                    val entry = contribs[k]
+                    val weight = entry.weight
+                    val dstBase = entry.localDy * sliceSize
+                    for (i in 0 until sliceSize) {
+                        accum[dstBase + i] += sliceRgb[i] * weight
+                    }
+                }
+            }
+        }
+        originalCheckpoint(stop)
+        if (input is OriginalRasterFile && input.isRgb16) {
+            var next = syStart
+            input.readRgb16Window(syStart, syEnd, sxStart, sxEnd, stop) { sy, sliceRgb ->
+                require(sy == next && sy < syEnd && sliceRgb.size == sliceSize) { "Invalid original raster row" }
+                originalCheckpoint(stop)
+                acceptRow(sy, sliceRgb)
+                next++
+            }
+            require(next == syEnd) { "Incomplete original raster" }
+        } else {
+            // Non-RGB16 files (Float32) and synthetic rasters walk every row to preserve full-frame checks.
+            val sliceRgb = if (sxStart == 0 && sxEnd == input.width) null else FloatArray(sliceSize)
+            var next = 0
+            input.rows(stop) { y, rgb ->
+                require(y == next && y < input.height && rgb.size == input.width * 3) { "Invalid original raster row" }
+                if (y in syStart until syEnd && contributors[y] != null) {
+                    originalCheckpoint(stop)
+                    val rowSlice = if (sliceRgb == null) rgb else {
+                        rgb.copyInto(sliceRgb, 0, sxStart * 3, sxEnd * 3)
+                        sliceRgb
+                    }
+                    acceptRow(y, rowSlice)
+                }
+                next++
+            }
+            require(next == input.height) { "Incomplete original raster" }
+        }
+        originalCheckpoint(stop)
+        if (!verticalFirst) return FloatArray(accum.size) { accum[it].toFloat() }
+        val out = FloatArray(centralWidth * centralHeight * 3)
+        for (ly in 0 until centralHeight) {
+            originalCheckpoint(stop)
+            val rowAccBase = ly * sliceSize
+            val rowOutBase = ly * centralWidth * 3
+            for (lx in 0 until centralWidth) {
+                val sample = columns[x0 + lx]
+                val wArr = sample.weights
+                var accBase = rowAccBase + (sample.first - sxStart) * 3
+                var r = 0.0
+                var g = 0.0
+                var b = 0.0
+                for (dx in 0 until wArr.size) {
+                    val w = wArr[dx]
+                    r += accum[accBase].toFloat() * w
+                    g += accum[accBase + 1].toFloat() * w
+                    b += accum[accBase + 2].toFloat() * w
+                    accBase += 3
+                }
+                val outBase = rowOutBase + lx * 3
+                out[outBase] = r.toFloat()
+                out[outBase + 1] = g.toFloat()
+                out[outBase + 2] = b.toFloat()
+            }
+        }
+        return out
+    }
+
+    private class RowContribution(val localDy: Int, val weight: Double)
+
     private fun collect(input: OriginalRaster, grids: List<PreparedGrid>, channels: Int, stop: () -> Boolean,
         checkProjection: Boolean, project: (FloatArray, FloatArray) -> Unit): List<OriginalField> {
         val projected = FloatArray(input.width * channels)
