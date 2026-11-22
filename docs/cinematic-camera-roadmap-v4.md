@@ -1,7 +1,7 @@
 # cinematic-camera ロードマップと作業計画（v0.1.x）
 
 対象：reitojike/cinematic-camera  
-前版：[計画 v3](cinematic-camera-roadmap-v3.md)（履歴として保持）  
+前版：[計画 v3](archive/cinematic-camera-roadmap-v3.md)（履歴として保持）\
 基準：[v0.1.0](https://github.com/reitojike/cinematic-camera/releases/tag/v0.1.0)（ソース `2d14f981`）
 
 ## 1. 最優先：保存時の中断確認を軽くする

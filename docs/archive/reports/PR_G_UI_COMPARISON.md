@@ -49,118 +49,118 @@
 <a id="pair-01"></a>
 ## 01 撮影：録画中 / 通常 360×760dp / 文字1.0倍
 
-![撮影：録画中 / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](assets/pr-g-ui/01-normal-capture-rec-top.png)
+![撮影：録画中 / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](../../reports/assets/pr-g-ui/01-normal-capture-rec-top.png)
 
 
 <a id="pair-02"></a>
 ## 02 撮影：失敗・露出不明 / 通常 360×760dp / 文字1.0倍
 
-![撮影：失敗・露出不明 / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](assets/pr-g-ui/02-normal-capture-failure-top.png)
+![撮影：失敗・露出不明 / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](../../reports/assets/pr-g-ui/02-normal-capture-failure-top.png)
 
 
 <a id="pair-03"></a>
 ## 03 撮影：設定送信中 / 通常 360×760dp / 文字1.0倍
 
-![撮影：設定送信中 / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](assets/pr-g-ui/03-normal-capture-sending-top.png)
+![撮影：設定送信中 / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](../../reports/assets/pr-g-ui/03-normal-capture-sending-top.png)
 
 
 <a id="pair-04"></a>
 ## 04 撮影：カメラ許可待ち / 通常 360×760dp / 文字1.0倍
 
-![撮影：カメラ許可待ち / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](assets/pr-g-ui/04-normal-capture-permission-top.png)
+![撮影：カメラ許可待ち / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](../../reports/assets/pr-g-ui/04-normal-capture-permission-top.png)
 
 
 <a id="pair-05"></a>
 ## 05 現像：通常・保存前 / 通常 360×760dp / 文字1.0倍
 
-![現像：通常・保存前 / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](assets/pr-g-ui/05-normal-develop-ready-top.png)
+![現像：通常・保存前 / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](../../reports/assets/pr-g-ui/05-normal-develop-ready-top.png)
 
 
 <a id="pair-06"></a>
 ## 06 現像：長いファイル名 / 通常 360×760dp / 文字1.0倍
 
-![現像：長いファイル名 / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](assets/pr-g-ui/06-normal-develop-long-name-top.png)
+![現像：長いファイル名 / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](../../reports/assets/pr-g-ui/06-normal-develop-long-name-top.png)
 
 
 <a id="pair-07"></a>
 ## 07 現像：強さの編集 / 通常 360×760dp / 文字1.0倍
 
-![現像：強さの編集 / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](assets/pr-g-ui/07-normal-develop-edit-strength-top.png)
+![現像：強さの編集 / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](../../reports/assets/pr-g-ui/07-normal-develop-edit-strength-top.png)
 
 
 <a id="pair-08"></a>
 ## 08 現像：色温度の編集 / 通常 360×760dp / 文字1.0倍
 
-![現像：色温度の編集 / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](assets/pr-g-ui/08-normal-develop-edit-temperature-top.png)
+![現像：色温度の編集 / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](../../reports/assets/pr-g-ui/08-normal-develop-edit-temperature-top.png)
 
 
 <a id="pair-09"></a>
 ## 09 現像：保存中 / 通常 360×760dp / 文字1.0倍
 
-![現像：保存中 / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](assets/pr-g-ui/09-normal-develop-saving-top.png)
+![現像：保存中 / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](../../reports/assets/pr-g-ui/09-normal-develop-saving-top.png)
 
 
 <a id="pair-10"></a>
 ## 10 現像：保存済み / 通常 360×760dp / 文字1.0倍
 
-![現像：保存済み / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](assets/pr-g-ui/10-normal-develop-published-top.png)
+![現像：保存済み / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](../../reports/assets/pr-g-ui/10-normal-develop-published-top.png)
 
 
 <a id="pair-11"></a>
 ## 11 現像：保存取消後 / 通常 360×760dp / 文字1.0倍
 
-![現像：保存取消後 / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](assets/pr-g-ui/11-normal-develop-cancelled-top.png)
+![現像：保存取消後 / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](../../reports/assets/pr-g-ui/11-normal-develop-cancelled-top.png)
 
 
 <a id="pair-12"></a>
 ## 12 初期案内：保存済みJPEG / 通常 360×760dp / 文字1.0倍
 
-![初期案内：保存済みJPEG / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](assets/pr-g-ui/12-normal-guide-saved-top.png)
+![初期案内：保存済みJPEG / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](../../reports/assets/pr-g-ui/12-normal-guide-saved-top.png)
 
 
 <a id="pair-13"></a>
 ## 13 初期案内：RAW基準 / 通常 360×760dp / 文字1.0倍
 
-![初期案内：RAW基準 / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](assets/pr-g-ui/13-normal-guide-raw-top.png)
+![初期案内：RAW基準 / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](../../reports/assets/pr-g-ui/13-normal-guide-raw-top.png)
 
 
 <a id="pair-14"></a>
 ## 14 初期案内：撮影時JPEG / 通常 360×760dp / 文字1.0倍
 
-![初期案内：撮影時JPEG / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](assets/pr-g-ui/14-normal-guide-embedded-top.png)
+![初期案内：撮影時JPEG / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](../../reports/assets/pr-g-ui/14-normal-guide-embedded-top.png)
 
 
 <a id="pair-15"></a>
 ## 15 カメラロール一覧 / 通常 360×760dp / 文字1.0倍
 
-![カメラロール一覧 / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](assets/pr-g-ui/15-normal-roll-list-top.png)
+![カメラロール一覧 / 通常 360×760dp / 文字1.0倍：左が変更前、右が変更後](../../reports/assets/pr-g-ui/15-normal-roll-list-top.png)
 
 
 <a id="pair-16"></a>
 ## 16 現像：保存中 / 短画面 360×500dp / 文字1.0倍 / 保存行
 
-![現像：保存中 / 短画面 360×500dp / 文字1.0倍 / 保存行：左が変更前、右が変更後](assets/pr-g-ui/16-short-500dp-develop-saving-footer.png)
+![現像：保存中 / 短画面 360×500dp / 文字1.0倍 / 保存行：左が変更前、右が変更後](../../reports/assets/pr-g-ui/16-short-500dp-develop-saving-footer.png)
 
 
 <a id="pair-17"></a>
 ## 17 現像：保存中 / 360×760dp / 文字1.8倍 / 保存行
 
-![現像：保存中 / 360×760dp / 文字1.8倍 / 保存行：左が変更前、右が変更後](assets/pr-g-ui/17-font-1.8-develop-saving-footer.png)
+![現像：保存中 / 360×760dp / 文字1.8倍 / 保存行：左が変更前、右が変更後](../../reports/assets/pr-g-ui/17-font-1.8-develop-saving-footer.png)
 
 
 <a id="pair-18"></a>
 ## 18 現像：保存中 / 短画面 360×500dp / 文字1.8倍 / 保存行
 
-![現像：保存中 / 短画面 360×500dp / 文字1.8倍 / 保存行：左が変更前、右が変更後](assets/pr-g-ui/18-short-500dp-font-1.8-develop-saving-footer.png)
+![現像：保存中 / 短画面 360×500dp / 文字1.8倍 / 保存行：左が変更前、右が変更後](../../reports/assets/pr-g-ui/18-short-500dp-font-1.8-develop-saving-footer.png)
 
 
 <a id="pair-19"></a>
 ## 19 現像：長いファイル名 / 短画面 360×500dp / 文字1.8倍
 
-![現像：長いファイル名 / 短画面 360×500dp / 文字1.8倍：左が変更前、右が変更後](assets/pr-g-ui/19-short-500dp-font-1.8-develop-long-name-top.png)
+![現像：長いファイル名 / 短画面 360×500dp / 文字1.8倍：左が変更前、右が変更後](../../reports/assets/pr-g-ui/19-short-500dp-font-1.8-develop-long-name-top.png)
 
 
 <a id="pair-20"></a>
 ## 20 現像：色温度の編集 / 短画面 360×500dp / 文字1.8倍
 
-![現像：色温度の編集 / 短画面 360×500dp / 文字1.8倍：左が変更前、右が変更後](assets/pr-g-ui/20-short-500dp-font-1.8-develop-edit-temperature-top.png)
+![現像：色温度の編集 / 短画面 360×500dp / 文字1.8倍：左が変更前、右が変更後](../../reports/assets/pr-g-ui/20-short-500dp-font-1.8-develop-edit-temperature-top.png)
