@@ -75,6 +75,8 @@ android {
         }
         getByName("release") {
             isDebuggable = false
+            buildConfigField("boolean", "PUBLICATION_DIAGNOSTIC", publicationDiagnostic.toString())
+            if (publicationDiagnostic) versionNameSuffix = "-pubdiag"
             if (stableInternalSigning) signingConfig = signingConfigs.getByName("cinematicInternal")
         }
     }
@@ -122,6 +124,16 @@ android {
     }
     if (gpuMesa) {
         sourceSets.getByName("testDebug").kotlin.srcDir("src/testGpuMesa/java")
+    }
+}
+if (publicationDiagnostic) {
+    // Check the release build task so the existing debug opt-in still works.
+    tasks.matching { it.name == "preReleaseBuild" }.configureEach {
+        doFirst {
+            require(stableInternalSigning) {
+                "Release PUBLICATION diagnostics require CINEMATIC_SIGNING_MODE=stable_internal"
+            }
+        }
     }
 }
 if (gpuMesa) {

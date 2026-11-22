@@ -175,8 +175,21 @@ providerの自動登録を試すため、試験から `install()` は呼ばな�
 
 ## PUBLICATION 内訳の診断
 
-`c1f616d` を基準に設計した一時診断。P2a-1 の上の計測版では debug ビルドに
-`-PcinematicPublicationDiagnostic=true` を指定すると有効になる。既定値は無効。
+`c1f616d` を基準に設計した一時診断。P2a-1 の上の計測版は、既存の固定内部署名を使った
+release としてビルドする。上書きインストールに先立ち、既存版の署名証明書と内部署名の
+証明書が一致することを確認する。[固定内部署名の手順](OPERATIONS.md) に従って署名用の
+環境変数を設定し、次を実行する。
+
+```bash
+CINEMATIC_SIGNING_MODE=stable_internal CINEMATIC_VERSION_CODE=27 \
+  ./gradlew :app:assembleRelease -PcinematicPublicationDiagnostic=true --no-configuration-cache
+```
+
+診断の既定値は無効。release で診断を有効にする場合は固定内部署名が必須で、
+versionName に `-pubdiag` が付く。
+
+採番記録：versionCode 27 は P2a-1+PUBLICATION 計測ビルド専用に使用。次の正式版は 28 以上。
+
 通常保存オーナーの `publisher.advance` ごとに既存 `PUBLICATION` の終了時刻を採った後、
 同じ試行へ次の8行を追加する。publisher の構築、事前の journal 読取り、`RECONCILIATION`、
 返却後の照合と TSV 書込みは対象範囲外。
