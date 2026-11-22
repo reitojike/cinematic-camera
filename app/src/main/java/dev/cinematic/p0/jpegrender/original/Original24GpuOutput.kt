@@ -4,6 +4,7 @@ import android.content.res.AssetManager
 import dev.cinematic.p0.BuildConfig
 import dev.cinematic.p0.saveprogress.SaveProgressSink
 import dev.cinematic.p0.saveprogress.bestEffort
+import dev.cinematic.p0.gpu.export.GpuExportBandConsumer
 import dev.cinematic.p0.gpu.export.GpuExportProgress
 import dev.cinematic.p0.gpu.*
 import dev.cinematic.p0.gpu.diag.GpuStageTap
@@ -30,12 +31,26 @@ internal class Original24GpuOutput(private val assets: AssetManager) : AutoClose
 
     fun render(source: OriginalRaster, ev: Double, gains: DoubleArray, strength: Double,
         stop: () -> Boolean, timings: GpuExportTimings? = null, progress: SaveProgressSink? = null,
-        forceReaderBoundaries: Boolean = false, consume: (Int, IntArray) -> Unit) {
+        forceReaderBoundaries: Boolean = false, consume: (Int, IntArray) -> Unit) =
+        renderWithConsumer(source, ev, gains, strength, stop, timings, progress, forceReaderBoundaries) { effectiveStop ->
+            GpuExportBandConsumer.fromRows(source.width, effectiveStop, consume)
+        }
+
+    fun renderBands(source: OriginalRaster, ev: Double, gains: DoubleArray, strength: Double,
+        stop: () -> Boolean, timings: GpuExportTimings? = null, progress: SaveProgressSink? = null,
+        forceReaderBoundaries: Boolean = false, consumer: GpuExportBandConsumer) =
+        renderWithConsumer(source, ev, gains, strength, stop, timings, progress, forceReaderBoundaries) { consumer }
+
+    private fun renderWithConsumer(source: OriginalRaster, ev: Double, gains: DoubleArray, strength: Double,
+        stop: () -> Boolean, timings: GpuExportTimings?, progress: SaveProgressSink?,
+        forceReaderBoundaries: Boolean, createConsumer: (() -> Boolean) -> GpuExportBandConsumer) {
         check(!started); started = true
         // Freeze one observer for this attempt. Release/internal builds cannot register or invoke it.
         val observer = if (observationsAllowed) diagnosticObserver.get() else null
         val workProgress = if (progress != null) GpuExportProgress(source.height, strength) else null
         val interrupted = AtomicBoolean(false)
+        val effectiveStop = { interrupted.get() || stop() }
+        val consumer = createConsumer(effectiveStop)
         var failure: Throwable? = null
         var cleanupConfirmed = false
         held = true
@@ -53,8 +68,8 @@ internal class Original24GpuOutput(private val assets: AssetManager) : AutoClose
                     fun snapshot() = TextureBalance(ledger.allocatedBytes, ledger.textureCount, ledger.peakAllocatedBytes)
                     egl = EglContexts(thread, assets)
                     try {
-                        GpuExportRenderer(egl, ledger).render(source, ev, gains, strength,
-                            stop = { interrupted.get() || stop() },
+                        GpuExportRenderer(egl, ledger).renderBands(source, ev, gains, strength,
+                            stop = effectiveStop,
                             tap = observer?.let { observation -> { point, origin, texture ->
                                 observation.insideBand(point, origin, texture.height, snapshot())
                             } },
@@ -62,7 +77,7 @@ internal class Original24GpuOutput(private val assets: AssetManager) : AutoClose
                                 // Existing post-fence boundary; product telemetry never invokes diagnostics.
                                 bestEffort { workProgress?.let { progress?.developed(it.bandCompleted(rows)) } }
                                 observer?.bandComplete(boundary, origin, rows, snapshot())
-                            }, timings = timings, forceReaderBoundaries = forceReaderBoundaries, consumeRow = consume)
+                            }, timings = timings, forceReaderBoundaries = forceReaderBoundaries, consumer = consumer)
                     } catch (caught: Throwable) { error = caught; throw caught }
                     finally {
                         // Renderer.use has returned/unwound. Observe before EGL teardown; this is
@@ -106,7 +121,7 @@ internal class Original24GpuOutput(private val assets: AssetManager) : AutoClose
             held = !cleanupConfirmed
             if (interrupted.get()) Thread.currentThread().interrupt()
         }
-        if (interrupted.get() || stop() || failure is CancellationException || failure is android.os.OperationCanceledException)
+        if (effectiveStop() || failure is CancellationException || failure is android.os.OperationCanceledException)
             throw CancellationException("GPU export stopped").apply { failure?.let(::initCause) }
         failure?.let {
             if (it !is Exception) throw it

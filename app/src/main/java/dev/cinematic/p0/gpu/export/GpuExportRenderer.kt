@@ -25,7 +25,7 @@ import kotlin.math.round
 
 /** GL-thread-only, bounded export. No full-size GPU image or intermediate disk raster.
  * EGL and ledger are borrowed. Every render owns and releases all of its fields/textures.
- * Rows are 0xffRRGGBB for the existing Bitmap.setPixels path; their array is borrowed.
+ * FINAL bands contain borrowed, opaque 0xffRRGGBB pixels in output row order.
  */
 internal class GpuExportRenderer(
     private val egl: EglContexts,
@@ -43,7 +43,17 @@ internal class GpuExportRenderer(
         onBandComplete: ((String, Int, Int) -> Unit)? = null,
         timings: GpuExportTimings? = null,
         forceReaderBoundaries: Boolean = false,
-        consumeRow: (Int, IntArray) -> Unit): Result {
+        consumeRow: (Int, IntArray) -> Unit): Result =
+        renderBands(input, externalEv, warmthGains, strength, stop, tap, onBandComplete, timings,
+            forceReaderBoundaries, GpuExportBandConsumer.fromRows(input.width, stop, consumeRow))
+
+    fun renderBands(input: OriginalRaster, externalEv: Double, warmthGains: DoubleArray, strength: Double,
+        stop: () -> Boolean = { false },
+        tap: ((GpuStageTap.Point, Int, GpuTexture) -> Unit)? = null,
+        onBandComplete: ((String, Int, Int) -> Unit)? = null,
+        timings: GpuExportTimings? = null,
+        forceReaderBoundaries: Boolean = false,
+        consumer: GpuExportBandConsumer): Result {
         egl.requireCurrent()
         check(!rendering) { "Export renderer is already running" }
         validateOriginalSize(input.width, input.height)
@@ -66,7 +76,7 @@ internal class GpuExportRenderer(
         rendering = true
         try {
             return Session(input, gain, warmthGains.copyOf(), strength, stop, tap, onBandComplete, toneWidth, toneHeight, timings,
-                forceReaderBoundaries).use { it.run(consumeRow) }
+                forceReaderBoundaries).use { it.run(consumer) }
         } finally { rendering = false }
     }
 
@@ -131,7 +141,7 @@ internal class GpuExportRenderer(
             }
         }
 
-        fun run(consumeRow: (Int, IntArray) -> Unit): Result {
+        fun run(consumer: GpuExportBandConsumer): Result {
             boundary("B1") {
                 tone = field(toneWidth, toneHeight,
                     GpuTexture.Format.R32F, StageClearBlur.Filter.BICUBIC)
@@ -199,8 +209,9 @@ internal class GpuExportRenderer(
                 }
             } else timings?.skipped("B5")
             boundary("FINAL") {
-                val bytes = ByteBuffer.allocateDirect(Math.multiplyExact(width * minOf(height, bandHeight), 4))
-                val row = IntArray(width)
+                val maxPixels = Math.multiplyExact(width, minOf(height, bandHeight))
+                val bytes = ByteBuffer.allocateDirect(Math.multiplyExact(maxPixels, Int.SIZE_BYTES))
+                val argb = IntArray(maxPixels)
                 scan { band ->
                     val output = band.finish()
                     gpuWork(workTimings, GpuExportDetail.FENCE_WAIT) { GpuFence(egl).use { it.await(stop) } }
@@ -217,13 +228,15 @@ internal class GpuExportRenderer(
                     }
                     egl.checkGl("read export band RGBA8")
                     bytes.position(0)
-                    bytes.limit(width * output.height * 4)
+                    bytes.limit(Math.multiplyExact(Math.multiplyExact(width, output.height), Int.SIZE_BYTES))
                     gpuWork(workTimings, GpuExportDetail.ROW_PROCESS) {
+                        val words = GpuExportRgba8.words(bytes)
                         repeat(output.height) { y ->
                             originalCheckpoint(stop)
-                            GpuExportRgba8.readRow(bytes, y, row)
-                            consumeRow(band.origin + y, row)
+                            GpuExportRgba8.readNextRow(words, argb, y * width, width)
                         }
+                        originalCheckpoint(stop)
+                        consumer.consume(band.origin, output.height, argb)
                     }
                 }
             }
