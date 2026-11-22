@@ -122,12 +122,15 @@ class SaveTimingTest {
     @Test fun recordAndByteBoundsRotateOldestWithoutPartialLines() {
         val directory = temp.newFolder()
         val store = SaveTimingStore(directory)
-        repeat(SaveTimingStore.MAX_RECORDS + 7) { store.append(record(it)) }
+        val diagnostic = record(SaveTimingStore.MAX_RECORDS + 6).copy(stage = SaveTimingStage.PUB_JOURNAL)
+        repeat(SaveTimingStore.MAX_RECORDS + 6) { store.append(record(it)) }
+        store.append(diagnostic)
         val bytes = store.snapshot()
         assertTrue(bytes.size <= SaveTimingStore.MAX_BYTES)
         val lines = bytes.toString(Charsets.US_ASCII).trimEnd().lines()
         assertEquals(SaveTimingStore.MAX_RECORDS, lines.size)
         assertEquals(record(7).line().trimEnd(), lines.first())
+        assertEquals(diagnostic.line().trimEnd(), lines.last())
         assertTrue(lines.all(SaveTimingRecord::valid))
         File(directory, "records.tsv").writeBytes(ByteArray(SaveTimingStore.MAX_BYTES.toInt() + 1))
         assertEquals(0, store.snapshot().size)

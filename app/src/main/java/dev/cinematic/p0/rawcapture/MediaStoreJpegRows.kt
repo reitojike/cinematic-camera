@@ -28,7 +28,7 @@ internal class MediaStoreJpegRows(context: Context) : RenderedJpegRows, JpegReco
             put(MediaStore.MediaColumns.MIME_TYPE, target.mimeType)
             put(MediaStore.MediaColumns.IS_PENDING, 1)
         }
-        return resolver.insert(collection, values)?.toString()
+        return PublicationTiming.measure(PublicationInterval.MEDIASTORE) { resolver.insert(collection, values) }?.toString()
     }
 
     override fun find(target: JpegPublicationTarget): List<DngPendingRow> = query(
@@ -64,16 +64,20 @@ internal class MediaStoreJpegRows(context: Context) : RenderedJpegRows, JpegReco
             if (Build.VERSION.SDK_INT >= 30) " AND ${MediaStore.MediaColumns.IS_TRASHED}=0" else ""
         val selectionArgs = arrayOf("1", packageName, target.displayName, target.relativePath, target.mimeType, target.volume)
         val updated = if (Build.VERSION.SDK_INT >= 30) {
-            resolver.update(Uri.parse(uri), values, Bundle().apply {
+            val parsed = Uri.parse(uri)
+            val args = Bundle().apply {
                 putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE)
                 putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_EXCLUDE)
                 putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
                 putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, selectionArgs)
-            })
+            }
+            PublicationTiming.measure(PublicationInterval.MEDIASTORE) { resolver.update(parsed, values, args) }
         } else {
             @Suppress("DEPRECATION")
             val includingPending = MediaStore.setIncludePending(Uri.parse(uri))
-            resolver.update(includingPending, values, selection, selectionArgs)
+            PublicationTiming.measure(PublicationInterval.MEDIASTORE) {
+                resolver.update(includingPending, values, selection, selectionArgs)
+            }
         }
         if (updated != 1) throw IOException("JPEG pending update unconfirmed")
     }
@@ -83,31 +87,32 @@ internal class MediaStoreJpegRows(context: Context) : RenderedJpegRows, JpegReco
         if (row.uri != uri || !target.accepts(row, pending)) throw IOException("JPEG row identity or ownership changed")
     }
 
-    private fun query(uri: Uri, selection: String?, selectionArgs: Array<String>?): List<DngPendingRow> {
-        val columns = arrayOf(
-            MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.VOLUME_NAME,
-            MediaStore.MediaColumns.RELATIVE_PATH, MediaStore.MediaColumns.MIME_TYPE,
-            MediaStore.MediaColumns.OWNER_PACKAGE_NAME, MediaStore.MediaColumns.IS_PENDING,
-        ) + if (Build.VERSION.SDK_INT >= 30) arrayOf(MediaStore.MediaColumns.IS_TRASHED) else emptyArray()
-        val cursor = if (Build.VERSION.SDK_INT >= 30) {
-            val args = Bundle().apply {
-                putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE)
-                putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_EXCLUDE)
-                if (selection != null) putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
-                if (selectionArgs != null) putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, selectionArgs)
-            }
-            resolver.query(uri, columns, args, null)
-        } else {
-            @Suppress("DEPRECATION") // Documented API-29 compatibility; API 30+ uses query arguments.
-            val includingPending = MediaStore.setIncludePending(uri)
-            resolver.query(includingPending, columns, selection, selectionArgs, null)
-        } ?: throw IOException("JPEG row query unavailable")
-        return cursor.use {
-            buildList {
-                while (size < 2 && it.moveToNext()) add(readRow(it)) // Two suffice to reject ambiguity.
+    private fun query(uri: Uri, selection: String?, selectionArgs: Array<String>?): List<DngPendingRow> =
+        PublicationTiming.measure(PublicationInterval.MEDIASTORE, subtractFromParent = true) {
+            val columns = arrayOf(
+                MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.VOLUME_NAME,
+                MediaStore.MediaColumns.RELATIVE_PATH, MediaStore.MediaColumns.MIME_TYPE,
+                MediaStore.MediaColumns.OWNER_PACKAGE_NAME, MediaStore.MediaColumns.IS_PENDING,
+            ) + if (Build.VERSION.SDK_INT >= 30) arrayOf(MediaStore.MediaColumns.IS_TRASHED) else emptyArray()
+            val cursor = if (Build.VERSION.SDK_INT >= 30) {
+                val args = Bundle().apply {
+                    putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE)
+                    putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_EXCLUDE)
+                    if (selection != null) putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
+                    if (selectionArgs != null) putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, selectionArgs)
+                }
+                resolver.query(uri, columns, args, null)
+            } else {
+                @Suppress("DEPRECATION") // Documented API-29 compatibility; API 30+ uses query arguments.
+                val includingPending = MediaStore.setIncludePending(uri)
+                resolver.query(includingPending, columns, selection, selectionArgs, null)
+            } ?: throw IOException("JPEG row query unavailable")
+            cursor.use {
+                buildList {
+                    while (size < 2 && it.moveToNext()) add(readRow(it)) // Two suffice to reject ambiguity.
+                }
             }
         }
-    }
 
     private fun readRow(cursor: Cursor): DngPendingRow {
         val idIndex = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)

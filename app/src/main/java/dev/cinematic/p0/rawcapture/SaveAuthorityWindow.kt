@@ -87,10 +87,14 @@ internal object SaveAuthorityBoundary {
 
 // Only the manual-save intent, attempt and JPEG journals opt in. Their revision/record
 // comparisons still throw their own CaptureJournalConflict, unchanged.
-internal fun AtomicJournalStorage.checkingSaveAuthority(): AtomicJournalStorage =
+internal fun AtomicJournalStorage.checkingSaveAuthority(publicationJournal: Boolean = false): AtomicJournalStorage =
     object : AtomicJournalStorage by this {
         override fun replace(contents: ByteArray) {
-            SaveAuthorityBoundary.checkpoint()
+            if (publicationJournal) {
+                PublicationTiming.measure(PublicationInterval.AUTHORITY, subtractFromParent = true) {
+                    SaveAuthorityBoundary.checkpoint()
+                }
+            } else SaveAuthorityBoundary.checkpoint()
             this@checkingSaveAuthority.replace(contents)
         }
     }

@@ -172,3 +172,44 @@ providerの自動登録を試すため、試験から `install()` は呼ばな�
 起動後の安定・crash/ANRゲートと試験前後のinstance照合を行う。ATDで発生したBluetooth native abortは
 アプリ導入前の環境阻害として記録し、ログ消去や無条件再試行で合格にしない。既存AOSPでの代替確認とは分ける。
 この試験は実機のthermal変化、保存速度、OSによる抑制を保証しない。
+
+## PUBLICATION 内訳の診断
+
+`c1f616d` を基準に設計した一時診断。P2a-1 の上の計測版では debug ビルドに
+`-PcinematicPublicationDiagnostic=true` を指定すると有効になる。既定値は無効。
+通常保存オーナーの `publisher.advance` ごとに既存 `PUBLICATION` の終了時刻を採った後、
+同じ試行へ次の8行を追加する。publisher の構築、事前の journal 読取り、`RECONCILIATION`、
+返却後の照合と TSV 書込みは対象範囲外。
+
+| キー | 計測区間 |
+|---|---|
+| `PUB_VERIFY_ORIGINAL` | 原本の open・全読込み・照合・close |
+| `PUB_PRIVATE_JPEG_CHECK` | 私有 JPEG の検査と全読込み照合の合計。検査の返却後に行うメタデータ・fingerprint 確認は区間外 |
+| `PUB_COPY` | 私有 JPEG と pending 出力の open・コピー・digest・close |
+| `PUB_VERIFY_ROW_PENDING` | pending=true の MediaStore 行の open・全読込み・照合・close |
+| `PUB_VERIFY_ROW_PUBLIC` | pending=false の MediaStore 行の同じ照合。再開時も実際の引数で分類 |
+| `PUB_JOURNAL` | journal の read・prepare・advance・recordRow・unknown。内部の読取り、codec、書込み、readback を含む |
+| `PUB_MEDIASTORE` | insert・update の API 呼出しと、query の入口からカーソルの close まで |
+| `PUB_AUTHORITY_CHECK` | publisher の checkContinue 全体と、通常公開・#377 復旧用 JPEG journal の checkpoint 呼出し |
+
+COPY と各行の照合から内包 query を、JOURNAL から内包 checkpoint を、同一単調時計で測って
+直近の親から一度だけ引く。読込みやコピー中のチャンクごとの停止確認は親に含む。
+1キーの全呼出しが正常 return し、合計が有効なら `COMPLETED`。呼出しが `Throwable` で抜けたキーは
+`INCOMPLETE` とし、計測値が有効なら失敗までの時間も合算する。null や0件の正常 return は完了に含む。
+時計値の欠損、負の経過値、合計のオーバーフローは nanos を `NA` にする。
+差し引く子が欠損した場合も親の nanos は `NA`。呼出しの例外を観測し、計測値も無効なら
+`INCOMPLETE/NA`、計測値だけが無効なら `UNAVAILABLE/NA`。部分和は使わない。
+未実行キーは、`advance` が `PUBLISHED` で戻れば `SKIPPED/NA`、`UNKNOWN` で戻るか例外が
+外へ出れば `NOT_REACHED/NA`。既存 `UNKNOWN` を返す場合は JOURNAL だけが実行される。
+無効時、試行の timing がない場合、`advance` 前に終了した場合は追加行を発行しない。
+集計器の生成失敗時は可能な範囲で `UNAVAILABLE/NA` を出す。
+
+新規成功の集計対象は同じ attempt の `SAVE`、`ATTEMPT/PUBLISHED`、`JPEG_ENCODE/COMPLETED`、
+`PUBLICATION/COMPLETED` と内訳8キーすべての `COMPLETED` が揃い、外枠と8キーの nanos が
+有効な試行。残差は同じ試行の `PUBLICATION` から8キーの合計を引く。オン／オフは同じコード、
+端末、入力、画素数、温度帯で交互に比較し、`PUBLICATION` と `ATTEMPT` の差とばらつきを確認する。
+
+schema 1・2 と既存の1,024行・256KiB上限を維持する。P0 versionCode 26 の実測55行/保存を
+基準にすると、同等の新規成功は8行増えて63行/保存となり、上限内に完全な試行が16回残る。
+診断終了時は抽出と比較を済ませ、ビルド設定と計測フックを除く。ローテーションまでは
+採取済みの行を抽出できるよう、読み手に8キーの固定名を残す。

@@ -1,6 +1,7 @@
 package dev.cinematic.p0.rawcapture
 
 import android.content.Context
+import dev.cinematic.p0.BuildConfig
 import dev.cinematic.p0.saveprogress.SaveProgressStore
 import dev.cinematic.p0.saveprogress.SaveProgressSink
 import dev.cinematic.p0.saveprogress.SaveProgressPhase
@@ -102,8 +103,8 @@ internal object AndroidManualOriginalTrialSaves {
             val directory = generationFiles(request).generationRoot()
             val storage = AndroidAtomicJournalStorage(requireNotNull(directory.parentFile), request.generation.toString(), kind)
             return when (kind) {
-                CaptureJournalFile.MANUAL_REQUEST, CaptureJournalFile.MANUAL_ATTEMPT,
-                CaptureJournalFile.JPEG_PUBLICATION -> storage.checkingSaveAuthority()
+                CaptureJournalFile.MANUAL_REQUEST, CaptureJournalFile.MANUAL_ATTEMPT -> storage.checkingSaveAuthority()
+                CaptureJournalFile.JPEG_PUBLICATION -> storage.checkingSaveAuthority(publicationJournal = true)
                 else -> storage
             }
         }
@@ -325,7 +326,7 @@ internal object AndroidManualOriginalTrialSaves {
         private fun recoveryStorage(kind: CaptureJournalFile): AtomicJournalStorage {
             val directory = RenderedJpegFiles(File(app.noBackupFilesDir, "raw-captures"), request.captureId, request.generation).generationRoot()
             return AndroidAtomicJournalStorage(requireNotNull(directory.parentFile), request.generation.toString(), kind)
-                .checkingSaveAuthority()
+                .checkingSaveAuthority(publicationJournal = kind == CaptureJournalFile.JPEG_RECOVERY)
         }
         private val recoveryJournal = JpegPublicationJournal(request.captureId, request.generation, recoveryStorage(CaptureJournalFile.JPEG_RECOVERY))
         private val forwardJournal = journal(request)
@@ -398,7 +399,7 @@ internal object AndroidManualOriginalTrialSaves {
                 override fun advance(stop: () -> Boolean) = try {
                     bestEffort { progressSink?.phase(SaveProgressPhase.SAVING) }
                     timing?.pixels(render.request.output.width, render.request.output.height)
-                    measured(timing, SaveTimingStage.PUBLICATION) { publisher.advance(stop) }
+                    measurePublication(timing, BuildConfig.PUBLICATION_DIAGNOSTIC) { publisher.advance(stop, it) }
                 }
                     catch (failure: Throwable) { throw reportFailure(failure) }
                 override fun releaseResources() = publisher.releaseResources()
