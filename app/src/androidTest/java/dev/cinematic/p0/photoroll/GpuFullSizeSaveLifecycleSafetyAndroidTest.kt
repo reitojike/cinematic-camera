@@ -315,7 +315,7 @@ class GpuFullSizeSaveLifecycleSafetyAndroidTest {
             val ledger = AtomicReference<GpuMemoryLedger>()
             val session = GpuPhotoRollSession(assets) { egl, memory ->
                 check(ledger.compareAndSet(null, memory))
-                DefaultStageClearGpu(egl, memory)
+                DefaultStageClearGpu(egl, memory, createPresenter = windowTestPresenter(egl, memory))
             }
             owners += Owner(session, ledger)
             return session
