@@ -114,3 +114,7 @@ The existing Android capture is manual, not automatically run in CI. Original 90
 |c088|SATURATED|export|1597x1199|0|0|0|95874edaa847683dfd3d2c84179c5a88d9e6c0c0f95e46f6909c2bd050f2ab16|
 |c089|NEAR_WHITE_2|export|1597x1199|0.25|0|0|bf53b389e838537b3e75dfb22a0f06d8d787b6ae85863c65d2ee86bc39b7731e|
 |c090|MIXED|export|1597x1199|0.5|100|2|d8c09e6118a5fea1c2f8c46af58d7b8b65d6b0998eb05fe5249d2c19acd2316b|
+
+## 候補 PNG の整理（2026-11-22）
+
+[#470 の CP2 の判断](https://github.com/reitojike/cinematic-camera/issues/470#issuecomment-7076626734)に基づき、この候補の閲覧用 PNG 90枚を削除しました。元の RGB8 データは[基準画像の保存先](../../gpu-golden-baselines/golden-20261112-072140-1a6ded41/)に残っています。RGB8 データから削除した PNG とバイト単位で同一のファイルを再生成できるかは未確認です。上の SHA-256 表は削除時点の記録として残しています。
