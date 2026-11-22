@@ -1,6 +1,6 @@
 # PR-C 表示レビュー資料
 
-[表示指示書](DEVELOP_UI_REFACTOR_INSTRUCTIONS.md) の 3.4 (1)〜(4),(6) と、#382・#383 の本人レビュー指摘を対象とします。
+[表示指示書](../DEVELOP_UI_REFACTOR_INSTRUCTIONS.md) の 3.4 (1)〜(4),(6) と、#382・#383 の本人レビュー指摘を対象とします。
 比較の製品基準は main `53e68ffc`（#390 の共通 fail-soft 統合後）です。C の製品差分は `32fec1f3`、比較 fixture の最終補正は `c229f3e4` です。本人が固定 commit `fbaf293a` の比較一覧を確認し「OKです」と表示を承認しました。
 
 ## 変更範囲
@@ -73,7 +73,7 @@ DEBUG 版で不正な `UiMessage` を作成しません。この2枚は本番版
 
 ### 実行手順
 
-共有端末の枠は [MANAGED_DEVICES](MANAGED_DEVICES.md) に従い、他レーンと調整してから実行します。
+共有端末の枠は [MANAGED_DEVICES](../MANAGED_DEVICES.md) に従い、他レーンと調整してから実行します。
 本人の Pixel は使いません。既存の固定 ATD 枠で `ANDROID_AVD_HOME` を設定済みであることを確認します。
 
 ```powershell
