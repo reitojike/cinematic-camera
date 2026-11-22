@@ -78,7 +78,7 @@ internal interface StageClearGpuPipeline : AutoCloseable {
  * INPUT/Beforeはルックを通さず、同じ常駐AS_SHOTから描画する。
  */
 internal class DefaultStageClearGpu(
-    private val egl: EglContexts,
+    private val egl: GpuExecutionContext,
     private val ledger: GpuMemoryLedger,
     frameMode: GpuFrameMode = GpuFrameMode.NORMAL,
     private val createPresenter: (GpuPreviewTarget, GpuDisplayOptions) -> GpuPreviewPresenter,
@@ -212,7 +212,7 @@ internal class DefaultStageClearGpu(
             return passes ?: createPipeline(input, analysis).also { passes = it }
         }
         override fun close() {
-            egl.glThread.requireCurrent()
+            egl.requireOwnerThread()
             if (photoClosed) return
             // Preserve failed owners for an explicit cleanup retry. Never release borrowed input
             // while its pipeline still has an unconfirmed close.
@@ -237,7 +237,7 @@ internal class DefaultStageClearGpu(
         if (stop()) throw CancellationException("GPU photo preparation stopped")
     }
     override fun close() {
-        egl.glThread.requireCurrent()
+        egl.requireOwnerThread()
         if (closed) return
         var failure: Throwable? = null
         photos.toList().forEach { photo ->
