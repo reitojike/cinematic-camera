@@ -12,6 +12,7 @@ import java.nio.ByteOrder
  * CPU reads only four selections (64B) per stage; storage is allocated lazily.
  */
 internal class GpuQuantileWorkspace(private val egl: GpuExecutionContext) : AutoCloseable {
+    private val ssbo get() = egl.ssboOperations
     private val names = IntArray(1)
     private val selectionNames = IntArray(2)
     private val selectionAllocated = BooleanArray(2)
@@ -30,29 +31,29 @@ internal class GpuQuantileWorkspace(private val egl: GpuExecutionContext) : Auto
         require(length in HistogramRanks.BINS..MAX_COUNTS)
         if (names[0] == 0) {
             val zeros = zero ?: ByteBuffer.allocateDirect(MAX_BYTES).order(ByteOrder.nativeOrder()).also { zero = it }
-            GLES32.glGenBuffers(1, names, 0)
+            ssbo.generateBuffers(1, names)
             check(names[0] != 0) { "Cannot allocate histogram buffer" }
             try {
-                GLES32.glBindBuffer(GLES32.GL_SHADER_STORAGE_BUFFER, names[0])
-                GLES32.glBufferData(GLES32.GL_SHADER_STORAGE_BUFFER, MAX_BYTES, null, GLES32.GL_DYNAMIC_READ)
+                ssbo.bindBuffer(names[0])
+                ssbo.allocateDynamicRead(MAX_BYTES, null)
                 egl.checkGl("allocate histogram storage")
                 zeros.clear()
                 allocations++
             } catch (failure: Throwable) {
-                runCatching { egl.releaseResource { GLES32.glDeleteBuffers(1, names, 0) } }.exceptionOrNull()?.let(failure::addSuppressed)
+                runCatching { egl.releaseResource { ssbo.deleteBuffers(1, names) } }.exceptionOrNull()?.let(failure::addSuppressed)
                 names[0] = 0
                 throw failure
             }
         }
         val bytes = length * Int.SIZE_BYTES
         val zeros = checkNotNull(zero).apply { clear(); limit(bytes) }
-        GLES32.glBindBuffer(GLES32.GL_SHADER_STORAGE_BUFFER, names[0])
-        GLES32.glBufferSubData(GLES32.GL_SHADER_STORAGE_BUFFER, 0, bytes, zeros)
+        ssbo.bindBuffer(names[0])
+        ssbo.updateBuffer(0, bytes, zeros)
         egl.checkGl("clear histogram")
     }
     fun bind() {
         requireContext(egl); check(names[0] != 0)
-        GLES32.glBindBufferBase(GLES32.GL_SHADER_STORAGE_BUFFER, 0, names[0])
+        ssbo.bindBufferBase(0, names[0])
     }
     /** Select four ranks without transferring the full histogram to the CPU. */
     fun select(rows: IntArray, ranks: IntArray, expectedCounts: LongArray,
@@ -65,14 +66,13 @@ internal class GpuQuantileWorkspace(private val egl: GpuExecutionContext) : Auto
             if (selectionAllocated[index]) continue
             if (selectionNames[index] == 0) {
                 val name = IntArray(1)
-                GLES32.glGenBuffers(1, name, 0)
+                ssbo.generateBuffers(1, name)
                 check(name[0] != 0) { "Cannot allocate quantile selection buffer" }
                 // Retain ownership even if storage allocation fails; a retry allocates storage again.
                 selectionNames[index] = name[0]
             }
-            GLES32.glBindBuffer(GLES32.GL_SHADER_STORAGE_BUFFER, selectionNames[index])
-            GLES32.glBufferData(GLES32.GL_SHADER_STORAGE_BUFFER,
-                if (index == 0) TILE_BYTES else RESULT_BYTES, null, GLES32.GL_DYNAMIC_READ)
+            ssbo.bindBuffer(selectionNames[index])
+            ssbo.allocateDynamicRead(if (index == 0) TILE_BYTES else RESULT_BYTES, null)
             egl.checkGl("allocate quantile selection storage")
             selectionAllocated[index] = true
         }
@@ -88,12 +88,11 @@ internal class GpuQuantileWorkspace(private val egl: GpuExecutionContext) : Auto
             }, bindResources = ::bindSelection,
             memoryBarrier = GLES32.GL_SHADER_STORAGE_BARRIER_BIT or GLES32.GL_BUFFER_UPDATE_BARRIER_BIT))
         GpuFence(egl).use { it.await() }
-        GLES32.glBindBuffer(GLES32.GL_SHADER_STORAGE_BUFFER, selectionNames[1])
-        val mapped = GLES32.glMapBufferRange(GLES32.GL_SHADER_STORAGE_BUFFER, 0, RESULT_BYTES,
-            GLES32.GL_MAP_READ_BIT) as? ByteBuffer ?: error("Cannot map quantile selections")
+        ssbo.bindBuffer(selectionNames[1])
+        val mapped = ssbo.mapRead(0, RESULT_BYTES) ?: error("Cannot map quantile selections")
         val values = IntArray(16)
         try { mapped.order(ByteOrder.nativeOrder()).asIntBuffer().get(values) }
-        finally { check(GLES32.glUnmapBuffer(GLES32.GL_SHADER_STORAGE_BUFFER)) { "Quantile selections corrupted" } }
+        finally { check(ssbo.unmapBuffer()) { "Quantile selections corrupted" } }
         egl.checkGl("read quantile selections")
         return List(4) { i ->
             val total = values[i * 4 + 3].toLong() and 0xffffffffL
@@ -109,16 +108,16 @@ internal class GpuQuantileWorkspace(private val egl: GpuExecutionContext) : Auto
     }
     private fun bindSelection() {
         bind()
-        GLES32.glBindBufferBase(GLES32.GL_SHADER_STORAGE_BUFFER, 1, selectionNames[0])
-        GLES32.glBindBufferBase(GLES32.GL_SHADER_STORAGE_BUFFER, 2, selectionNames[1])
+        ssbo.bindBufferBase(1, selectionNames[0])
+        ssbo.bindBufferBase(2, selectionNames[1])
     }
     override fun close() {
         egl.requireOwnerThread()
         if (closed) return
         // Keep ownership if a live context rejects cleanup; destroyed/lost contexts return normally.
         egl.releaseResource {
-            if (names[0] != 0) GLES32.glDeleteBuffers(1, names, 0)
-            GLES32.glDeleteBuffers(2, selectionNames, 0)
+            if (names[0] != 0) ssbo.deleteBuffers(1, names)
+            ssbo.deleteBuffers(2, selectionNames)
         }
         names[0] = 0; selectionNames.fill(0); selectionAllocated.fill(false); zero = null; closed = true
     }

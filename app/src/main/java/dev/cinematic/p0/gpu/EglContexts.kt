@@ -53,6 +53,7 @@ internal class EglContexts(val glThread: GlThread, private val assets: AssetMana
 
     override val syncOperations: GpuSyncOperations = AndroidGpuSyncOperations
     override val pixelTransferOperations: GpuPixelTransferOperations = AndroidGpuPixelTransferOperations
+    override val ssboOperations: GpuSsboOperations = AndroidGpuSsboOperations
     override val passOperations: GpuPassOperations = AndroidGpuPassOperations
     override val textureOperations: GpuTextureOperations = AndroidGpuTextureOperations(this)
 
