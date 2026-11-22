@@ -13,6 +13,7 @@ internal class GpuTexture private constructor(
     internal val pool: GpuTexturePool? = null,
 ) : AutoCloseable {
     private val egl get() = storage.egl
+    private val owner get() = storage.owner
     private val ledger get() = storage.ledger
     val width get() = storage.width
     val height get() = storage.height
@@ -39,8 +40,8 @@ internal class GpuTexture private constructor(
         return create(egl, ledger, width, height, format, pool)
     }
 
-    fun requireOpen() { egl.requireCurrent(); check(!closed) { "GPU texture is closed" } }
-    internal fun requireContext(expected: EglContexts) { check(egl === expected) { "Texture belongs to another context" }; requireOpen() }
+    fun requireOpen() { owner.requireCurrent(); check(!closed) { "GPU texture is closed" } }
+    internal fun requireContext(expected: GpuResourceContext) { check(owner === expected) { "Texture belongs to another context" }; requireOpen() }
 
     fun upload(data: Buffer) {
         requireOpen()
@@ -54,11 +55,11 @@ internal class GpuTexture private constructor(
         GLES32.glPixelStorei(GLES32.GL_UNPACK_SKIP_ROWS, 0)
         GLES32.glBindTexture(GLES32.GL_TEXTURE_2D, storage.textureId)
         GLES32.glTexSubImage2D(GLES32.GL_TEXTURE_2D, 0, 0, 0, width, height, format.pixelFormat, format.pixelType, data)
-        egl.checkGl("upload texture")
+        owner.checkGl("upload texture")
     }
 
     override fun close() {
-        egl.glThread.requireCurrent()
+        owner.requireOwnerThread()
         if (closed) return
         // Failed cleanup leaves this lease valid for an explicit retry.
         if (pool == null) storage.destroy() else pool.recycle(storage)
@@ -69,13 +70,14 @@ internal class GpuTexture private constructor(
         val egl: EglContexts, val ledger: GpuMemoryLedger,
         val width: Int, val height: Int, val format: Format,
     ) {
+        val owner: GpuResourceContext get() = egl
         val byteSize = width.toLong() * height * format.bytesPerPixel
         private var texture = 0
         private var framebuffer = 0
         private var reserved = false
-        val textureId: Int get() { egl.requireCurrent(); return texture }
+        val textureId: Int get() { owner.requireCurrent(); return texture }
         val framebufferId: Int get() {
-            egl.requireCurrent()
+            owner.requireCurrent()
             if (framebuffer == 0) {
                 val names = IntArray(1)
                 GLES32.glGenFramebuffers(1, names, 0)
@@ -85,7 +87,7 @@ internal class GpuTexture private constructor(
                     GLES32.glBindFramebuffer(GLES32.GL_FRAMEBUFFER, candidate)
                     GLES32.glFramebufferTexture2D(GLES32.GL_FRAMEBUFFER, GLES32.GL_COLOR_ATTACHMENT0, GLES32.GL_TEXTURE_2D, texture, 0)
                     check(GLES32.glCheckFramebufferStatus(GLES32.GL_FRAMEBUFFER) == GLES32.GL_FRAMEBUFFER_COMPLETE) { "$format cannot be attached to a complete FBO" }
-                    egl.checkGl("create framebuffer")
+                    owner.checkGl("create framebuffer")
                     framebuffer = candidate
                 } catch (failure: Throwable) {
                     GLES32.glDeleteFramebuffers(1, intArrayOf(candidate), 0)
@@ -96,7 +98,7 @@ internal class GpuTexture private constructor(
         }
 
         init {
-            egl.requireCurrent()
+            owner.requireCurrent()
             require(width > 0 && height > 0)
             val maximum = IntArray(1).also { GLES32.glGetIntegerv(GLES32.GL_MAX_TEXTURE_SIZE, it, 0) }[0]
             require(width <= maximum && height <= maximum) { "Texture dimensions exceed GL_MAX_TEXTURE_SIZE" }
@@ -111,7 +113,7 @@ internal class GpuTexture private constructor(
                 GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_WRAP_S, GLES32.GL_CLAMP_TO_EDGE)
                 GLES32.glTexParameteri(GLES32.GL_TEXTURE_2D, GLES32.GL_TEXTURE_WRAP_T, GLES32.GL_CLAMP_TO_EDGE)
                 GLES32.glTexStorage2D(GLES32.GL_TEXTURE_2D, 1, format.internalFormat, width, height)
-                egl.checkGl("allocate $format texture")
+                owner.checkGl("allocate $format texture")
             } catch (failure: Throwable) {
                 runCatching { destroy() }.exceptionOrNull()?.let(failure::addSuppressed)
                 throw failure
@@ -120,10 +122,10 @@ internal class GpuTexture private constructor(
 
 
         fun destroy() {
-            egl.glThread.requireCurrent()
+            owner.requireOwnerThread()
             if (!reserved) return
             // Lost contexts free names implicitly; foreign contexts preserve the owner for retry.
-            egl.releaseResource {
+            owner.releaseResource {
                 if (framebuffer != 0) GLES32.glDeleteFramebuffers(1, intArrayOf(framebuffer), 0)
                 if (texture != 0) GLES32.glDeleteTextures(1, intArrayOf(texture), 0)
             }
