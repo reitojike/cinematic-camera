@@ -1,5 +1,11 @@
 package dev.cinematic.p0.raw.original
 
+import dev.cinematic.p0.jpegrender.original.verifyAnalysisParityBestEffort
+import dev.cinematic.p0.metrics.SaveTiming
+import dev.cinematic.p0.metrics.SaveTimingKind
+import dev.cinematic.p0.metrics.SaveTimingOutcome
+import dev.cinematic.p0.metrics.SaveTimingRecord
+import dev.cinematic.p0.metrics.SaveTimingStage
 import dev.cinematic.p0.raw.R7PreviewInputs
 import java.io.File
 import java.io.IOException
@@ -331,6 +337,114 @@ class OriginalCentralMeteringTest {
             }
             assertThrows(IllegalArgumentException::class.java) {
                 R7PreviewInputs.meterCentralRgb(FloatArray(11), 4, 4, R7PreviewInputs.Source.SYNTHETIC_AS_SHOT)
+            }
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test fun analysisParityDiagnosticReportsCompletedFailedSkippedIncompleteAndUnavailableWithoutThrowing() {
+        val width = 64
+        val height = 48
+        val (outW, outH) = analysisDimensions(width, height)
+        val file = writeRgb16File("parity.rgb16", width, height, Pattern.REALISTIC)
+        try {
+            val source = OriginalRasterFile(file, width, height, 2)
+            val central = OriginalFields.reduceCentralRgb(source, outW, outH) { false }
+            val actual = R7PreviewInputs.meterCentralRgb(
+                central, outW, outH, R7PreviewInputs.Source.LIBRAW_PRELIMINARY_AS_SHOT,
+            )
+
+            // 1. Exact match -> COMPLETED with elapsed nanos and preserved pixels
+            run {
+                val records = mutableListOf<SaveTimingRecord>()
+                var clockTicks = 0
+                val timing = SaveTiming.start(26, SaveTimingKind.SAVE, records::addAll)!!
+                timing.pixels(width, height)
+                verifyAnalysisParityBestEffort(
+                    file, width, height, outW, outH, actual, timing,
+                    clock = { if (clockTicks++ == 0) 1_000L else 6_500L },
+                ) { false }
+                timing.finish(SaveTimingOutcome.PUBLISHED)
+                val row = records.single { it.stage == SaveTimingStage.ANALYSIS_REDUCE_PARITY }
+                assertEquals(SaveTimingOutcome.COMPLETED, row.outcome)
+                assertEquals(5_500L, row.nanos)
+                assertEquals(width.toLong() * height, row.pixels)
+            }
+
+            // 2. 1-ULP mismatch in externalBaseEv, centralP97, or centralSampleCount -> FAILED
+            val mismatches = listOf(
+                actual.copy(externalBaseEv = Math.nextUp(actual.externalBaseEv)),
+                actual.copy(centralP97 = Math.nextUp(actual.centralP97)),
+                actual.copy(centralSampleCount = actual.centralSampleCount + 1),
+            )
+            for (bad in mismatches) {
+                val records = mutableListOf<SaveTimingRecord>()
+                val timing = SaveTiming.start(26, SaveTimingKind.SAVE, records::addAll)!!
+                verifyAnalysisParityBestEffort(file, width, height, outW, outH, bad, timing) { false }
+                timing.finish(SaveTimingOutcome.PUBLISHED)
+                val row = records.single { it.stage == SaveTimingStage.ANALYSIS_REDUCE_PARITY }
+                assertEquals(SaveTimingOutcome.FAILED, row.outcome)
+                assertNotNull(row.nanos)
+            }
+
+            // 3. Pre-stopped -> SKIPPED with NA nanos (never opens file)
+            run {
+                val records = mutableListOf<SaveTimingRecord>()
+                val timing = SaveTiming.start(26, SaveTimingKind.SAVE, records::addAll)!!
+                verifyAnalysisParityBestEffort(
+                    File(temp.root, "nonexistent.rgb16"), width, height, outW, outH, actual, timing,
+                ) { true }
+                timing.finish(SaveTimingOutcome.PUBLISHED)
+                val row = records.single { it.stage == SaveTimingStage.ANALYSIS_REDUCE_PARITY }
+                assertEquals(SaveTimingOutcome.SKIPPED, row.outcome)
+                assertNull(row.nanos)
+            }
+
+            // 4. Mid-run cancellation or missing file -> INCOMPLETE without throwing
+            run {
+                val records = mutableListOf<SaveTimingRecord>()
+                val timing = SaveTiming.start(26, SaveTimingKind.SAVE, records::addAll)!!
+                var checks = 0
+                verifyAnalysisParityBestEffort(file, width, height, outW, outH, actual, timing) { ++checks >= 3 }
+                timing.finish(SaveTimingOutcome.PUBLISHED)
+                val row = records.single { it.stage == SaveTimingStage.ANALYSIS_REDUCE_PARITY }
+                assertEquals(SaveTimingOutcome.INCOMPLETE, row.outcome)
+            }
+            run {
+                val records = mutableListOf<SaveTimingRecord>()
+                val timing = SaveTiming.start(26, SaveTimingKind.SAVE, records::addAll)!!
+                verifyAnalysisParityBestEffort(
+                    File(temp.root, "missing.rgb16"), width, height, outW, outH, actual, timing,
+                ) { false }
+                timing.finish(SaveTimingOutcome.PUBLISHED)
+                val row = records.single { it.stage == SaveTimingStage.ANALYSIS_REDUCE_PARITY }
+                assertEquals(SaveTimingOutcome.INCOMPLETE, row.outcome)
+            }
+
+            // 5. Invalid preconditions -> UNAVAILABLE with NA nanos, without throwing
+            run {
+                val records = mutableListOf<SaveTimingRecord>()
+                val timing = SaveTiming.start(26, SaveTimingKind.SAVE, records::addAll)!!
+                verifyAnalysisParityBestEffort(file, 0, height, outW, outH, actual, timing) { false }
+                timing.finish(SaveTimingOutcome.PUBLISHED)
+                val row = records.single { it.stage == SaveTimingStage.ANALYSIS_REDUCE_PARITY }
+                assertEquals(SaveTimingOutcome.UNAVAILABLE, row.outcome)
+                assertNull(row.nanos)
+            }
+
+            // 6. Throwing clock -> COMPLETED with NA nanos (never fabricates 0)
+            run {
+                val records = mutableListOf<SaveTimingRecord>()
+                val timing = SaveTiming.start(26, SaveTimingKind.SAVE, records::addAll)!!
+                verifyAnalysisParityBestEffort(
+                    file, width, height, outW, outH, actual, timing,
+                    clock = { throw IOException("clock unavailable") },
+                ) { false }
+                timing.finish(SaveTimingOutcome.PUBLISHED)
+                val row = records.single { it.stage == SaveTimingStage.ANALYSIS_REDUCE_PARITY }
+                assertEquals(SaveTimingOutcome.COMPLETED, row.outcome)
+                assertNull(row.nanos)
             }
         } finally {
             file.delete()

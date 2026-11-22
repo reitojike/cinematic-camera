@@ -18,23 +18,80 @@
 #include "as_shot_xy.h"
 #include "original_raster_sink.h"
 #include <fcntl.h>
+#ifdef CINEMATIC_ENABLE_DECODE_TIMING
+#include <time.h>
+#endif
 
 namespace {
 constexpr uint64_t kMaxFileBytes = 64ULL * 1024 * 1024;
 constexpr uint64_t kMaxRawPixels = 16'000'000;
 
+#ifdef CINEMATIC_ENABLE_DECODE_TIMING
+int64_t monotonicNowNs() {
+    struct timespec ts{};
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return -1;
+    if (ts.tv_sec < 0 || ts.tv_nsec < 0) return -1;
+    return static_cast<int64_t>(ts.tv_sec) * 1'000'000'000LL + static_cast<int64_t>(ts.tv_nsec);
+}
+
+int64_t elapsedNs(int64_t start, int64_t end) {
+    return (start >= 0 && end >= start) ? (end - start) : -1;
+}
+
+struct DecodeTimingMarks {
+    int64_t preadStart = -1;
+    int64_t preadEnd = -1;
+    int64_t unpackStart = -1;
+    int64_t processStart = -1;
+    int64_t scaleColorsStart = -1;
+    int64_t scaleColorsEnd = -1;
+    int64_t preInterpStart = -1;
+    int64_t preInterpEnd = -1;
+    int64_t convertRgbStart = -1;
+    int64_t convertRgbEnd = -1;
+    int64_t makeImageStart = -1;
+    int64_t makeImageEnd = -1;
+    int64_t writeStart = -1;
+    int64_t writeEnd = -1;
+};
+#endif
+
 struct Cancellation {
     JNIEnv* env;
     jobject signal;
     jmethodID isCancelled;
+#ifdef CINEMATIC_ENABLE_DECODE_TIMING
+    DecodeTimingMarks* timing = nullptr;
+#endif
     bool cancelled() const {
         return env->ExceptionCheck() || env->CallBooleanMethod(signal, isCancelled);
     }
 };
 
+#ifdef CINEMATIC_ENABLE_DECODE_TIMING
+int progress(void* state, LibRaw_progress stage, int iteration, int) {
+    auto* cancel = static_cast<Cancellation*>(state);
+    if (auto* marks = cancel->timing) {
+        int64_t* slot = nullptr;
+        if (stage == LIBRAW_PROGRESS_SCALE_COLORS) {
+            if (iteration == 0) slot = &marks->scaleColorsStart;
+            else if (iteration == 1) slot = &marks->scaleColorsEnd;
+        } else if (stage == LIBRAW_PROGRESS_PRE_INTERPOLATE) {
+            if (iteration == 0) slot = &marks->preInterpStart;
+            else if (iteration == 1) slot = &marks->preInterpEnd;
+        } else if (stage == LIBRAW_PROGRESS_CONVERT_RGB) {
+            if (iteration == 0) slot = &marks->convertRgbStart;
+            else if (iteration == 1) slot = &marks->convertRgbEnd;
+        }
+        if (slot && *slot < 0) *slot = monotonicNowNs();
+    }
+    return cancel->cancelled() ? 1 : 0;
+}
+#else
 int progress(void* state, LibRaw_progress, int, int) {
     return static_cast<Cancellation*>(state)->cancelled() ? 1 : 0;
 }
+#endif
 
 void fail(const char* code) { throw std::runtime_error(code); }
 void check(int result) {
@@ -71,10 +128,20 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
 ) {
     if (fd < 0 || longEdge < 1 || longEdge > 1024 || !signal || (wbMode != 0 && wbMode != 1)) fail("DNG_UNSUPPORTED");
     if (geometryOnly && !original) fail("DNG_UNSUPPORTED");
+#ifdef CINEMATIC_ENABLE_DECODE_TIMING
+    DecodeTimingMarks timingMarks{};
+    const bool recordTiming = (original != nullptr && !original->isHalfPreview() && !geometryOnly);
+    Cancellation cancel{env, signal, env->GetMethodID(env->GetObjectClass(signal), "isCanceled", "()Z"),
+                        recordTiming ? &timingMarks : nullptr};
+#else
     Cancellation cancel{env, signal, env->GetMethodID(env->GetObjectClass(signal), "isCanceled", "()Z")};
+#endif
     if (!cancel.isCancelled || cancel.cancelled()) fail("DNG_CANCELLED");
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
     if (probe) probe->stage("snapshot", cancel);
+#endif
+#ifdef CINEMATIC_ENABLE_DECODE_TIMING
+    if (recordTiming) timingMarks.preadStart = monotonicNowNs();
 #endif
     struct stat file{};
     if (fstat(fd, &file) || !S_ISREG(file.st_mode) || file.st_size <= 0) fail("DNG_SOURCE");
@@ -91,6 +158,9 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
         if (read <= 0) fail("DNG_SOURCE");
         offset += static_cast<size_t>(read);
     }
+#ifdef CINEMATIC_ENABLE_DECODE_TIMING
+    if (recordTiming) timingMarks.preadEnd = monotonicNowNs();
+#endif
 
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
     if (probe && probe->baseline) probe->baseline->parse(encoded);
@@ -191,6 +261,9 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
     if (probe) probe->stage("unpack", cancel);
 #endif
+#ifdef CINEMATIC_ENABLE_DECODE_TIMING
+    if (recordTiming) timingMarks.unpackStart = monotonicNowNs();
+#endif
     check(raw.unpack());
     if (raw.error_count()) fail("DNG_UNSUPPORTED");
     if (original) original->applyCrop(raw);
@@ -207,6 +280,9 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
     if (probe) probe->stage("process", cancel);
 #endif
+#ifdef CINEMATIC_ENABLE_DECODE_TIMING
+    if (recordTiming) timingMarks.processStart = monotonicNowNs();
+#endif
     check(raw.dcraw_process());
     if (raw.error_count()) fail("DNG_UNSUPPORTED");
     if (original) original->validateProcessedGeometry(raw);
@@ -214,18 +290,44 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
     if (probe) probe->stage("make_image", cancel);
 #endif
+#ifdef CINEMATIC_ENABLE_DECODE_TIMING
+    if (recordTiming) timingMarks.makeImageStart = monotonicNowNs();
+#endif
     std::unique_ptr<libraw_processed_image_t, decltype(&LibRaw::dcraw_clear_mem)> image(
         raw.dcraw_make_mem_image(&error), LibRaw::dcraw_clear_mem);
+#ifdef CINEMATIC_ENABLE_DECODE_TIMING
+    if (recordTiming) timingMarks.makeImageEnd = monotonicNowNs();
+#endif
     check(error);
     if (!image || image->type != LIBRAW_IMAGE_BITMAP || image->bits != 16 || image->colors != 3 ||
         !image->width || !image->height ||
         image->data_size != static_cast<uint64_t>(image->width) * image->height * 6) fail("DNG_UNSUPPORTED");
     if (original) {
         // File output keeps full RGB outside Java. Free RAW/snapshot before row writes.
+#ifdef CINEMATIC_ENABLE_DECODE_TIMING
+        if (recordTiming) timingMarks.writeStart = monotonicNowNs();
+#endif
         raw.recycle();
         std::vector<unsigned char>().swap(encoded);
         original->write(*image, [&] { if (cancel.cancelled()) fail("DNG_CANCELLED"); });
         image.reset();
+#ifdef CINEMATIC_ENABLE_DECODE_TIMING
+        if (recordTiming) {
+            timingMarks.writeEnd = monotonicNowNs();
+            original->setDecodeTiming(cinematic::DecodeTimingNs{
+                elapsedNs(timingMarks.preadStart, timingMarks.preadEnd),
+                elapsedNs(timingMarks.preadEnd, timingMarks.unpackStart),
+                elapsedNs(timingMarks.unpackStart, timingMarks.processStart),
+                elapsedNs(timingMarks.processStart, timingMarks.scaleColorsStart),
+                elapsedNs(timingMarks.scaleColorsStart, timingMarks.scaleColorsEnd),
+                elapsedNs(timingMarks.preInterpStart, timingMarks.preInterpEnd),
+                elapsedNs(timingMarks.preInterpEnd, timingMarks.convertRgbStart),
+                elapsedNs(timingMarks.convertRgbStart, timingMarks.convertRgbEnd),
+                elapsedNs(timingMarks.makeImageStart, timingMarks.makeImageEnd),
+                elapsedNs(timingMarks.writeStart, timingMarks.writeEnd),
+            });
+        }
+#endif
         return nullptr;
     }
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
