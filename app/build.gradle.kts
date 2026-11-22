@@ -76,7 +76,12 @@ android {
         getByName("release") {
             isDebuggable = false
             buildConfigField("boolean", "PUBLICATION_DIAGNOSTIC", publicationDiagnostic.toString())
-            if (publicationDiagnostic) versionNameSuffix = "-pubdiag"
+            if (publicationDiagnostic) {
+                applicationIdSuffix = ".pubdiag"
+                versionNameSuffix = "-pubdiag"
+                manifestPlaceholders["cinematicAppLabel"] = "Cinematic Camera Probe (PubDiag)"
+                manifestPlaceholders["cinematicTestTarget"] = "dev.cinematic.p0.pubdiag"
+            }
             if (stableInternalSigning) signingConfig = signingConfigs.getByName("cinematicInternal")
         }
     }
