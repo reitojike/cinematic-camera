@@ -36,11 +36,17 @@ internal class RecoverablePhotoPublisher(
     val hasUnreleasedResources get() = held?.hasOpenResources == true
 
     fun releaseResources() = exclusive { releaseHeld() }
-    fun advance(shouldStop: () -> Boolean = { false }): JpegPublicationRecord = exclusive {
+    fun advance(shouldStop: () -> Boolean = { false }): JpegPublicationRecord = advance(shouldStop, null)
+
+    fun advance(shouldStop: () -> Boolean, timing: PublicationTiming?): JpegPublicationRecord = exclusive {
+        if (timing == null) advanceExclusive(shouldStop) else timing.scoped { advanceExclusive(shouldStop) }
+    }
+
+    private fun advanceExclusive(shouldStop: () -> Boolean): JpegPublicationRecord {
         releaseHeld()
         val resources = DngIoResources().also { held = it }
         var failure: Throwable? = null
-        try { run(resources, shouldStop) }
+        try { return run(resources, shouldStop) }
         catch (t: Throwable) { failure = t; throw t }
         finally {
             val cleanup = resources.releaseAll()
@@ -53,7 +59,7 @@ internal class RecoverablePhotoPublisher(
 
     private fun run(resources: DngIoResources, stop: () -> Boolean): JpegPublicationRecord {
         render.requirePublishable(supportedContracts)
-        var current = journal.read()
+        var current = measureJournal { journal.read() }
         if (current != null && current.render != render) throw CaptureJournalConflict()
         current?.let { render.requireFingerprint(it.fingerprint) }
         if (current?.phase == JpegPublicationPhase.UNKNOWN) return current
@@ -64,14 +70,19 @@ internal class RecoverablePhotoPublisher(
         checkContinue(stop)
         if (current == null) {
             verifyOriginal(resources, stop)
-            val inspection = checkedStage(stop) { inspector.inspect({ resources.input(input.openJpeg()) }, render.request.output.bytes, { SaveAuthorityBoundary.timed { stop() } }) }
+            val inspection = checkedStage(stop) {
+                PublicationTiming.measure(PublicationInterval.PRIVATE_JPEG) {
+                    inspector.inspect({ resources.input(input.openJpeg()) }, render.request.output.bytes,
+                        { SaveAuthorityBoundary.timed { stop() } })
+                }
+            }
             if (inspection.output != render.request.output || inspection.fingerprint.bytes != inspection.output.bytes) {
                 throw IOException("Completed JPEG metadata does not match the request")
             }
             render.requireFingerprint(inspection.fingerprint)
             checkReleased(resources)
             checkContinue(stop)
-            current = journal.prepare(render, inspection.fingerprint)
+            current = measureJournal { journal.prepare(render, inspection.fingerprint) }
         }
         var record = requireNotNull(current)
         if (record.phase == JpegPublicationPhase.PREPARED) {
@@ -79,20 +90,20 @@ internal class RecoverablePhotoPublisher(
             verifyPrivate(record, resources, stop)
             verifyOriginal(resources, stop)
             checkContinue(stop)
-            record = journal.advance(record.revision, record.phase, JpegPublicationPhase.INSERTING)
+            record = measureJournal { journal.advance(record.revision, record.phase, JpegPublicationPhase.INSERTING) }
             // Do not deliberately leave a durable INSERTING intent without issuing its one insert.
             val uri = try { rows.insert(record.target) } catch (_: Exception) { return unknown(record) }
             if (uri == null || !isDngRowUri(uri)) return unknown(record)
-            val row = try { rows.inspect(uri) } catch (_: Exception) { return journal.unknown(record.revision, uri) }
-            if (row == null || row.uri != uri || !record.target.accepts(row)) return journal.unknown(record.revision, uri)
-            record = journal.recordRow(record.revision, uri)
+            val row = try { rows.inspect(uri) } catch (_: Exception) { return unknown(record, uri) }
+            if (row == null || row.uri != uri || !record.target.accepts(row)) return unknown(record, uri)
+            record = measureJournal { journal.recordRow(record.revision, uri) }
         }
         if (record.phase == JpegPublicationPhase.INSERTING) {
             checkContinue(stop)
             val candidates = try { rows.find(record.target) } catch (_: Exception) { return unknown(record) }
             val row = candidates.singleOrNull()
             if (row == null || !record.target.accepts(row)) return unknown(record)
-            record = journal.recordRow(record.revision, row.uri)
+            record = measureJournal { journal.recordRow(record.revision, row.uri) }
         }
         var firstCopy = false
         if (record.phase == JpegPublicationPhase.ROW_RECORDED) {
@@ -100,7 +111,7 @@ internal class RecoverablePhotoPublisher(
             verifyPrivate(record, resources, stop)
             verifyOriginal(resources, stop)
             checkContinue(stop)
-            record = journal.advance(record.revision, record.phase, JpegPublicationPhase.COPYING)
+            record = measureJournal { journal.advance(record.revision, record.phase, JpegPublicationPhase.COPYING) }
             firstCopy = true
         }
         if (record.phase == JpegPublicationPhase.COPYING) {
@@ -115,20 +126,24 @@ internal class RecoverablePhotoPublisher(
                 verifyOriginal(resources, stop)
                 checkContinue(stop)
                 if (!matches(record, true)) return unknown(record)
-                checkedStage(stop) { DngContentVerifier.copy(record.fingerprint, { resources.input(input.openJpeg()) },
-                    { resources.output(rows.openOutput(record.target, requireNotNull(record.uri))) }, { stopped(stop) }) }
+                checkedStage(stop) {
+                    PublicationTiming.measure(PublicationInterval.COPY) {
+                        DngContentVerifier.copy(record.fingerprint, { resources.input(input.openJpeg()) },
+                            { resources.output(rows.openOutput(record.target, requireNotNull(record.uri))) }, { stopped(stop) })
+                    }
+                }
             }
             if (!matches(record, true)) return unknown(record)
             verifyRow(record, true, resources, stop)
             checkContinue(stop)
             checkReleased(resources)
-            record = journal.advance(record.revision, record.phase, JpegPublicationPhase.BYTES_COMPLETE)
+            record = measureJournal { journal.advance(record.revision, record.phase, JpegPublicationPhase.BYTES_COMPLETE) }
         }
         if (record.phase == JpegPublicationPhase.BYTES_COMPLETE) {
             if (!matches(record, true)) return unknown(record)
             try { verifyRow(record, true, resources, stop) } catch (_: DngContentChanged) { return unknown(record) }
             checkContinue(stop)
-            record = journal.advance(record.revision, record.phase, JpegPublicationPhase.PUBLISHING)
+            record = measureJournal { journal.advance(record.revision, record.phase, JpegPublicationPhase.PUBLISHING) }
         }
         if (record.phase == JpegPublicationPhase.PUBLISHING) {
             val row = inspect(record) ?: return unknown(record)
@@ -146,19 +161,32 @@ internal class RecoverablePhotoPublisher(
             }
             checkContinue(stop)
             checkReleased(resources)
-            record = journal.advance(record.revision, record.phase, JpegPublicationPhase.PUBLISHED)
+            record = measureJournal { journal.advance(record.revision, record.phase, JpegPublicationPhase.PUBLISHED) }
         }
         verifyPublic(record, resources, stop)
         return record
     }
 
-    private fun verifyOriginal(resources: DngIoResources, stop: () -> Boolean) = checkedStage(stop) { DngContentVerifier.verify(
-        render.request.source.fingerprint, { resources.input(input.openOriginal(render.request.source)) }, { stopped(stop) }) }
+    private fun verifyOriginal(resources: DngIoResources, stop: () -> Boolean) = checkedStage(stop) {
+        PublicationTiming.measure(PublicationInterval.ORIGINAL) {
+            DngContentVerifier.verify(render.request.source.fingerprint,
+                { resources.input(input.openOriginal(render.request.source)) }, { stopped(stop) })
+        }
+    }
     private fun verifyPrivate(record: JpegPublicationRecord, resources: DngIoResources, stop: () -> Boolean) =
-        checkedStage(stop) { DngContentVerifier.verify(record.fingerprint, { resources.input(input.openJpeg()) }, { stopped(stop) }) }
+        checkedStage(stop) {
+            PublicationTiming.measure(PublicationInterval.PRIVATE_JPEG) {
+                DngContentVerifier.verify(record.fingerprint, { resources.input(input.openJpeg()) }, { stopped(stop) })
+            }
+        }
     private fun verifyRow(record: JpegPublicationRecord, pending: Boolean, resources: DngIoResources, stop: () -> Boolean) =
-        checkedStage(stop) { DngContentVerifier.verify(record.fingerprint,
-            { resources.input(rows.openRead(record.target, requireNotNull(record.uri), pending)) }, stop) }
+        checkedStage(stop) {
+            val interval = if (pending) PublicationInterval.ROW_PENDING else PublicationInterval.ROW_PUBLIC
+            PublicationTiming.measure(interval) {
+                DngContentVerifier.verify(record.fingerprint,
+                    { resources.input(rows.openRead(record.target, requireNotNull(record.uri), pending)) }, stop)
+            }
+        }
     private fun verifyPublic(record: JpegPublicationRecord, resources: DngIoResources, stop: () -> Boolean) {
         if (record.phase != JpegPublicationPhase.PUBLISHED || !matches(record, false)) throw IOException("Published JPEG unavailable or changed")
         verifyRow(record, false, resources, stop)
@@ -167,7 +195,11 @@ internal class RecoverablePhotoPublisher(
         rows.inspect(requireNotNull(record.uri))?.takeIf { it.uri == record.uri }
     } catch (_: Exception) { null }
     private fun matches(record: JpegPublicationRecord, pending: Boolean) = inspect(record)?.let { record.target.accepts(it, pending) } == true
-    private fun unknown(record: JpegPublicationRecord) = journal.unknown(record.revision, record.uri)
+    private fun unknown(record: JpegPublicationRecord, uri: String? = record.uri) =
+        measureJournal { journal.unknown(record.revision, uri) }
+
+    private inline fun <T> measureJournal(action: () -> T): T =
+        PublicationTiming.measure(PublicationInterval.JOURNAL, action = action)
     private fun stopped(stop: () -> Boolean) = stop() || !isCurrent()
     private fun <T> checkedStage(stop: () -> Boolean, action: () -> T): T {
         if (!SaveAuthorityBoundary.isObserving) return action()
@@ -177,7 +209,9 @@ internal class RecoverablePhotoPublisher(
         return result
     }
     private fun checkContinue(stop: () -> Boolean) {
-        if (SaveAuthorityBoundary.durable { stopped(stop) }) throw IOException("JPEG publication stopped or superseded")
+        PublicationTiming.measure(PublicationInterval.AUTHORITY) {
+            if (SaveAuthorityBoundary.durable { stopped(stop) }) throw IOException("JPEG publication stopped or superseded")
+        }
     }
     private fun checkReleased(resources: DngIoResources) { if (resources.hasOpenResources) throw IOException("JPEG resources remain open") }
     private fun releaseHeld() {

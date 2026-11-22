@@ -1,5 +1,10 @@
 package dev.cinematic.p0.rawcapture
 
+import dev.cinematic.p0.metrics.SaveTiming
+import dev.cinematic.p0.metrics.SaveTimingKind
+import dev.cinematic.p0.metrics.SaveTimingOutcome
+import dev.cinematic.p0.metrics.SaveTimingRecord
+import dev.cinematic.p0.metrics.SaveTimingStage
 import dev.cinematic.p0.raw.PhotoAdjustments
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -15,6 +20,209 @@ class RenderedJpegPublicationTest {
     private val jpeg = "synthetic completed JPEG".toByteArray() // Protocol fixture; native decoding is tested separately.
     private fun fingerprint(bytes: ByteArray) = OriginalFingerprint(bytes.size.toLong(),
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) })
+
+    @Test fun observedPublicationMeasuresAuthoritySeparatelyFromJournalWrites() {
+        val f = Fixture(publicationJournal = true)
+        var now = 0L
+        var checkpoints = 0
+        var journalWrites = 0
+        f.storage.afterCommit = {
+            journalWrites++
+            now += 2
+        }
+        val publisher = f.publisher(isCurrent = {
+            now++
+            true
+        })
+        val records = mutableListOf<SaveTimingRecord>()
+        val timing = SaveTiming.start(10, SaveTimingKind.SAVE, records::addAll)!!
+
+        val result = SaveAuthorityBoundary.observing(check = {
+            checkpoints++
+            now += 10
+            true
+        }) {
+            measurePublication(timing, true, { PublicationTiming { now } }) {
+                publisher.advance({ false }, it)
+            }
+        }
+
+        assertEquals(JpegPublicationPhase.PUBLISHED, result.phase)
+        assertEquals(7, checkpoints)
+        assertEquals(7, journalWrites)
+        timing.finish(SaveTimingOutcome.PUBLISHED)
+        val authority = records.single { it.stage == SaveTimingStage.PUB_AUTHORITY_CHECK }
+        assertEquals(SaveTimingOutcome.COMPLETED, authority.outcome)
+        // Each checkContinue costs 1 ns and each observed journal checkpoint costs 10 ns.
+        assertEquals(38L + 7L * 10, authority.nanos)
+        val journal = records.single { it.stage == SaveTimingStage.PUB_JOURNAL }
+        assertEquals(SaveTimingOutcome.COMPLETED, journal.outcome)
+        assertEquals(7L * 2, journal.nanos)
+    }
+
+    @Test fun nonPublicationJournalChecksAuthorityWithoutRecordingAnInterval() {
+        val f = Fixture()
+        // Prepare valid bytes outside the measured replacement.
+        f.journal().prepare(f.completion, fingerprint(jpeg))
+        val contents = requireNotNull(f.storage.bytes).clone()
+        f.storage.bytes = null
+        var now = 0L
+        var checkpoints = 0
+        val collector = PublicationTiming { now }
+        val records = mutableListOf<SaveTimingRecord>()
+        val timing = SaveTiming.start(10, SaveTimingKind.SAVE, records::addAll)!!
+
+        SaveAuthorityBoundary.observing(check = {
+            checkpoints++
+            now += 10
+            true
+        }) {
+            collector.scoped {
+                f.storage.checkingSaveAuthority(publicationJournal = false).replace(contents)
+            }
+        }
+
+        assertEquals(1, checkpoints)
+        assertArrayEquals(contents, f.storage.bytes)
+        collector.emit(timing, published = false)
+        timing.finish(SaveTimingOutcome.HOLD)
+        val authority = records.single { it.stage == SaveTimingStage.PUB_AUTHORITY_CHECK }
+        assertEquals(SaveTimingOutcome.NOT_REACHED, authority.outcome)
+        assertNull(authority.nanos)
+    }
+
+    @Test fun publicationTimingClassifiesRowChecksOnResume() {
+        for (phase in listOf(JpegPublicationPhase.COPYING, JpegPublicationPhase.PUBLISHING)) {
+            val f = Fixture()
+            if (phase == JpegPublicationPhase.COPYING) {
+                f.storage.faultPhase = JpegPublicationPhase.BYTES_COMPLETE
+                f.storage.fault = "before"
+            } else {
+                f.rows.publishFault = "after"
+            }
+            assertThrows(IOException::class.java) { f.publisher().advance() }
+            assertEquals(phase, f.journal().read()!!.phase)
+            assertEquals(phase == JpegPublicationPhase.COPYING, f.rows.row!!.pending)
+            f.storage.fault = "none"
+            f.rows.publishFault = "none"
+
+            val records = mutableListOf<SaveTimingRecord>()
+            val timing = SaveTiming.start(10, SaveTimingKind.SAVE, records::addAll)!!
+            var tick = 0L
+            val result = measurePublication(timing, true, { PublicationTiming { tick++ } }) {
+                f.publisher().advance({ false }, it)
+            }
+            assertEquals(JpegPublicationPhase.PUBLISHED, result.phase)
+            timing.finish(SaveTimingOutcome.PUBLISHED)
+            val pending = records.single { it.stage == SaveTimingStage.PUB_VERIFY_ROW_PENDING }
+            val public = records.single { it.stage == SaveTimingStage.PUB_VERIFY_ROW_PUBLIC }
+            if (phase == JpegPublicationPhase.COPYING) {
+                assertEquals(SaveTimingOutcome.COMPLETED, pending.outcome)
+                assertEquals(4L, pending.nanos)
+            } else {
+                assertEquals(SaveTimingOutcome.SKIPPED, pending.outcome)
+                assertNull(pending.nanos)
+            }
+            assertEquals(SaveTimingOutcome.COMPLETED, public.outcome)
+            assertEquals(2L, public.nanos)
+            assertEquals(SaveTimingOutcome.SKIPPED, records.single { it.stage == SaveTimingStage.PUB_COPY }.outcome)
+            assertEquals(1, f.rows.outputs)
+            assertEquals(1, f.rows.publishes)
+        }
+    }
+
+    @Test fun publicationTimingPreservesVerificationCountsAndClassifiesResumedAndUnknownReturns() {
+        val verificationCounts = mutableListOf<List<List<Int>>>()
+        for (enabled in listOf(false, true)) {
+            val f = Fixture()
+            val publisher = f.publisher()
+            val records = mutableListOf<SaveTimingRecord>()
+            val timing = SaveTiming.start(10, SaveTimingKind.SAVE, records::addAll)!!
+            var ticks = 0L
+            var created = 0
+            val create = { created++; PublicationTiming { ticks++ } }
+            verificationCounts += List(2) {
+                val result = measurePublication(timing, enabled, create) { publisher.advance({ false }, it) }
+                assertEquals(JpegPublicationPhase.PUBLISHED, result.phase)
+                listOf(f.originalOpens, f.jpegOpens, f.jpegInspections, f.rows.reads, f.rows.inspections)
+            }
+            assertTrue(records.isEmpty())
+            timing.finish(SaveTimingOutcome.PUBLISHED)
+            assertEquals(1, f.rows.inserts)
+            assertEquals(1, f.rows.outputs)
+            assertEquals(1, f.rows.publishes)
+            val details = records.filter { it.stage.name.startsWith("PUB_") }
+            assertEquals(if (enabled) 2 else 0, created)
+            assertEquals(if (enabled) 16 else 0, details.size)
+            if (enabled) {
+                for ((interval, count) in mapOf(PublicationInterval.ORIGINAL to 5L, PublicationInterval.PRIVATE_JPEG to 3L,
+                    PublicationInterval.COPY to 1L, PublicationInterval.ROW_PENDING to 3L, PublicationInterval.ROW_PUBLIC to 2L,
+                    PublicationInterval.JOURNAL to 8L)) {
+                    assertEquals(count, details.take(8).single { it.stage == interval.stage }.nanos)
+                }
+                assertEquals(SaveTimingOutcome.SKIPPED,
+                    details.drop(8).single { it.stage == SaveTimingStage.PUB_COPY }.outcome)
+            }
+        }
+
+        assertEquals(verificationCounts[0], verificationCounts[1])
+
+        val f = Fixture()
+        f.rows.afterInsert = { throw IOException("lost insert acknowledgement") }
+        val publisher = f.publisher()
+        val records = mutableListOf<SaveTimingRecord>()
+        val timing = SaveTiming.start(10, SaveTimingKind.SAVE, records::addAll)!!
+        repeat(2) {
+            assertEquals(JpegPublicationPhase.UNKNOWN,
+                measurePublication(timing, true) { publisher.advance({ false }, it) }.phase)
+        }
+        timing.finish(SaveTimingOutcome.UNCONFIRMED)
+        val details = records.filter { it.stage.name.startsWith("PUB_") }
+        assertEquals(16, details.size)
+        assertEquals(2, records.count { it.stage == SaveTimingStage.PUBLICATION && it.outcome == SaveTimingOutcome.COMPLETED })
+        assertEquals(SaveTimingOutcome.COMPLETED, details.take(8).single { it.stage == SaveTimingStage.PUB_VERIFY_ORIGINAL }.outcome)
+        assertEquals(SaveTimingOutcome.NOT_REACHED, details.take(8).single { it.stage == SaveTimingStage.PUB_COPY }.outcome)
+        assertTrue(details.drop(8).all {
+            it.outcome == if (it.stage == SaveTimingStage.PUB_JOURNAL) SaveTimingOutcome.COMPLETED else SaveTimingOutcome.NOT_REACHED
+        })
+    }
+
+    @Test fun publicationTimingKeepsStopShortCircuitAndSkipsCreationWithoutTiming() {
+        val publisher = Fixture().publisher(isCurrent = { error("stop must short-circuit authority check") })
+        val records = mutableListOf<SaveTimingRecord>()
+        val timing = SaveTiming.start(10, SaveTimingKind.SAVE, records::addAll)!!
+        val failure = assertThrows(IOException::class.java) {
+            measurePublication(timing, true) { publisher.advance({ true }, it) }
+        }
+        assertEquals("JPEG publication stopped or superseded", failure.message)
+        timing.finish(SaveTimingOutcome.HOLD)
+        assertEquals(SaveTimingOutcome.INCOMPLETE, records.single { it.stage == SaveTimingStage.PUB_AUTHORITY_CHECK }.outcome)
+        assertEquals(SaveTimingOutcome.NOT_REACHED, records.single { it.stage == SaveTimingStage.PUB_VERIFY_ORIGINAL }.outcome)
+        val unmeasured = Fixture().publisher()
+        var created = 0
+        assertEquals(JpegPublicationPhase.PUBLISHED,
+            measurePublication(null, true, { created++; PublicationTiming() }) {
+                assertNull(it)
+                unmeasured.advance({ false }, it)
+            }.phase)
+        assertEquals(0, created)
+    }
+
+    @Test fun collectorCreationFailureReportsUnavailableAndStillPublishes() {
+        val records = mutableListOf<SaveTimingRecord>()
+        val timing = SaveTiming.start(10, SaveTimingKind.SAVE, records::addAll)!!
+        val f = Fixture()
+        val publisher = f.publisher()
+        val result = measurePublication(timing, true, { throw OutOfMemoryError("synthetic") }) {
+            publisher.advance({ false }, it)
+        }
+        assertEquals(JpegPublicationPhase.PUBLISHED, result.phase)
+        assertEquals(1, f.rows.inserts)
+        timing.finish(SaveTimingOutcome.PUBLISHED)
+        val details = records.filter { it.stage.name.startsWith("PUB_") }
+        assertEquals(8, details.size)
+        assertTrue(details.all { it.outcome == SaveTimingOutcome.UNAVAILABLE && it.nanos == null })
+    }
 
     @Test fun publishesOneCompletedResultAndNeverDeletesOrRecreatesSharedRows() {
         val f = Fixture()
@@ -471,11 +679,15 @@ class RenderedJpegPublicationTest {
     }
 
     private inner class Fixture(strict: Boolean = false, private val trial: Boolean = false,
-        private val adjustments: PhotoAdjustments = PhotoAdjustments.NONE) {
+        private val adjustments: PhotoAdjustments = PhotoAdjustments.NONE,
+        private val publicationJournal: Boolean = false) {
         var originalBytes = original.clone()
         var jpegBytes = jpeg.clone()
         var originalUnavailable = false
         var inspectorFails = false
+        var originalOpens = 0
+        var jpegOpens = 0
+        var jpegInspections = 0
         val request = RenderedJpegRequest(if (trial) "TRIAL24_capture-1" else "capture-1", 1,
             SharedOriginalReference("content://test/original/1", fingerprint(original), OriginalGrant.APP_OWNED),
             if (trial) ManualOriginalTrialRender.recipe(.5, adjustments) else RenderRecipeSnapshot("test-recipe-v1", "{\"strength\":0.5}"),
@@ -493,18 +705,25 @@ class RenderedJpegPublicationTest {
         var inspectedOutput = request.output
         val storage = MemoryStorage()
         val rows = FakeRows()
-        fun journal() = JpegPublicationJournal(request.captureId, 1, storage) { "a".repeat(32) }
+        fun journal() = JpegPublicationJournal(request.captureId, 1,
+            if (publicationJournal) storage.checkingSaveAuthority(publicationJournal = true) else storage
+        ) { "a".repeat(32) }
         fun publisher(c: JpegPublicationRender = if (trial) manualTrial else completion,
             contracts: Set<RendererPublicationContract> = if (trial) setOf(ManualOriginalTrialRender.CONTRACT) else
                 setOf(RendererPublicationContract("test-renderer-v1", "test-recipe-v1", completion.original?.declaration)),
             isCurrent: () -> Boolean = { true }) = RecoverablePhotoPublisher(journal(), rows, c, contracts,
                 object : RenderedJpegInput {
-                    override fun openJpeg() = ByteArrayInputStream(jpegBytes)
+                    override fun openJpeg(): InputStream {
+                        jpegOpens++
+                        return ByteArrayInputStream(jpegBytes)
+                    }
                     override fun openOriginal(reference: SharedOriginalReference): InputStream {
+                        originalOpens++
                         if (originalUnavailable) throw IOException("Source unavailable")
                         return ByteArrayInputStream(originalBytes)
                     }
                 }, JpegInspector { open, _ ->
+                    jpegInspections++
                     if (inspectorFails) throw IOException("Invalid JPEG")
                     JpegInspection(inspectedOutput, fingerprint(open().use { it.readBytes() }))
                 }, isCurrent)
@@ -539,6 +758,8 @@ class RenderedJpegPublicationTest {
         var inserts = 0
         var outputs = 0
         var publishes = 0
+        var reads = 0
+        var inspections = 0
         var duplicate = false
         var afterInsert: () -> Unit = {}
         var writeFault = "none"
@@ -552,8 +773,12 @@ class RenderedJpegPublicationTest {
             return row!!.uri
         }
         override fun find(target: JpegPublicationTarget) = listOfNotNull(row).let { if (duplicate) it + it else it }
-        override fun inspect(uri: String) = row?.takeIf { it.uri == uri }
+        override fun inspect(uri: String): DngPendingRow? {
+            inspections++
+            return row?.takeIf { it.uri == uri }
+        }
         override fun openRead(target: JpegPublicationTarget, uri: String, pending: Boolean): InputStream {
+            reads++
             check(target.accepts(requireNotNull(row), pending))
             return ByteArrayInputStream(bytes)
         }

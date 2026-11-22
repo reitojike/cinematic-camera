@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
 import androidx.test.platform.app.InstrumentationRegistry
+import dev.cinematic.p0.BuildConfig
 import dev.cinematic.p0.rawcapture.*
 import dev.cinematic.p0.testing.writeSyntheticTrialDng
 import org.junit.Assert.*
@@ -138,6 +139,16 @@ class SaveTimingAndroidTest {
             assertTrue("Missing completed $stage", records.any { it[4] == stage && it[5] == "COMPLETED" && it[7] != "NA" })
         }
         assertTrue(records.any { it[4] == "ATTEMPT" && it[5] == "PUBLISHED" && it[6] == (width.toLong() * height).toString() })
+        val publicationDetails = records.filter { it[4].startsWith("PUB_") }
+        if (BuildConfig.PUBLICATION_DIAGNOSTIC) {
+            assertEquals(PublicationInterval.entries.map { it.stage.name }, publicationDetails.map { it[4] })
+            assertTrue(publicationDetails.all { it.size == 8 && it[5] == "COMPLETED" && it[7] != "NA" })
+            val publication = records.single { it[4] == "PUBLICATION" }
+            assertTrue(records.indexOf(publication) < records.indexOf(publicationDetails.first()))
+            assertTrue(publicationDetails.sumOf { it[7].toLong() } <= publication[7].toLong())
+        } else {
+            assertTrue(publicationDetails.isEmpty())
+        }
         for (privateText in listOf(name, original.toString(), save.request.captureId, source.fingerprint.toString()))
             assertFalse(snapshot.contains(privateText))
         assertEquals(fingerprint, DngContentVerifier.verify(fingerprint, { requireNotNull(resolver.openInputStream(original)) }))
