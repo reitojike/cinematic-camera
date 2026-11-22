@@ -3,6 +3,7 @@ package dev.cinematic.p0.gpu.preview
 import dev.cinematic.p0.gpu.EglContexts
 import dev.cinematic.p0.gpu.GpuDisplayOptions
 import dev.cinematic.p0.gpu.GpuMemoryLedger
+import dev.cinematic.p0.gpu.GpuPreviewPresenter
 import dev.cinematic.p0.gpu.GpuPreviewTarget
 import dev.cinematic.p0.gpu.GpuTexture
 import dev.cinematic.p0.gpu.StageClearGpuPreviewTarget
@@ -13,7 +14,7 @@ internal class GpuFramePresenter(
     private val ledger: GpuMemoryLedger,
     target: GpuPreviewTarget,
     private val display: GpuDisplayOptions,
-) {
+) : GpuPreviewPresenter {
     private val destination: StageClearGpuPreviewTarget
 
     init {
@@ -22,9 +23,9 @@ internal class GpuFramePresenter(
     }
 
     // Kept outside the submission timer, as before. Window ownership/swap/query stay in renderer.
-    fun makeCurrent() = egl.makeCurrent(destination.window)
+    override fun makeCurrent() = egl.makeCurrent(destination.window)
 
-    fun present(image: GpuTexture) {
+    override fun present(image: GpuTexture) {
         image.requireContext(egl)
         require(image.memoryLedger === ledger) { "GPU frame belongs to another memory ledger" }
         present(egl, image, destination.width, destination.height, display.rotationDegrees,
