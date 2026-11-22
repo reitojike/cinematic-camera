@@ -40,7 +40,7 @@ class GpuPresentationBoundaryAndroidTest {
         var calls = 0
         var foreign = false
         val otherLedger = GpuMemoryLedger()
-        DefaultStageClearGpu(egl, ledger) { input, _ ->
+        DefaultStageClearGpu(egl, ledger, createPresenter = windowTestPresenter(egl, ledger)) { input, _ ->
             object : StageClearGpuPipeline {
                 override fun render(params: GpuRenderParams, tap: ((GpuStageTap.Point, GpuTexture) -> Unit)?,
                     consume: (GpuTexture, GpuDecisions) -> Unit) {
@@ -76,7 +76,7 @@ class GpuPresentationBoundaryAndroidTest {
 
     @Test fun temporaryOutputIsConsumedBeforeCloseAndViewportOffsetIsForwarded() = gpu { egl, ledger, window ->
         var released = false
-        DefaultStageClearGpu(egl, ledger) { input, _ ->
+        DefaultStageClearGpu(egl, ledger, createPresenter = windowTestPresenter(egl, ledger)) { input, _ ->
             object : StageClearGpuPipeline {
                 override fun render(params: GpuRenderParams, tap: ((GpuStageTap.Point, GpuTexture) -> Unit)?,
                     consume: (GpuTexture, GpuDecisions) -> Unit) {
@@ -119,7 +119,7 @@ class GpuPresentationBoundaryAndroidTest {
 
     @Test fun invalidPresentationIsRejectedBeforePipelineRuns() = gpu { egl, ledger, window ->
         var calls = 0
-        DefaultStageClearGpu(egl, ledger) { _, _ -> calls++; error("Must not create pipeline") }.use { engine ->
+        DefaultStageClearGpu(egl, ledger, createPresenter = windowTestPresenter(egl, ledger)) { _, _ -> calls++; error("Must not create pipeline") }.use { engine ->
             engine.openPhoto(LinearSrgbImage(4, 4, FloatArray(48))) { false }.use { photo ->
                 assertThrows(IllegalArgumentException::class.java) {
                     engine.renderPreview(photo, params, StageClearGpuPreviewTarget(window, 16, 16), GpuDisplayOptions(false, 45))

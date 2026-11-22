@@ -181,7 +181,7 @@ class GpuInputAdmissionSafetyAndroidTest {
                 EglContexts(thread, target.assets).use { egl ->
                     GlCapabilities.inspect(egl).requireSupported()
                     val ledger = GpuMemoryLedger(GpuMemoryLedger.PREVIEW_BUDGET)
-                    DefaultStageClearGpu(egl, ledger, GpuFrameMode.FULL_RECOMPUTE).use { engine ->
+                    DefaultStageClearGpu(egl, ledger, GpuFrameMode.FULL_RECOMPUTE, createPresenter = windowTestPresenter(egl, ledger)).use { engine ->
                         engine.openPhoto(next.image) { false }.use { photo ->
                             for (params in listOf(GpuRenderParams(0.0, PhotoAdjustments.NONE),
                                 GpuRenderParams(1.0, PhotoAdjustments(60.0, 1.0)))) {

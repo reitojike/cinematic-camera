@@ -7,7 +7,6 @@ import android.opengl.EGLSurface
 import android.opengl.EGLExt
 import android.opengl.GLES32
 import android.view.Surface
-import dev.cinematic.p0.gpu.preview.GpuFramePresenter
 import dev.cinematic.p0.gpu.preview.GpuSurfaceProbe
 
 internal fun androidGpuShaderSource(assets: AssetManager): ShaderSource =
@@ -50,9 +49,6 @@ internal class EglContexts(val glThread: GlThread, private val assets: AssetMana
     }
 
     override fun capabilities(): GlCapabilities.Result = GlCapabilities.inspectAndroid(this)
-
-    fun createPreviewPresenter(ledger: GpuMemoryLedger, target: GpuPreviewTarget,
-        options: GpuDisplayOptions): GpuPreviewPresenter = GpuFramePresenter(this, ledger, target, options)
 
     init {
         glThread.requireCurrent()
