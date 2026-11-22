@@ -1,19 +1,28 @@
 package dev.cinematic.p0.gpu
 
+import android.graphics.Bitmap
+import android.opengl.GLES32
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.cinematic.p0.gpu.diag.GpuStageTap
+import dev.cinematic.p0.gpu.export.GpuExportBands
 import dev.cinematic.p0.gpu.export.GpuExportRenderer
+import dev.cinematic.p0.gpu.export.GpuExportRgb16
 import dev.cinematic.p0.gpu.export.GpuExportTimings
 import dev.cinematic.p0.raw.original.OriginalRaster
+import dev.cinematic.p0.raw.original.OriginalRasterFile
 import dev.cinematic.p0.raw.original.originalCheckpoint
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.CancellationException
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** #286: 合成入力限定。帯分割、最終短帯、例外・取消時の所有権を実 renderer で確認する。 */
 @RunWith(AndroidJUnit4::class)
@@ -45,6 +54,180 @@ class GpuExportRendererAndroidTest {
                 }
                 consume(y, row)
             }
+        }
+    }
+
+    private fun rgb16Sample(pixel: Int, channel: Int): Int =
+        (pixel * 15485863 + channel * 32452843) and 65535
+
+    private fun withRgb16Raster(rows: Int, width: Int = 257, block: (OriginalRasterFile) -> Unit) {
+        val cache = InstrumentationRegistry.getInstrumentation().targetContext.cacheDir
+        val file = File.createTempFile("synthetic-rgb16", ".bin", cache)
+        try {
+            val input = OriginalRasterFile(file, width, rows, 2)
+            val row = ByteBuffer.allocate(width * 6).order(ByteOrder.LITTLE_ENDIAN)
+            file.outputStream().use { stream ->
+                repeat(rows) { y ->
+                    row.clear()
+                    repeat(width) { x ->
+                        repeat(3) { channel -> row.putShort(rgb16Sample(y * width + x, channel).toShort()) }
+                    }
+                    stream.write(row.array())
+                }
+            }
+            block(input)
+        } finally { file.delete() }
+    }
+
+    @Test fun rgb16GpuDecodeMatchesEveryCpuBit() = gpu { egl ->
+        val ledger = GpuMemoryLedger(GpuMemoryLedger.EXPORT_BUDGET)
+        val side = GpuExportRgb16.LUT_SIDE
+        GpuTexture.create(egl, ledger, side, side, GpuTexture.Format.R32UI).use { lut ->
+            lut.upload(GpuExportRgb16.lutBits())
+            for ((imageRows, bandRows) in listOf(257 to 64, 257 to 256, 256 to 256, 1 to 64)) {
+                withRgb16Raster(imageRows) { input ->
+                    val width = input.width
+                    GpuExportBands.forEach(input, bandRows, { false }) { origin, rows, data ->
+                        GpuTexture.create(egl, ledger, width, rows, GpuTexture.Format.RGB16UI).use { raw ->
+                            GpuTexture.create(egl, ledger, width, rows, GpuTexture.Format.RGBA32F).use { output ->
+                                raw.upload(data)
+                                GpuExportRgb16.decode(egl, raw, lut, output)
+                                val rgba = ByteBuffer.allocateDirect(width * rows * 16)
+                                    .order(ByteOrder.nativeOrder()).asFloatBuffer()
+                                GLES32.glBindFramebuffer(GLES32.GL_FRAMEBUFFER, output.framebufferId)
+                                GLES32.glReadBuffer(GLES32.GL_COLOR_ATTACHMENT0)
+                                GLES32.glBindBuffer(GLES32.GL_PIXEL_PACK_BUFFER, 0)
+                                GLES32.glPixelStorei(GLES32.GL_PACK_ALIGNMENT, 1)
+                                GLES32.glPixelStorei(GLES32.GL_PACK_ROW_LENGTH, 0)
+                                GLES32.glPixelStorei(GLES32.GL_PACK_SKIP_PIXELS, 0)
+                                GLES32.glPixelStorei(GLES32.GL_PACK_SKIP_ROWS, 0)
+                                GLES32.glReadPixels(0, 0, width, rows, GLES32.GL_RGBA, GLES32.GL_FLOAT, rgba)
+                                egl.checkGl("read RGB16 decoded RGBA32F")
+                                for (y in 0 until rows) for (x in 0 until width) for (c in 0..3) {
+                                    val sample = if (c < 3) rgb16Sample((origin + y) * width + x, c) else 65535
+                                    val expected = (sample / 65535f).toRawBits()
+                                    val actual = rgba.get().toRawBits()
+                                    if (actual != expected) {
+                                        fail("RGB16 decode band=$origin xy=($x,$y) channel=$c sample=$sample " +
+                                            "expected=0x${expected.toString(16)} actual=0x${actual.toString(16)}")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assertReleased(ledger)
+    }
+
+    @Test fun rgb16AndCpuFloatInputsProduceIdenticalFinalBitmaps() = gpu { egl ->
+        withRgb16Raster(257) { rgb16 ->
+            val cpu = object : OriginalRaster by rgb16 {}
+            val ledger = GpuMemoryLedger(GpuMemoryLedger.EXPORT_BUDGET)
+            fun bitmapPixels(input: OriginalRaster, bandRows: Int, strength: Double, byRow: Boolean): IntArray {
+                val width = input.width
+                val height = input.height
+                val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                try {
+                    bitmap.setHasAlpha(false)
+                    val renderer = GpuExportRenderer(egl, ledger, bandRows)
+                    val gains = doubleArrayOf(1.02, 1.0, .98)
+                    if (byRow) {
+                        renderer.render(input, .25, gains, strength) { y, argb ->
+                            bitmap.setPixels(argb, 0, width, 0, y, width, 1)
+                        }
+                    } else {
+                        renderer.renderBands(input, .25, gains, strength) { origin, rows, argb ->
+                            bitmap.setPixels(argb, 0, width, 0, origin, width, rows)
+                        }
+                    }
+                    assertReleased(ledger)
+                    return IntArray(width * height).also { bitmap.getPixels(it, 0, width, 0, 0, width, height) }
+                } finally { bitmap.recycle() }
+            }
+            for (bandRows in listOf(64, 256)) for (strength in listOf(0.0, .75)) {
+                val reference = bitmapPixels(cpu, bandRows, strength, byRow = true)
+                assertArrayEquals("Float bands: bandRows=$bandRows strength=$strength",
+                    reference, bitmapPixels(cpu, bandRows, strength, byRow = false))
+                assertArrayEquals("RGB16 bands: bandRows=$bandRows strength=$strength",
+                    reference, bitmapPixels(rgb16, bandRows, strength, byRow = false))
+            }
+        }
+    }
+
+    @Test fun optIn12And24MpRgb16ExportsStayWithinTextureBudget() {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("gpuLargeExport") == "true")
+        gpu { egl ->
+            for ((width, height) in listOf(4000 to 3000, 6000 to 4000)) {
+                withRgb16Raster(height, width) { input ->
+                    val budget = 192L * 1024 * 1024
+                    assertEquals(budget, GpuMemoryLedger.EXPORT_BUDGET)
+                    val ledger = GpuMemoryLedger(budget)
+                    var nextRow = 0
+                    val result = GpuExportRenderer(egl, ledger, 256)
+                        .renderBands(input, 0.0, doubleArrayOf(1.0, 1.0, 1.0), 1.0) { origin, rows, _ ->
+                            assertEquals(nextRow, origin)
+                            assertEquals(minOf(256, height - origin), rows)
+                            nextRow += rows
+                        }
+                    assertEquals(height, nextRow)
+                    assertEquals(result.peakTextureBytes, ledger.peakAllocatedBytes)
+                    assertTrue("${width}x$height peak=${ledger.peakAllocatedBytes}",
+                        ledger.peakAllocatedBytes in 1L..budget)
+                    assertReleased(ledger)
+                    assertFalse(input.hasPendingOwners)
+                    Log.i("GpuExportRendererTest", "Synthetic RGB16 ${width}x$height " +
+                        "peak=${ledger.peakAllocatedBytes} budget=$budget outputRows=$nextRow")
+                }
+            }
+        }
+    }
+
+    @Test fun rgb16SmallBudgetFailureReleasesLutAndPartialFields() = gpu { egl ->
+        withRgb16Raster(257) { input ->
+            val lutBytes = GpuExportRgb16.LUT_SIDE.toLong() * GpuExportRgb16.LUT_SIDE * Int.SIZE_BYTES
+            val ledger = GpuMemoryLedger(lutBytes + 128L * 1024)
+            val renderer = GpuExportRenderer(egl, ledger, 64)
+            repeat(2) {
+                assertThrows(GpuMemoryBudgetException::class.java) {
+                    renderer.renderBands(input, 0.0, doubleArrayOf(1.0, 1.0, 1.0), .75) { _, _, _ -> fail() }
+                }
+                assertTrue(ledger.peakAllocatedBytes > lutBytes)
+                assertTrue(ledger.peakAllocatedBytes <= ledger.budgetBytes)
+                assertReleased(ledger)
+                assertFalse(input.hasPendingOwners)
+            }
+        }
+    }
+
+    @Test fun rgb16FinalCancellationReleasesTexturesAndAllowsSameRendererRetry() = gpu { egl ->
+        withRgb16Raster(257) { input ->
+            val ledger = GpuMemoryLedger(GpuMemoryLedger.EXPORT_BUDGET)
+            val renderer = GpuExportRenderer(egl, ledger, 64)
+            val gains = doubleArrayOf(1.0, 1.0, 1.0)
+            val stopped = AtomicBoolean()
+            var deliveredRows = 0
+            assertThrows(CancellationException::class.java) {
+                renderer.renderBands(input, 0.0, gains, .75, stop = stopped::get) { origin, rows, _ ->
+                    assertEquals(deliveredRows, origin)
+                    assertEquals(64, rows)
+                    deliveredRows += rows
+                    stopped.set(true)
+                }
+            }
+            assertEquals(64, deliveredRows)
+            assertReleased(ledger)
+            assertFalse(input.hasPendingOwners)
+
+            var nextRow = 0
+            renderer.renderBands(input, 0.0, gains, .75) { origin, rows, _ ->
+                assertEquals(nextRow, origin)
+                nextRow += rows
+            }
+            assertEquals(input.height, nextRow)
+            assertReleased(ledger)
+            assertFalse(input.hasPendingOwners)
         }
     }
 
