@@ -39,8 +39,11 @@ internal class EglContexts(val glThread: GlThread, private val assets: AssetMana
     /** Context-owned resources: callers borrow these and must not close them individually. */
     override fun shaders(): ShaderLibrary {
         requireCurrent()
-        return shaderLibrary ?: ShaderLibrary(this,
-            androidGpuShaderSource(checkNotNull(assets) { "Shader assets were not provided" }))
+        return shaderLibrary ?: ShaderLibrary(
+            this,
+            androidGpuShaderSource(checkNotNull(assets) { "Shader assets were not provided" }),
+            AndroidGpuProgramOperations,
+        )
             .also { shaderLibrary = it }
     }
     override fun passes(): PassGraph {
