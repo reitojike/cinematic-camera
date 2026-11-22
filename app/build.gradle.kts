@@ -9,6 +9,8 @@ val initialHalfGuide = providers.gradleProperty("initialHalfGuide").orNull == "t
 // Side-by-side internal comparison only; never changes the normal/release application identity.
 val initialPreviewCompare = providers.gradleProperty("initialPreviewCompare").orNull == "true"
 
+val publicationDiagnostic = providers.gradleProperty("cinematicPublicationDiagnostic").orNull == "true"
+
 val gpuMesa = providers.gradleProperty("cinematicGpuMesa").orNull == "true"
 
 // Draft opt-in: default debug builds require no signing inputs and remain unchanged.
@@ -35,9 +37,16 @@ android {
         manifestPlaceholders["cinematicTestTarget"] = "dev.cinematic.p0"
         buildConfigField("boolean", "EDITOR_PREVIEW_DIAGNOSTIC", "false")
         buildConfigField("boolean", "INITIAL_HALF_GUIDE", "false")
+        buildConfigField("boolean", "DECODE_TIMING_DIAGNOSTIC", "false")
+        buildConfigField("boolean", "ANALYSIS_PARITY_DIAGNOSTIC", "false")
         minSdk = 33
         targetSdk = 37
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+        externalNativeBuild {
+            cmake {
+                arguments += "-DCINEMATIC_ENABLE_DECODE_TIMING=${if (publicationDiagnostic) "ON" else "OFF"}"
+            }
+        }
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         versionCode = providers.environmentVariable("CINEMATIC_VERSION_CODE").orNull?.toInt() ?: 10
         versionName = providers.environmentVariable("CINEMATIC_VERSION_NAME").orNull ?: "0.0.10-p05"
@@ -61,6 +70,8 @@ android {
     }
     buildTypes {
         getByName("debug") {
+            buildConfigField("boolean", "DECODE_TIMING_DIAGNOSTIC", publicationDiagnostic.toString())
+            buildConfigField("boolean", "ANALYSIS_PARITY_DIAGNOSTIC", publicationDiagnostic.toString())
             buildConfigField("boolean", "INITIAL_HALF_GUIDE", initialHalfGuide.toString())
             if (initialPreviewCompare) {
                 applicationIdSuffix = ".initialpreviewcompare"
@@ -71,7 +82,19 @@ android {
         }
         getByName("release") {
             isDebuggable = false
-            if (stableInternalSigning) signingConfig = signingConfigs.getByName("cinematicInternal")
+            buildConfigField("boolean", "DECODE_TIMING_DIAGNOSTIC", publicationDiagnostic.toString())
+            buildConfigField("boolean", "ANALYSIS_PARITY_DIAGNOSTIC", publicationDiagnostic.toString())
+            if (publicationDiagnostic) {
+                applicationIdSuffix = ".pubdiag"
+                versionNameSuffix = "-pubdiag"
+                manifestPlaceholders["cinematicAppLabel"] = "Cinematic Camera Probe (PubDiag)"
+                manifestPlaceholders["cinematicTestTarget"] = "dev.cinematic.p0.pubdiag"
+            }
+            if (stableInternalSigning) {
+                signingConfig = signingConfigs.getByName("cinematicInternal")
+            } else if (publicationDiagnostic) {
+                signingConfig = signingConfigs.getByName("debug")
+            }
         }
     }
     compileOptions {
@@ -118,6 +141,19 @@ android {
     }
     if (gpuMesa) {
         sourceSets.getByName("testDebug").kotlin.srcDir("src/testGpuMesa/java")
+    }
+}
+if (publicationDiagnostic) {
+    androidComponents {
+        finalizeDsl { androidDsl ->
+            val release = androidDsl.buildTypes.getByName("release")
+            require(
+                androidDsl.defaultConfig.applicationId == "dev.cinematic.p0" &&
+                    release.applicationIdSuffix == ".pubdiag"
+            ) {
+                "Release diagnostic builds require applicationId dev.cinematic.p0.pubdiag"
+            }
+        }
     }
 }
 if (gpuMesa) {

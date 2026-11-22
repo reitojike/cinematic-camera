@@ -184,7 +184,22 @@ std::string OriginalRasterSink::report() const {
         << ",\"height\":" << outputHeight() << ",\"pixelsWritten\":" << uint64_t(outputWidth()) * outputHeight()
         << ",\"bits\":16,\"channels\":3,\"halfSize\":" << (isHalfPreview() ? 1 : 0)
         << ",\"color\":\"linear-sRGB-D65\",\"scope\":\""
-        << (isHalfPreview() ? "HALF_PREVIEW_CANDIDATE_NOT_SAVE_INPUT" : "PRELIMINARY_ORIGINAL_NO_FACE_NO_VERIFIED_EV") << "\"}";
+        << (isHalfPreview() ? "HALF_PREVIEW_CANDIDATE_NOT_SAVE_INPUT" : "PRELIMINARY_ORIGINAL_NO_FACE_NO_VERIFIED_EV") << "\"";
+#ifdef CINEMATIC_ENABLE_DECODE_TIMING
+    if (!isHalfPreview() && hasDecodeTiming) {
+        out << ",\"timingNs\":{\"pread\":" << decodeTiming.pread
+            << ",\"openParse\":" << decodeTiming.openParse
+            << ",\"unpack\":" << decodeTiming.unpack
+            << ",\"raw2image\":" << decodeTiming.raw2image
+            << ",\"scaleColors\":" << decodeTiming.scaleColors
+            << ",\"preInterp\":" << decodeTiming.preInterp
+            << ",\"ahd\":" << decodeTiming.ahd
+            << ",\"convertRgb\":" << decodeTiming.convertRgb
+            << ",\"makeImage\":" << decodeTiming.makeImage
+            << ",\"write\":" << decodeTiming.write << "}";
+    }
+#endif
+    out << "}";
     return out.str();
 }
 

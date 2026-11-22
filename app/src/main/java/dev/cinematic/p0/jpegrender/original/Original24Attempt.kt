@@ -11,12 +11,15 @@ import android.content.Context
 import android.os.CancellationSignal
 import android.os.Looper
 import android.os.ParcelFileDescriptor
+import dev.cinematic.p0.BuildConfig
 import dev.cinematic.p0.raw.R7PreviewInputs
 import dev.cinematic.p0.raw.original.*
 import dev.cinematic.p0.rawcapture.*
 import dev.cinematic.p0.metrics.SaveTiming
+import dev.cinematic.p0.metrics.SaveTimingOutcome
 import dev.cinematic.p0.metrics.SaveTimingStage
 import dev.cinematic.p0.metrics.measured
+import dev.cinematic.p0.metrics.timingBestEffort
 import dev.cinematic.p0.gpu.export.GpuExportTimings
 import java.io.File
 import java.io.IOException
@@ -111,6 +114,9 @@ internal class Original24Attempt(context: Context, private val request: Original
             val width = metadata.getInt("width"); val height = metadata.getInt("height")
             validateOriginalSize(width, height)
             saveTiming?.pixels(width, height)
+            if (BuildConfig.DECODE_TIMING_DIAGNOSTIC && saveTiming != null) {
+                timingBestEffort { recordDecodeTimings(saveTiming, metadata) }
+            }
             val sourceWidth = metadata.getInt("sourceWidth"); val sourceHeight = metadata.getInt("sourceHeight")
             val orientation = metadata.getInt("orientation")
             val observedGeometry = Original24PreflightGeometry(metadata.getInt("rawWidth"), metadata.getInt("rawHeight"),
@@ -200,6 +206,11 @@ internal class Original24Attempt(context: Context, private val request: Original
             if (observed.fingerprint != fingerprint || observed.output.width != width || observed.output.height != height ||
                 observed.output.orientation != 1 || observed.output.color != "sRGB") throw IOException("Original JPEG readback differs")
             originalStage(trace, OriginalStage.SOURCE_VERIFY_AFTER) { verify() }; checkpoint()
+            if (BuildConfig.ANALYSIS_PARITY_DIAGNOSTIC && saveTiming != null) {
+                verifyAnalysisParityBestEffort(raw, width, height, outW, outH, exposure, saveTiming) {
+                    signal.isCanceled || shouldStop()
+                }
+            }
             originalStage(trace, OriginalStage.RESOURCE_CLOSE) { closeOwners() }
             checkpoint()
             originalStage(trace, OriginalStage.SCRATCH_CLEANUP) {
@@ -252,5 +263,103 @@ internal class Original24Attempt(context: Context, private val request: Original
         work.disposeConfirmed()
         rawRaster = null
         workspace = null
+    }
+}
+
+private val DECODE_TIMING_STAGES = listOf(
+    "pread" to SaveTimingStage.DECODE_PREAD,
+    "openParse" to SaveTimingStage.DECODE_OPEN_PARSE,
+    "unpack" to SaveTimingStage.DECODE_UNPACK,
+    "raw2image" to SaveTimingStage.DECODE_RAW2IMAGE,
+    "scaleColors" to SaveTimingStage.DECODE_SCALE_COLORS,
+    "preInterp" to SaveTimingStage.DECODE_PRE_INTERP,
+    "ahd" to SaveTimingStage.DECODE_AHD,
+    "convertRgb" to SaveTimingStage.DECODE_CONVERT_RGB,
+    "makeImage" to SaveTimingStage.DECODE_MAKE_IMAGE,
+    "write" to SaveTimingStage.DECODE_WRITE,
+)
+
+internal fun recordDecodeTimings(saveTiming: SaveTiming, metadata: JSONObject) = timingBestEffort {
+    val timings = metadata.optJSONObject("timingNs")
+    recordDecodeTimings(saveTiming) { key ->
+        if (timings == null || !timings.has(key) || timings.isNull(key)) null
+        else when (val value = timings.opt(key)) {
+            is Int -> value.toLong()
+            is Long -> value
+            else -> null
+        }
+    }
+}
+
+internal fun recordDecodeTimings(saveTiming: SaveTiming, readNs: (String) -> Long?) = timingBestEffort {
+    for ((key, stage) in DECODE_TIMING_STAGES) {
+        val nanos = try { readNs(key)?.takeIf { it >= 0L } } catch (_: Throwable) { null }
+        if (nanos != null) {
+            saveTiming.event(stage, SaveTimingOutcome.COMPLETED, nanos)
+        } else {
+            saveTiming.event(stage, SaveTimingOutcome.UNAVAILABLE, null)
+        }
+    }
+}
+
+internal fun verifyAnalysisParityBestEffort(
+    raw: File,
+    width: Int,
+    height: Int,
+    outW: Int,
+    outH: Int,
+    actual: R7PreviewInputs.DiagnosticExposure,
+    saveTiming: SaveTiming,
+    clock: () -> Long = System::nanoTime,
+    diagStop: () -> Boolean,
+) = timingBestEffort {
+    val alreadyStopped = try {
+        diagStop()
+    } catch (_: Throwable) {
+        saveTiming.event(SaveTimingStage.ANALYSIS_REDUCE_PARITY, SaveTimingOutcome.UNAVAILABLE, null)
+        return@timingBestEffort
+    }
+    if (alreadyStopped) {
+        saveTiming.event(SaveTimingStage.ANALYSIS_REDUCE_PARITY, SaveTimingOutcome.SKIPPED, null)
+        return@timingBestEffort
+    }
+    val diagSource = try {
+        OriginalRasterFile(raw, width, height, 2)
+    } catch (_: Throwable) {
+        saveTiming.event(SaveTimingStage.ANALYSIS_REDUCE_PARITY, SaveTimingOutcome.UNAVAILABLE, null)
+        return@timingBestEffort
+    }
+    val start = try { clock() } catch (_: Throwable) { null }
+    fun elapsed(): Long? = start?.let { s ->
+        try {
+            val diff = clock() - s
+            if (diff >= 0L) diff else null
+        } catch (_: Throwable) {
+            null
+        }
+    }
+    try {
+        val oldAnalysis = OriginalFields.reduce(diagSource, outW, outH, 3, diagStop) { rgb, out ->
+            rgb.copyInto(out)
+        }.reducedRgb()
+        val oldExposure = R7PreviewInputs.prepare(
+            R7PreviewInputs.AsShotInput(oldAnalysis, R7PreviewInputs.Source.LIBRAW_PRELIMINARY_AS_SHOT),
+            emptyList(),
+            diagStop,
+        ).exposure
+        val duration = elapsed()
+        val bitExact =
+            actual.externalBaseEv.toRawBits() == oldExposure.externalBaseEv.toRawBits() &&
+            actual.centralP97.toRawBits() == oldExposure.centralP97.toRawBits() &&
+            actual.centralSampleCount == oldExposure.centralSampleCount
+        saveTiming.event(
+            SaveTimingStage.ANALYSIS_REDUCE_PARITY,
+            if (bitExact) SaveTimingOutcome.COMPLETED else SaveTimingOutcome.FAILED,
+            duration,
+        )
+    } catch (_: Throwable) {
+        saveTiming.event(SaveTimingStage.ANALYSIS_REDUCE_PARITY, SaveTimingOutcome.INCOMPLETE, elapsed())
+    } finally {
+        timingBestEffort { diagSource.closePending() }
     }
 }

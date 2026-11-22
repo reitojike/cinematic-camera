@@ -172,3 +172,61 @@ providerの自動登録を試すため、試験から `install()` は呼ばな�
 起動後の安定・crash/ANRゲートと試験前後のinstance照合を行う。ATDで発生したBluetooth native abortは
 アプリ導入前の環境阻害として記録し、ログ消去や無条件再試行で合格にしない。既存AOSPでの代替確認とは分ける。
 この試験は実機のthermal変化、保存速度、OSによる抑制を保証しない。
+
+## `ANALYSIS_REDUCE` 一致診断・`NATIVE_DECODE` 区間別計測（`.pubdiag` 一時診断）
+
+通常ビルドでは `BuildConfig.ANALYSIS_PARITY_DIAGNOSTIC`・`BuildConfig.DECODE_TIMING_DIAGNOSTIC`・
+CMake `CINEMATIC_ENABLE_DECODE_TIMING` のすべてが既定無効（`false` / `OFF`）であり、
+追加計測・追加 TSV 行・`libcinematic_dng.so` 内計測コードは一切含まれない。
+`-PcinematicPublicationDiagnostic=true` を付けた計測版 release ビルド（`dev.cinematic.p0.pubdiag`）
+に限り両診断を有効化し、1 回の実機計測で次を同時に確認する。
+
+- ビルド（`CINEMATIC_SIGNING_MODE` 等の署名用環境変数を解除した状態、debug 署名使用）:
+  ```bash
+  ./gradlew :app:assembleRelease -PcinematicPublicationDiagnostic=true
+  ```
+- 並置インストール（本人の実機操作承認後、`dev.cinematic.p0` を上書きせず並置し、ランチャーから `Cinematic Camera Probe (PubDiag)` を起動）:
+  ```bash
+  adb -s <authorized-device> install -r app/build/outputs/apk/release/app-release.apk
+  ```
+  ※ `dev.cinematic.p0.pubdiag` では通常の新規 GPU 保存を計測対象とし、コールド復元・明示復旧の試験には使わない。
+- 抽出:
+  ```bash
+  adb -s <authorized-device> exec-out content read --uri content://dev.cinematic.p0.pubdiag.save-timing/records > records-pubdiag.tsv
+  ```
+
+### `ANALYSIS_REDUCE_PARITY`（新旧スカラービット一致診断）
+
+- `BuildConfig.ANALYSIS_PARITY_DIAGNOSTIC && saveTiming != null` のときのみ、`SOURCE_VERIFY_AFTER` 完了後・`RESOURCE_CLOSE` 直前（原寸 `Bitmap` 解放後かつ `source-linear.rgb16` 削除前）に実行する。
+- `ANALYSIS_REDUCE`・`CONTROL_PREPARE`・`GPU_RENDER`・`JPEG_ENCODE` の計測区間の外で独立のローカル `OriginalRasterFile` を開き、旧経路（`OriginalFields.reduce().reducedRgb()` → `R7PreviewInputs.prepare()`）と新経路の `externalBaseEv.toRawBits()`・`centralP97.toRawBits()`・`centralSampleCount` が全一致するか検証する。例外・取消は `timingBestEffort` で隔離し保存結果へ影響させない。
+- 出力は schema 1（8 列・匿名性厳守、EV 値やファイル名は記録しない）。`finish()` の自動 `NOT_REACHED` 対象には含めない:
+  - `COMPLETED` / 旧経路経過 ns（時計取得不能時は `NA`）: 3 項目すべてビット一致
+  - `FAILED` / 旧経路経過 ns（時計取得不能時は `NA`）: 1 ビットでも不一致（即停止・原因調査対象）
+  - `INCOMPLETE` / 中断まで ns または `NA`: 旧経路実行中の取消・I/O 例外
+  - `SKIPPED` / `NA`: 到達時点で既に停止要求済み
+  - `UNAVAILABLE` / `NA`: 診断前提不成立等（0 を捏造しない）
+- **重要（`ATTEMPT` 時間の扱い）**: `ANALYSIS_REDUCE_PARITY` は `Original24Attempt.render()` 内（`ATTEMPT` 外枠の内側）で走るため、`.pubdiag` の `ATTEMPT` には旧経路分の時間（`ANALYSIS_REDUCE_PARITY` の `nanos`）が上乗せされる。`.pubdiag` の `ATTEMPT` を通常版の `ATTEMPT` と直接比較せず、中央領域最適化の効果確認は `ANALYSIS_REDUCE`（および `CONTROL_PREPARE`）単体値で行い、`ATTEMPT - ANALYSIS_REDUCE_PARITY` は参考値として区別しつつ、集計時に `ANALYSIS_REDUCE` の短縮量との整合確認に用いる。
+
+### `DECODE_*` 10 区間（`NATIVE_DECODE` 内訳・LibRaw 0.22.3 無改変）
+
+LibRaw 0.22.3 は無改変のまま、既存の `progress` コールバックと `clock_gettime(CLOCK_MONOTONIC)` により `decode24`（通常保存）の 10 区間を分離計測し、`saveTiming?.pixels(width, height)` 実行直後に schema 1 の 10 行として記録する（`finish()` の自動 `NOT_REACHED` 対象外）。未到達・欠損・負の差分は `UNAVAILABLE` / `NA` とし、0 を捏造しない。
+
+| stage | JSON キー（`timingNs.*`） | 計測区間 |
+|---|---|---|
+| `DECODE_PREAD` | `pread` | `fstat` / `encoded` 確保直前〜`pread` ループ完了 |
+| `DECODE_OPEN_PARSE` | `openParse` | `pread` 完了〜`raw.unpack()` 直前（`open_buffer` / TIFF 検証 / WB・params 設定） |
+| `DECODE_UNPACK` | `unpack` | `raw.unpack()` 直前〜`raw.dcraw_process()` 直前（展開・`applyCrop`・WB 検証） |
+| `DECODE_RAW2IMAGE` | `raw2image` | `raw.dcraw_process()` 直前〜`progress(SCALE_COLORS, 0)` |
+| `DECODE_SCALE_COLORS` | `scaleColors` | `progress(SCALE_COLORS, 0)`〜`progress(SCALE_COLORS, 1)` |
+| `DECODE_PRE_INTERP` | `preInterp` | `progress(PRE_INTERPOLATE, 0)`〜`progress(PRE_INTERPOLATE, 1)` |
+| `DECODE_AHD` | `ahd` | `progress(PRE_INTERPOLATE, 1)`〜`progress(CONVERT_RGB, 0)` |
+| `DECODE_CONVERT_RGB` | `convertRgb` | `progress(CONVERT_RGB, 0)`〜`progress(CONVERT_RGB, 1)` |
+| `DECODE_MAKE_IMAGE` | `makeImage` | `dcraw_make_mem_image()` 直前〜直後（回転コピー差を含む） |
+| `DECODE_WRITE` | `write` | `raw.recycle()` 直前〜`OriginalRasterSink::write()` 完了・`image.reset()` 直後 |
+
+### 保持回数と集計条件
+
+- schema 1・2 および上限（1,024 行・256 KiB）を維持する。独立 `.pubdiag` 初期状態（N = 0）で通常保存 55 行を基準にすると、`DECODE_*` 10 行 + `ANALYSIS_REDUCE_PARITY` 1 行の計 66 行/保存で完全保持 15 試行（990 行）、`PUB_*` 8 行と合流した場合は計 74 行/保存で完全保持 13 試行（962 行）を 1 回の抽出で回収できる。
+- 集計対象は同一 `attempt` で `SAVE`・`ATTEMPT/PUBLISHED`・`NATIVE_DECODE/COMPLETED`・`ANALYSIS_REDUCE/COMPLETED`・`CONTROL_PREPARE/COMPLETED`・`GPU_RENDER/COMPLETED`・`DECODE_*` 全 10 キー `COMPLETED`・`ANALYSIS_REDUCE_PARITY/COMPLETED` が揃い、通常温度帯（`thermal ∈ {0, 1}`）にある試行とする。12MP・24MP の横向き・縦向きを含め、全試行で `ANALYSIS_REDUCE_PARITY == COMPLETED`（`FAILED` 0 件）であること、および残差 `NATIVE_DECODE - Σ DECODE_*` を確認する。
+- 効果の評価では、`GPU_RENDER` と `B1`〜`FINAL` の `*_INPUT_READ_CONVERT` / `*_INPUT_WAIT`（同一画素数・通常温度帯の `COMPLETED` 区間どうし。省略された `SKIPPED` 帯は 0ms 扱いせず除外）を変更前と比較し、悪化していないことを確認する（旧経路の全量読込みが後段のページキャッシュを温めていた可能性への備え）。
+- 併せて、`ATTEMPT` から `ANALYSIS_REDUCE_PARITY` を除いた値（変更前の通常版は `ATTEMPT` のまま）の短縮量が、`ANALYSIS_REDUCE` の短縮量と整合することを確認する。
