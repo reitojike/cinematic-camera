@@ -339,7 +339,7 @@ internal class ConnectedStageClearGpuPipeline(
         failure?.let { throw it }
     }
     override fun close() {
-        egl.glThread.requireCurrent()
+        egl.requireOwnerThread()
         if (closed) return
         // Keep an owner if close fails, so the photo/engine can explicitly retry cleanup.
         releaseTransient()

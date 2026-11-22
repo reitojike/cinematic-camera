@@ -1,8 +1,8 @@
 package dev.cinematic.p0.gpu.analysis
 
 import android.opengl.GLES32
-import dev.cinematic.p0.gpu.EglContexts
 import dev.cinematic.p0.gpu.ComputePass
+import dev.cinematic.p0.gpu.GpuExecutionContext
 import dev.cinematic.p0.gpu.GpuFence
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -11,7 +11,7 @@ import java.nio.ByteOrder
  * At most 1MiB histogram + 8KiB tiles + 64B results on GL, and 1MiB zero data.
  * CPU reads only four selections (64B) per stage; storage is allocated lazily.
  */
-internal class GpuQuantileWorkspace(private val egl: EglContexts) : AutoCloseable {
+internal class GpuQuantileWorkspace(private val egl: GpuExecutionContext) : AutoCloseable {
     private val names = IntArray(1)
     private val selectionNames = IntArray(2)
     private val selectionAllocated = BooleanArray(2)
@@ -21,7 +21,7 @@ internal class GpuQuantileWorkspace(private val egl: EglContexts) : AutoCloseabl
     internal val retainedGlBytes: Int get() = (if (names[0] == 0) 0 else MAX_BYTES) +
         (if (selectionNames[0] == 0) 0 else TILE_BYTES) + (if (selectionNames[1] == 0) 0 else RESULT_BYTES)
 
-    fun requireContext(expected: EglContexts) {
+    fun requireContext(expected: GpuExecutionContext) {
         egl.requireCurrent(); check(!closed) { "Quantile workspace is closed" }
         check(egl === expected) { "Quantile workspace belongs to another context" }
     }
@@ -113,7 +113,7 @@ internal class GpuQuantileWorkspace(private val egl: EglContexts) : AutoCloseabl
         GLES32.glBindBufferBase(GLES32.GL_SHADER_STORAGE_BUFFER, 2, selectionNames[1])
     }
     override fun close() {
-        egl.glThread.requireCurrent()
+        egl.requireOwnerThread()
         if (closed) return
         // Keep ownership if a live context rejects cleanup; destroyed/lost contexts return normally.
         egl.releaseResource {
