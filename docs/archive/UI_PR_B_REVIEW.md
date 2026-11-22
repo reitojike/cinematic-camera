@@ -1,6 +1,6 @@
 # PR-B 表示レビューの記録
 
-対象: 撮影・設定・診断の表示整理（PR #389、Issue #384）。指示書: [DEVELOP_UI_REFACTOR_INSTRUCTIONS.md](DEVELOP_UI_REFACTOR_INSTRUCTIONS.md)。
+対象: 撮影・設定・診断の表示整理（PR #389、Issue #384）。指示書: [DEVELOP_UI_REFACTOR_INSTRUCTIONS.md](../DEVELOP_UI_REFACTOR_INSTRUCTIONS.md)。
 
 ## 本人承認の対象
 

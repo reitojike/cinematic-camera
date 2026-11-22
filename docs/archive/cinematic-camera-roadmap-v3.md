@@ -14,7 +14,7 @@
 #### レーンA：v0.1.0リリース（最優先）
 - [dev.9](https://github.com/reitojike/cinematic-camera/releases/tag/v0.1.0-dev.9) は本人承認後に公開済み。source `6d34d8c4c79b3f32ba3a44a9bffee0aaf6cbf441`、versionCode 23。固定署名・3資産・hash・package/version・非debuggable・tag/sourceを確認済み。公開済みであることをインストール・普段使い・実機受入済みと読み替えない。
 - PR-G #461 は本人の前後比較承認後にマージ済み。U1〜U6・U8・U9・U11を実装。U7は先行#454で実装済み、**U10は本人指定により実装しない**。
-- #458 は出力を変えない記録追加としてレビュー・回帰後にマージしdev.9へ収録済み。保存開始/終了の前面・背面とPowerManager thermal status、走査ごとの入力読込み/変換・転送API・既存GPU待ち・読戻し等を記録する。AVDのON/OFF評価は軽量化後のばらつき内であり、Pixelの計測負荷ゼロや高速化を保証しない。定義・並行区間の加算禁止は [SAVE_TIMING](SAVE_TIMING.md) を正とする。
+- #458 は出力を変えない記録追加としてレビュー・回帰後にマージしdev.9へ収録済み。保存開始/終了の前面・背面とPowerManager thermal status、走査ごとの入力読込み/変換・転送API・既存GPU待ち・読戻し等を記録する。AVDのON/OFF評価は軽量化後のばらつき内であり、Pixelの計測負荷ゼロや高速化を保証しない。定義・並行区間の加算禁止は [SAVE_TIMING](../SAVE_TIMING.md) を正とする。
 - 普段使い後、#445の2回目Pixel最終確認で、プレビュー・保存・操作感と安全性、保存計測の前面/背面×12MP/24MPをまとめる。既存記録は先に回収し、上限1,024行/256KiBと項目増による保持回数減少を考慮する。実機操作・インストールは都度承認。
 - 重大不具合がなければ必要な回帰・対象main/CI・残Issueの扱いを確認し、正式公開の個別承認を得る。dev.9公開許可を正式版公開へ広げない。
 
@@ -57,7 +57,7 @@ v4はv0.1.0正式リリース後に別文書として作成し、新しい計画
 - **案C（Mist nearWhiteCount の同期除去等）は v0.1.0 後の別 PR**。出力が変わる場合は差分を示して本人が確認する。本人確認前の基準画像更新は禁止する。
 - **顔検出の #406 は v0.1.0 の範囲外で優先度を低くする**。端末内評価・本人ラベル・集計のみ公開という条件は維持するが、リリース前の待ち条件にしない。
 
-判断用Pixelの記録：[3枚・4条件のAHD/PPG比較（PPG未採用）](https://github.com/reitojike/cinematic-camera/issues/445#issuecomment-6907322749)、[パネル開閉の確認とhalf経路の未判定](https://github.com/reitojike/cinematic-camera/issues/445#issuecomment-6907099602)。案Cの独立PR・本人確認条件は [D0の設計](GPU_ENGINE.md) も参照する。
+判断用Pixelの記録：[3枚・4条件のAHD/PPG比較（PPG未採用）](https://github.com/reitojike/cinematic-camera/issues/445#issuecomment-6907322749)、[パネル開閉の確認とhalf経路の未判定](https://github.com/reitojike/cinematic-camera/issues/445#issuecomment-6907099602)。案Cの独立PR・本人確認条件は [D0の設計](../GPU_ENGINE.md) も参照する。
 
 ### v0.1.0 の残作業と確認順序
 

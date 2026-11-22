@@ -2,7 +2,7 @@
 
 Issue #392。2026-11-14 の本人フォローアップ指示のうち、1-1、1-2（暫定）、1-5、1-7、1-8、2-1〜2-4 を扱う。撮影側は #425・色は #433/#434 で対応済み。PR-D の配置変更は含めない。
 
-正本：[メッセージ仕様](../specs/ui-messages/spec.md)。前提：[共通メッセージ改修指示書](DEVELOP_UI_REFACTOR_INSTRUCTIONS.md)。保存・取消・復旧・照合・canSave/canRecover/canLeave 等の条件は変えない。
+正本：[メッセージ仕様](../../specs/ui-messages/spec.md)。前提：[共通メッセージ改修指示書](../DEVELOP_UI_REFACTOR_INSTRUCTIONS.md)。保存・取消・復旧・照合・canSave/canRecover/canLeave 等の条件は変えない。
 
 ## 文言の変更
 | 変更前 | 変更後 |
