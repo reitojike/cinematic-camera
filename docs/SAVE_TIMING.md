@@ -36,7 +36,7 @@ UTF-8互換のASCII TSV、1行1イベント、ヘッダなし。列の順は次�
 |---|---|
 | NATIVE_DECODE | 既存JNI呼出し `NativeOriginalRaster.decode24`。入力の事前照合・snapshotコピー・事後descriptor close・縮小解析は含まない |
 | B1 / B1_QUANTILES / B2 / B3 / B4 / B5 / FINAL | `GpuExportRenderer` の同名boundary。CPU側の帯入力読込み・変換・GL発行・読戻し等と既存のGPU fence完了待ちを含むwall。純GPU timer値ではない。新たなfenceは追加しない |
-| GPU_RENDER | GL thread/contextの準備からrenderer実行、既存の完了待ち、thread/context cleanupまで |
+| GPU_RENDER | GL thread/contextの準備からrenderer実行、RGB16 セッションの LUT 生成・転送、既存の完了待ち、thread/context cleanupまで |
 | JPEG_ENCODE | `openOutput`、Bitmap.compress、stream write・digest更新・flush・closeを含む既存区間。JPEGコーデック単体の時間ではない。事後JPEG検査・原本再照合・公開を含まない |
 | RESOURCE_CLOSE | 既存資源解放の各呼出し。複数回を別イベントとして保持し、最後の値で上書きしない |
 | PUBLICATION | 既存publisherのadvance全体。pending行処理・copy・検証・公開やjournal処理のうち実際にadvanceが実行した範囲。再試行では再利用/再照合のみの場合もある |
@@ -132,14 +132,14 @@ CONTROL_PREPARE / JPEG_INSPECT / SOURCE_VERIFY_AFTER / SCRATCH_CLEANUP を保存
 B1 / B2 / B3 / B4 / B5 / FINAL ごとに以下を追加する。
 
 - INPUT_WAIT: GL側が入力帯の準備を待つwall時間。
-- INPUT_READ_CONVERT: reader の rows 全体から後続の空きbuffer待ちだけを引いたwall時間。読込み、RGB16→Float変換、RGB→RGBA詰め替え、行検証、帯投入、EOF検査・closeを含む。初回buffer取得、帯buffer確保、reader threadの起動・joinは範囲外。純decode時間・純CPU時間ではない。
-- UPLOAD: GL転送API呼出しのCPU wall時間。GPUでの転送完了時間とは異なる。
+- INPUT_READ_CONVERT は reader の行走査全体から後続の空き buffer 待ちだけを引いた wall 時間。従来の RGB16 経路では読込み・Float 変換・RGBA 詰め替えを含み、LUT 経路では RGB16 の直接読込み・帯充填を含む。Float 入力の RGBA 詰め替え、行検証、帯投入、EOF 検査・close も該当経路で計上する。初回 buffer 取得、帯 buffer 確保、reader thread の起動・join は範囲外。従来と同じキーで収集し、純読込み時間や純 CPU 時間とは区別する。
+- UPLOAD は帯の GL 転送 API 呼出しの CPU wall 時間。RGB16 入力は RGB16UI（6 B/画素）、Float 入力は RGBA32F（16 B/画素）を転送する。LUT の初期化は GPU_RENDER に含み、帯の GPU 変換は既存の完了待ちに反映される。
 - FENCE_WAIT: renderer と B4/B1_QUANTILES 内部の既存明示fence待ち。ドライバ内部の暗黙待ちは別項目にも残り得る。
 
 B1_QUANTILES_FENCE_WAIT、B1_QUANTILES_READBACK、B4_READBACK、FINAL_READBACK、FINAL_ROW_PROCESS も記録する。
 GPUタイマー問い合わせ、新たなfence、glFinishは追加しない。reader とGLは並行するため単純加算禁止。
 readback APIに含まれる暗黙同期はREADBACK側に残る。not reached / skipped / unavailable と0を区別する。
-FINAL_ROW_PROCESS は帯内の行ループ全体（取消チェック、RGBA8→ARGB変換、consumer呼出し）をまとめたwall時間。行順・取消チェック位置は変更しない。
+FINAL_ROW_PROCESS は帯内の行ループ全体（取消チェック、RGBA8→ARGB変換、帯 consumer による Bitmap.setPixels）をまとめたwall時間。行順・取消チェック位置は変更しない。
 INPUT_PACK と行単位の変換/consumer分離は未配布の詳細案から削除し、帯・走査単位だけで計測する。
 時計取得失敗・負の差分はNA、失敗した途中区間はINCOMPLETE。到達しなかったbuffer待ちだけは差引き0とする。
 ディスクI/Oは従来どおり終了後の一括書込み。

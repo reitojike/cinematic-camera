@@ -4,6 +4,7 @@ import dev.cinematic.p0.raw.original.OriginalRaster
 import dev.cinematic.p0.rawcapture.SaveAuthorityBoundary
 import org.junit.Assert.*
 import org.junit.Test
+import java.nio.ShortBuffer
 import java.nio.FloatBuffer
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -22,7 +23,8 @@ class GpuExportBandsTest {
     @Test fun orderedRowsBecomeRgbaAndReuseTheBoundedBufferWithShortTail() {
         val bands = mutableListOf<Pair<Int, Int>>()
         val buffers = Collections.newSetFromMap(IdentityHashMap<FloatBuffer, Boolean>())
-        GpuExportBands.forEach(raster(3, 513), stop = { false }) { origin, rows, rgba ->
+        GpuExportBands.forEach(raster(3, 513), stop = { false }) { origin, rows, data ->
+            val rgba = data as FloatBuffer
             buffers += rgba
             assertTrue(buffers.size <= 2)
             assertTrue(rgba.isDirect)
@@ -180,22 +182,151 @@ class GpuExportBandsTest {
         } finally { Thread.interrupted() }
     }
 
-    @Test fun rgb16AllSampleValuesKeepExactBitsButFloatNanStillFails() {
+    @Test fun rgb16BandsAndLutMatchAllCpuSampleBits() {
         val file = Files.createTempFile("synthetic-rgb16", ".bin").toFile()
         try {
-            val bytes = ByteBuffer.allocate(256 * 256 * 3 * 2).order(ByteOrder.LITTLE_ENDIAN)
-            repeat(256 * 256 * 3) { bytes.putShort(it.toShort()) }
+            val input = OriginalRasterFile(file, 257, 257, 2)
+            val bytes = ByteBuffer.allocate(input.bytes.toInt()).order(ByteOrder.LITTLE_ENDIAN)
+            repeat(input.width * input.height * 3) { bytes.putShort(it.toShort()) }
             file.writeBytes(bytes.array())
-            var sample = 0
-            val input = OriginalRasterFile(file, 256, 256, 2)
-            GpuExportBands.forEach(input, stop = { false }) { _, _, rgba ->
-                while (rgba.hasRemaining()) {
-                    repeat(3) { assertEquals(((sample++ and 65535) / 65535f).toRawBits(), rgba.get().toRawBits()) }
-                    assertEquals(1f.toRawBits(), rgba.get().toRawBits())
+
+            val lut = GpuExportRgb16.lutBits()
+            assertTrue(lut.isDirect)
+            assertEquals(ByteOrder.nativeOrder(), lut.order())
+            assertEquals(65_536, lut.remaining())
+            val cpuBits = IntArray(input.width * input.height * 3)
+            var index = 0
+            input.rows({ false }) { _, row ->
+                for (sample in row) {
+                    val bits = sample.toRawBits()
+                    assertEquals("LUT sample ${index and 65535}", bits, lut.get(index and 65535))
+                    cpuBits[index++] = bits
                 }
             }
-            assertEquals(256 * 256 * 3, sample)
+            assertEquals(cpuBits.size, index)
+
+            for (bandHeight in listOf(64, 256)) {
+                var sampleIndex = 0
+                GpuExportBands.forEach(input, bandHeight, { false }) { origin, rows, data ->
+                    val rgb = data as ShortBuffer
+                    assertTrue(rgb.isDirect)
+                    assertEquals(ByteOrder.nativeOrder(), rgb.order())
+                    assertEquals(origin * input.width * 3, sampleIndex)
+                    assertEquals(minOf(bandHeight, input.height - origin), rows)
+                    assertEquals(input.width * rows * 3, rgb.remaining())
+                    while (rgb.hasRemaining()) {
+                        val value = rgb.get().toInt() and 65535
+                        assertEquals(sampleIndex and 65535, value)
+                        assertEquals(cpuBits[sampleIndex++], lut.get(value))
+                    }
+                }
+                assertEquals(cpuBits.size, sampleIndex)
+                assertFalse(input.hasPendingOwners)
+            }
+        } finally { file.delete() }
+    }
+
+    @Test fun rgb16ReaderChecksShortReadFinalSizeAndCancellation() {
+        val file = Files.createTempFile("synthetic-rgb16-errors", ".bin").toFile()
+        try {
+            val input = OriginalRasterFile(file, 3, 2, 2)
+            val row = ByteBuffer.allocateDirect(18)
+            fun read(stop: () -> Boolean = { false }, afterRow: (Int) -> Unit) =
+                input.rgb16Rows(stop, { row.clear(); row }, afterRow)
+
+            file.writeBytes(ByteArray(36))
+            val short = assertThrows(IOException::class.java) {
+                read { y -> if (y == 0) java.io.RandomAccessFile(file, "rw").use { it.setLength(19) } }
+            }
+            assertEquals("Short original raster", short.message)
             assertFalse(input.hasPendingOwners)
+
+            file.writeBytes(ByteArray(36))
+            val changed = assertThrows(IOException::class.java) {
+                read { y -> if (y == 1) file.appendBytes(byteArrayOf(0)) }
+            }
+            assertEquals("Original raster changed", changed.message)
+            assertFalse(input.hasPendingOwners)
+
+            file.writeBytes(ByteArray(36))
+            var stopped = false
+            assertThrows(CancellationException::class.java) {
+                read({ stopped }) { y -> assertEquals(0, y); stopped = true }
+            }
+            assertFalse(input.hasPendingOwners)
+        } finally { file.delete() }
+    }
+
+    @Test fun rgb16BandCancellationAndConsumerFailureDrainTheReader() {
+        val file = Files.createTempFile("synthetic-rgb16-band-errors", ".bin").toFile()
+        try {
+            val input = OriginalRasterFile(file, 3, 193, 2)
+            file.writeBytes(ByteArray(input.bytes.toInt()))
+            val cancelled = AtomicBoolean()
+            var calls = 0
+            assertThrows(CancellationException::class.java) {
+                GpuExportBands.forEach(input, 64, cancelled::get) { origin, rows, data ->
+                    assertEquals(0, origin)
+                    assertEquals(64, rows)
+                    assertTrue(data is ShortBuffer)
+                    calls++
+                    cancelled.set(true)
+                }
+            }
+            assertEquals(1, calls)
+            assertFalse(input.hasPendingOwners)
+
+            calls = 0
+            val failure = IOException("synthetic RGB16 upload failure")
+            assertSame(failure, assertThrows(IOException::class.java) {
+                GpuExportBands.forEach(input, 64, { false }) { _, _, _ ->
+                    calls++
+                    throw failure
+                }
+            })
+            assertEquals(1, calls)
+            assertFalse(input.hasPendingOwners)
+        } finally { file.delete() }
+    }
+
+    @Test fun rgb16BandsReportInputTimingAndHonorForcedReaderBoundaries() {
+        val file = Files.createTempFile("synthetic-rgb16-band-timing", ".bin").toFile()
+        try {
+            val input = OriginalRasterFile(file, 3, 130, 2)
+            file.writeBytes(ByteArray(input.bytes.toInt()))
+            val caller = Thread.currentThread()
+            for (force in listOf(false, true)) {
+                val clock = java.util.concurrent.atomic.AtomicLong()
+                val timing = GpuExportWorkTimings { clock.incrementAndGet() }
+                var checkpointsBeforeOpen = 0
+                var opened = false
+                val bands = mutableListOf<Pair<Int, Int>>()
+                GpuExportBands.forEach(input, 64, stop = {
+                    if (Thread.currentThread() !== caller) {
+                        if (input.hasPendingOwners) opened = true
+                        if (!opened) checkpointsBeforeOpen++
+                    }
+                    false
+                }, timings = timing, forceReaderBoundaries = force) { origin, rows, data ->
+                    assertTrue(data is ShortBuffer)
+                    assertEquals(input.width * rows * 3, data.remaining())
+                    bands += origin to rows
+                }
+                assertEquals(listOf(0 to 64, 64 to 64, 128 to 2), bands)
+                assertTrue(opened)
+                assertEquals(if (force) 2 else 1, checkpointsBeforeOpen)
+                val read = checkNotNull(timing.sample(GpuExportDetail.INPUT_READ_CONVERT))
+                assertTrue(read.completed)
+                assertTrue(checkNotNull(read.nanos) > 0)
+                assertNull(timing.sample(GpuExportDetail.READER_TOTAL))
+                assertFalse(input.hasPendingOwners)
+            }
+        } finally { file.delete() }
+    }
+
+    @Test fun floatNanStillFails() {
+        val file = Files.createTempFile("synthetic-float32", ".bin").toFile()
+        try {
             file.writeBytes(ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN).putFloat(Float.NaN).putFloat(0f).putFloat(0f).array())
             assertThrows(IOException::class.java) {
                 GpuExportBands.forEach(OriginalRasterFile(file, 1, 1), stop = { false }) { _, _, _ -> fail() }
@@ -214,7 +345,8 @@ class GpuExportBandsTest {
         val clock = java.util.concurrent.atomic.AtomicLong()
         val timing = GpuExportWorkTimings { clock.incrementAndGet() }
         val origins = mutableListOf<Int>()
-        GpuExportBands.forEach(raster(4, 130), 64, { false }, timing) { origin, rows, rgba ->
+        GpuExportBands.forEach(raster(4, 130), 64, { false }, timing) { origin, rows, data ->
+            val rgba = data as FloatBuffer
             origins += origin
             assertEquals(4 * rows * 4, rgba.remaining())
             assertEquals(origin.toFloat(), rgba.get(), 0f)

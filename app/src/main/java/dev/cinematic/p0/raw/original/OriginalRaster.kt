@@ -70,23 +70,61 @@ internal class OriginalRasterFile internal constructor(
     // Unsigned 16-bit samples divided by 65535f are finite by construction.
     val isRgb16 get() = bytesPerChannel == 2
     override fun rows(stop: () -> Boolean, consume: (Int, FloatArray) -> Unit) {
+        withRows(stop, setup = {
+            ByteBuffer.allocate(width * 3 * bytesPerChannel).order(ByteOrder.LITTLE_ENDIAN) to FloatArray(width * 3)
+        }) { channel, y, (buffer, row) ->
+            buffer.clear()
+            readRow(channel, buffer)
+            buffer.flip()
+            if (bytesPerChannel == 4) buffer.asFloatBuffer().get(row)
+            else repeat(row.size) { row[it] = (buffer.short.toInt() and 65535) / 65535f }
+            if (!isRgb16 && !row.all { it.isFinite() }) throw IOException("Non-finite original raster")
+            consume(y, row)
+        }
+    }
+
+    /** Appends one file row to the borrowed direct band before calling consume. */
+    fun rgb16Rows(stop: () -> Boolean, destination: () -> ByteBuffer, consume: (Int) -> Unit) {
+        require(isRgb16)
+        withRows(stop, setup = { Unit }) { channel, y, _ ->
+            val buffer = destination()
+            val start = buffer.position()
+            val end = start + width * 6
+            val limit = buffer.limit()
+            require(buffer.isDirect && end <= limit)
+            buffer.limit(end)
+            try {
+                readRow(channel, buffer)
+            } finally {
+                buffer.limit(limit)
+            }
+            // The file is little endian and GL consumes native-order unsigned shorts.
+            if (ByteOrder.nativeOrder() != ByteOrder.LITTLE_ENDIAN) {
+                for (offset in start until end step 2) {
+                    val low = buffer.get(offset)
+                    buffer.put(offset, buffer.get(offset + 1))
+                    buffer.put(offset + 1, low)
+                }
+            }
+            consume(y)
+        }
+    }
+
+    private fun <T> withRows(stop: () -> Boolean, setup: () -> T, consume: (FileChannel, Int, T) -> Unit) {
         check(!hasPendingOwners)
         owners.using(FileChannel.open(file.toPath(), StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) { channel ->
             if (channel.size() != bytes) throw IOException("Original raster length differs")
-            val buffer = ByteBuffer.allocate(width * 3 * bytesPerChannel).order(ByteOrder.LITTLE_ENDIAN)
-            val row = FloatArray(width * 3)
+            val state = setup()
             repeat(height) { y ->
                 originalCheckpoint(stop)
-                buffer.clear()
-                while (buffer.hasRemaining()) if (channel.read(buffer) <= 0) throw IOException("Short original raster")
-                buffer.flip()
-                if (bytesPerChannel == 4) buffer.asFloatBuffer().get(row)
-                else repeat(row.size) { row[it] = (buffer.short.toInt() and 65535) / 65535f }
-                if (!isRgb16 && !row.all { it.isFinite() }) throw IOException("Non-finite original raster")
-                consume(y, row)
+                consume(channel, y, state)
             }
             if (channel.size() != bytes || channel.position() != bytes) throw IOException("Original raster changed")
         }
+    }
+
+    private fun readRow(channel: FileChannel, buffer: ByteBuffer) {
+        while (buffer.hasRemaining()) if (channel.read(buffer) <= 0) throw IOException("Short original raster")
     }
 }
 
