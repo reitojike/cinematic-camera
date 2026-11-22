@@ -66,7 +66,7 @@ class OrtonBoundaryDiagnosticAndroidTest {
                 var skin: FloatPlane? = null
                 var actualDisplay: IntArray? = null
                 var decisions: GpuDecisions? = null
-                DefaultStageClearGpu(egl, ledger) { texture, analysis ->
+                DefaultStageClearGpu(egl, ledger, createPresenter = windowTestPresenter(egl, ledger)) { texture, analysis ->
                     val connected = ConnectedStageClearGpuPipeline(texture, analysis, GpuFrameMode.FULL_RECOMPUTE)
                     object : StageClearGpuPipeline {
                         override fun render(params: GpuRenderParams, tap: ((Point, GpuTexture) -> Unit)?,

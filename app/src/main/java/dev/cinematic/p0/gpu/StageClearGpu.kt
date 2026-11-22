@@ -81,8 +81,7 @@ internal class DefaultStageClearGpu(
     private val egl: EglContexts,
     private val ledger: GpuMemoryLedger,
     frameMode: GpuFrameMode = GpuFrameMode.NORMAL,
-    private val createPresenter: (GpuPreviewTarget, GpuDisplayOptions) -> GpuPreviewPresenter =
-        { target, display -> egl.createPreviewPresenter(ledger, target, display) },
+    private val createPresenter: (GpuPreviewTarget, GpuDisplayOptions) -> GpuPreviewPresenter,
     private val createPipeline: (GpuTexture, GpuPhotoAnalysis) -> StageClearGpuPipeline = { input, analysis ->
         ConnectedStageClearGpuPipeline(input, analysis, frameMode)
     },
