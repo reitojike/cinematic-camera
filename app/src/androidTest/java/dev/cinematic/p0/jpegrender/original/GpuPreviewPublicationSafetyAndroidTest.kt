@@ -10,6 +10,7 @@ import android.opengl.EGL14
 import dev.cinematic.p0.gpu.*
 import dev.cinematic.p0.gpu.diag.GpuStageTap
 import android.os.CancellationSignal
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import dev.cinematic.p0.photoroll.*
 import dev.cinematic.p0.gpu.preview.GpuInputRequestDeadline
@@ -24,12 +25,19 @@ import dev.cinematic.p0.gpu.GlThread
 import dev.cinematic.p0.gpu.GpuAvailability
 import dev.cinematic.p0.raw.PhotoAdjustments
 import dev.cinematic.p0.raw.R7PreviewInputs
+import dev.cinematic.p0.raw.original.NativeOriginalRaster
+import dev.cinematic.p0.raw.original.OriginalFields
+import dev.cinematic.p0.raw.original.OriginalRasterFile
 import dev.cinematic.p0.rawcapture.*
 import dev.cinematic.p0.testing.writeSyntheticTrialDng
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.floor
+import kotlin.math.max
+import kotlin.math.min
+import org.json.JSONObject
 import org.junit.Assert.*
 
 import org.junit.Test
@@ -98,8 +106,6 @@ class GpuPreviewPublicationSafetyAndroidTest {
             assertEquals(6, save.geometry.orientation)
             assertEquals(1536, save.geometry.outputWidth); assertEquals(2304, save.geometry.outputHeight)
 
-            // The original-size save and preview use the same bounded AS_SHOT analysis input.
-            // Check base exposure plus manual EV without a CPU look or JPEG similarity threshold.
             val ready = PhotoRollResources(true, 0, false, 2L * 1024 * 1024 * 1024,
                 PhotoRollCameraSnapshot(false, false, false, false), true, true)
             val input = GpuPhotoRollInputs.open(app, { ready }, PhotoRollRepository(resolver, app.packageName),
@@ -111,8 +117,40 @@ class GpuPreviewPublicationSafetyAndroidTest {
             assertSame(save, AndroidManualOriginalTrialSaves.prepareGpu(app, source, input.geometry, strength,
                 allowed, edits, stopped::get).get(30, TimeUnit.SECONDS))
             assertSame(save, AndroidManualOriginalTrialSaves.knownPrepared(source))
-            val expectedEv = R7PreviewInputs.prepare(R7PreviewInputs.AsShotInput(input.image,
-                R7PreviewInputs.Source.LIBRAW_PRELIMINARY_AS_SHOT), emptyList()).exposure.externalBaseEv + edits.exposureEv
+            // The save meters exposure from a bounded reduction of the native full-size decode.
+            // The HALF-based preview analysis may differ slightly. Require the saved EV to equal
+            // the full-size computation without a CPU look or JPEG similarity threshold.
+            val sourceFile = File.createTempFile("gpu-save-source-", ".dng", app.cacheDir)
+            val analysis = try {
+                val rasterFile = File.createTempFile("gpu-save-raster-", ".rgb16", app.cacheDir)
+                try {
+                    requireNotNull(resolver.openInputStream(originalUri)).use { stream ->
+                        sourceFile.outputStream().use { stream.copyTo(it) }
+                    }
+                    val report = ParcelFileDescriptor.open(sourceFile, ParcelFileDescriptor.MODE_READ_ONLY).use { dng ->
+                        ParcelFileDescriptor.open(rasterFile, ParcelFileDescriptor.MODE_READ_WRITE).use { target ->
+                            JSONObject(NativeOriginalRaster.decode24(dng.fd, target.fd, CancellationSignal()))
+                        }
+                    }
+                    val width = report.getInt("width")
+                    val height = report.getInt("height")
+                    assertEquals(save.geometry.outputWidth, width)
+                    assertEquals(save.geometry.outputHeight, height)
+                    val raster = OriginalRasterFile(rasterFile, width, height, 2)
+                    val scale = min(1.0, 1024.0 / max(width, height))
+                    OriginalFields.reduce(raster, max(4, floor(width * scale).toInt()),
+                        max(4, floor(height * scale).toInt()), 3, stopped::get) { rgb, out ->
+                        rgb.copyInto(out)
+                    }.reducedRgb()
+                } finally {
+                    rasterFile.delete()
+                }
+            } finally {
+                sourceFile.delete()
+            }
+            val expectedEv = R7PreviewInputs.prepare(R7PreviewInputs.AsShotInput(analysis,
+                R7PreviewInputs.Source.LIBRAW_PRELIMINARY_AS_SHOT), emptyList(), stopped::get)
+                .exposure.externalBaseEv + edits.exposureEv
             val directory = RenderedJpegFiles(File(app.noBackupFilesDir, "raw-captures"),
                 save.request.captureId, save.request.generation).generationRoot()
             val scratch = File(directory, "original-work")
