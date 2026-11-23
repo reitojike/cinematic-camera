@@ -1,7 +1,7 @@
 package dev.cinematic.p0.gpu.diag
 
 import android.opengl.GLES32
-import dev.cinematic.p0.gpu.EglContexts
+import dev.cinematic.p0.gpu.GpuExecutionContext
 import dev.cinematic.p0.gpu.GpuFence
 import dev.cinematic.p0.gpu.GpuTexture
 import dev.cinematic.p0.raw.FloatPlane
@@ -29,19 +29,19 @@ internal object GpuStageTap {
         DISPLAY8,
     }
 
-    fun readRgb(egl: EglContexts, texture: GpuTexture, stop: () -> Boolean = { false }): LinearSrgbImage {
+    fun readRgb(egl: GpuExecutionContext, texture: GpuTexture, stop: () -> Boolean = { false }): LinearSrgbImage {
         require(texture.format == GpuTexture.Format.RGBA32F)
         val rgba = readRgba(egl, texture, stop)
         val rgb = FloatArray(texture.width * texture.height * 3)
         for (i in 0 until texture.width * texture.height) for (c in 0..2) rgb[i * 3 + c] = rgba.get(i * 4 + c)
         return LinearSrgbImage.takeOwnership(texture.width, texture.height, rgb)
     }
-    fun readPlane(egl: EglContexts, texture: GpuTexture, stop: () -> Boolean = { false }): FloatPlane {
+    fun readPlane(egl: GpuExecutionContext, texture: GpuTexture, stop: () -> Boolean = { false }): FloatPlane {
         require(texture.format == GpuTexture.Format.R32F)
         val rgba = readRgba(egl, texture, stop)
         return FloatPlane.takeOwnership(texture.width, texture.height, FloatArray(texture.width * texture.height) { rgba.get(it * 4) })
     }
-    private fun readRgba(egl: EglContexts, texture: GpuTexture, stop: () -> Boolean): java.nio.FloatBuffer {
+    private fun readRgba(egl: GpuExecutionContext, texture: GpuTexture, stop: () -> Boolean): java.nio.FloatBuffer {
         texture.requireContext(egl)
         GpuFence(egl).use { it.await(stop) }
         val bytes = Math.multiplyExact(Math.multiplyExact(texture.width, texture.height), 16)

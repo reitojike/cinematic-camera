@@ -13,7 +13,7 @@ import kotlin.math.pow
 import kotlin.math.round
 
 /** 写真ごとに所有するR7。入力/ROIは借用かつ不変。中間は即時解放し、最終出力だけを保持する。 */
-internal class R7Gpu(private val egl: EglContexts, private val ledger: GpuMemoryLedger,
+internal class R7Gpu(private val egl: GpuExecutionContext, private val ledger: GpuMemoryLedger,
     private val resample: GpuResample = GpuResample(egl, ledger),
     private val ownsResample: Boolean = true) : AutoCloseable {
     private data class Key(val input: GpuTexture, val warmth: Double, val ev: Double, val roi: GpuTexture?)
@@ -106,7 +106,7 @@ internal class R7Gpu(private val egl: EglContexts, private val ledger: GpuMemory
     }
 
     override fun close() {
-        egl.glThread.requireCurrent()
+        egl.requireOwnerThread()
         if (closed) return
         var failure: Throwable? = null
         fun cleanup(block: () -> Unit) { try { block() } catch (e: Throwable) { if (failure == null) failure = e else failure.addSuppressed(e) } }
