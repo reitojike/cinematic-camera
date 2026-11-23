@@ -1,6 +1,7 @@
 package dev.cinematic.p0.metrics
 
 import dev.cinematic.p0.gpu.export.GpuExportTimings
+import dev.cinematic.p0.jpegrender.original.recordDecodeTimings
 import dev.cinematic.p0.raw.original.OriginalStage
 import dev.cinematic.p0.raw.original.originalStage
 import org.junit.Assert.*
@@ -323,4 +324,91 @@ class SaveTimingTest {
         assertEquals(SaveTimingOutcome.HOLD, batch.last().outcome)
     }
 
+    @Test fun decodeDiagnosticRowsKeepValuesAndOutcomesInSchema1() {
+        val rows = listOf(
+            Triple(SaveTimingStage.DECODE_CONFIG, SaveTimingOutcome.COMPLETED, 4L),
+            Triple(SaveTimingStage.DECODE_THREAD_SOURCE, SaveTimingOutcome.COMPLETED, 12L),
+            Triple(SaveTimingStage.DECODE_BLOCKTIME, SaveTimingOutcome.COMPLETED, 0L),
+            Triple(SaveTimingStage.DECODE_BLOCKTIME, SaveTimingOutcome.UNAVAILABLE, null),
+        ) + listOf(SaveTimingOutcome.COMPLETED, SaveTimingOutcome.FAILED, SaveTimingOutcome.INCOMPLETE,
+            SaveTimingOutcome.SKIPPED, SaveTimingOutcome.UNAVAILABLE).map {
+            Triple(SaveTimingStage.DECODE_PARITY, it, null)
+        }
+        for ((stage, outcome, value) in rows) {
+            val prefix = "1\t${"f".repeat(32)}\t26\tSAVE\t"
+            val record = SaveTimingRecord("f".repeat(32), 26, SaveTimingKind.SAVE, stage, outcome, 24_000_000, value)
+            val line = record.line().removeSuffix("\n")
+            assertEquals("$prefix$stage\t$outcome\t24000000\t${value ?: "NA"}", line)
+            assertTrue(SaveTimingRecord.valid(line))
+        }
+    }
+
+    @Test fun decodeTimingStagesStaySchema1WithinByteBoundAndAreOmittedByDefault() {
+        val diagStages = listOf(
+            SaveTimingStage.DECODE_PREAD,
+            SaveTimingStage.DECODE_OPEN_PARSE,
+            SaveTimingStage.DECODE_UNPACK,
+            SaveTimingStage.DECODE_RAW2IMAGE,
+            SaveTimingStage.DECODE_SCALE_COLORS,
+            SaveTimingStage.DECODE_PRE_INTERP,
+            SaveTimingStage.DECODE_AHD,
+            SaveTimingStage.DECODE_CONVERT_RGB,
+            SaveTimingStage.DECODE_MAKE_IMAGE,
+            SaveTimingStage.DECODE_WRITE,
+            SaveTimingStage.DECODE_PARITY,
+            SaveTimingStage.DECODE_CONFIG,
+            SaveTimingStage.DECODE_THREAD_SOURCE,
+            SaveTimingStage.DECODE_BLOCKTIME,
+        )
+        // Default finish() (SAVE and RECHECK) never auto-emits any diagnostic stage.
+        for (kind in listOf(SaveTimingKind.SAVE, SaveTimingKind.RECHECK)) {
+            val defaultRecords = mutableListOf<SaveTimingRecord>()
+            val timing = SaveTiming.start(26, kind, defaultRecords::addAll)!!
+            timing.finish(SaveTimingOutcome.PUBLISHED)
+            assertTrue(defaultRecords.none { it.stage in diagStages })
+        }
+        // Every diagnostic stage serializes as valid schema 1 within the fixed-width byte ceiling.
+        for (stage in diagStages) {
+            val row = SaveTimingRecord(
+                "f".repeat(32), Int.MAX_VALUE, SaveTimingKind.SAVE,
+                stage, SaveTimingOutcome.COMPLETED, 24_000_000L, Long.MAX_VALUE,
+            )
+            val line = row.line()
+            assertTrue(line.startsWith("1\t"))
+            assertTrue(SaveTimingRecord.valid(line.trimEnd()))
+            assertTrue(line.length * SaveTimingStore.MAX_RECORDS < SaveTimingStore.MAX_BYTES)
+        }
+        // recordDecodeTimings maps all 10 keys, preserving verified pixels and marking missing/negative as UNAVAILABLE.
+        val recorded = mutableListOf<SaveTimingRecord>()
+        val timing = SaveTiming.start(26, SaveTimingKind.SAVE, recorded::addAll)!!
+        timing.pixels(6000, 4000)
+        val samples = mapOf<String, Long?>(
+            "pread" to 0L,
+            "openParse" to 12_345L,
+            "unpack" to 23_456L,
+            "raw2image" to -1L,
+            "scaleColors" to 34_567L,
+            "preInterp" to null,
+            "ahd" to 45_678L,
+            "convertRgb" to 56_789L,
+            "makeImage" to 67_890L,
+            // "write" omitted -> UNAVAILABLE
+        )
+        recordDecodeTimings(timing) { key -> samples[key] }
+        timing.finish(SaveTimingOutcome.PUBLISHED)
+        val byStage = recorded.associateBy { it.stage }
+        assertEquals(SaveTimingOutcome.COMPLETED, byStage[SaveTimingStage.DECODE_PREAD]?.outcome)
+        assertEquals(0L, byStage[SaveTimingStage.DECODE_PREAD]?.nanos)
+        assertEquals(24_000_000L, byStage[SaveTimingStage.DECODE_PREAD]?.pixels)
+        assertEquals(SaveTimingOutcome.COMPLETED, byStage[SaveTimingStage.DECODE_OPEN_PARSE]?.outcome)
+        assertEquals(12_345L, byStage[SaveTimingStage.DECODE_OPEN_PARSE]?.nanos)
+        assertEquals(SaveTimingOutcome.UNAVAILABLE, byStage[SaveTimingStage.DECODE_RAW2IMAGE]?.outcome)
+        assertNull(byStage[SaveTimingStage.DECODE_RAW2IMAGE]?.nanos)
+        assertEquals(SaveTimingOutcome.UNAVAILABLE, byStage[SaveTimingStage.DECODE_PRE_INTERP]?.outcome)
+        assertNull(byStage[SaveTimingStage.DECODE_PRE_INTERP]?.nanos)
+        assertEquals(SaveTimingOutcome.UNAVAILABLE, byStage[SaveTimingStage.DECODE_WRITE]?.outcome)
+        assertNull(byStage[SaveTimingStage.DECODE_WRITE]?.nanos)
+        assertEquals(SaveTimingOutcome.COMPLETED, byStage[SaveTimingStage.DECODE_AHD]?.outcome)
+        assertEquals(45_678L, byStage[SaveTimingStage.DECODE_AHD]?.nanos)
+    }
 }

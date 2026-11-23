@@ -14,15 +14,25 @@ file(GLOB_RECURSE libraw_sources CONFIGURE_DEPENDS "${libraw_SOURCE_DIR}/src/*.c
 add_library(raw STATIC ${libraw_sources})
 set_target_properties(raw PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(raw PUBLIC "${libraw_SOURCE_DIR}")
-target_compile_definitions(raw PRIVATE LIBRAW_NOTHREADS USE_ZLIB)
+target_compile_definitions(raw PRIVATE USE_ZLIB)
+target_compile_options(raw PRIVATE -fopenmp)
 target_compile_features(raw PUBLIC cxx_std_17)
-# Android zlib only. No JPEG/LCMS/RawSpeed/DNG SDK/GPL demosaic packs/OpenMP.
+# Android zlib and OpenMP (libomp linked statically into the JNI library).
+# No JPEG/LCMS/RawSpeed/DNG SDK/GPL demosaic packs.
 target_link_libraries(raw PUBLIC z)
 
 add_library(cinematic_dng SHARED dng_decoder.cpp w1_trial.cpp as_shot_xy.cpp original_raster_sink.cpp)
 target_compile_options(cinematic_dng PRIVATE -Wall -Wextra -Werror -fvisibility=hidden)
 # Keep static LibRaw/C++ runtime symbols private to this JNI boundary.
 target_link_options(cinematic_dng PRIVATE "-Wl,--exclude-libs,ALL")
+option(CINEMATIC_ENABLE_DECODE_TIMING "Record native DNG decode stage timings for .pubdiag builds" OFF)
+if(CINEMATIC_ENABLE_DECODE_TIMING)
+    target_compile_definitions(cinematic_dng PRIVATE CINEMATIC_ENABLE_DECODE_TIMING)
+endif()
+option(CINEMATIC_ENABLE_DECODE_PARITY "Enable DNG decode parity diagnostics for .pubdiag builds" OFF)
+if(CINEMATIC_ENABLE_DECODE_PARITY)
+    target_compile_definitions(cinematic_dng PRIVATE CINEMATIC_ENABLE_DECODE_PARITY)
+endif()
 option(CINEMATIC_ENABLE_RAW_PROBE "Build the isolated full-resolution diagnostic JNI entry" OFF)
 set(dng_exports "${CMAKE_CURRENT_LIST_DIR}/dng.exports")
 if(CINEMATIC_ENABLE_RAW_PROBE)
@@ -31,7 +41,22 @@ if(CINEMATIC_ENABLE_RAW_PROBE)
     target_include_directories(cinematic_dng PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../../../../rawprobe/src/main/cpp")
     target_link_libraries(cinematic_dng PRIVATE jnigraphics)
     set(dng_exports "${CMAKE_CURRENT_LIST_DIR}/probe.exports")
+elseif(NOT CINEMATIC_ENABLE_DECODE_PARITY)
+    # LLD requires every symbol listed in the version script to be defined.
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${dng_exports}")
+    file(READ "${dng_exports}" regular_exports)
+    string(REGEX REPLACE "[^
+]*NativeOriginalRaster_(registerDecodeConfigPath|forceNextDecodeThreads);
+" ""
+        regular_exports "${regular_exports}")
+    set(dng_exports "${CMAKE_CURRENT_BINARY_DIR}/dng-regular.exports")
+    file(GENERATE OUTPUT "${dng_exports}" CONTENT "${regular_exports}")
 endif()
 target_link_options(cinematic_dng PRIVATE "-Wl,--version-script=${dng_exports}")
 set_property(TARGET cinematic_dng APPEND PROPERTY LINK_DEPENDS "${dng_exports}")
 target_link_libraries(cinematic_dng PRIVATE raw)
+
+set(CINEMATIC_DECODE_THREADS 4 CACHE STRING "OpenMP thread count for DNG decoding")
+target_compile_definitions(cinematic_dng PRIVATE CINEMATIC_DECODE_THREADS=${CINEMATIC_DECODE_THREADS})
+target_compile_options(cinematic_dng PRIVATE -fopenmp)
+target_link_options(cinematic_dng PRIVATE -fopenmp -fstatic-openmp)

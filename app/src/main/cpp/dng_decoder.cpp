@@ -1,5 +1,6 @@
 #include <jni.h>
 #include <libraw/libraw.h>
+#include <omp.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <algorithm>
@@ -18,23 +19,195 @@
 #include "as_shot_xy.h"
 #include "original_raster_sink.h"
 #include <fcntl.h>
+#ifdef CINEMATIC_ENABLE_DECODE_TIMING
+#include <time.h>
+#endif
+
+#ifdef CINEMATIC_ENABLE_DECODE_PARITY
+#include <sys/system_properties.h>
+#include <cerrno>
+#include <fstream>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <utility>
+#endif
 
 namespace {
+#ifndef CINEMATIC_DECODE_THREADS
+#define CINEMATIC_DECODE_THREADS 4
+#endif
+
+void applyDecodeOpenMpSettings(int threadCount) {
+    omp_set_dynamic(0);
+    omp_set_num_threads(threadCount);
+    kmp_set_blocktime(0);
+}
+
+#ifdef CINEMATIC_ENABLE_DECODE_PARITY
+std::mutex decodeConfigPathMutex;
+std::string decodeConfigPath;
+
+struct DecodeThreadOverride {
+    int threads = 0;
+    int restoreThreads = 0;
+};
+thread_local DecodeThreadOverride nextDecodeOverride;
+
+struct RestoreDecodeThreads {
+    int threads;
+    ~RestoreDecodeThreads() { if (threads > 0) omp_set_num_threads(threads); }
+};
+
+std::string trimConfigField(const std::string& text) {
+    const auto start = text.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos) return {};
+    return text.substr(start, text.find_last_not_of(" \t\r\n") - start + 1);
+}
+
+int parseThreadCount(const std::string& text) {
+    return text.size() == 1 && text.find_first_not_of("1248") == std::string::npos
+        ? text[0] - '0' : 0;
+}
+
+cinematic::DecodeConfig resolveDecodeConfig(int forcedThreads) {
+    cinematic::DecodeConfig config{CINEMATIC_DECODE_THREADS};
+    if (forcedThreads > 0) {
+        config.threads = forcedThreads;
+        return config;
+    }
+    char threadsProperty[PROP_VALUE_MAX]{};
+    char parityProperty[PROP_VALUE_MAX]{};
+    const bool hasThreads = __system_property_get("debug.cinematic.decode.threads", threadsProperty) > 0;
+    const bool hasParity = __system_property_get("debug.cinematic.decode.parity", parityProperty) > 0;
+    const int propThreads = parseThreadCount(threadsProperty);
+    const std::string propParity(parityProperty);
+    const bool validParity = propParity == "1" || propParity == "0";
+    if (propThreads) {
+        config.threads = propThreads;
+        config.threadSource = "prop";
+    }
+    if (validParity) config.parity = propParity == "1";
+    config.threadInvalid = hasThreads && !propThreads;
+    config.parityInvalid = hasParity && !validParity;
+    if (propThreads && validParity) return config;
+
+    std::string path;
+    {
+        const std::lock_guard<std::mutex> lock(decodeConfigPathMutex);
+        path = decodeConfigPath;
+    }
+    if (path.empty()) return config;
+
+    errno = 0;
+    std::ifstream file(path);
+    const int openError = errno;
+    if (!file.is_open() && openError == ENOENT) return config;
+    std::optional<std::string> fileThreads;
+    std::optional<std::string> fileParity;
+    for (std::string line; std::getline(file, line);) {
+        line = trimConfigField(line);
+        if (line.empty() || line.front() == '#') continue;
+        const auto separator = line.find('=');
+        const auto key = trimConfigField(line.substr(0, separator));
+        auto* target = key == "threads" ? &fileThreads : key == "parity" ? &fileParity : nullptr;
+        if (target) {
+            // Empty, missing and duplicate values for a present key are invalid.
+            *target = target->has_value() || separator == std::string::npos
+                ? std::string{} : trimConfigField(line.substr(separator + 1));
+        }
+    }
+    const bool readFailed = !file.is_open() || file.bad() || !file.eof();
+    if (!propThreads) {
+        if (readFailed) config.threadInvalid = true;
+        else if (fileThreads) {
+            const int threads = parseThreadCount(*fileThreads);
+            if (threads) {
+                config.threads = threads;
+                config.threadSource = "file";
+            } else config.threadInvalid = true;
+        }
+    }
+    if (!validParity) {
+        if (readFailed) config.parityInvalid = true;
+        else if (fileParity) {
+            if (*fileParity == "on" || *fileParity == "off") config.parity = *fileParity == "on";
+            else config.parityInvalid = true;
+        }
+    }
+    return config;
+}
+#endif
+
 constexpr uint64_t kMaxFileBytes = 64ULL * 1024 * 1024;
 constexpr uint64_t kMaxRawPixels = 16'000'000;
+
+#ifdef CINEMATIC_ENABLE_DECODE_TIMING
+int64_t monotonicNowNs() {
+    struct timespec ts{};
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return -1;
+    if (ts.tv_sec < 0 || ts.tv_nsec < 0) return -1;
+    return static_cast<int64_t>(ts.tv_sec) * 1'000'000'000LL + static_cast<int64_t>(ts.tv_nsec);
+}
+
+int64_t elapsedNs(int64_t start, int64_t end) {
+    return (start >= 0 && end >= start) ? (end - start) : -1;
+}
+
+struct DecodeTimingMarks {
+    int64_t preadStart = -1;
+    int64_t preadEnd = -1;
+    int64_t unpackStart = -1;
+    int64_t processStart = -1;
+    int64_t scaleColorsStart = -1;
+    int64_t scaleColorsEnd = -1;
+    int64_t preInterpStart = -1;
+    int64_t preInterpEnd = -1;
+    int64_t convertRgbStart = -1;
+    int64_t convertRgbEnd = -1;
+    int64_t makeImageStart = -1;
+    int64_t makeImageEnd = -1;
+    int64_t writeStart = -1;
+    int64_t writeEnd = -1;
+};
+#endif
 
 struct Cancellation {
     JNIEnv* env;
     jobject signal;
     jmethodID isCancelled;
+#ifdef CINEMATIC_ENABLE_DECODE_TIMING
+    DecodeTimingMarks* timing = nullptr;
+#endif
     bool cancelled() const {
         return env->ExceptionCheck() || env->CallBooleanMethod(signal, isCancelled);
     }
 };
 
+#ifdef CINEMATIC_ENABLE_DECODE_TIMING
+int progress(void* state, LibRaw_progress stage, int iteration, int) {
+    auto* cancel = static_cast<Cancellation*>(state);
+    if (auto* marks = cancel->timing) {
+        int64_t* slot = nullptr;
+        if (stage == LIBRAW_PROGRESS_SCALE_COLORS) {
+            if (iteration == 0) slot = &marks->scaleColorsStart;
+            else if (iteration == 1) slot = &marks->scaleColorsEnd;
+        } else if (stage == LIBRAW_PROGRESS_PRE_INTERPOLATE) {
+            if (iteration == 0) slot = &marks->preInterpStart;
+            else if (iteration == 1) slot = &marks->preInterpEnd;
+        } else if (stage == LIBRAW_PROGRESS_CONVERT_RGB) {
+            if (iteration == 0) slot = &marks->convertRgbStart;
+            else if (iteration == 1) slot = &marks->convertRgbEnd;
+        }
+        if (slot && *slot < 0) *slot = monotonicNowNs();
+    }
+    return cancel->cancelled() ? 1 : 0;
+}
+#else
 int progress(void* state, LibRaw_progress, int, int) {
     return static_cast<Cancellation*>(state)->cancelled() ? 1 : 0;
 }
+#endif
 
 void fail(const char* code) { throw std::runtime_error(code); }
 void check(int result) {
@@ -68,13 +241,32 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
                  , ProbeReport* probe = nullptr
 #endif
                  , cinematic::OriginalRasterSink* original = nullptr, bool geometryOnly = false
+#ifdef CINEMATIC_ENABLE_DECODE_PARITY
+                 , int forcedThreads = 0
+#endif
 ) {
     if (fd < 0 || longEdge < 1 || longEdge > 1024 || !signal || (wbMode != 0 && wbMode != 1)) fail("DNG_UNSUPPORTED");
     if (geometryOnly && !original) fail("DNG_UNSUPPORTED");
+#ifdef CINEMATIC_ENABLE_DECODE_PARITY
+    auto decodeConfig = geometryOnly ? cinematic::DecodeConfig{CINEMATIC_DECODE_THREADS}
+                                     : resolveDecodeConfig(forcedThreads);
+#elif defined(CINEMATIC_ENABLE_DECODE_TIMING)
+    cinematic::DecodeConfig decodeConfig{CINEMATIC_DECODE_THREADS};
+#endif
+#ifdef CINEMATIC_ENABLE_DECODE_TIMING
+    DecodeTimingMarks timingMarks{};
+    const bool recordTiming = (original != nullptr && !original->isHalfPreview() && !geometryOnly);
+    Cancellation cancel{env, signal, env->GetMethodID(env->GetObjectClass(signal), "isCanceled", "()Z"),
+                        recordTiming ? &timingMarks : nullptr};
+#else
     Cancellation cancel{env, signal, env->GetMethodID(env->GetObjectClass(signal), "isCanceled", "()Z")};
+#endif
     if (!cancel.isCancelled || cancel.cancelled()) fail("DNG_CANCELLED");
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
     if (probe) probe->stage("snapshot", cancel);
+#endif
+#ifdef CINEMATIC_ENABLE_DECODE_TIMING
+    if (recordTiming) timingMarks.preadStart = monotonicNowNs();
 #endif
     struct stat file{};
     if (fstat(fd, &file) || !S_ISREG(file.st_mode) || file.st_size <= 0) fail("DNG_SOURCE");
@@ -91,6 +283,9 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
         if (read <= 0) fail("DNG_SOURCE");
         offset += static_cast<size_t>(read);
     }
+#ifdef CINEMATIC_ENABLE_DECODE_TIMING
+    if (recordTiming) timingMarks.preadEnd = monotonicNowNs();
+#endif
 
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
     if (probe && probe->baseline) probe->baseline->parse(encoded);
@@ -191,6 +386,9 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
     if (probe) probe->stage("unpack", cancel);
 #endif
+#ifdef CINEMATIC_ENABLE_DECODE_TIMING
+    if (recordTiming) timingMarks.unpackStart = monotonicNowNs();
+#endif
     check(raw.unpack());
     if (raw.error_count()) fail("DNG_UNSUPPORTED");
     if (original) original->applyCrop(raw);
@@ -204,8 +402,20 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
         try { cinematic::validateW1Processing(raw.imgdata.rawdata.color, requestedWb); }
         catch (const std::runtime_error&) { fail("DNG_UNSUPPORTED"); }
     }
+#if defined(CINEMATIC_ENABLE_DECODE_TIMING) || defined(CINEMATIC_ENABLE_DECODE_PARITY)
+    applyDecodeOpenMpSettings(decodeConfig.threads);
+    if (original && !original->isHalfPreview()) {
+        decodeConfig.blocktime = kmp_get_blocktime();
+        original->setDecodeConfig(decodeConfig);
+    }
+#else
+    applyDecodeOpenMpSettings(CINEMATIC_DECODE_THREADS);
+#endif
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
     if (probe) probe->stage("process", cancel);
+#endif
+#ifdef CINEMATIC_ENABLE_DECODE_TIMING
+    if (recordTiming) timingMarks.processStart = monotonicNowNs();
 #endif
     check(raw.dcraw_process());
     if (raw.error_count()) fail("DNG_UNSUPPORTED");
@@ -214,18 +424,44 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
     if (probe) probe->stage("make_image", cancel);
 #endif
+#ifdef CINEMATIC_ENABLE_DECODE_TIMING
+    if (recordTiming) timingMarks.makeImageStart = monotonicNowNs();
+#endif
     std::unique_ptr<libraw_processed_image_t, decltype(&LibRaw::dcraw_clear_mem)> image(
         raw.dcraw_make_mem_image(&error), LibRaw::dcraw_clear_mem);
+#ifdef CINEMATIC_ENABLE_DECODE_TIMING
+    if (recordTiming) timingMarks.makeImageEnd = monotonicNowNs();
+#endif
     check(error);
     if (!image || image->type != LIBRAW_IMAGE_BITMAP || image->bits != 16 || image->colors != 3 ||
         !image->width || !image->height ||
         image->data_size != static_cast<uint64_t>(image->width) * image->height * 6) fail("DNG_UNSUPPORTED");
     if (original) {
         // File output keeps full RGB outside Java. Free RAW/snapshot before row writes.
+#ifdef CINEMATIC_ENABLE_DECODE_TIMING
+        if (recordTiming) timingMarks.writeStart = monotonicNowNs();
+#endif
         raw.recycle();
         std::vector<unsigned char>().swap(encoded);
         original->write(*image, [&] { if (cancel.cancelled()) fail("DNG_CANCELLED"); });
         image.reset();
+#ifdef CINEMATIC_ENABLE_DECODE_TIMING
+        if (recordTiming) {
+            timingMarks.writeEnd = monotonicNowNs();
+            original->setDecodeTiming(cinematic::DecodeTimingNs{
+                elapsedNs(timingMarks.preadStart, timingMarks.preadEnd),
+                elapsedNs(timingMarks.preadEnd, timingMarks.unpackStart),
+                elapsedNs(timingMarks.unpackStart, timingMarks.processStart),
+                elapsedNs(timingMarks.processStart, timingMarks.scaleColorsStart),
+                elapsedNs(timingMarks.scaleColorsStart, timingMarks.scaleColorsEnd),
+                elapsedNs(timingMarks.preInterpStart, timingMarks.preInterpEnd),
+                elapsedNs(timingMarks.preInterpEnd, timingMarks.convertRgbStart),
+                elapsedNs(timingMarks.convertRgbStart, timingMarks.convertRgbEnd),
+                elapsedNs(timingMarks.makeImageStart, timingMarks.makeImageEnd),
+                elapsedNs(timingMarks.writeStart, timingMarks.writeEnd),
+            });
+        }
+#endif
         return nullptr;
     }
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
@@ -414,6 +650,11 @@ Java_dev_cinematic_p0_raw_original_NativeOriginalRaster_preflight24(JNIEnv* env,
 
 namespace {
 jstring decodeRaster(JNIEnv* env, jint fd, jint outputFd, jobject signal, cinematic::OriginalRasterSink::Output mode) {
+#ifdef CINEMATIC_ENABLE_DECODE_PARITY
+    const auto forced = mode == cinematic::OriginalRasterSink::Output::Full
+        ? std::exchange(nextDecodeOverride, {}) : DecodeThreadOverride{};
+    const RestoreDecodeThreads restore{forced.restoreThreads};
+#endif
     try {
         struct stat source{}, target{};
         const int flags = fcntl(outputFd, F_GETFL);
@@ -421,7 +662,11 @@ jstring decodeRaster(JNIEnv* env, jint fd, jint outputFd, jobject signal, cinema
             fstat(fd, &source) || fstat(outputFd, &target) || !S_ISREG(target.st_mode) || target.st_size != 0 ||
             (source.st_dev == target.st_dev && source.st_ino == target.st_ino)) fail("ORIGINAL_RASTER_TARGET");
         cinematic::OriginalRasterSink sink(outputFd, mode);
-        decodeDng(env, fd, 1024, signal, 0, &sink);
+        decodeDng(env, fd, 1024, signal, 0, &sink, false
+#ifdef CINEMATIC_ENABLE_DECODE_PARITY
+                  , forced.threads
+#endif
+        );
         if (env->ExceptionCheck()) return nullptr;
         return env->NewStringUTF(sink.report().c_str());
     } catch (const std::bad_alloc&) {
@@ -434,6 +679,33 @@ jstring decodeRaster(JNIEnv* env, jint fd, jint outputFd, jobject signal, cinema
     return nullptr;
 }
 } // namespace
+
+#ifdef CINEMATIC_ENABLE_DECODE_PARITY
+extern "C" JNIEXPORT void JNICALL
+Java_dev_cinematic_p0_raw_original_NativeOriginalRaster_registerDecodeConfigPath(
+    JNIEnv* env, jobject, jbyteArray path
+) {
+    try {
+        std::string value(path ? env->GetArrayLength(path) : 0, '\0');
+        if (!value.empty()) {
+            env->GetByteArrayRegion(path, 0, static_cast<jsize>(value.size()), reinterpret_cast<jbyte*>(value.data()));
+            if (env->ExceptionCheck()) return;
+        }
+        const std::lock_guard<std::mutex> lock(decodeConfigPathMutex);
+        decodeConfigPath = std::move(value);
+    } catch (...) {
+        if (!env->ExceptionCheck()) env->ThrowNew(env->FindClass("java/io/IOException"), "DNG_DECODE_CONFIG");
+    }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_dev_cinematic_p0_raw_original_NativeOriginalRaster_forceNextDecodeThreads(
+    JNIEnv*, jobject, jint threads, jint restoreThreads
+) {
+    nextDecodeOverride = threads > 0 && restoreThreads > 0
+        ? DecodeThreadOverride{threads, restoreThreads} : DecodeThreadOverride{};
+}
+#endif
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_dev_cinematic_p0_raw_original_NativeOriginalRaster_decode24(JNIEnv* env, jobject, jint fd, jint outputFd, jobject signal) {

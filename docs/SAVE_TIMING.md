@@ -172,3 +172,69 @@ providerの自動登録を試すため、試験から `install()` は呼ばな�
 起動後の安定・crash/ANRゲートと試験前後のinstance照合を行う。ATDで発生したBluetooth native abortは
 アプリ導入前の環境阻害として記録し、ログ消去や無条件再試行で合格にしない。既存AOSPでの代替確認とは分ける。
 この試験は実機のthermal変化、保存速度、OSによる抑制を保証しない。
+
+## `NATIVE_DECODE` 区間別計測（`.pubdiag` 一時診断）
+
+`cinematicPublicationDiagnostic` の既定値は無効で、`BuildConfig.DECODE_TIMING_DIAGNOSTIC` と
+CMake の `CINEMATIC_ENABLE_DECODE_TIMING` はそれぞれ `false` と `OFF` になる。
+計測には `-PcinematicPublicationDiagnostic=true` を付けた release ビルド（`dev.cinematic.p0.pubdiag`）を使う。
+
+- ビルド（`CINEMATIC_SIGNING_MODE` 等の署名用環境変数を解除した状態、debug 署名使用）:
+  ```bash
+  ./gradlew :app:assembleRelease -PcinematicPublicationDiagnostic=true
+  ```
+- 並置インストール（本人の実機操作承認後、`dev.cinematic.p0` を上書きせず並置し、ランチャーから `Cinematic Camera Probe (PubDiag)` を起動）:
+  ```bash
+  adb -s <authorized-device> install -r app/build/outputs/apk/release/app-release.apk
+  ```
+- 抽出:
+  ```bash
+  adb -s <authorized-device> exec-out content read --uri content://dev.cinematic.p0.pubdiag.save-timing/records > records-pubdiag.tsv
+  ```
+
+### `DECODE_*` 10 区間（`NATIVE_DECODE` 内訳・LibRaw 0.22.3 無改変）
+
+LibRaw 0.22.3 は無改変のまま、既存の `progress` コールバックと `clock_gettime(CLOCK_MONOTONIC)` により `decode24`（通常保存）の 10 区間を分離計測し、`saveTiming?.pixels(width, height)` 実行直後に schema 1 の 10 行として記録する（`finish()` の自動 `NOT_REACHED` 対象外）。未到達・欠損・負の差分は `UNAVAILABLE` / `NA` とし、0 を捏造しない。
+
+| stage | JSON キー（`timingNs.*`） | 計測区間 |
+|---|---|---|
+| `DECODE_PREAD` | `pread` | `fstat` / `encoded` 確保直前〜`pread` ループ完了 |
+| `DECODE_OPEN_PARSE` | `openParse` | `pread` 完了〜`raw.unpack()` 直前（`open_buffer` / TIFF 検証 / WB・params 設定） |
+| `DECODE_UNPACK` | `unpack` | `raw.unpack()` 直前〜`raw.dcraw_process()` 直前（展開・`applyCrop`・WB 検証） |
+| `DECODE_RAW2IMAGE` | `raw2image` | `raw.dcraw_process()` 直前〜`progress(SCALE_COLORS, 0)` |
+| `DECODE_SCALE_COLORS` | `scaleColors` | `progress(SCALE_COLORS, 0)`〜`progress(SCALE_COLORS, 1)` |
+| `DECODE_PRE_INTERP` | `preInterp` | `progress(PRE_INTERPOLATE, 0)`〜`progress(PRE_INTERPOLATE, 1)` |
+| `DECODE_AHD` | `ahd` | `progress(PRE_INTERPOLATE, 1)`〜`progress(CONVERT_RGB, 0)` |
+| `DECODE_CONVERT_RGB` | `convertRgb` | `progress(CONVERT_RGB, 0)`〜`progress(CONVERT_RGB, 1)` |
+| `DECODE_MAKE_IMAGE` | `makeImage` | `dcraw_make_mem_image()` 直前〜直後（回転コピー差を含む） |
+| `DECODE_WRITE` | `write` | `raw.recycle()` 直前〜`OriginalRasterSink::write()` 完了・`image.reset()` 直後 |
+
+### 保持回数の見積もり
+
+保持上限は 1,024 行・256 KiB。1 保存あたりの行数は段階①の抽出で、同じ `attempt` の
+レコードを数えて実測する。初回抽出前からある行を差し引いた残りの保持枠を実測行数で割り、
+完全に保持できる保存回数を見積もる。
+
+### AHD のスレッド設定とラスタ一致診断
+
+以下の行は `.pubdiag` 診断ビルド限定の schema 1 で、`finish()` の自動 `NOT_REACHED` 補完の対象外。製品デコードの report を使って、次の設定行を各1行記録する。設定行の `nanos` 列には値そのものを格納する。
+
+| stage | `nanos` 列の値 |
+|---|---|
+| `DECODE_CONFIG` | `omp_set_num_threads` に実際に渡したスレッド数 |
+| `DECODE_THREAD_SOURCE` | 1 = プロパティ、2 = 設定ファイル、3 = 既定。不正な上位設定を読み飛ばした場合、またはファイルの読み取りに失敗して既定に戻った場合は +10 |
+| `DECODE_BLOCKTIME` | `kmp_get_blocktime()` の読み戻し値（ms）。取得不能は `UNAVAILABLE` / `NA` |
+
+スレッド数は `debug.cinematic.decode.threads`、アプリ専用外部ストレージの `decode-threads.txt` の `threads` キー、ビルド既定値の順に解決する。parity は `debug.cinematic.decode.parity`（1 / 0）、同ファイルの `parity`（on / off）、既定オンの順に解決する。
+
+`DECODE_PARITY` は保存に使った RGB16 ラスタと、同じ DNG を1スレッドおよび実適用スレッド数で再デコードした各ラスタの SHA-256 とバイト数を比較する。結果は1行に記録する（`nanos` は `NA`）。
+
+| outcome | 意味 |
+|---|---|
+| `COMPLETED` | 両方の再デコード結果が保存用ラスタと一致 |
+| `FAILED` | 少なくとも一方が不一致 |
+| `INCOMPLETE` | 途中取消または例外で比較を完了できなかった |
+| `UNAVAILABLE` | report や入力ファイルなどの前提を満たさなかった |
+| `SKIPPED` | parity がオフ。再デコードを省略し、この結果を1行記録 |
+
+parity オンでは、再デコードと照合の時間が `ATTEMPT` の `nanos` に上乗せされる。①ビット一致、②スレッド数比較、③発熱の順序と切替方法は、計測手順書 `AHD-measure-request.md` を参照する。

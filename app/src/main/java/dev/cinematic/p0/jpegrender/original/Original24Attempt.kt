@@ -11,16 +11,20 @@ import android.content.Context
 import android.os.CancellationSignal
 import android.os.Looper
 import android.os.ParcelFileDescriptor
+import dev.cinematic.p0.BuildConfig
 import dev.cinematic.p0.raw.R7PreviewInputs
 import dev.cinematic.p0.raw.original.*
 import dev.cinematic.p0.rawcapture.*
 import dev.cinematic.p0.metrics.SaveTiming
+import dev.cinematic.p0.metrics.SaveTimingOutcome
 import dev.cinematic.p0.metrics.SaveTimingStage
 import dev.cinematic.p0.metrics.measured
+import dev.cinematic.p0.metrics.timingBestEffort
 import dev.cinematic.p0.gpu.export.GpuExportTimings
 import java.io.File
 import java.io.IOException
 import java.io.OutputStream
+import java.nio.file.Files
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.*
@@ -98,6 +102,12 @@ internal class Original24Attempt(context: Context, private val request: Original
                 override val fd get() = immutableFd.fd
                 override fun close() = immutableFd.close()
             }
+            if (BuildConfig.DECODE_PARITY_DIAGNOSTIC) {
+                timingBestEffort {
+                    val path = context.getExternalFilesDir(null)?.let { File(it, "decode-threads.txt").absolutePath }
+                    NativeOriginalRaster.registerDecodeConfigPath(path?.toByteArray(Charsets.UTF_8))
+                }
+            }
             val metadata = JSONObject(originalStage(trace, OriginalStage.NATIVE_DECODE) {
                 try { NativeOriginalRaster.decode24(requireNotNull(sourceFd).fd, requireNotNull(rasterFd).fd, signal) }
                 catch (error: IOException) {
@@ -111,6 +121,12 @@ internal class Original24Attempt(context: Context, private val request: Original
             val width = metadata.getInt("width"); val height = metadata.getInt("height")
             validateOriginalSize(width, height)
             saveTiming?.pixels(width, height)
+            if (BuildConfig.DECODE_TIMING_DIAGNOSTIC && saveTiming != null) {
+                timingBestEffort { recordDecodeTimings(saveTiming, metadata) }
+            }
+            if ((BuildConfig.DECODE_TIMING_DIAGNOSTIC || BuildConfig.DECODE_PARITY_DIAGNOSTIC) && saveTiming != null) {
+                timingBestEffort { recordDecodeConfig(saveTiming, metadata) }
+            }
             val sourceWidth = metadata.getInt("sourceWidth"); val sourceHeight = metadata.getInt("sourceHeight")
             val orientation = metadata.getInt("orientation")
             val observedGeometry = Original24PreflightGeometry(metadata.getInt("rawWidth"), metadata.getInt("rawHeight"),
@@ -199,7 +215,11 @@ internal class Original24Attempt(context: Context, private val request: Original
             }
             if (observed.fingerprint != fingerprint || observed.output.width != width || observed.output.height != height ||
                 observed.output.orientation != 1 || observed.output.color != "sRGB") throw IOException("Original JPEG readback differs")
-            originalStage(trace, OriginalStage.SOURCE_VERIFY_AFTER) { verify() }; checkpoint()
+            originalStage(trace, OriginalStage.SOURCE_VERIFY_AFTER) { verify() }
+            if (BuildConfig.DECODE_PARITY_DIAGNOSTIC && saveTiming != null) {
+                timingBestEffort { verifyDecodeParityBestEffort(saveTiming, metadata, snapshot, raw, stop) }
+            }
+            checkpoint()
             originalStage(trace, OriginalStage.RESOURCE_CLOSE) { closeOwners() }
             checkpoint()
             originalStage(trace, OriginalStage.SCRATCH_CLEANUP) {
@@ -219,6 +239,56 @@ internal class Original24Attempt(context: Context, private val request: Original
             cancellationBeforeJpegConfirmed = !jpegOutputStarted && !hasUnreleasedResources &&
                 failure?.suppressed?.isEmpty() == true && (failure is java.util.concurrent.CancellationException ||
                 failure is android.os.OperationCanceledException || failure is DngVerificationStopped)
+        }
+    }
+
+    private fun verifyDecodeParityBestEffort(
+        timing: SaveTiming, metadata: JSONObject, snapshot: File, raw: File, stop: () -> Boolean,
+    ) {
+        val parity = metadata.optInt("parity", -1)
+        val threads = metadata.optInt("threads", 0)
+        val outcome = try {
+            when {
+                parity == 0 -> SaveTimingOutcome.SKIPPED
+                parity != 1 || threads <= 0 || !snapshot.isFile || !raw.isFile -> SaveTimingOutcome.UNAVAILABLE
+                else -> {
+                    val maxRasterBytes = 24_000_000L * 6
+                    val product = DngContentVerifier.identifyBounded(maxRasterBytes, raw::inputStream, stop)
+                    val single = redecodeFingerprint(snapshot, 1, threads, maxRasterBytes, stop)
+                    val repeat = redecodeFingerprint(snapshot, threads, threads, maxRasterBytes, stop)
+                    if (product == single && product == repeat) SaveTimingOutcome.COMPLETED else SaveTimingOutcome.FAILED
+                }
+            }
+        } catch (_: Throwable) {
+            SaveTimingOutcome.INCOMPLETE
+        }
+        timing.event(SaveTimingStage.DECODE_PARITY, outcome)
+    }
+
+    private fun redecodeFingerprint(
+        snapshot: File, threads: Int, productThreads: Int, maxRasterBytes: Long, stop: () -> Boolean,
+    ): OriginalFingerprint {
+        originalCheckpoint(stop)
+        val scratch = File.createTempFile("decode-parity-", ".rgb16", scratchDirectory)
+        try {
+            return ParcelFileDescriptor.open(snapshot, ParcelFileDescriptor.MODE_READ_ONLY).use { input ->
+                ParcelFileDescriptor.open(scratch, ParcelFileDescriptor.MODE_READ_WRITE).use { output ->
+                    // Unlink while open so diagnostic data cannot outlive its descriptors.
+                    Files.delete(scratch.toPath())
+                    val report = try {
+                        NativeOriginalRaster.forceNextDecodeThreads(threads, productThreads)
+                        NativeOriginalRaster.decode24(input.fd, output.fd, signal)
+                    } finally {
+                        NativeOriginalRaster.forceNextDecodeThreads(0, 0)
+                    }
+                    check(JSONObject(report).getInt("threads") == threads)
+                    DngContentVerifier.identifyBounded(maxRasterBytes, {
+                        ParcelFileDescriptor.AutoCloseInputStream(ParcelFileDescriptor.dup(output.fileDescriptor))
+                    }, stop)
+                }
+            }
+        } finally {
+            Files.deleteIfExists(scratch.toPath())
         }
     }
 
@@ -253,4 +323,57 @@ internal class Original24Attempt(context: Context, private val request: Original
         rawRaster = null
         workspace = null
     }
+}
+
+private val DECODE_TIMING_STAGES = listOf(
+    "pread" to SaveTimingStage.DECODE_PREAD,
+    "openParse" to SaveTimingStage.DECODE_OPEN_PARSE,
+    "unpack" to SaveTimingStage.DECODE_UNPACK,
+    "raw2image" to SaveTimingStage.DECODE_RAW2IMAGE,
+    "scaleColors" to SaveTimingStage.DECODE_SCALE_COLORS,
+    "preInterp" to SaveTimingStage.DECODE_PRE_INTERP,
+    "ahd" to SaveTimingStage.DECODE_AHD,
+    "convertRgb" to SaveTimingStage.DECODE_CONVERT_RGB,
+    "makeImage" to SaveTimingStage.DECODE_MAKE_IMAGE,
+    "write" to SaveTimingStage.DECODE_WRITE,
+)
+
+internal fun recordDecodeTimings(saveTiming: SaveTiming, metadata: JSONObject) = timingBestEffort {
+    val timings = metadata.optJSONObject("timingNs")
+    recordDecodeTimings(saveTiming) { key ->
+        if (timings == null || !timings.has(key) || timings.isNull(key)) null
+        else when (val value = timings.opt(key)) {
+            is Int -> value.toLong()
+            is Long -> value
+            else -> null
+        }
+    }
+}
+
+internal fun recordDecodeTimings(saveTiming: SaveTiming, readNs: (String) -> Long?) = timingBestEffort {
+    for ((key, stage) in DECODE_TIMING_STAGES) {
+        val nanos = try { readNs(key)?.takeIf { it >= 0L } } catch (_: Throwable) { null }
+        if (nanos != null) {
+            saveTiming.event(stage, SaveTimingOutcome.COMPLETED, nanos)
+        } else {
+            saveTiming.event(stage, SaveTimingOutcome.UNAVAILABLE, null)
+        }
+    }
+}
+
+private fun recordDecodeConfig(timing: SaveTiming, metadata: JSONObject) {
+    fun record(stage: SaveTimingStage, value: Long?) = timing.event(
+        stage, if (value == null) SaveTimingOutcome.UNAVAILABLE else SaveTimingOutcome.COMPLETED, value,
+    )
+    val source = when (metadata.optString("threadSource")) {
+        "prop" -> 1L
+        "file" -> 2L
+        "default" -> 3L
+        else -> null
+    }
+    record(SaveTimingStage.DECODE_CONFIG, metadata.optLong("threads", 0).takeIf { it > 0 })
+    record(SaveTimingStage.DECODE_THREAD_SOURCE, source?.let {
+        if (metadata.optInt("threadInvalid") == 1) it + 10 else it
+    })
+    record(SaveTimingStage.DECODE_BLOCKTIME, metadata.optLong("blocktime", -1).takeIf { it >= 0 })
 }
