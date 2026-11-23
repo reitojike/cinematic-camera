@@ -1,6 +1,5 @@
 package dev.cinematic.p0.gpu.diag
 
-import android.opengl.GLES32
 import dev.cinematic.p0.gpu.GpuExecutionContext
 import dev.cinematic.p0.gpu.GpuFence
 import dev.cinematic.p0.gpu.GpuTexture
@@ -46,14 +45,9 @@ internal object GpuStageTap {
         GpuFence(egl).use { it.await(stop) }
         val bytes = Math.multiplyExact(Math.multiplyExact(texture.width, texture.height), 16)
         val rgba = ByteBuffer.allocateDirect(bytes).order(ByteOrder.nativeOrder()).asFloatBuffer()
-        GLES32.glBindFramebuffer(GLES32.GL_FRAMEBUFFER, texture.framebufferId)
-        GLES32.glReadBuffer(GLES32.GL_COLOR_ATTACHMENT0)
-        GLES32.glBindBuffer(GLES32.GL_PIXEL_PACK_BUFFER, 0)
-        GLES32.glPixelStorei(GLES32.GL_PACK_ALIGNMENT, 1)
-        GLES32.glPixelStorei(GLES32.GL_PACK_ROW_LENGTH, 0)
-        GLES32.glPixelStorei(GLES32.GL_PACK_SKIP_PIXELS, 0)
-        GLES32.glPixelStorei(GLES32.GL_PACK_SKIP_ROWS, 0)
-        GLES32.glReadPixels(0, 0, texture.width, texture.height, GLES32.GL_RGBA, GLES32.GL_FLOAT, rgba)
+        val pixelTransfer = egl.pixelTransferOperations
+        pixelTransfer.prepareReadback(texture.framebufferId)
+        pixelTransfer.readRgbaFloat(texture.width, texture.height, rgba)
         egl.checkGl("read stage tap")
         return rgba
     }

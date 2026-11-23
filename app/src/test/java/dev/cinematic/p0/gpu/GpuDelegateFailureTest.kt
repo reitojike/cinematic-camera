@@ -166,6 +166,9 @@ class GpuDelegateFailureTest {
         var currentFailure: IllegalStateException? = null
         var glFailure: IllegalStateException? = null
 
+        override val syncOperations: GpuSyncOperations
+            get() = error("Unexpected sync operations lookup")
+
         override fun requireOwnerThread() {
             calls += "ownerThread"
         }
@@ -190,6 +193,10 @@ class GpuDelegateFailureTest {
         context: GpuResourceContext,
         override val textureOperations: GpuTextureOperations,
     ) : GpuExecutionContext, GpuResourceContext by context {
+        override val syncOperations: GpuSyncOperations
+            get() = error("Unexpected sync operations lookup")
+        override val pixelTransferOperations: GpuPixelTransferOperations
+            get() = error("Unexpected pixel transfer operations lookup")
         override fun capabilities(): GlCapabilities.Result = error("Unexpected capabilities lookup")
         override fun shaders(): ShaderLibrary = error("Unexpected shader library lookup")
         override fun passes(): PassGraph = error("Unexpected pass graph lookup")
