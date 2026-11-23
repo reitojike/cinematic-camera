@@ -8,6 +8,8 @@ import android.graphics.Typeface
 import android.os.Build
 import android.os.SystemClock
 import android.util.TypedValue
+import android.view.View
+import android.view.ViewGroup
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -16,7 +18,12 @@ import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect as ComposeRect
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.ViewRootForTest
+import androidx.compose.ui.semantics.SemanticsNode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
@@ -112,6 +119,42 @@ class DevelopCompactAccessibilityAndroidTest {
             }
             error("No unique visible fixture node: $label")
         }
+        // マージ済みボタンの bounds は固定高とタッチ領域を含み文字レイアウトを表さないため、
+        // 非マージツリーから Text 自体の bounds を取得する。
+        fun awaitSwitchTextBounds(scenario: ActivityScenario<PhotoRollActivity>, label: String): ComposeRect {
+            var matchCount = 0
+            repeat(60) {
+                settle()
+                var textBounds: ComposeRect? = null
+                scenario.onActivity { activity ->
+                    matchCount = 0
+                    fun visitSemantics(node: SemanticsNode) {
+                        val hasLabel = node.config.getOrNull(SemanticsProperties.Text)?.any { it.text == label } == true
+                        if (hasLabel &&
+                            generateSequence(node.parent) { it.parent }.take(4)
+                                .any { SemanticsProperties.Selected in it.config }
+                        ) {
+                            matchCount++
+                            val bounds = node.boundsInRoot
+                            textBounds = ComposeRect(bounds.left, bounds.top, bounds.right, bounds.bottom)
+                        }
+                        node.children.forEach(::visitSemantics)
+                    }
+                    fun visitView(view: View) {
+                        if (view is ViewRootForTest) {
+                            visitSemantics(view.semanticsOwner.unmergedRootSemanticsNode)
+                        }
+                        if (view is ViewGroup) {
+                            for (index in 0 until view.childCount) visitView(view.getChildAt(index))
+                        }
+                    }
+                    visitView(activity.window.decorView)
+                }
+                if (matchCount == 1) return requireNotNull(textBounds)
+                SystemClock.sleep(100)
+            }
+            error("No unique switch Text node: $label (last match count=$matchCount)")
+        }
         fun clickNode(start: AccessibilityNodeInfo) {
             var node = start
             while (!node.isClickable) node = requireNotNull(node.parent)
@@ -194,7 +237,10 @@ class DevelopCompactAccessibilityAndroidTest {
                     val display = awaitMatch("表示")
                     val displayY = bounds(display).centerY()
                     val compare = awaitMatch("比較") { bounds(it).top <= displayY && displayY < bounds(it).bottom }
-                    val switchLabelBounds = listOf("表示" to bounds(display), "比較" to bounds(compare))
+                    val switchLabelBounds = listOf(
+                        "表示" to awaitSwitchTextBounds(scenario, "表示"),
+                        "比較" to awaitSwitchTextBounds(scenario, "比較"),
+                    )
                     clickNode(compare)
                     // Recover the same top position even if the viewport scrolled out when reaching Save.
                     // Scroll to the start, not just until a partial preview becomes visible.
@@ -235,13 +281,19 @@ class DevelopCompactAccessibilityAndroidTest {
                     val oneLineWidth = maxOf(paint.measureText(referenceLabel), widthWithGap)
                     val metrics = paint.fontMetrics
                     val oneLineHeight = metrics.descent - metrics.ascent
+                    // Text の高さは1行なら行高さ H に近く、文字単位で折り返すと行送りが重なって約 2H になる。
+                    // Paint の fontMetrics と Compose の行高さの丸めやリーディングの差を見込み、
+                    // 1H と 2H の中間より少し上の 1.6H を閾値にする。2H まで 0.4H の余裕がある。
+                    // Text の幅は1行なら2字＋字間に近く、折り返すと最長行が1字＋字間で約半分になり、
+                    // 1行幅の 0.75 倍を下回る。固定高のボタンでは Text の高さが切り取られ得るため、
+                    // 折り返しは主に幅で判別する。
                     for ((label, rect) in switchLabelBounds) {
-                        val measurements = "$label bounds=$rect (${rect.width()}x${rect.height()} px), " +
+                        val measurements = "$label bounds=$rect (${rect.width}x${rect.height} px), " +
                             "one line width=$oneLineWidth px height=$oneLineHeight px"
                         assertTrue("$measurements, expected height < ${1.6f * oneLineHeight} px",
-                            rect.height() < 1.6f * oneLineHeight)
-                        assertTrue("$measurements, expected width >= $oneLineWidth px",
-                            rect.width() >= oneLineWidth)
+                            rect.height < 1.6f * oneLineHeight)
+                        assertTrue("$measurements, expected width >= ${0.75f * oneLineWidth} px",
+                            rect.width >= 0.75f * oneLineWidth)
                     }
                 } catch (failure: AssertionError) {
                     retainFailureImage(failure)
