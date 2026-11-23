@@ -70,7 +70,18 @@ internal class GpuTexture private constructor(
         val framebufferId: Int get() {
             owner.requireCurrent()
             if (framebuffer == 0) {
-                framebuffer = owner.textureOperations.createFramebuffer(texture, format)
+                val ops = owner.textureOperations
+                val candidate = ops.generateFramebuffer()
+                try {
+                    check(candidate != 0) { "glGenFramebuffers failed" }
+                    ops.attachFramebufferTexture(candidate, texture)
+                    check(ops.framebufferComplete()) { "$format cannot be attached to a complete FBO" }
+                    owner.checkGl("create framebuffer")
+                } catch (failure: Throwable) {
+                    ops.deleteFramebuffer(candidate)
+                    throw failure
+                }
+                framebuffer = candidate
             }
             return framebuffer
         }
@@ -85,6 +96,7 @@ internal class GpuTexture private constructor(
                 texture = owner.textureOperations.generateTexture()
                 check(texture != 0) { "glGenTextures failed" }
                 owner.textureOperations.allocateTexture(texture, width, height, format)
+                owner.checkGl("allocate $format texture")
             } catch (failure: Throwable) {
                 runCatching { destroy() }.exceptionOrNull()?.let(failure::addSuppressed)
                 throw failure
@@ -93,7 +105,11 @@ internal class GpuTexture private constructor(
 
 
         fun upload(data: Buffer) {
-            owner.textureOperations.uploadTexture(texture, width, height, format, data)
+            val ops = owner.textureOperations
+            ops.prepareTextureUpload()
+            owner.requireCurrent()
+            ops.uploadTexture(texture, width, height, format, data)
+            owner.checkGl("upload texture")
         }
 
         fun destroy() {

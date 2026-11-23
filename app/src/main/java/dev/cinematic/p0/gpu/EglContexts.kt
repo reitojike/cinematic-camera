@@ -51,7 +51,7 @@ internal class EglContexts(val glThread: GlThread, private val assets: AssetMana
         return passGraph ?: PassGraph(this).also { passGraph = it }
     }
 
-    override val textureOperations: GpuTextureOperations = AndroidGpuTextureOperations(this)
+    override val textureOperations: GpuTextureOperations = AndroidGpuTextureOperations()
 
     override fun capabilities(): GlCapabilities.Result = GlCapabilities.inspectAndroid(this)
 
