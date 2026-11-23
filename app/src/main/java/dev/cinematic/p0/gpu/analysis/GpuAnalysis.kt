@@ -1,7 +1,8 @@
 package dev.cinematic.p0.gpu.analysis
 
-import android.opengl.GLES32
 import dev.cinematic.p0.gpu.ComputePass
+import dev.cinematic.p0.gpu.GPU_BUFFER_UPDATE_BARRIER_BIT
+import dev.cinematic.p0.gpu.GPU_SHADER_STORAGE_BARRIER_BIT
 import dev.cinematic.p0.gpu.GpuFence
 import dev.cinematic.p0.gpu.GpuTexture
 import dev.cinematic.p0.gpu.TextureInput
@@ -35,13 +36,13 @@ internal object GpuAnalysis {
             egl.passes().run(ComputePass(program, listOf(TextureInput("s_input", input, 0)),
                 groupsX = (width + 7) / 8, groupsY = (height + 7) / 8,
                 uniforms = {
-                    GLES32.glUniform2i(program.uniformLocation("u_size"), width, height)
+                    egl.passOperations.uniform2i(program.uniformLocation("u_size"), width, height)
                     if (targets != null) {
-                        GLES32.glUniform1i(program.uniformLocation("u_targetCount"), targets.size)
-                        GLES32.glUniform4uiv(program.uniformLocation("u_highBins"), 1, targets.copyOf(4), 0)
+                        egl.passOperations.uniform1i(program.uniformLocation("u_targetCount"), targets.size)
+                        egl.passOperations.uniform4uiv(program.uniformLocation("u_highBins"), 1, targets.copyOf(4), 0)
                     }
                 }, bindResources = workspace::bind,
-                memoryBarrier = GLES32.GL_SHADER_STORAGE_BARRIER_BIT or GLES32.GL_BUFFER_UPDATE_BARRIER_BIT))
+                memoryBarrier = GPU_SHADER_STORAGE_BARRIER_BIT or GPU_BUFFER_UPDATE_BARRIER_BIT))
         }
         val ranks = doubleArrayOf((count - 1) * .5, (count - 1) * .92)
         val orders = ranks.flatMap { listOf(floor(it).toInt(), ceil(it).toInt()) }.toIntArray()
@@ -85,9 +86,9 @@ internal object GpuAnalysis {
                 uniforms = { program ->
                     val location = egl.shaders().uniformLocation(program, "u_size")
                     check(location >= 0)
-                    GLES32.glUniform2i(location, width, height)
+                    egl.passOperations.uniform2i(location, width, height)
                 }, bindResources = { ssbo.bindBufferBase(0, buffer[0]) },
-                memoryBarrier = GLES32.GL_SHADER_STORAGE_BARRIER_BIT or GLES32.GL_BUFFER_UPDATE_BARRIER_BIT))
+                memoryBarrier = GPU_SHADER_STORAGE_BARRIER_BIT or GPU_BUFFER_UPDATE_BARRIER_BIT))
             gpuWork(timings, GpuExportDetail.FENCE_WAIT) { GpuFence(egl).use { it.await() } }
             val count = gpuWork(timings, GpuExportDetail.READBACK) {
                 ssbo.bindBuffer(buffer[0])

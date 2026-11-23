@@ -1,7 +1,8 @@
 package dev.cinematic.p0.gpu.export
 
-import android.opengl.GLES32
 import dev.cinematic.p0.gpu.ComputePass
+import dev.cinematic.p0.gpu.GPU_BUFFER_UPDATE_BARRIER_BIT
+import dev.cinematic.p0.gpu.GPU_SHADER_STORAGE_BARRIER_BIT
 import dev.cinematic.p0.gpu.GpuExecutionContext
 import dev.cinematic.p0.gpu.GpuFence
 import dev.cinematic.p0.gpu.GpuTexture
@@ -63,15 +64,21 @@ internal object GpuExportAnalysis {
                     egl.passes().run(ComputePass(program, listOf(TextureInput("s_input", input, 0)),
                         groupsX = (width + 7) / 8, groupsY = (input.height + 7) / 8,
                         uniforms = { id ->
-                            GLES32.glUniform2i(GLES32.glGetUniformLocation(id, "u_size"), width, input.height)
+                            egl.passOperations.uniform2i(
+                                egl.shaders().uncachedUniformLocation(id, "u_size"), width, input.height,
+                            )
                             if (targets != null) {
-                                GLES32.glUniform1i(GLES32.glGetUniformLocation(id, "u_targetCount"), targets.size)
-                                GLES32.glUniform4uiv(GLES32.glGetUniformLocation(id, "u_highBins"), 1, targets.copyOf(4), 0)
+                                egl.passOperations.uniform1i(
+                                    egl.shaders().uncachedUniformLocation(id, "u_targetCount"), targets.size,
+                                )
+                                egl.passOperations.uniform4uiv(
+                                    egl.shaders().uncachedUniformLocation(id, "u_highBins"), 1, targets.copyOf(4), 0,
+                                )
                             }
                         },
                         // 帯の生成処理が別の SSBO を使っていても、各 dispatch で再設定する。
                         bindResources = { ssbo.bindBufferBase(0, names[0]) },
-                        memoryBarrier = GLES32.GL_SHADER_STORAGE_BARRIER_BIT or GLES32.GL_BUFFER_UPDATE_BARRIER_BIT))
+                        memoryBarrier = GPU_SHADER_STORAGE_BARRIER_BIT or GPU_BUFFER_UPDATE_BARRIER_BIT))
                     rows += input.height
                     checkStopped()
                 }

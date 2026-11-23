@@ -12,6 +12,8 @@ internal object AndroidGpuPassOperations : GpuPassOperations {
     override fun bindTexture2d(texture: Int) = GLES32.glBindTexture(GLES32.GL_TEXTURE_2D, texture)
     override fun uniform1i(location: Int, value: Int) = GLES32.glUniform1i(location, value)
     override fun uniform2i(location: Int, x: Int, y: Int) = GLES32.glUniform2i(location, x, y)
+    override fun uniform4uiv(location: Int, count: Int, values: IntArray, offset: Int) =
+        GLES32.glUniform4uiv(location, count, values, offset)
     override fun uniform1f(location: Int, value: Float) = GLES32.glUniform1f(location, value)
     override fun uniform2f(location: Int, x: Float, y: Float) = GLES32.glUniform2f(location, x, y)
     override fun uniform3f(location: Int, x: Float, y: Float, z: Float) = GLES32.glUniform3f(location, x, y, z)

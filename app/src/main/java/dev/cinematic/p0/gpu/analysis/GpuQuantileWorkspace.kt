@@ -1,7 +1,8 @@
 package dev.cinematic.p0.gpu.analysis
 
-import android.opengl.GLES32
 import dev.cinematic.p0.gpu.ComputePass
+import dev.cinematic.p0.gpu.GPU_BUFFER_UPDATE_BARRIER_BIT
+import dev.cinematic.p0.gpu.GPU_SHADER_STORAGE_BARRIER_BIT
 import dev.cinematic.p0.gpu.GpuExecutionContext
 import dev.cinematic.p0.gpu.GpuFence
 import java.nio.ByteBuffer
@@ -78,15 +79,15 @@ internal class GpuQuantileWorkspace(private val egl: GpuExecutionContext) : Auto
         }
         val tiles = egl.shaders().compute("analysis/histogram_tiles.comp")
         egl.passes().run(ComputePass(tiles, emptyList(), 256, histogramCount,
-            uniforms = { GLES32.glUniform1i(tiles.uniformLocation("u_finite"), if (finite) 1 else 0) },
-            bindResources = ::bindSelection, memoryBarrier = GLES32.GL_SHADER_STORAGE_BARRIER_BIT))
+            uniforms = { egl.passOperations.uniform1i(tiles.uniformLocation("u_finite"), if (finite) 1 else 0) },
+            bindResources = ::bindSelection, memoryBarrier = GPU_SHADER_STORAGE_BARRIER_BIT))
         val selection = egl.shaders().compute("analysis/histogram_select.comp")
         egl.passes().run(ComputePass(selection, emptyList(), 1,
             uniforms = {
-                GLES32.glUniform4uiv(selection.uniformLocation("u_ranks"), 1, ranks, 0)
-                GLES32.glUniform4uiv(selection.uniformLocation("u_rows"), 1, rows, 0)
+                egl.passOperations.uniform4uiv(selection.uniformLocation("u_ranks"), 1, ranks, 0)
+                egl.passOperations.uniform4uiv(selection.uniformLocation("u_rows"), 1, rows, 0)
             }, bindResources = ::bindSelection,
-            memoryBarrier = GLES32.GL_SHADER_STORAGE_BARRIER_BIT or GLES32.GL_BUFFER_UPDATE_BARRIER_BIT))
+            memoryBarrier = GPU_SHADER_STORAGE_BARRIER_BIT or GPU_BUFFER_UPDATE_BARRIER_BIT))
         GpuFence(egl).use { it.await() }
         ssbo.bindBuffer(selectionNames[1])
         val mapped = ssbo.mapRead(0, RESULT_BYTES) ?: error("Cannot map quantile selections")
