@@ -2,7 +2,7 @@
 
 本書を撮影・設定・診断・カメラロール・取り込み・現像の表示規則の正本とする。
 根拠は [改修指示書](../../docs/DEVELOP_UI_REFACTOR_INSTRUCTIONS.md) 第1・2章と
-[計画 v3](../../docs/cinematic-camera-roadmap-v3.md) レーン5。原文と後続の補足を混同しない。
+[計画 v3](../../docs/archive/cinematic-camera-roadmap-v3.md) レーン5。原文と後続の補足を混同しない。
 共通部品を追加した段階では既存画面へ適用しない。画面ごとの切替は別PRで行う。
 
 ## 不変条件

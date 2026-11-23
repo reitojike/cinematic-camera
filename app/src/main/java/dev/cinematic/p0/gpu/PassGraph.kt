@@ -23,7 +23,7 @@ internal data class ComputePass(
 )
 
 /** 明示したプログラム/入力/出力/領域/uniformから1パスを実行する。 */
-internal class PassGraph(private val egl: EglContexts) : AutoCloseable {
+internal class PassGraph(private val egl: GpuResourceContext) : AutoCloseable {
     private var vao: Int
     init {
         egl.requireCurrent()
@@ -108,7 +108,7 @@ internal class PassGraph(private val egl: EglContexts) : AutoCloseable {
         return System.nanoTime() - start
     }
     override fun close() {
-        egl.glThread.requireCurrent()
+        egl.requireOwnerThread()
         if (vao == 0) return
         egl.releaseResource { GLES32.glDeleteVertexArrays(1, intArrayOf(vao), 0) }; vao = 0
     }

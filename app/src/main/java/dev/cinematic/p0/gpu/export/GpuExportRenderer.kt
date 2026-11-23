@@ -15,6 +15,7 @@ import dev.cinematic.p0.gpu.look.StageClearGlowGpu
 import dev.cinematic.p0.gpu.resample.GpuResample
 import dev.cinematic.p0.raw.*
 import dev.cinematic.p0.raw.original.OriginalRaster
+import dev.cinematic.p0.raw.original.OriginalRasterFile
 import dev.cinematic.p0.raw.original.originalCheckpoint
 import dev.cinematic.p0.raw.original.validateOriginalSize
 import java.nio.ByteBuffer
@@ -25,7 +26,7 @@ import kotlin.math.round
 
 /** GL-thread-only, bounded export. No full-size GPU image or intermediate disk raster.
  * EGL and ledger are borrowed. Every render owns and releases all of its fields/textures.
- * Rows are 0xffRRGGBB for the existing Bitmap.setPixels path; their array is borrowed.
+ * FINAL bands contain borrowed, opaque 0xffRRGGBB pixels in output row order.
  */
 internal class GpuExportRenderer(
     private val egl: EglContexts,
@@ -43,7 +44,17 @@ internal class GpuExportRenderer(
         onBandComplete: ((String, Int, Int) -> Unit)? = null,
         timings: GpuExportTimings? = null,
         forceReaderBoundaries: Boolean = false,
-        consumeRow: (Int, IntArray) -> Unit): Result {
+        consumeRow: (Int, IntArray) -> Unit): Result =
+        renderBands(input, externalEv, warmthGains, strength, stop, tap, onBandComplete, timings,
+            forceReaderBoundaries, GpuExportBandConsumer.fromRows(input.width, stop, consumeRow))
+
+    fun renderBands(input: OriginalRaster, externalEv: Double, warmthGains: DoubleArray, strength: Double,
+        stop: () -> Boolean = { false },
+        tap: ((GpuStageTap.Point, Int, GpuTexture) -> Unit)? = null,
+        onBandComplete: ((String, Int, Int) -> Unit)? = null,
+        timings: GpuExportTimings? = null,
+        forceReaderBoundaries: Boolean = false,
+        consumer: GpuExportBandConsumer): Result {
         egl.requireCurrent()
         check(!rendering) { "Export renderer is already running" }
         validateOriginalSize(input.width, input.height)
@@ -66,7 +77,7 @@ internal class GpuExportRenderer(
         rendering = true
         try {
             return Session(input, gain, warmthGains.copyOf(), strength, stop, tap, onBandComplete, toneWidth, toneHeight, timings,
-                forceReaderBoundaries).use { it.run(consumeRow) }
+                forceReaderBoundaries).use { it.run(consumer) }
         } finally { rendering = false }
     }
 
@@ -80,6 +91,7 @@ internal class GpuExportRenderer(
         // Limit idle retention independently of the total (active + idle) 192 MiB ledger.
         val pool = if (reuseTextures) GpuTexturePool(egl, ledger, minOf(64L * 1024 * 1024, ledger.budgetBytes)) else null
         val resample = GpuResample(egl, ledger, pool)
+        private var rgb16Lut: GpuTexture? = null
         private val fields = mutableListOf<GpuExportField>()
         private val times = linkedMapOf<String, Long>()
         private var boundaryName = ""
@@ -118,10 +130,14 @@ internal class GpuExportRenderer(
             SaveAuthorityBoundary.durable { originalCheckpoint(stop) }
         }
         private fun scan(action: (Band) -> Unit) {
-            GpuExportBands.forEach(input, bandHeight, stop, workTimings, forceReaderBoundaries) { origin, rows, rgba ->
-                val upload = GpuTexture.create(egl, ledger, width, rows, GpuTexture.Format.RGBA32F, pool)
-                try { gpuWork(workTimings, GpuExportDetail.UPLOAD) { upload.upload(rgba) } } catch (failure: Throwable) { upload.close(); throw failure }
-                Band(origin, upload).use { band ->
+            GpuExportBands.forEach(input, bandHeight, stop, workTimings, forceReaderBoundaries) { origin, rows, data ->
+                val lut = rgb16Lut
+                val floatInput = GpuTexture.create(egl, ledger, width, rows, GpuTexture.Format.RGBA32F, pool)
+                Band(origin, floatInput).use { band ->
+                    val upload = if (lut == null) floatInput else
+                        band.own(GpuTexture.create(egl, ledger, width, rows, GpuTexture.Format.RGB16UI, pool))
+                    gpuWork(workTimings, GpuExportDetail.UPLOAD) { upload.upload(data) }
+                    if (lut != null) GpuExportRgb16.decode(egl, upload, lut, floatInput)
                     action(band)
                     // Do not queue many bands ahead of cancellation. At most this band's work
                     // remains submitted when stop becomes true.
@@ -131,7 +147,13 @@ internal class GpuExportRenderer(
             }
         }
 
-        fun run(consumeRow: (Int, IntArray) -> Unit): Result {
+        fun run(consumer: GpuExportBandConsumer): Result {
+            if (input is OriginalRasterFile && input.isRgb16) {
+                val side = GpuExportRgb16.LUT_SIDE
+                val lut = GpuTexture.create(egl, ledger, side, side, GpuTexture.Format.R32UI)
+                rgb16Lut = lut
+                lut.upload(GpuExportRgb16.lutBits())
+            }
             boundary("B1") {
                 tone = field(toneWidth, toneHeight,
                     GpuTexture.Format.R32F, StageClearBlur.Filter.BICUBIC)
@@ -199,8 +221,9 @@ internal class GpuExportRenderer(
                 }
             } else timings?.skipped("B5")
             boundary("FINAL") {
-                val bytes = ByteBuffer.allocateDirect(Math.multiplyExact(width * minOf(height, bandHeight), 4))
-                val row = IntArray(width)
+                val maxPixels = Math.multiplyExact(width, minOf(height, bandHeight))
+                val bytes = ByteBuffer.allocateDirect(Math.multiplyExact(maxPixels, Int.SIZE_BYTES))
+                val argb = IntArray(maxPixels)
                 scan { band ->
                     val output = band.finish()
                     gpuWork(workTimings, GpuExportDetail.FENCE_WAIT) { GpuFence(egl).use { it.await(stop) } }
@@ -217,13 +240,15 @@ internal class GpuExportRenderer(
                     }
                     egl.checkGl("read export band RGBA8")
                     bytes.position(0)
-                    bytes.limit(width * output.height * 4)
+                    bytes.limit(Math.multiplyExact(Math.multiplyExact(width, output.height), Int.SIZE_BYTES))
                     gpuWork(workTimings, GpuExportDetail.ROW_PROCESS) {
+                        val words = GpuExportRgba8.words(bytes)
                         repeat(output.height) { y ->
                             originalCheckpoint(stop)
-                            GpuExportRgba8.readRow(bytes, y, row)
-                            consumeRow(band.origin + y, row)
+                            GpuExportRgba8.readNextRow(words, argb, y * width, width)
                         }
+                        originalCheckpoint(stop)
+                        consumer.consume(band.origin, output.height, argb)
                     }
                 }
             }
@@ -348,7 +373,11 @@ internal class GpuExportRenderer(
             override fun close() = closeAll(owned.toList().asReversed().map { texture -> { release(texture) } })
         }
         override fun close() {
-            closeAll(fields.asReversed().map { field -> { field.close() } } + listOf({ resample.close() }, { pool?.close(); Unit }))
+            closeAll(fields.asReversed().map { field -> { field.close() } } + listOf(
+                { resample.close() },
+                { rgb16Lut?.close(); Unit },
+                { pool?.close(); Unit },
+            ))
         }
     }
     private fun closeAll(actions: List<() -> Unit>) {

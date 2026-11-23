@@ -12,8 +12,19 @@ import dev.cinematic.p0.gpu.preview.GpuSurfaceProbe
 internal fun androidGpuShaderSource(assets: AssetManager): ShaderSource =
     ShaderSource({ path -> assets.open("gpu/$path").bufferedReader().use { it.readText() } })
 
+/** #284 の表示寸法。window の寿命・swap・GPU query は renderer が所有する。 */
+internal data class StageClearGpuPreviewTarget(
+    val window: EglContexts.WindowTarget,
+    val width: Int,
+    val height: Int,
+    val linearFiltering: Boolean = false,
+    val viewportY: Int = 0,
+) : GpuPreviewTarget {
+    init { require(width > 0 && height > 0) }
+}
+
 /** 1個の ES 3.2 context を pbuffer と表示面で共有する。全操作は GlThread 上。 */
-internal class EglContexts(val glThread: GlThread, private val assets: AssetManager? = null) : GpuResourceContext, AutoCloseable {
+internal class EglContexts(val glThread: GlThread, private val assets: AssetManager? = null) : GpuExecutionContext, AutoCloseable {
     private var display = EGL14.EGL_NO_DISPLAY
     private var context = EGL14.EGL_NO_CONTEXT
     private var pbuffer = EGL14.EGL_NO_SURFACE
@@ -26,16 +37,23 @@ internal class EglContexts(val glThread: GlThread, private val assets: AssetMana
     private var passGraph: PassGraph? = null
 
     /** Context-owned resources: callers borrow these and must not close them individually. */
-    fun shaders(): ShaderLibrary {
+    override fun shaders(): ShaderLibrary {
         requireCurrent()
-        return shaderLibrary ?: ShaderLibrary(this,
-            androidGpuShaderSource(checkNotNull(assets) { "Shader assets were not provided" }))
+        return shaderLibrary ?: ShaderLibrary(
+            this,
+            androidGpuShaderSource(checkNotNull(assets) { "Shader assets were not provided" }),
+            AndroidGpuProgramOperations,
+        )
             .also { shaderLibrary = it }
     }
-    fun passes(): PassGraph {
+    override fun passes(): PassGraph {
         requireCurrent()
         return passGraph ?: PassGraph(this).also { passGraph = it }
     }
+
+    override val textureOperations: GpuTextureOperations = AndroidGpuTextureOperations(this)
+
+    override fun capabilities(): GlCapabilities.Result = GlCapabilities.inspectAndroid(this)
 
     init {
         glThread.requireCurrent()

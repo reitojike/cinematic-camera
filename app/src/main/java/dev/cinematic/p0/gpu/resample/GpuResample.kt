@@ -2,8 +2,8 @@ package dev.cinematic.p0.gpu.resample
 
 import android.opengl.GLES32
 import dev.cinematic.p0.gpu.ComputePass
-import dev.cinematic.p0.gpu.EglContexts
 import dev.cinematic.p0.gpu.FragmentPass
+import dev.cinematic.p0.gpu.GpuExecutionContext
 import dev.cinematic.p0.gpu.GpuMemoryLedger
 import dev.cinematic.p0.gpu.GpuTexture
 import dev.cinematic.p0.gpu.GpuTexturePool
@@ -17,7 +17,7 @@ import java.nio.ByteOrder
  * 中間 texture と重み cache はこのクラスが所有し、RGB を平面へ分離しない。
  */
 internal class GpuResample(
-    private val egl: EglContexts,
+    private val egl: GpuExecutionContext,
     private val ledger: GpuMemoryLedger,
     private val pool: GpuTexturePool? = null,
 ) : AutoCloseable {
@@ -141,7 +141,7 @@ internal class GpuResample(
     }
 
     override fun close() {
-        egl.glThread.requireCurrent()
+        egl.requireOwnerThread()
         if (closed) return
         cache.values.forEach { it.close() }; cache.clear(); closed = true
     }

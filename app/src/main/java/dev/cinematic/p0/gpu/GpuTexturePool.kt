@@ -4,7 +4,7 @@ package dev.cinematic.p0.gpu
  * Ledger counts real storage, including idle entries, not the number of active leases.
  * Fragment writes use normal context ordering; imageStore users add a pre-write memory barrier.
  */
-internal class GpuTexturePool(private val egl: EglContexts, private val ledger: GpuMemoryLedger,
+internal class GpuTexturePool(private val owner: GpuExecutionContext, private val ledger: GpuMemoryLedger,
     private val maxIdleBytes: Long = ledger.budgetBytes,
 ) : AutoCloseable {
     init { require(maxIdleBytes in 0..ledger.budgetBytes) }
@@ -15,10 +15,10 @@ internal class GpuTexturePool(private val egl: EglContexts, private val ledger: 
     internal var reuseCount = 0; private set
     internal val idleBytes get() = idle.sumOf { it.byteSize }
 
-    internal fun acquire(context: EglContexts, memory: GpuMemoryLedger, width: Int, height: Int,
+    internal fun acquire(context: GpuExecutionContext, memory: GpuMemoryLedger, width: Int, height: Int,
         format: GpuTexture.Format): GpuTexture {
-        egl.requireCurrent(); check(!closed) { "GPU texture pool is closed" }
-        require(context === egl && memory === ledger) { "Foreign texture pool" }
+        owner.requireCurrent(); check(!closed) { "GPU texture pool is closed" }
+        require(context === owner && memory === ledger) { "Foreign texture pool" }
         require(width > 0 && height > 0)
         val index = idle.indexOfLast { it.width == width && it.height == height && it.format == format }
         val storage = if (index >= 0) {
@@ -30,17 +30,17 @@ internal class GpuTexturePool(private val egl: EglContexts, private val ledger: 
             while (bytes > ledger.budgetBytes - ledger.allocatedBytes && idle.isNotEmpty()) {
                 idle.first().destroy(); idle.removeAt(0)
             }
-            GpuTexture.Storage(egl, ledger, width, height, format).also { allocationCount++ }
+            GpuTexture.Storage(context, ledger, width, height, format).also { allocationCount++ }
         }
         check(active.add(storage))
         return GpuTexture.lease(storage, this)
     }
 
     internal fun recycle(storage: GpuTexture.Storage) {
-        egl.glThread.requireCurrent()
+        owner.requireOwnerThread()
         check(!closed && storage in active) { "Foreign or closed texture lease" }
         // Validate the current context before transferring ownership, including context-loss cleanup.
-        egl.releaseResource { }
+        owner.releaseResource { }
         // Destroy before removing the active lease: failed cleanup remains retryable.
         if (storage.byteSize > maxIdleBytes) {
             storage.destroy()
@@ -55,7 +55,7 @@ internal class GpuTexturePool(private val egl: EglContexts, private val ledger: 
     }
 
     override fun close() {
-        egl.glThread.requireCurrent()
+        owner.requireOwnerThread()
         if (closed) return
         check(active.isEmpty()) { "GPU texture pool still has active leases" }
         while (idle.isNotEmpty()) { idle.first().destroy(); idle.removeAt(0) }

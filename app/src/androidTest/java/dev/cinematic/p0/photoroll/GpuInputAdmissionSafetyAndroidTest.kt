@@ -172,8 +172,8 @@ class GpuInputAdmissionSafetyAndroidTest {
 
             val next = open().get(30, TimeUnit.SECONDS)
             assertEquals(provider.uri(1), next.original.uri)
-            assertEquals(64, next.image.width)
-            assertEquals(48, next.image.height)
+            assertEquals(32, next.image.width)
+            assertEquals(24, next.image.height)
             assertTrue("The next selection must really decode native input", provider.opens.get() > initialReads)
             closedAdmission()
             val inputBits = next.image.copyPixels().map { it.toRawBits() }.toIntArray()
@@ -181,7 +181,7 @@ class GpuInputAdmissionSafetyAndroidTest {
                 EglContexts(thread, target.assets).use { egl ->
                     GlCapabilities.inspect(egl).requireSupported()
                     val ledger = GpuMemoryLedger(GpuMemoryLedger.PREVIEW_BUDGET)
-                    DefaultStageClearGpu(egl, ledger, GpuFrameMode.FULL_RECOMPUTE).use { engine ->
+                    DefaultStageClearGpu(egl, ledger, GpuFrameMode.FULL_RECOMPUTE, createPresenter = windowTestPresenter(egl, ledger)).use { engine ->
                         engine.openPhoto(next.image) { false }.use { photo ->
                             for (params in listOf(GpuRenderParams(0.0, PhotoAdjustments.NONE),
                                 GpuRenderParams(1.0, PhotoAdjustments(60.0, 1.0)))) {
