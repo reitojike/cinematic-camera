@@ -1,6 +1,5 @@
 package dev.cinematic.p0.gpu.r7
 
-import android.opengl.GLES32
 import dev.cinematic.p0.gpu.*
 import dev.cinematic.p0.gpu.analysis.GpuAnalysis
 import dev.cinematic.p0.gpu.analysis.GpuQuantileWorkspace
@@ -57,9 +56,9 @@ internal class R7Gpu(private val egl: GpuExecutionContext, private val ledger: G
         val red = 2.0.pow(warmth / 200.0); val blue = 2.0.pow(-warmth / 200.0)
         val norm = .2126 * red + .7152 + .0722 * blue
         fun profile(output: GpuTexture, warmthOnly: Boolean) = pass("r7/profile.frag", listOf(TextureInput("s_input", input, 0)), output) { program ->
-            GLES32.glUniform3f(egl.shaders().uniformLocation(program, "u_warmthGain"),
+            egl.passOperations.uniform3f(egl.shaders().uniformLocation(program, "u_warmthGain"),
                 (red / norm).toFloat(), (1.0 / norm).toFloat(), (blue / norm).toFloat())
-            GLES32.glUniform1i(egl.shaders().uniformLocation(program, "u_warmthOnly"), if (warmthOnly) 1 else 0)
+            egl.passOperations.uniform1i(egl.shaders().uniformLocation(program, "u_warmthOnly"), if (warmthOnly) 1 else 0)
         }
         try {
             if (tap != null) {
@@ -80,19 +79,17 @@ internal class R7Gpu(private val egl: GpuExecutionContext, private val ledger: G
             smoothLogTap?.invoke(smooth, quantiles.copyOf())
             val toned = create()
             pass("r7/tone_apply.frag", listOf(TextureInput("s_input", profiled, 0), TextureInput("s_smoothLogLuma", smooth, 1)), toned) { program ->
-                GLES32.glUniform2f(egl.shaders().uniformLocation(program, "u_quantiles"), quantiles[0].toFloat(), quantiles[1].toFloat())
+                egl.passOperations.uniform2f(egl.shaders().uniformLocation(program, "u_quantiles"), quantiles[0].toFloat(), quantiles[1].toFloat())
             }
             release(profiled); release(smooth); tap?.invoke(Point.R7_TONE, toned)
             val roi = foundationRoi ?: create(GpuTexture.Format.R32F).also {
                 // glTexStorage2D has undefined contents. Explicit clear supplies the Phase 0 empty ROI.
-                GLES32.glBindFramebuffer(GLES32.GL_FRAMEBUFFER, it.framebufferId)
-                GLES32.glDisable(GLES32.GL_SCISSOR_TEST); GLES32.glColorMask(true, true, true, true)
-                GLES32.glClearBufferfv(GLES32.GL_COLOR, 0, floatArrayOf(0f, 0f, 0f, 0f), 0)
+                egl.passOperations.clearColorToZero(it.framebufferId)
                 egl.checkGl("clear empty R7 ROI")
             }
             val foundation = create()
             pass("r7/foundation.frag", listOf(TextureInput("s_input", toned, 0), TextureInput("s_roi", roi, 1)), foundation) { program ->
-                GLES32.glUniform1f(egl.shaders().uniformLocation(program, "u_gain"), gain)
+                egl.passOperations.uniform1f(egl.shaders().uniformLocation(program, "u_gain"), gain)
             }
             release(toned); if (foundationRoi == null) release(roi); tap?.invoke(Point.R7_FOUNDATION, foundation)
             val final = create(); pass("r7/finish.frag", listOf(TextureInput("s_input", foundation, 0)), final)
