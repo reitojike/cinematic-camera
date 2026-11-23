@@ -166,6 +166,9 @@ class GpuDelegateFailureTest {
         var currentFailure: IllegalStateException? = null
         var glFailure: IllegalStateException? = null
 
+        override val syncOperations: GpuSyncOperations
+            get() = error("Unexpected sync operations lookup")
+
         override fun requireOwnerThread() {
             calls += "ownerThread"
         }
