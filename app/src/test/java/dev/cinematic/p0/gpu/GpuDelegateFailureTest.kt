@@ -202,6 +202,8 @@ class GpuDelegateFailureTest {
         override fun passes(): PassGraph = error("Unexpected pass graph lookup")
         override val passOperations: GpuPassOperations
             get() = error("Unexpected pass operations lookup")
+        override val ssboOperations: GpuSsboOperations
+            get() = error("Unexpected ssbo operations lookup")
     }
 
     private class RecordingProgramOperations(private val calls: MutableList<String>) : GpuProgramOperations {
