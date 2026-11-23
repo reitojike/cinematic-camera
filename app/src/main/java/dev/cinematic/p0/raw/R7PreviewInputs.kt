@@ -61,6 +61,46 @@ internal object R7PreviewInputs {
     fun prepare(input: AsShotInput, ellipses: List<FoundationEllipse>, shouldStop: () -> Boolean = { false }): Prepared =
         prepare(input, ellipses, null, shouldStop)
 
+    internal fun meterCentralRgb(
+        centralRgb: FloatArray,
+        fullWidth: Int,
+        fullHeight: Int,
+        source: Source,
+        shouldStop: () -> Boolean = { false },
+    ): DiagnosticExposure {
+        fun checkpoint() {
+            if (shouldStop()) throw CancellationException("R7 preview inputs stopped")
+        }
+        checkpoint()
+        require(fullWidth > 0 && fullHeight > 0 && max(fullWidth, fullHeight) <= MAX_LONG_EDGE) {
+            "Preview long edge must not exceed 1024"
+        }
+        val x0 = fullWidth / 4; val x1 = 3 * fullWidth / 4
+        val y0 = fullHeight / 4; val y1 = 3 * fullHeight / 4
+        require(x1 > x0 && y1 > y0) { "Preview must have a nonempty central metering region" }
+        val centralWidth = x1 - x0
+        val centralHeight = y1 - y0
+        require(centralRgb.size.toLong() == centralWidth.toLong() * centralHeight * 3L) {
+            "Central RGB buffer size must match central metering region"
+        }
+        val luminance = FloatArray(centralWidth * centralHeight)
+        var next = 0
+        for (ly in 0 until centralHeight) {
+            checkpoint()
+            var i = ly * centralWidth * 3
+            for (lx in 0 until centralWidth) {
+                val value = centralRgb[i] * .2126f + centralRgb[i + 1] * .7152f + centralRgb[i + 2] * .0722f
+                require(value.isFinite()) { "Central luminance must be finite" }
+                luminance[next++] = value
+                i += 3
+            }
+        }
+        checkpoint()
+        val exposure = exposureFromLuminance(luminance, source, ::checkpoint)
+        checkpoint()
+        return exposure
+    }
+
     internal fun prepare(input: AsShotInput, ellipses: List<FoundationEllipse>, timing: R7StageTiming?,
         shouldStop: () -> Boolean): Prepared {
         fun checkpoint() {
@@ -86,17 +126,7 @@ internal object R7PreviewInputs {
         }
         checkpoint()
         timing?.enter(R7StageTiming.Stage.METER_QUANTILE)
-        val rank = (luminance.size - 1) * .97
-        val lo = floor(rank).toInt(); val hi = ceil(rank).toInt()
-        val lower = PreviewFloatSelection.select(luminance, lo, ::checkpoint)
-        val upper = if (hi == lo) lower else PreviewFloatSelection.select(luminance, hi, ::checkpoint)
-        val fraction = (rank - lo).toFloat()
-        val delta = upper - lower
-        // NumPy's float32 linear quantile uses the nearer endpoint for interpolation.
-        val p97 = if (fraction >= .5f) upper - delta * (1f - fraction)
-            else lower + delta * fraction
-        require(p97.isFinite()) { "Central percentile must be finite" }
-        val ev = (-.13 - .83 * log2(max(p97.toDouble(), 1e-5))).coerceIn(-3.0, 6.0) - R7BaseV1.BRIGHTNESS_EV
+        val exposure = exposureFromLuminance(luminance, input.source, ::checkpoint)
         timing?.enter(R7StageTiming.Stage.ROI)
         val weights = FloatArray(image.pixelCount)
         for (y in 0 until image.height) {
@@ -115,9 +145,27 @@ internal object R7PreviewInputs {
                 weights[y * image.width + x] = weight
             }
         }
-        val result = Prepared(DiagnosticExposure(ev, p97, luminance.size, input.source),
-            FloatPlane(image.width, image.height, weights), regions.size)
+        val result = Prepared(exposure, FloatPlane(image.width, image.height, weights), regions.size)
         checkpoint()
         return result
+    }
+
+    private fun exposureFromLuminance(
+        luminance: FloatArray,
+        source: Source,
+        checkpoint: () -> Unit,
+    ): DiagnosticExposure {
+        val rank = (luminance.size - 1) * .97
+        val lo = floor(rank).toInt(); val hi = ceil(rank).toInt()
+        val lower = PreviewFloatSelection.select(luminance, lo, checkpoint)
+        val upper = if (hi == lo) lower else PreviewFloatSelection.select(luminance, hi, checkpoint)
+        val fraction = (rank - lo).toFloat()
+        val delta = upper - lower
+        // NumPy's float32 linear quantile uses the nearer endpoint for interpolation.
+        val p97 = if (fraction >= .5f) upper - delta * (1f - fraction)
+            else lower + delta * fraction
+        require(p97.isFinite()) { "Central percentile must be finite" }
+        val ev = (-.13 - .83 * log2(max(p97.toDouble(), 1e-5))).coerceIn(-3.0, 6.0) - R7BaseV1.BRIGHTNESS_EV
+        return DiagnosticExposure(ev, p97, luminance.size, source)
     }
 }
