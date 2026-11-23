@@ -16,6 +16,7 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /** Shared paint only; callers retain click, selection semantics and disabled behavior. */
@@ -35,8 +36,8 @@ internal fun Modifier.captureControlSurface(selected: Boolean, decorationAlpha: 
 /** Shared switch frame and animated thumb, without imposing toggle or direct-selection input. */
 @Composable
 internal fun CaptureModeSwitchSurface(secondSelected: Boolean, modifier: Modifier = Modifier,
-    content: @Composable RowScope.() -> Unit) {
-    BoxWithConstraints(modifier.width(100.dp).height(48.dp)
+    switchWidth: Dp = 100.dp, content: @Composable RowScope.() -> Unit) {
+    BoxWithConstraints(modifier.width(switchWidth).height(48.dp)
         .background(CaptureDesign.SwitchBackground, RoundedCornerShape(6.dp))
         .border(1.dp, CaptureDesign.SwitchBorder, RoundedCornerShape(6.dp)).padding(2.dp)) {
         val thumbWidth = maxWidth / 2

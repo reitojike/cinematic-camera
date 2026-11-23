@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.draw.alpha
@@ -224,8 +225,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                 }
                 TextButton(onClick = { comparing = !comparing }, enabled = compareEnabled, modifier = Modifier.weight(1f).heightIn(min = 72.dp).captureControlSurface(selected = false), shape = RectangleShape) { Text("比較", style = CaptureDesign.Label) }
             }
-            Row(Modifier.fillMaxWidth().heightIn(min = 96.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween) {
+            val cancelAndSave: @Composable () -> Unit = {
                 TextButton(onClick = { session?.let { cancel(it.inputToken) } }, enabled = foreground && session != null,
                     modifier = Modifier.width(88.dp), shape = RectangleShape) { Text("取消") }
                 Column(Modifier.width(76.dp).heightIn(min = 76.dp).semantics(mergeDescendants = true) { contentDescription = productSave?.description ?: when (savePhase) {
@@ -255,13 +255,33 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                             else -> CaptureDesign.Disabled
                         })
                 }
-                CaptureModeSwitchSurface(comparing, Modifier.alpha(if (compareEnabled) 1f else .4f)) {
+            }
+            val displayCompareSwitch: @Composable (Dp) -> Unit = { switchWidth ->
+                CaptureModeSwitchSurface(comparing, Modifier.alpha(if (compareEnabled) 1f else .4f), switchWidth = switchWidth) {
                     listOf(false, true).forEach { before -> TextButton(onClick = { comparing = before }, enabled = compareEnabled,
                         modifier = Modifier.weight(1f).fillMaxHeight().semantics { selected = comparing == before },
                         shape = RectangleShape, contentPadding = PaddingValues(2.dp)) {
                         Text(if (before) "比較" else "表示", style = CaptureDesign.Label,
                             color = if (!compareEnabled) CaptureDesign.Disabled else if (comparing == before) CaptureDesign.Ink else CaptureDesign.Muted)
                     } }
+                }
+            }
+            if (compact) {
+                // #451: コンパクト表示では表示・比較を独立した全幅の行にする。
+                Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+                    Row(Modifier.fillMaxWidth().heightIn(min = 96.dp), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween) {
+                        cancelAndSave()
+                    }
+                    BoxWithConstraints(Modifier.fillMaxWidth()) {
+                        displayCompareSwitch(maxWidth)
+                    }
+                }
+            } else {
+                Row(Modifier.fillMaxWidth().heightIn(min = 96.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween) {
+                    cancelAndSave()
+                    displayCompareSwitch(100.dp)
                 }
             }
         }
