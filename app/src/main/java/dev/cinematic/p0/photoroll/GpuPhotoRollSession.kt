@@ -2,6 +2,7 @@ package dev.cinematic.p0.photoroll
 
 import android.content.res.AssetManager
 import dev.cinematic.p0.gpu.*
+import dev.cinematic.p0.gpu.preview.GpuFramePresenter
 import dev.cinematic.p0.gpu.preview.GpuPreviewRenderer
 import dev.cinematic.p0.gpu.preview.GpuPreviewRuntime
 import dev.cinematic.p0.photoedit.PhotoAdjustmentPolicy
@@ -17,7 +18,11 @@ import java.util.concurrent.atomic.AtomicBoolean
 /** One selected photo owns its GL callbacks. Closed generations can never publish to a new photo. */
 internal class GpuPhotoRollSession(assets: AssetManager,
     private val runtime: GpuPreviewRuntime? = null,
-    engineFactory: (EglContexts, GpuMemoryLedger) -> StageClearGpu = { egl, ledger -> DefaultStageClearGpu(egl, ledger) },
+    engineFactory: (EglContexts, GpuMemoryLedger) -> StageClearGpu = { egl, ledger ->
+        DefaultStageClearGpu(egl, ledger, createPresenter = { target, display ->
+            GpuFramePresenter(egl, ledger, target, display)
+        })
+    },
 ) {
     private val closed = AtomicBoolean()
     private val mutableFailure = MutableStateFlow<Throwable?>(null)

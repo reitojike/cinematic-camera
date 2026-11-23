@@ -61,7 +61,7 @@ class StageClearGpuPipelineAndroidTest {
         val source = KotlinReference.Source(input)
         val ledger = previewLedger()
         var captured: MatrixPipeline? = null
-        DefaultStageClearGpu(egl, ledger) { texture, analysis ->
+        DefaultStageClearGpu(egl, ledger, createPresenter = windowTestPresenter(egl, ledger)) { texture, analysis ->
             assertOwner(label, egl, ledger, texture)
             MatrixPipeline(egl, ConnectedStageClearGpuPipeline(texture, analysis, GpuFrameMode.FULL_RECOMPUTE)).also { captured = it }
         }.use { engine ->
@@ -146,7 +146,7 @@ class StageClearGpuPipelineAndroidTest {
             val input = GpuReferenceImages.create(GpuReferenceImages.Kind.MIXED, size)
             val ledger = previewLedger()
             var captured: ConnectedStageClearGpuPipeline? = null
-            DefaultStageClearGpu(egl, ledger) { texture, analysis ->
+            DefaultStageClearGpu(egl, ledger, createPresenter = windowTestPresenter(egl, ledger)) { texture, analysis ->
                 assertOwner(label, egl, ledger, texture)
                 ConnectedStageClearGpuPipeline(texture, analysis).also { captured = it }
             }.use { engine ->

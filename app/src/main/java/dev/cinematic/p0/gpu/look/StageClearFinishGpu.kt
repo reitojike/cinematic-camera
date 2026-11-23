@@ -12,7 +12,7 @@ import kotlin.math.min
 /** Photo-local finishing passes. Inputs and synchronous tap textures are borrowed.
  * render/encode return a new caller-owned texture; intermediates are released eagerly.
  */
-internal class StageClearFinishGpu(private val egl: EglContexts, private val ledger: GpuMemoryLedger,
+internal class StageClearFinishGpu(private val egl: GpuExecutionContext, private val ledger: GpuMemoryLedger,
     private val resample: GpuResample = GpuResample(egl, ledger),
     private val ownsResample: Boolean = true) : AutoCloseable {
     private var closed = false
@@ -92,7 +92,7 @@ internal class StageClearFinishGpu(private val egl: EglContexts, private val led
         if (aligned != null) require(texture.width == aligned.width && texture.height == aligned.height)
     }
     override fun close() {
-        egl.glThread.requireCurrent()
+        egl.requireOwnerThread()
         if (closed) return
         if (ownsResample) resample.close(); closed = true
     }

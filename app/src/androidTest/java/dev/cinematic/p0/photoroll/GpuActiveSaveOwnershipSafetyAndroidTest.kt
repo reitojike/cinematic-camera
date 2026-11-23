@@ -704,7 +704,7 @@ class GpuActiveSaveOwnershipSafetyAndroidTest {
             val ledger = AtomicReference<GpuMemoryLedger>()
             return GpuPhotoRollSession(assets) { egl, memory ->
                 check(ledger.compareAndSet(null, memory))
-                val real = DefaultStageClearGpu(egl, memory)
+                val real = DefaultStageClearGpu(egl, memory, createPresenter = windowTestPresenter(egl, memory))
                 object : StageClearGpu by real {
                     override fun renderPreview(photo: StageClearGpuPhoto, params: GpuRenderParams,
                         target: GpuPreviewTarget, display: GpuDisplayOptions): GpuFrameStats {

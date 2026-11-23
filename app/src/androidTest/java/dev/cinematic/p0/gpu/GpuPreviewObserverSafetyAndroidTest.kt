@@ -37,7 +37,7 @@ class GpuPreviewObserverSafetyAndroidTest {
                 var timing: PreviewTiming? = null
                 var report = ""
                 var now = 0L
-                DefaultStageClearGpu(egl, ledger, GpuFrameMode.FULL_RECOMPUTE) { texture, analysis ->
+                DefaultStageClearGpu(egl, ledger, GpuFrameMode.FULL_RECOMPUTE, createPresenter = windowTestPresenter(egl, ledger)) { texture, analysis ->
                     val pipeline = ConnectedStageClearGpuPipeline(texture, analysis, GpuFrameMode.FULL_RECOMPUTE)
                     object : StageClearGpuPipeline {
                         override fun render(params: GpuRenderParams, tap: ((GpuStageTap.Point, GpuTexture) -> Unit)?,

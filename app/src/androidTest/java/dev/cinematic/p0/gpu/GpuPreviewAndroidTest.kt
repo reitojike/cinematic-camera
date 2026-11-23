@@ -180,7 +180,7 @@ class GpuPreviewAndroidTest {
         val drawCalls = AtomicInteger()
         val errorCalls = AtomicInteger()
         val lost = CountDownLatch(1)
-        val firstContext = AtomicReference<EglContexts>()
+        val firstContext = AtomicReference<GpuExecutionContext>()
         val injected = GpuContextLostException("synthetic preview context loss")
         val renderer = GpuPreviewRenderer(instrumentation.targetContext.assets,
             onFrame = { check(frames.offer(it)) },
@@ -190,7 +190,7 @@ class GpuPreviewAndroidTest {
             },
             draw = { photo, _, output ->
                 val context = photo.input.context
-                context.glThread.requireCurrent()
+                context.requireOwnerThread()
                 context.requireCurrent()
                 if (drawCalls.incrementAndGet() == 1) {
                     firstContext.set(context)
@@ -264,7 +264,7 @@ class GpuPreviewAndroidTest {
             onError = { failure.compareAndSet(null, it) },
             draw = { photo, params, output ->
                 val context = photo.input.context
-                context.glThread.requireCurrent()
+                context.requireOwnerThread()
                 drawnStrengths.add(params.strength)
                 if (drawCalls.incrementAndGet() == 1) {
                     drawing.countDown()

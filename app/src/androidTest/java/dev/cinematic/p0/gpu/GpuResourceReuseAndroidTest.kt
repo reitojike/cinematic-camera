@@ -82,7 +82,7 @@ class GpuResourceReuseAndroidTest {
                 val ledger = GpuMemoryLedger()
                 val hashes = mutableListOf<String>()
                 var pipeline: ConnectedStageClearGpuPipeline? = null
-                DefaultStageClearGpu(egl, ledger, mode) { texture, analysis ->
+                DefaultStageClearGpu(egl, ledger, mode, createPresenter = windowTestPresenter(egl, ledger)) { texture, analysis ->
                     val connected = ConnectedStageClearGpuPipeline(texture, analysis, mode).also { pipeline = it }
                     // Test the untapped production/measurement path. Read only its borrowed final
                     // output; a normal stage tap would intentionally invalidate the product caches.

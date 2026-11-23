@@ -4,7 +4,7 @@ package dev.cinematic.p0.gpu
  * Ledger counts real storage, including idle entries, not the number of active leases.
  * Fragment writes use normal context ordering; imageStore users add a pre-write memory barrier.
  */
-internal class GpuTexturePool(private val owner: GpuResourceContext, private val ledger: GpuMemoryLedger,
+internal class GpuTexturePool(private val owner: GpuExecutionContext, private val ledger: GpuMemoryLedger,
     private val maxIdleBytes: Long = ledger.budgetBytes,
 ) : AutoCloseable {
     init { require(maxIdleBytes in 0..ledger.budgetBytes) }
@@ -15,7 +15,7 @@ internal class GpuTexturePool(private val owner: GpuResourceContext, private val
     internal var reuseCount = 0; private set
     internal val idleBytes get() = idle.sumOf { it.byteSize }
 
-    internal fun acquire(context: EglContexts, memory: GpuMemoryLedger, width: Int, height: Int,
+    internal fun acquire(context: GpuExecutionContext, memory: GpuMemoryLedger, width: Int, height: Int,
         format: GpuTexture.Format): GpuTexture {
         owner.requireCurrent(); check(!closed) { "GPU texture pool is closed" }
         require(context === owner && memory === ledger) { "Foreign texture pool" }

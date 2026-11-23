@@ -62,7 +62,7 @@ class GpuProductContextLossAndroidTest {
         val releaseDraw = CountDownLatch(1)
         fun createSession() = GpuPhotoRollSession(target.assets) { egl, ledger ->
             ledgers += ledger
-            val real = DefaultStageClearGpu(egl, ledger)
+            val real = DefaultStageClearGpu(egl, ledger, createPresenter = windowTestPresenter(egl, ledger))
             object : StageClearGpu by real {
                 override fun renderPreview(photo: StageClearGpuPhoto, params: GpuRenderParams,
                     target: GpuPreviewTarget, display: GpuDisplayOptions): GpuFrameStats {

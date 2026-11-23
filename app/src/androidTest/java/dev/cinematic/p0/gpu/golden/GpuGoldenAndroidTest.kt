@@ -100,7 +100,7 @@ class GpuGoldenAndroidTest {
     private fun preview(egl: EglContexts, input: LinearSrgbImage, params: GpuRenderParams): IntArray {
         val ledger = GpuMemoryLedger(GpuMemoryLedger.PREVIEW_BUDGET)
         var pixels: IntArray? = null
-        DefaultStageClearGpu(egl, ledger) { texture, analysis ->
+        DefaultStageClearGpu(egl, ledger, createPresenter = windowTestPresenter(egl, ledger)) { texture, analysis ->
             val connected = ConnectedStageClearGpuPipeline(texture, analysis, GpuFrameMode.FULL_RECOMPUTE)
             object : StageClearGpuPipeline {
                 override fun render(params: GpuRenderParams, tap: ((GpuStageTap.Point, GpuTexture) -> Unit)?,
