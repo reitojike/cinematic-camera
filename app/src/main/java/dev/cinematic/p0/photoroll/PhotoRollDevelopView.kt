@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.*
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -35,6 +36,16 @@ import dev.cinematic.p0.CaptureDesign
 import dev.cinematic.p0.captureControlSurface
 import dev.cinematic.p0.CaptureModeSwitchSurface
 import dev.cinematic.p0.photoedit.*
+
+private val DevelopInlineSwitchWidth = 100.dp
+private val DevelopSwitchButtonPadding = 2.dp
+private const val DevelopDisplayLabel = "表示"
+private const val DevelopCompareLabel = "比較"
+
+// CaptureModeSwitchSurface の枠 1dp と内側 padding 2dp を左右分引いて 2 項目で分け、
+// ボタンの contentPadding を左右分引くと、1 項目の字面幅は 43dp。
+private val DevelopInlineSwitchLabelWidth =
+    (DevelopInlineSwitchWidth - (1.dp + 2.dp) * 2) / 2 - DevelopSwitchButtonPadding * 2
 
 internal fun developModeColor(mode: PhotoRollPreviewMode) =
     if (mode == PhotoRollPreviewMode.PRIVATE_TRIAL) CaptureDesign.Amber else CaptureDesign.Text
@@ -260,14 +271,20 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                 CaptureModeSwitchSurface(comparing, Modifier.alpha(if (compareEnabled) 1f else .4f), switchWidth = switchWidth) {
                     listOf(false, true).forEach { before -> TextButton(onClick = { comparing = before }, enabled = compareEnabled,
                         modifier = Modifier.weight(1f).fillMaxHeight().semantics { selected = comparing == before },
-                        shape = RectangleShape, contentPadding = PaddingValues(2.dp)) {
-                        Text(if (before) "比較" else "表示", style = CaptureDesign.Label,
+                        shape = RectangleShape, contentPadding = PaddingValues(DevelopSwitchButtonPadding)) {
+                        Text(if (before) DevelopCompareLabel else DevelopDisplayLabel, style = CaptureDesign.Label,
                             color = if (!compareEnabled) CaptureDesign.Disabled else if (comparing == before) CaptureDesign.Ink else CaptureDesign.Muted)
                     } }
                 }
             }
-            if (compact) {
-                // #451: コンパクト表示では表示・比較を独立した全幅の行にする。
+            // compact はスクロール等を制御し、保存行の2段化はスイッチの字面幅の実測で判定する。
+            val textMeasurer = rememberTextMeasurer()
+            val widestSwitchLabelPx = listOf(DevelopDisplayLabel, DevelopCompareLabel).maxOf { label ->
+                textMeasurer.measure(label, style = CaptureDesign.Label, maxLines = 1, softWrap = false).size.width
+            }
+            val switchLabelsNeedFullWidth =
+                widestSwitchLabelPx > with(LocalDensity.current) { DevelopInlineSwitchLabelWidth.toPx() }
+            if (switchLabelsNeedFullWidth) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
                     Row(Modifier.fillMaxWidth().heightIn(min = 96.dp), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween) {
@@ -281,7 +298,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                 Row(Modifier.fillMaxWidth().heightIn(min = 96.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween) {
                     cancelAndSave()
-                    displayCompareSwitch(100.dp)
+                    displayCompareSwitch(DevelopInlineSwitchWidth)
                 }
             }
         }
