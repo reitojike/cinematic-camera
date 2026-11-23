@@ -11,23 +11,33 @@ internal object AndroidGpuProgramOperations : GpuProgramOperations {
         },
     )
 
-    override fun compileShader(shader: Int, source: String, label: String) {
+    override fun compileShader(shader: Int, source: String) {
         GLES32.glShaderSource(shader, source)
         GLES32.glCompileShader(shader)
+    }
+
+    override fun shaderCompiled(shader: Int): Boolean {
         val status = IntArray(1)
         GLES32.glGetShaderiv(shader, GLES32.GL_COMPILE_STATUS, status, 0)
-        check(status[0] != 0) { "Shader compile failed: $label\n${GLES32.glGetShaderInfoLog(shader)}" }
+        return status[0] != 0
     }
+
+    override fun shaderInfoLog(shader: Int): String = GLES32.glGetShaderInfoLog(shader)
 
     override fun createProgram(): Int = GLES32.glCreateProgram()
 
-    override fun linkProgram(program: Int, shaders: List<Int>, label: String) {
+    override fun linkProgram(program: Int, shaders: List<Int>) {
         shaders.forEach { GLES32.glAttachShader(program, it) }
         GLES32.glLinkProgram(program)
+    }
+
+    override fun programLinked(program: Int): Boolean {
         val status = IntArray(1)
         GLES32.glGetProgramiv(program, GLES32.GL_LINK_STATUS, status, 0)
-        check(status[0] != 0) { "Shader link failed: $label\n${GLES32.glGetProgramInfoLog(program)}" }
+        return status[0] != 0
     }
+
+    override fun programInfoLog(program: Int): String = GLES32.glGetProgramInfoLog(program)
 
     override fun uniformLocation(program: Int, name: String): Int = GLES32.glGetUniformLocation(program, name)
 

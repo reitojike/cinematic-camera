@@ -49,7 +49,7 @@ internal class GpuProgram internal constructor(
 internal class ShaderLibrary(
     private val egl: GpuResourceContext,
     private val source: ShaderSource,
-    private val operations: GpuProgramOperations = AndroidGpuProgramOperations,
+    private val operations: GpuProgramOperations,
 ) : AutoCloseable {
     private val programs = mutableMapOf<Pair<Boolean, String>, GpuProgram>()
     private val linkedPrograms = mutableMapOf<Int, GpuProgram>()
@@ -77,10 +77,12 @@ internal class ShaderLibrary(
                 val shader = operations.createShader(kind)
                 check(shader != 0) { "glCreateShader failed: $label" }
                 shaders += shader
-                operations.compileShader(shader, text, label)
+                operations.compileShader(shader, text)
+                check(operations.shaderCompiled(shader)) { "Shader compile failed: $label\n${operations.shaderInfoLog(shader)}" }
             }
             program = operations.createProgram(); check(program != 0) { "glCreateProgram failed: $label" }
-            operations.linkProgram(program, shaders, label)
+            operations.linkProgram(program, shaders)
+            check(operations.programLinked(program)) { "Shader link failed: $label\n${operations.programInfoLog(program)}" }
             egl.checkGl("compile/link $label")
             val linked = program
             return GpuProgram(egl, operations, linked, compute) { linkedPrograms.remove(linked) }
