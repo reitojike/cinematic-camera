@@ -193,6 +193,12 @@ class GpuDelegateFailureTest {
         override fun capabilities(): GlCapabilities.Result = error("Unexpected capabilities lookup")
         override fun shaders(): ShaderLibrary = error("Unexpected shader library lookup")
         override fun passes(): PassGraph = error("Unexpected pass graph lookup")
+        override val passOperations: GpuPassOperations
+            get() = error("Unexpected pass operations lookup")
+        override val syncOperations: GpuSyncOperations
+            get() = error("Unexpected sync operations lookup")
+        override val pixelTransferOperations: GpuPixelTransferOperations
+            get() = error("Unexpected pixel transfer operations lookup")
     }
 
     private class RecordingProgramOperations(private val calls: MutableList<String>) : GpuProgramOperations {
