@@ -172,8 +172,8 @@ class GpuInputAdmissionSafetyAndroidTest {
 
             val next = open().get(30, TimeUnit.SECONDS)
             assertEquals(provider.uri(1), next.original.uri)
-            assertEquals(64, next.image.width)
-            assertEquals(48, next.image.height)
+            assertEquals(32, next.image.width)
+            assertEquals(24, next.image.height)
             assertTrue("The next selection must really decode native input", provider.opens.get() > initialReads)
             closedAdmission()
             val inputBits = next.image.copyPixels().map { it.toRawBits() }.toIntArray()

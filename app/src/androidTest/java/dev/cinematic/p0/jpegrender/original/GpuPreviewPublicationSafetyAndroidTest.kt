@@ -72,7 +72,7 @@ class GpuPreviewPublicationSafetyAndroidTest {
                     put(MediaStore.MediaColumns.IS_PENDING, 1)
                 })).also { sourceUri = it }
             val sourceBytes = requireNotNull(resolver.openOutputStream(originalUri, "w")).use {
-                writeSyntheticTrialDng(it, 1152, 768, 6)
+                writeSyntheticTrialDng(it, 2304, 1536, 6)
             }
             assertEquals(1, resolver.update(originalUri, ContentValues().apply {
                 put(MediaStore.MediaColumns.IS_PENDING, 0)
@@ -93,10 +93,10 @@ class GpuPreviewPublicationSafetyAndroidTest {
             assertEquals(ManualOriginalTrialRender.recipe(strength, edits), save.request.recipe)
             assertTrue(save.matches(source))
             assertEquals(ManualOriginalTrialSavePhase.READY, save.state.value.phase)
-            assertEquals(1152, save.geometry.rawWidth); assertEquals(768, save.geometry.rawHeight)
-            assertEquals(1152, save.geometry.sourceWidth); assertEquals(768, save.geometry.sourceHeight)
+            assertEquals(2304, save.geometry.rawWidth); assertEquals(1536, save.geometry.rawHeight)
+            assertEquals(2304, save.geometry.sourceWidth); assertEquals(1536, save.geometry.sourceHeight)
             assertEquals(6, save.geometry.orientation)
-            assertEquals(768, save.geometry.outputWidth); assertEquals(1152, save.geometry.outputHeight)
+            assertEquals(1536, save.geometry.outputWidth); assertEquals(2304, save.geometry.outputHeight)
 
             // The original-size save and preview use the same bounded AS_SHOT analysis input.
             // Check base exposure plus manual EV without a CPU look or JPEG similarity threshold.
@@ -174,19 +174,19 @@ class GpuPreviewPublicationSafetyAndroidTest {
             assertEquals(strength, proof.appliedStrength, 0.0)
             assertEquals(edits, proof.adjustments)
             assertEquals(expectedEv, proof.externalEv, 0.0)
-            assertEquals(OriginalRasterGeometry(1152, 768, 6, 768, 1152, true), proof.geometry)
+            assertEquals(OriginalRasterGeometry(2304, 1536, 6, 1536, 2304, true), proof.geometry)
             val inspection = AndroidJpegInspector().inspect(
                 { requireNotNull(resolver.openInputStream(jpegUri)) }, record.fingerprint.bytes) { false }
             assertEquals(record.fingerprint, inspection.fingerprint)
             assertEquals(proof.request.output, inspection.output)
-            assertEquals(768, inspection.output.width); assertEquals(1152, inspection.output.height)
+            assertEquals(1536, inspection.output.width); assertEquals(2304, inspection.output.height)
             assertEquals(1, inspection.output.orientation)
             assertEquals("sRGB", inspection.output.color)
             val decoded = requireNotNull(resolver.openInputStream(jpegUri)).use {
                 requireNotNull(BitmapFactory.decodeStream(it))
             }
             try {
-                assertEquals(768, decoded.width); assertEquals(1152, decoded.height)
+                assertEquals(1536, decoded.width); assertEquals(2304, decoded.height)
                 assertTrue(requireNotNull(decoded.colorSpace).isSrgb)
             } finally { decoded.recycle() }
 
