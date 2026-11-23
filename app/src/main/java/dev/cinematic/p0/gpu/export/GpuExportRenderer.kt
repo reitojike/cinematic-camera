@@ -228,15 +228,10 @@ internal class GpuExportRenderer(
                     val output = band.finish()
                     gpuWork(workTimings, GpuExportDetail.FENCE_WAIT) { GpuFence(egl).use { it.await(stop) } }
                     bytes.clear()
-                    GLES32.glBindFramebuffer(GLES32.GL_FRAMEBUFFER, output.framebufferId)
-                    GLES32.glReadBuffer(GLES32.GL_COLOR_ATTACHMENT0)
-                    GLES32.glBindBuffer(GLES32.GL_PIXEL_PACK_BUFFER, 0)
-                    GLES32.glPixelStorei(GLES32.GL_PACK_ALIGNMENT, 1)
-                    GLES32.glPixelStorei(GLES32.GL_PACK_ROW_LENGTH, 0)
-                    GLES32.glPixelStorei(GLES32.GL_PACK_SKIP_PIXELS, 0)
-                    GLES32.glPixelStorei(GLES32.GL_PACK_SKIP_ROWS, 0)
+                    val pixelTransfer = egl.pixelTransferOperations
+                    pixelTransfer.prepareReadback(output.framebufferId)
                     gpuWork(workTimings, GpuExportDetail.READBACK) {
-                        GLES32.glReadPixels(0, 0, width, output.height, GLES32.GL_RGBA, GLES32.GL_UNSIGNED_BYTE, bytes)
+                        pixelTransfer.readRgba8(width, output.height, bytes)
                     }
                     egl.checkGl("read export band RGBA8")
                     bytes.position(0)
