@@ -16,6 +16,7 @@ internal interface GpuExecutionContext : GpuResourceContext {
     val passOperations: GpuPassOperations
     val textureOperations: GpuTextureOperations
     val pixelTransferOperations: GpuPixelTransferOperations
+    val ssboOperations: GpuSsboOperations
     fun capabilities(): GlCapabilities.Result
 
     // These services are closed by the context owner.
