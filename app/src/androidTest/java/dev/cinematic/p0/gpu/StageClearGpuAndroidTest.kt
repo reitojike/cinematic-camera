@@ -55,7 +55,7 @@ class StageClearGpuAndroidTest {
         val input = input()
         val expected = R7PreviewInputs.prepare(R7PreviewInputs.AsShotInput(input,
             R7PreviewInputs.Source.LIBRAW_PRELIMINARY_AS_SHOT), emptyList()).exposure
-        DefaultStageClearGpu(egl, ledger).use { engine ->
+        DefaultStageClearGpu(egl, ledger, createPresenter = windowTestPresenter(egl, ledger)).use { engine ->
             engine.openPhoto(input) { false }.use { photo ->
                 assertEquals(input.width, photo.width)
                 assertEquals(input.height, photo.height)
@@ -69,7 +69,7 @@ class StageClearGpuAndroidTest {
     }
 
     @Test fun cancelledPreparationAndUnsupportedInputLeaveNoTextureOwners() = gpu { egl, ledger ->
-        DefaultStageClearGpu(egl, ledger).use { engine ->
+        DefaultStageClearGpu(egl, ledger, createPresenter = windowTestPresenter(egl, ledger)).use { engine ->
             assertThrows(CancellationException::class.java) { engine.openPhoto(input()) { true } }
             // Cancel after texture allocation, exercising upload-buffer preparation cleanup.
             assertThrows(CancellationException::class.java) { engine.openPhoto(input()) { ledger.allocatedBytes > 0 } }
@@ -85,7 +85,7 @@ class StageClearGpuAndroidTest {
     }
 
     @Test fun missingOrFailingPassesAreErrorsAndCloseReleasesTheirResources() = gpu { egl, ledger ->
-        DefaultStageClearGpu(egl, ledger) { _, _ -> error("synthetic missing pipeline") }.use { missing ->
+        DefaultStageClearGpu(egl, ledger, createPresenter = windowTestPresenter(egl, ledger)) { _, _ -> error("synthetic missing pipeline") }.use { missing ->
             missing.openPhoto(input()) { false }.use { photo ->
                 assertThrows(IllegalStateException::class.java) {
                     missing.renderForTest(photo, params, GpuStageTap.Point.R7_FINAL)
@@ -94,7 +94,7 @@ class StageClearGpuAndroidTest {
             }
         }
         var closes = 0
-        DefaultStageClearGpu(egl, ledger) { texture, _ ->
+        DefaultStageClearGpu(egl, ledger, createPresenter = windowTestPresenter(egl, ledger)) { texture, _ ->
             val held = GpuTexture.create(egl, ledger, texture.width, texture.height, GpuTexture.Format.RGBA32F)
             object : StageClearGpuPipeline {
                 override fun render(params: GpuRenderParams, tap: ((GpuStageTap.Point, GpuTexture) -> Unit)?,
@@ -112,7 +112,7 @@ class StageClearGpuAndroidTest {
     }
 
     @Test fun stageTapConsumesTemporaryPlaneAndDisplayTexturesSynchronously() = gpu { egl, ledger ->
-        DefaultStageClearGpu(egl, ledger) { texture, _ ->
+        DefaultStageClearGpu(egl, ledger, createPresenter = windowTestPresenter(egl, ledger)) { texture, _ ->
             object : StageClearGpuPipeline {
                 override fun render(params: GpuRenderParams, tap: ((GpuStageTap.Point, GpuTexture) -> Unit)?,
                     consume: (GpuTexture, GpuDecisions) -> Unit) {
@@ -149,7 +149,7 @@ class StageClearGpuAndroidTest {
 
     @Test fun failedPipelineCloseRetainsOwnersAndEngineCloseRetriesAllPhotos() = gpu { egl, ledger ->
         var closes = 0
-        val engine = DefaultStageClearGpu(egl, ledger) { texture, _ ->
+        val engine = DefaultStageClearGpu(egl, ledger, createPresenter = windowTestPresenter(egl, ledger)) { texture, _ ->
             val held = GpuTexture.create(egl, ledger, texture.width, texture.height, GpuTexture.Format.RGBA32F)
             object : StageClearGpuPipeline {
                 override fun render(params: GpuRenderParams, tap: ((GpuStageTap.Point, GpuTexture) -> Unit)?,
@@ -179,11 +179,12 @@ class StageClearGpuAndroidTest {
 
     @Test fun budgetFailureAndForeignPhotoKeepExistingPhotoValid() = gpu { egl, _ ->
         val ledger = GpuMemoryLedger(4 * 4 * 16L)
-        DefaultStageClearGpu(egl, ledger).use { engine ->
+        DefaultStageClearGpu(egl, ledger, createPresenter = windowTestPresenter(egl, ledger)).use { engine ->
             val first = engine.openPhoto(input()) { false }
             assertThrows(GpuMemoryBudgetException::class.java) { engine.openPhoto(input()) { false } }
             assertEquals(4 * 4 * 16L, ledger.allocatedBytes)
-            DefaultStageClearGpu(egl, GpuMemoryLedger()).use { foreign ->
+            val foreignLedger = GpuMemoryLedger()
+            DefaultStageClearGpu(egl, foreignLedger, createPresenter = windowTestPresenter(egl, foreignLedger)).use { foreign ->
                 assertThrows(IllegalStateException::class.java) { foreign.renderForTest(first, params, GpuStageTap.Point.INPUT) }
             }
             assertEquals(4, engine.renderForTest(first, params, GpuStageTap.Point.INPUT).width)
@@ -203,7 +204,7 @@ class StageClearGpuAndroidTest {
             onFrame = { frames.offer(it) }, onError = { if (it === injected) lost.countDown() else errors.compareAndSet(null, it) },
             engineFactory = { egl, ledger ->
                 val generation = creations.incrementAndGet()
-                DefaultStageClearGpu(egl, ledger) { texture, _ ->
+                DefaultStageClearGpu(egl, ledger, createPresenter = windowTestPresenter(egl, ledger)) { texture, _ ->
                     object : StageClearGpuPipeline {
                         override fun render(params: GpuRenderParams, tap: ((GpuStageTap.Point, GpuTexture) -> Unit)?,
                             consume: (GpuTexture, GpuDecisions) -> Unit) {
@@ -246,7 +247,7 @@ class StageClearGpuAndroidTest {
         val pipelineCloses = AtomicInteger()
         val renderer = GpuPreviewRenderer(instrumentation.targetContext.assets,
             onFrame = { frames.offer(it) }, onError = { errors.compareAndSet(null, it) },
-            engineFactory = { egl, ledger -> DefaultStageClearGpu(egl, ledger) { texture, _ ->
+            engineFactory = { egl, ledger -> DefaultStageClearGpu(egl, ledger, createPresenter = windowTestPresenter(egl, ledger)) { texture, _ ->
                 object : StageClearGpuPipeline {
                     override fun render(params: GpuRenderParams, tap: ((GpuStageTap.Point, GpuTexture) -> Unit)?,
                         consume: (GpuTexture, GpuDecisions) -> Unit) {
@@ -292,7 +293,7 @@ class StageClearGpuAndroidTest {
         val frames = LinkedBlockingQueue<GpuPreviewFrame>()
         val renderer = GpuPreviewRenderer(instrumentation.targetContext.assets,
             onFrame = { frames.offer(it) }, onError = { errors.compareAndSet(null, it) },
-            engineFactory = { egl, ledger -> DefaultStageClearGpu(egl, ledger) })
+            engineFactory = { egl, ledger -> DefaultStageClearGpu(egl, ledger, createPresenter = windowTestPresenter(egl, ledger)) })
         val consumer = HandlerThread("GpuResourceReuseConsumer").apply { start() }
         try {
             ImageReader.newInstance(64, 48, PixelFormat.RGBA_8888, 2).use { reader ->

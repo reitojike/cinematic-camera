@@ -28,7 +28,7 @@ class StageClearGpuR7IntegrationAndroidTest {
         for (kind in listOf(GpuReferenceImages.Kind.MIXED, GpuReferenceImages.Kind.HDR_LIGHTS)) {
             val input = GpuReferenceImages.create(kind, GpuReferenceImages.Size(256, 192))
             val source = KotlinReference.Source(input)
-            DefaultStageClearGpu(egl, ledger).use { engine ->
+            DefaultStageClearGpu(egl, ledger, createPresenter = windowTestPresenter(egl, ledger)).use { engine ->
                 engine.openPhoto(input) { false }.use { photo ->
                     for (adjustments in listOf(PhotoAdjustments.NONE, PhotoAdjustments(60.0, 1.0))) {
                         val expected = KotlinReference.prepare(source, adjustments)
@@ -52,7 +52,7 @@ class StageClearGpuR7IntegrationAndroidTest {
     @Test fun strengthReusesR7AndAdjustmentInvalidatesItInsidePhotoPipeline() = gpu { egl, ledger ->
         var pipeline: ConnectedStageClearGpuPipeline? = null
         val input = GpuReferenceImages.create(GpuReferenceImages.Kind.MIXED, GpuReferenceImages.Size(256, 192))
-        DefaultStageClearGpu(egl, ledger) { texture, analysis ->
+        DefaultStageClearGpu(egl, ledger, createPresenter = windowTestPresenter(egl, ledger)) { texture, analysis ->
             ConnectedStageClearGpuPipeline(texture, analysis).also { pipeline = it }
         }.use { engine ->
             engine.openPhoto(input) { false }.use { photo ->

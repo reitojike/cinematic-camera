@@ -8,8 +8,10 @@ internal object GlCapabilities {
         fun requireSupported() { if (!supported) throw GpuUnavailableException(missing.joinToString(", ")) }
     }
 
-    fun inspect(egl: EglContexts): Result {
-        egl.requireCurrent()
+    fun inspect(context: GpuExecutionContext): Result = context.capabilities()
+
+    fun inspectAndroid(owner: GpuResourceContext): Result {
+        owner.requireCurrent()
         fun integer(name: Int) = IntArray(1).also { GLES32.glGetIntegerv(name, it, 0) }[0]
         val major = integer(GLES32.GL_MAJOR_VERSION)
         val minor = integer(GLES32.GL_MINOR_VERSION)

@@ -166,7 +166,7 @@ class GpuPreviewPublicationSafetyAndroidTest {
             GlThread().use { thread -> thread.call {
                 EglContexts(thread, app.assets).use { egl ->
                     val ledger = GpuMemoryLedger(GpuMemoryLedger.PREVIEW_BUDGET)
-                    DefaultStageClearGpu(egl, ledger, GpuFrameMode.FULL_RECOMPUTE).use { engine ->
+                    DefaultStageClearGpu(egl, ledger, GpuFrameMode.FULL_RECOMPUTE, createPresenter = windowTestPresenter(egl, ledger)).use { engine ->
                         engine.openPhoto(input.image) { false }.use { photo ->
                             val displayed = engine.renderForTest(photo, GpuRenderParams(strength, edits), GpuStageTap.Point.DISPLAY8)
                             assertEquals(682, displayed.width)

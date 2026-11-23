@@ -122,7 +122,7 @@ class GpuInputFilesSafetyAndroidTest {
                             Modifier.fillMaxSize(), createSession = { assets ->
                                 GpuPhotoRollSession(assets) { egl, memory ->
                                     ledgers += memory
-                                    DefaultStageClearGpu(egl, memory, GpuFrameMode.FULL_RECOMPUTE)
+                                    DefaultStageClearGpu(egl, memory, GpuFrameMode.FULL_RECOMPUTE, createPresenter = windowTestPresenter(egl, memory))
                                 }.also { owners += it }
                             })
                     }

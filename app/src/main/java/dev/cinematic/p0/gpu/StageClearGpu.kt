@@ -5,7 +5,6 @@ import dev.cinematic.p0.gpu.diag.GpuStageTap
 import dev.cinematic.p0.gpu.look.StageClearFinishGpu
 import dev.cinematic.p0.gpu.look.StageClearGlowGpu
 import dev.cinematic.p0.gpu.look.StageClearMistGpu
-import dev.cinematic.p0.gpu.preview.GpuFramePresenter
 import dev.cinematic.p0.gpu.r7.R7Gpu
 import dev.cinematic.p0.gpu.resample.GpuResample
 import dev.cinematic.p0.raw.LinearSrgbImage
@@ -58,15 +57,10 @@ internal data class GpuFrameStats(val gpuNanos: Long?, val cpuSubmitNanos: Long,
 /** 現行 StageClearDecisions と同じ意味。プレビューでは解像度ごとに GPU で求める。 */
 internal data class GpuDecisions(val mistAutoStrength: Double, val faceCutFactor: Double /* 現状は常に 1.0 */)
 
-/** #284 の表示寸法。window の寿命・swap・GPU query は renderer が所有する。 */
-internal data class StageClearGpuPreviewTarget(
-    val window: EglContexts.WindowTarget,
-    val width: Int,
-    val height: Int,
-    val linearFiltering: Boolean = false,
-    val viewportY: Int = 0,
-) : GpuPreviewTarget {
-    init { require(width > 0 && height > 0) }
+/** Borrows the frame texture only for the duration of the synchronous submission. */
+internal interface GpuPreviewPresenter {
+    fun makeCurrent()
+    fun present(image: GpuTexture)
 }
 
 /**
@@ -87,6 +81,7 @@ internal class DefaultStageClearGpu(
     private val egl: EglContexts,
     private val ledger: GpuMemoryLedger,
     frameMode: GpuFrameMode = GpuFrameMode.NORMAL,
+    private val createPresenter: (GpuPreviewTarget, GpuDisplayOptions) -> GpuPreviewPresenter,
     private val createPipeline: (GpuTexture, GpuPhotoAnalysis) -> StageClearGpuPipeline = { input, analysis ->
         ConnectedStageClearGpuPipeline(input, analysis, frameMode)
     },
@@ -102,7 +97,7 @@ internal class DefaultStageClearGpu(
         GpuPreviewInputSize.checkSupported(input.width, input.height)
         checkpoint(stop)
         if (!capabilitiesChecked) {
-            GlCapabilities.inspect(egl).requireSupported()
+            egl.capabilities().requireSupported()
             capabilitiesChecked = true
         }
         // Initial preparation is excluded from criterion ①. Neither mode re-meters this photo.
@@ -126,7 +121,7 @@ internal class DefaultStageClearGpu(
         target: GpuPreviewTarget, display: GpuDisplayOptions): GpuFrameStats {
         val source = requirePhoto(photo)
         requireParams(params)
-        val presenter = GpuFramePresenter(egl, ledger, target, display)
+        val presenter = createPresenter(target, display)
         presenter.makeCurrent()
         val start = System.nanoTime()
         val decisions = renderPixels(source, params, display.showBefore, presenter::present)

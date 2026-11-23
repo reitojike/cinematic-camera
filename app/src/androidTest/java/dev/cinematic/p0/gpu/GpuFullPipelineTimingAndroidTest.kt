@@ -38,7 +38,7 @@ class GpuFullPipelineTimingAndroidTest {
                 val points = ArrayList<GpuStageTap.Point>()
                 var connected: ConnectedStageClearGpuPipeline? = null
                 var creations = 0
-                DefaultStageClearGpu(egl, ledger, GpuFrameMode.FULL_RECOMPUTE) { texture, analysis ->
+                DefaultStageClearGpu(egl, ledger, GpuFrameMode.FULL_RECOMPUTE, createPresenter = windowTestPresenter(egl, ledger)) { texture, analysis ->
                     creations++
                     val pipeline = ConnectedStageClearGpuPipeline(texture, analysis, GpuFrameMode.FULL_RECOMPUTE)
                     connected = pipeline

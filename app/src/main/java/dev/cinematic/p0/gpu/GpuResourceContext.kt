@@ -9,3 +9,12 @@ internal interface GpuResourceContext {
     /** Run explicit deletion only while a live context still owns its GL names. */
     fun releaseResource(block: () -> Unit)
 }
+
+/** Execution services borrowed from the same owner as textures and programs. */
+internal interface GpuExecutionContext : GpuResourceContext {
+    fun capabilities(): GlCapabilities.Result
+
+    // These services are closed by the context owner.
+    fun shaders(): ShaderLibrary
+    fun passes(): PassGraph
+}

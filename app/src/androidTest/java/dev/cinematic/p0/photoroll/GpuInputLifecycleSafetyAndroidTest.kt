@@ -79,7 +79,7 @@ class GpuInputLifecycleSafetyAndroidTest {
             val dimensions = AtomicReference<Pair<Int, Int>>()
             val session = GpuPhotoRollSession(assets) { egl, memory ->
                 check(ledger.compareAndSet(null, memory)) { "Failed owner automatically created another engine" }
-                val real = DefaultStageClearGpu(egl, memory)
+                val real = DefaultStageClearGpu(egl, memory, createPresenter = windowTestPresenter(egl, memory))
                 object : StageClearGpu by real {
                     override fun openPhoto(input: LinearSrgbImage, stop: () -> Boolean): StageClearGpuPhoto {
                         dimensions.set(input.width to input.height)
