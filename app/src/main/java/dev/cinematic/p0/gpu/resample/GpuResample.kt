@@ -1,8 +1,8 @@
 package dev.cinematic.p0.gpu.resample
 
-import android.opengl.GLES32
 import dev.cinematic.p0.gpu.ComputePass
 import dev.cinematic.p0.gpu.FragmentPass
+import dev.cinematic.p0.gpu.GPU_SHADER_IMAGE_ACCESS_BARRIER_BIT
 import dev.cinematic.p0.gpu.GpuExecutionContext
 import dev.cinematic.p0.gpu.GpuMemoryLedger
 import dev.cinematic.p0.gpu.GpuTexture
@@ -117,21 +117,21 @@ internal class GpuResample(
             val inputs = listOf(TextureInput("s_input", input, 0), TextureInput("s_weights", weights.values, 1),
                 TextureInput("s_first", weights.first, 2))
             val uniforms: (Int) -> Unit = { program ->
-                GLES32.glUniform1i(egl.shaders().uniformLocation(program, "u_horizontal"), if (horizontal) 1 else 0)
+                egl.passOperations.uniform1i(egl.shaders().uniformLocation(program, "u_horizontal"), if (horizontal) 1 else 0)
             }
             if (filter == StageClearBlur.Filter.BOX) {
                 // Reused storage may still be sampled by earlier commands. Image stores are
                 // incoherent: wait for those reads before writing, in addition to the pass's
                 // existing post-dispatch barrier for subsequent readers.
-                if (output.pool != null) GLES32.glMemoryBarrier(GLES32.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT)
+                if (output.pool != null) egl.passOperations.memoryBarrier(GPU_SHADER_IMAGE_ACCESS_BARRIER_BIT)
                 val path = if (input.format == GpuTexture.Format.R32F) "analysis/reduce_plane.comp" else "analysis/reduce_rgb.comp"
                 egl.passes().run(ComputePass(egl.shaders().compute(path), inputs,
                     groupsX = if (horizontal) output.height else output.width,
                     uniforms = { program ->
                         uniforms(program)
-                        GLES32.glUniform2i(egl.shaders().uniformLocation(program, "u_outputSize"), output.width, output.height)
+                        egl.passOperations.uniform2i(egl.shaders().uniformLocation(program, "u_outputSize"), output.width, output.height)
                     }, bindResources = {
-                        GLES32.glBindImageTexture(0, output.textureId, 0, false, 0, GLES32.GL_WRITE_ONLY, output.format.internalFormat)
+                        egl.passOperations.bindWriteImage2d(0, output.textureId, output.format.internalFormat)
                     }))
             } else {
                 egl.passes().run(FragmentPass(egl.shaders().fragment("common/upsample_axis.frag"), inputs, output, uniforms = uniforms))

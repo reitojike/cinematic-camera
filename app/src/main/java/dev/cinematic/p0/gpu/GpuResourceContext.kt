@@ -12,6 +12,7 @@ internal interface GpuResourceContext {
 
 /** Execution services borrowed from the same owner as textures and programs. */
 internal interface GpuExecutionContext : GpuResourceContext {
+    val passOperations: GpuPassOperations
     val textureOperations: GpuTextureOperations
     fun capabilities(): GlCapabilities.Result
 

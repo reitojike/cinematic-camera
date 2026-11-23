@@ -1,6 +1,5 @@
 package dev.cinematic.p0.gpu.look
 
-import android.opengl.GLES32
 import dev.cinematic.p0.gpu.FragmentPass
 import dev.cinematic.p0.gpu.GpuTexture
 import dev.cinematic.p0.gpu.TextureInput
@@ -30,10 +29,7 @@ internal object StageClearGlowGpu {
             var previous = buffers[0]
             // The second accumulator is not needed while the first blur is being built.
             var destination: GpuTexture? = null
-            GLES32.glBindFramebuffer(GLES32.GL_FRAMEBUFFER, previous.framebufferId)
-            GLES32.glDisable(GLES32.GL_SCISSOR_TEST)
-            GLES32.glColorMask(true, true, true, true)
-            GLES32.glClearBufferfv(GLES32.GL_COLOR, 0, floatArrayOf(0f, 0f, 0f, 0f), 0)
+            egl.passOperations.clearColorToZero(previous.framebufferId)
             egl.checkGl("clear bloom accumulator")
 
             // Never hard-code a kernel count or reorder by radius/weight. The generated Kotlin
@@ -47,7 +43,7 @@ internal object StageClearGlowGpu {
                     val target = destination ?: source.createSibling(format = GpuTexture.Format.RGBA32F).also(buffers::add)
                     graph.run(FragmentPass(program,
                         listOf(TextureInput("s_previous", previous, 0), TextureInput("s_blurred", it, 1)),
-                        target, uniforms = { GLES32.glUniform1f(weightLocation, weight) }))
+                        target, uniforms = { egl.passOperations.uniform1f(weightLocation, weight) }))
                     val old = previous
                     previous = target
                     destination = old
@@ -141,8 +137,7 @@ internal object StageClearGlowGpu {
     private fun copyOwned(source: GpuTexture): GpuTexture {
         val output = source.createSibling()
         try {
-            GLES32.glCopyImageSubData(source.textureId, GLES32.GL_TEXTURE_2D, 0, 0, 0, 0,
-                output.textureId, GLES32.GL_TEXTURE_2D, 0, 0, 0, 0, source.width, source.height, 1)
+            source.context.passOperations.copyTexture2d(source.textureId, output.textureId, source.width, source.height)
             source.context.checkGl("copy aliased Glow field")
             return output
         } catch (failure: Throwable) { output.close(); throw failure }
@@ -150,7 +145,7 @@ internal object StageClearGlowGpu {
     private fun uniform(base: GpuTexture, program: Int, name: String, value: Float) {
         val location = base.context.shaders().uniformLocation(program, name)
         check(location >= 0) { "Missing Glow uniform $name" }
-        GLES32.glUniform1f(location, value)
+        base.context.passOperations.uniform1f(location, value)
     }
 
     private fun draw(base: GpuTexture, shader: String, inputs: List<Pair<String, GpuTexture>>,
