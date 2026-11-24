@@ -240,60 +240,174 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
-      - name: Identify Mesa package cache platform
-        id: mesa-platform
-        shell: bash
-        run: |
-          set -euo pipefail
-          . /etc/os-release
-          echo "identity=$ID-$VERSION_ID-$(dpkg --print-architecture)-${ImageOS:?}-${ImageVersion:?}" >> "$GITHUB_OUTPUT"
-      - name: Cache Mesa dependency packages
-        id: mesa-debs
-        uses: actions/cache@v6
-        with:
-          # No restore-keys: a different runner image or package recipe must not reuse .deb files.
-          key: mesa-debs-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.mesa-platform.outputs.identity }}-${{ hashFiles('.github/workflows/android.yml') }}
-          path: |
-            ${{ runner.temp }}/mesa-debs/*.deb
-            ${{ runner.temp }}/mesa-debs/SHA256SUMS
-      - name: Download Mesa packages on cache miss
-        if: steps.mesa-debs.outputs.cache-hit != 'true'
+      - name: Download Mesa packages from the pinned storage release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
           export LC_ALL=C
+          manifest="tools/gpu-mesa/mesa-debs-manifest.txt"
+          tag="$(awk -F': ' '$1 == "release-tag" { print $2 }' "$manifest")"
+          test -n "$tag"
+          echo "Mesa .deb storage release tag: $tag"
           cache="$RUNNER_TEMP/mesa-debs"
-          mkdir -p "$cache/partial"
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o APT::Update::Error-Mode=any update
-          # --reinstall also downloads requested packages already present in the runner image.
-          # Missing/upgraded dependencies are downloaded into the same cache by apt.
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Dir::Cache::archives="$cache" install --download-only --reinstall --no-remove --no-install-recommends -y libegl1-mesa-dev libgles2-mesa-dev libgl1-mesa-dri
-          (cd "$cache" && sha256sum -- *.deb > SHA256SUMS)
-      - name: Verify and install Mesa packages without network downloads
+          mkdir -p "$cache"
+          # The tag is fixed by the manifest. The release is immutable, so its assets
+          # cannot be added, changed, or deleted after publication.
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir "$cache"
+          ls -l "$cache"
+      - name: Verify Mesa packages against the manifest and SHA256SUMS
         shell: bash
         run: |
           set -euo pipefail
           export LC_ALL=C
+          manifest="tools/gpu-mesa/mesa-debs-manifest.txt"
           cache="$RUNNER_TEMP/mesa-debs"
-          # This checks the complete file set too: missing, extra, or damaged .deb files fail.
-          (cd "$cache" && sha256sum -- *.deb | diff -u SHA256SUMS -)
+          # The downloaded SHA256SUMS must itself match the digest recorded in the manifest.
+          expected_sums_sha="$(awk -F': ' '$1 == "sha256sums-sha256" { print $2 }' "$manifest")"
+          actual_sums_sha="$(sha256sum "$cache/SHA256SUMS" | awk '{ print $1 }')"
+          [[ "$actual_sums_sha" == "$expected_sums_sha" ]]
+          # Manifest data rows (filename | package | version | arch | sha256 | class) as TSV.
+          awk -F' \\| ' '!/^#/ && NF == 6 { print $1"\t"$2"\t"$3"\t"$4"\t"$5"\t"$6 }' "$manifest" > "$RUNNER_TEMP/mesa-manifest.tsv"
+          [[ "$(wc -l < "$RUNNER_TEMP/mesa-manifest.tsv")" -eq 69 ]]
+          # Three-way set equality: manifest rows, SHA256SUMS entries, downloaded .deb files.
+          cut -f1 "$RUNNER_TEMP/mesa-manifest.tsv" | sort > "$RUNNER_TEMP/mesa-expected-files.txt"
+          awk '{ print $2 }' "$cache/SHA256SUMS" | sort | diff -u "$RUNNER_TEMP/mesa-expected-files.txt" -
+          (cd "$cache" && ls -- *.deb | sort) | diff -u "$RUNNER_TEMP/mesa-expected-files.txt" -
+          # Every downloaded .deb must match the release's SHA256SUMS (missing or damaged files fail).
+          (cd "$cache" && sha256sum -c SHA256SUMS)
+          # Each file must also match the manifest's own SHA256 and its
+          # Package / Version (with epoch) / Architecture fields.
           architecture="$(dpkg --print-architecture)"
           packages="$RUNNER_TEMP/mesa-package-names.txt"
           : > "$packages"
-          for deb in "$cache"/*.deb; do
+          while IFS=$'\t' read -r file package version arch sha class; do
+            deb="$cache/$file"
             test -f "$deb" && test ! -L "$deb"
-            deb_architecture="$(dpkg-deb -f "$deb" Architecture)"
-            [[ "$deb_architecture" == "$architecture" || "$deb_architecture" == all ]]
-            dpkg-deb -f "$deb" Package >> "$packages"
-            dpkg-deb -f "$deb" Package Version Architecture
-          done
+            [[ "$(sha256sum "$deb" | awk '{ print $1 }')" == "$sha" ]]
+            [[ "$(dpkg-deb -f "$deb" Package)" == "$package" ]]
+            [[ "$(dpkg-deb -f "$deb" Version)" == "$version" ]]
+            deb_arch="$(dpkg-deb -f "$deb" Architecture)"
+            [[ "$deb_arch" == "$arch" && ( "$deb_arch" == "$architecture" || "$deb_arch" == all ) ]]
+            echo "$package" >> "$packages"
+          done < "$RUNNER_TEMP/mesa-manifest.tsv"
+      - name: Install Mesa packages and record the result
+        shell: bash
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          cache="$RUNNER_TEMP/mesa-debs"
+          packages="$RUNNER_TEMP/mesa-package-names.txt"
+          record="$GITHUB_WORKSPACE/mesa-install-record"
+          mkdir -p "$record"
           for package in libegl1-mesa-dev libgles2-mesa-dev libgl1-mesa-dri; do
             grep -Fx "$package" "$packages"
           done
+          # Decide per package, by the class recorded in the manifest.
+          # Class A (rendering-determining): always install the stored .deb.
+          # Class B (OS foundation): if the runner already has the same or a newer
+          # version, keep the runner's version and do not install the stored .deb.
+          # Install the stored .deb only when the package is missing or older.
+          # A package is never downgraded. The decision is recorded per package.
+          : > "$record/dpkg-before.txt"
+          install_files=()
+          while IFS=$'\t' read -r file package version arch sha class; do
+            installed="$(dpkg-query -W -f='${Version}' "$package" 2>/dev/null || true)"
+            [[ -n "$installed" ]] || installed="not-installed"
+            if [[ "$class" == "B" && "$installed" != "not-installed" ]] \
+              && dpkg --compare-versions "$installed" ge "$version"; then
+              decision="use-runner"
+            else
+              decision="install-stored"
+              install_files+=("$cache/$file")
+            fi
+            echo "$package class=$class manifest=$version before=$installed decision=$decision" >> "$record/dpkg-before.txt"
+            echo "$decision" > "$RUNNER_TEMP/mesa-decision-$package.txt"
+          done < "$RUNNER_TEMP/mesa-manifest.tsv"
+          # Exact-version groups: some packages are tied together by (=) version
+          # requirements in their .deb control data (for example libc6 with
+          # libc-gconv-modules-extra, libgcc-s1 / libstdc++6 with gcc-16-base, the
+          # libglvnd family, and the libx11 / libxcb -dev pairs). If the decisions
+          # split inside such a group (some members install the stored .deb while
+          # others keep the runner's version), the installed versions would diverge
+          # and break the (=) ties. Derive the groups mechanically from the
+          # downloaded .deb files and stop here, before installing anything, if a
+          # group is split. Groups are never merged into a single install decision:
+          # a foundation library is never pulled back to an older version just to
+          # match the rest of its group.
+          python3 - "$cache" "$RUNNER_TEMP" <<'PYEOF' | tee "$record/dpkg-groups.txt"
+          import re, subprocess, sys
+          from collections import defaultdict
+          cache, temp = sys.argv[1], sys.argv[2]
+          rows = []
+          with open(f"{temp}/mesa-manifest.tsv") as fh:
+              for line in fh:
+                  rows.append(line.rstrip("\n").split("\t"))
+          known = {r[1] for r in rows}
+          parent = {p: p for p in known}
+          def find(x):
+              while parent[x] != x:
+                  parent[x] = parent[parent[x]]
+                  x = parent[x]
+              return x
+          edges = []
+          for file, package, *_ in rows:
+              out = subprocess.run(["dpkg-deb", "-f", f"{cache}/{file}", "Depends", "Pre-Depends"],
+                                   capture_output=True, text=True).stdout
+              deps = " ".join(l.split(":", 1)[1] for l in out.splitlines() if ":" in l)
+              for group in deps.split(","):
+                  for alt in group.split("|"):
+                      m = re.match(r"\s*([A-Za-z0-9.+-]+)\s*\(([^)]*)\)", alt)
+                      if m and m.group(1) in known and m.group(2).strip().startswith("="):
+                          edges.append((package, m.group(1)))
+                          ra, rb = find(package), find(m.group(1))
+                          if ra != rb:
+                              parent[ra] = rb
+          members = defaultdict(set)
+          for a, b in edges:
+              members[find(a)].update((a, b))
+          decisions = {}
+          for _, package, *_ in rows:
+              with open(f"{temp}/mesa-decision-{package}.txt") as fh:
+                  decisions[package] = fh.read().strip()
+          split = False
+          for root in sorted(members, key=lambda r: sorted(members[r])):
+              mem = sorted(members[root])
+              print("group: " + ", ".join(f"{p}={decisions[p]}" for p in mem))
+              if len({decisions[p] for p in mem}) > 1:
+                  split = True
+                  print("ERROR: decisions split inside an exact-version group: " + ", ".join(mem))
+          if split:
+              sys.exit("exact-version group decision check failed; not installing anything")
+          print("exact-version groups: all decisions uniform")
+          PYEOF
           # Incomplete dependency closure fails here instead of fetching or skipping Mesa.
-          sudo dpkg --install "$cache"/*.deb
-          sudo apt-get --no-download check
-          dpkg-query -W libegl-mesa0 libgl1-mesa-dri libgles2
+          if [[ "${#install_files[@]}" -gt 0 ]]; then
+            sudo dpkg --install "${install_files[@]}" 2>&1 | tee "$record/dpkg-install.log"
+          else
+            echo "no packages selected for installation" | tee "$record/dpkg-install.log"
+          fi
+          sudo apt-get --no-download check 2>&1 | tee "$record/apt-check.log"
+          # After installation: class A must be exactly the manifest version and fully
+          # installed. Class B must be fully installed at the manifest version or newer
+          # (the runner's version, when it was kept). Anything else fails the job.
+          : > "$record/dpkg-after.txt"
+          while IFS=$'\t' read -r file package version arch sha class; do
+            state="$(dpkg-query -W -f='${Version} ${Status}' "$package")"
+            decision="$(cat "$RUNNER_TEMP/mesa-decision-$package.txt")"
+            source="runner"
+            [[ "$decision" == "install-stored" ]] && source="stored"
+            echo "$package class=$class source=$source $state" >> "$record/dpkg-after.txt"
+            after_version="${state%% *}"
+            [[ "$state" == "$after_version install ok installed" ]]
+            if [[ "$class" == "A" ]]; then
+              [[ "$after_version" == "$version" ]]
+            else
+              dpkg --compare-versions "$after_version" ge "$version"
+            fi
+          done < "$RUNNER_TEMP/mesa-manifest.tsv"
+          dpkg-query -W libegl-mesa0 libgl1-mesa-dri libgles2 | tee "$record/dpkg-key-packages.txt"
       - name: Mesa GLES 3.2 shader / pixel regression (not Android acceptance)
         env:
           EGL_PLATFORM: surfaceless
@@ -319,6 +433,7 @@ jobs:
           path: |
             app/build/test-results/gpuMesa/
             app/build/reports/tests/gpuMesa/
+            mesa-install-record/
           if-no-files-found: warn
           retention-days: 7
 
