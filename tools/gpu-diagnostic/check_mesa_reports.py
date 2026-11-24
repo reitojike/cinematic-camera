@@ -1,11 +1,13 @@
 """Require the Mesa shader, GPU agreement, and reference-policy cases in JUnit XML."""
 import argparse
+import gzip
 import hashlib
 import json
 import math
 from pathlib import Path
 import re
 import xml.etree.ElementTree as ET
+import zlib
 
 PREFIX = 'dev.cinematic.p0.gpu.mesa.'
 GOLDEN_CASE = (PREFIX + 'MesaGoldenHarnessTest', 'captureGoldenMatrixOnMesa')
@@ -85,6 +87,10 @@ def check_golden(candidate_dir, observed):
     if not isinstance(cases, list) or not cases:
         raise ValueError('Expected at least one golden case')
 
+    case_count = capture.get('caseCount')
+    if type(case_count) is not int or case_count != len(cases):
+        raise ValueError('Golden caseCount mismatch')
+
     ids = set()
     for case in cases:
         if not isinstance(case, dict):
@@ -117,7 +123,30 @@ def check_golden(candidate_dir, observed):
         if digest != case['fileSha256'].lower():
             raise ValueError(f'{case_id}: fileSha256 mismatch')
 
-        group = case.get('group')
+        width, height = case.get('width'), case.get('height')
+        if type(width) is not int or type(height) is not int or width <= 0 or height <= 0:
+            raise ValueError(f'{case_id}: invalid image dimensions')
+        expected_rgb_bytes = width * height * 3
+        rgb_bytes = 0
+        rgb_digest = hashlib.sha256()
+        try:
+            with gzip.open(file, 'rb') as image:
+                while chunk := image.read(64 * 1024):
+                    rgb_bytes += len(chunk)
+                    if rgb_bytes > expected_rgb_bytes:
+                        break
+                    rgb_digest.update(chunk)
+        except (OSError, EOFError, zlib.error) as error:
+            raise ValueError(f'{case_id}: invalid gzip image') from error
+        if rgb_bytes != expected_rgb_bytes:
+            raise ValueError(f'{case_id}: decompressed RGB size mismatch')
+        if rgb_digest.hexdigest() != case['rgbSha256'].lower():
+            raise ValueError(f'{case_id}: rgbSha256 mismatch')
+
+        index = int(case_id[1:])
+        group = 'small' if index <= 58 else 'preview' if index <= 76 else 'export'
+        if case.get('group') != group:
+            raise ValueError(f'{case_id}: group mismatch, expected {group}')
         expected_rows = [64, 256] if group == 'export' else []
         if case.get('bandRowsPassed') != expected_rows:
             raise ValueError(f'{case_id}: invalid bandRowsPassed')
@@ -133,6 +162,10 @@ def check_golden(candidate_dir, observed):
     cpu = host_data.get('cpu') if isinstance(host_data, dict) else None
     if not isinstance(cpu, dict) or not isinstance(cpu.get('modelName'), str):
         raise ValueError('Golden host.json requires a cpu object with a modelName string')
+    run_id = capture.get('runId')
+    host_run_id = host_data.get('runId')
+    if not isinstance(run_id, str) or not isinstance(host_run_id, str) or run_id != host_run_id:
+        raise ValueError('Golden capture and host runId must be matching strings')
     print(f'GPU_MESA_GOLDEN cases={len(cases)} status={status}', flush=True)
 
 

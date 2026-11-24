@@ -88,6 +88,10 @@ android {
                     "gpu.mesa.goldenBaseline",
                     rootProject.file("docs/gpu-golden-baselines/golden-20261112-131916-51b691ad/capture.json").absolutePath,
                 )
+                it.systemProperty(
+                    "gpu.mesa.debManifest",
+                    rootProject.file("tools/gpu-mesa/mesa-debs-manifest.txt").absolutePath,
+                )
                 val test = it
                 listOf("Golden", "GoldenCases", "GoldenRunId", "GoldenDir", "GoldenBaseCommit", "GoldenBaseTree")
                     .forEach { suffix ->

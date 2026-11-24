@@ -22,16 +22,17 @@ import org.lwjgl.opengles.GLES32
 
 class MesaGoldenHarnessTest {
     @Test fun captureGoldenMatrixOnMesa() {
+        val matrix = matrix()
+        check(matrix.size == 90 && matrix.map { it.id }.toSet().size == 90)
+        checkBaseline(matrix)
+
         // 全件は10〜40分級のため、本人の指示により手動起動または main 向けに限る。
         // 既定の Mesa ジョブでは早期 return し、JUnit の skip を発生させない。
         if (System.getProperty("gpu.mesa.golden") != "true") return
 
         val runId = System.getProperty("gpu.mesa.goldenRunId", "mesa-run")
         require(runId.matches(Regex("[A-Za-z0-9_-]{1,80}"))) { "Invalid Mesa golden run ID: $runId" }
-        val matrix = matrix()
-        check(matrix.size == 90 && matrix.map { it.id }.toSet().size == 90)
         val cases = selectCases(matrix)
-        checkBaseline(cases)
 
         val parent = File(System.getProperty("gpu.mesa.goldenDir", "build/gpuMesaGolden"))
         val directory = File(parent, runId)
@@ -45,6 +46,7 @@ class MesaGoldenHarnessTest {
             "status" to "incomplete",
             "matrixVersion" to "stage-clear-90-v1",
             "caseCount" to cases.size,
+            "runId" to runId,
             "fixtureSeed" to GpuReferenceImages.SEED,
             "encoding" to "row-major RGB8 sRGB, top row first",
             "baselineApproved" to false,
@@ -177,23 +179,26 @@ class MesaGoldenHarnessTest {
 
     // 段階1の環境の記録として、OS の土台のライブラリ (マニフェストの区分B) の実際の版を残す。
     // ステップ5の比較で、土台の版の違いが Mesa の出力に影響しないかを確認するため。
-    // 区分Bの一覧は tools/gpu-mesa/mesa-debs-manifest.txt の区分列と一致させること。
     private fun readBaseLibraryVersions(): Map<String, String> {
-        val packages = listOf(
-            "gcc-16-base", "libbsd0", "libc-gconv-modules-extra", "libc6",
-            "libdrm-amdgpu1", "libdrm-common", "libdrm-intel1", "libdrm2", "libedit2",
-            "libegl-dev", "libegl1", "libelf1t64", "libexpat1", "libffi8", "libgcc-s1",
-            "libgl-dev", "libgl1", "libgles-dev", "libgles1", "libgles2",
-            "libglvnd-core-dev", "libglvnd-dev", "libglvnd0", "libglx-dev", "libglx0",
-            "libmd0", "libopengl-dev", "libopengl0", "libpciaccess0",
-            "libsensors-config", "libsensors5", "libstdc++6", "libtinfo6", "libvulkan1",
-            "libwayland-client0", "libx11-6", "libx11-data", "libx11-dev", "libx11-xcb1",
-            "libxau-dev", "libxau6", "libxcb-dri3-0", "libxcb-glx0", "libxcb-present0",
-            "libxcb-randr0", "libxcb-shm0", "libxcb-sync1", "libxcb-xfixes0",
-            "libxcb1-dev", "libxcb1", "libxdmcp-dev", "libxdmcp6", "libxext6",
-            "libxml2-16", "libxshmfence1", "libxxf86vm1", "libzstd1",
-            "x11proto-dev", "xorg-sgml-doctools", "xtrans-dev", "zlib1g",
-        )
+        val path = System.getProperty("gpu.mesa.debManifest")
+        check(path != null) { "Missing gpu.mesa.debManifest" }
+        val lines = try {
+            File(path).readLines()
+        } catch (_: IOException) {
+            null
+        } catch (_: SecurityException) {
+            null
+        }
+        check(lines != null) { "Cannot read Mesa deb manifest: $path" }
+        val packages = lines.asSequence()
+            .map { it.trim() }
+            .filterNot { it.startsWith("#") }
+            .map { it.split(" | ") }
+            .filter { it.size == 7 && it[5] == "B" && it[1].isNotBlank() }
+            .map { it[1] }
+            .toSet()
+        check(packages.isNotEmpty()) { "Mesa deb manifest has no category B packages" }
+
         val text = try {
             File("/var/lib/dpkg/status").readText()
         } catch (_: IOException) {
@@ -202,13 +207,18 @@ class MesaGoldenHarnessTest {
             return packages.associateWith { "unknown" }
         }
         val installed = HashMap<String, String>()
+        val amd64Packages = HashSet<String>()
         for (stanza in text.split(Regex("\\n\\n+"))) {
             val fields = stanza.lineSequence()
-                .filter { ':' in it }
+                .filter { it.isNotEmpty() && !it.first().isWhitespace() && ':' in it }
                 .associate { it.substringBefore(':').trim() to it.substringAfter(':').trim() }
             val name = fields["Package"] ?: continue
-            if (fields["Status"] == "install ok installed") {
-                fields["Version"]?.let { installed[name] = it }
+            if (name !in packages || fields["Status"] != "install ok installed") continue
+            val version = fields["Version"] ?: continue
+            if (fields["Architecture"] == "amd64" && amd64Packages.add(name)) {
+                installed[name] = version
+            } else {
+                installed.putIfAbsent(name, version)
             }
         }
         return packages.associateWith { installed[it] ?: "not-installed" }

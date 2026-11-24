@@ -83,7 +83,6 @@ internal class MesaExecutionContext : GpuExecutionContext, AutoCloseable {
     override fun close() {
         requireOwnerThread()
         if (closed) return
-        if (!lost) requireCurrent()
 
         var failure: Throwable? = null
         fun cleanup(block: () -> Unit) {
@@ -94,6 +93,7 @@ internal class MesaExecutionContext : GpuExecutionContext, AutoCloseable {
                 if (first == null) failure = error else first.addSuppressed(error)
             }
         }
+        cleanup { if (!lost) requireCurrent() }
         cleanup { passGraph?.close() }
         passGraph = null
         cleanup { shaderLibrary?.close() }

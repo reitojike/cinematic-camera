@@ -100,7 +100,8 @@ class MesaGoldenReportsTest(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.directory = Path(self.temp.name)
         self.host = self.directory / 'host.json'
-        self.host.write_text(json.dumps({'cpu': {'modelName': 'unknown', 'flags': []}}), encoding='utf-8')
+        self.host_data = {'runId': 'test-run', 'cpu': {'modelName': 'unknown', 'flags': []}}
+        self.host.write_text(json.dumps(self.host_data), encoding='utf-8')
 
     def candidate(self, status, indices):
         rgb = b'\x00\x01\x02'
@@ -111,7 +112,7 @@ class MesaGoldenReportsTest(unittest.TestCase):
             group = 'small' if index <= 58 else 'preview' if index <= 76 else 'export'
             path = self.directory / f'{case_id}.rgb8.gz'
             path.write_bytes(compressed)
-            record = dict(id=case_id, group=group, file=path.name,
+            record = dict(id=case_id, group=group, file=path.name, width=1, height=1,
                           rgbSha256=hashlib.sha256(rgb).hexdigest(),
                           fileSha256=hashlib.sha256(compressed).hexdigest(),
                           compressedBytes=len(compressed), bandRowsPassed=[])
@@ -120,7 +121,7 @@ class MesaGoldenReportsTest(unittest.TestCase):
                 for rows in (64, 256):
                     record[f'bands{rows}'] = dict(changedPixels=0, maxDelta=0, firstChangedXY='')
             cases.append(record)
-        return dict(status=status, caseCount=len(cases), cases=cases)
+        return dict(status=status, runId='test-run', caseCount=len(cases), cases=cases)
 
     def check_candidate(self, capture, observed=frozenset({GOLDEN_CASE})):
         (self.directory / 'capture.json').write_text(json.dumps(capture), encoding='utf-8')
@@ -153,6 +154,48 @@ class MesaGoldenReportsTest(unittest.TestCase):
         capture['cases'][0]['fileSha256'] = '0' * 64
         with self.assertRaisesRegex(ValueError, 'fileSha256 mismatch'):
             self.check_candidate(capture)
+
+    def test_rgb_sha256_mismatch_fails(self):
+        capture = self.candidate('partial', [1])
+        capture['cases'][0]['rgbSha256'] = '0' * 64
+        with self.assertRaisesRegex(ValueError, 'rgbSha256 mismatch'):
+            self.check_candidate(capture)
+
+    def test_decompressed_size_mismatch_fails(self):
+        capture = self.candidate('partial', [1])
+        capture['cases'][0]['width'] = 2
+        with self.assertRaisesRegex(ValueError, 'decompressed RGB size mismatch'):
+            self.check_candidate(capture)
+
+    def test_export_case_with_preview_group_fails(self):
+        capture = self.candidate('partial', [77])
+        record = capture['cases'][0]
+        record.update(group='preview', bandRowsPassed=[])
+        del record['bands64'], record['bands256']
+        with self.assertRaisesRegex(ValueError, 'c077: group mismatch, expected export'):
+            self.check_candidate(capture)
+
+    def test_case_count_mismatch_fails(self):
+        capture = self.candidate('partial', [1])
+        capture['caseCount'] = 2
+        with self.assertRaisesRegex(ValueError, 'caseCount mismatch'):
+            self.check_candidate(capture)
+
+    def test_mismatched_run_id_fails(self):
+        capture = self.candidate('partial', [1])
+        capture['runId'] = 'other-run'
+        with self.assertRaisesRegex(ValueError, 'runId must be matching strings'):
+            self.check_candidate(capture)
+
+    def test_missing_run_id_fails(self):
+        for source in ('capture', 'host'):
+            with self.subTest(source=source):
+                capture = self.candidate('partial', [1])
+                host_data = dict(self.host_data)
+                del (capture if source == 'capture' else host_data)['runId']
+                self.host.write_text(json.dumps(host_data), encoding='utf-8')
+                with self.assertRaisesRegex(ValueError, 'runId must be matching strings'):
+                    self.check_candidate(capture)
 
     def test_missing_band_record_fails(self):
         capture = self.candidate('partial', [90])
