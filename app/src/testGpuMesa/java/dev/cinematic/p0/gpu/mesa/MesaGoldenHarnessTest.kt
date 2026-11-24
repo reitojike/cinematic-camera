@@ -180,10 +180,19 @@ class MesaGoldenHarnessTest {
     // 区分Bの一覧は tools/gpu-mesa/mesa-debs-manifest.txt の区分列と一致させること。
     private fun readBaseLibraryVersions(): Map<String, String> {
         val packages = listOf(
-            "gcc-16-base", "libbsd0", "libc-gconv-modules-extra", "libc6", "libedit2",
-            "libexpat1", "libffi8", "libgcc-s1", "libmd0", "libstdc++6", "libtinfo6",
-            "libx11-dev", "libxau-dev", "libxcb1-dev", "libxdmcp-dev", "libxml2-16",
-            "libzstd1", "x11proto-dev", "xorg-sgml-doctools", "xtrans-dev", "zlib1g",
+            "gcc-16-base", "libbsd0", "libc-gconv-modules-extra", "libc6",
+            "libdrm-amdgpu1", "libdrm-common", "libdrm-intel1", "libdrm2", "libedit2",
+            "libegl-dev", "libegl1", "libelf1t64", "libexpat1", "libffi8", "libgcc-s1",
+            "libgl-dev", "libgl1", "libgles-dev", "libgles1", "libgles2",
+            "libglvnd-core-dev", "libglvnd-dev", "libglvnd0", "libglx-dev", "libglx0",
+            "libmd0", "libopengl-dev", "libopengl0", "libpciaccess0",
+            "libsensors-config", "libsensors5", "libstdc++6", "libtinfo6", "libvulkan1",
+            "libwayland-client0", "libx11-6", "libx11-data", "libx11-dev", "libx11-xcb1",
+            "libxau-dev", "libxau6", "libxcb-dri3-0", "libxcb-glx0", "libxcb-present0",
+            "libxcb-randr0", "libxcb-shm0", "libxcb-sync1", "libxcb-xfixes0",
+            "libxcb1-dev", "libxcb1", "libxdmcp-dev", "libxdmcp6", "libxext6",
+            "libxml2-16", "libxshmfence1", "libxxf86vm1", "libzstd1",
+            "x11proto-dev", "xorg-sgml-doctools", "xtrans-dev", "zlib1g",
         )
         val text = try {
             File("/var/lib/dpkg/status").readText()
