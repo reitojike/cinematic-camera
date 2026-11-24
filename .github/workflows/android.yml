@@ -272,7 +272,7 @@ jobs:
           actual_sums_sha="$(sha256sum "$cache/SHA256SUMS" | awk '{ print $1 }')"
           [[ "$actual_sums_sha" == "$expected_sums_sha" ]]
           # Manifest data rows (filename | package | version | arch | sha256 | class | install) as TSV.
-          awk -F' \| ' '!/^#/ && NF == 7 { print $1"\t"$2"\t"$3"\t"$4"\t"$5"\t"$6"\t"$7 }' "$manifest" > "$RUNNER_TEMP/mesa-manifest.tsv"
+          awk -F' [|] ' '!/^#/ && NF == 7 { print $1"\t"$2"\t"$3"\t"$4"\t"$5"\t"$6"\t"$7 }' "$manifest" > "$RUNNER_TEMP/mesa-manifest.tsv"
           [[ "$(wc -l < "$RUNNER_TEMP/mesa-manifest.tsv")" -eq 69 ]]
           # Three-way set equality: manifest rows, SHA256SUMS entries, downloaded .deb files.
           cut -f1 "$RUNNER_TEMP/mesa-manifest.tsv" | sort > "$RUNNER_TEMP/mesa-expected-files.txt"
