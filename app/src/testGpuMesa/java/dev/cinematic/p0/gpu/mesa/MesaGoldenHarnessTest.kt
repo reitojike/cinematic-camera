@@ -148,6 +148,11 @@ class MesaGoldenHarnessTest {
             "runId" to runId,
             "capturedUtc" to Instant.now().toString(),
             "cpu" to readHostCpu(),
+            // ステップ5のモード比較で候補を判別できるよう、プロセスの環境変数の実際の値を残す。
+            "llvmpipe" to mapOf(
+                "LP_NATIVE_VECTOR_WIDTH" to System.getenv("LP_NATIVE_VECTOR_WIDTH"),
+                "GALLIUM_OVERRIDE_CPU_CAPS" to System.getenv("GALLIUM_OVERRIDE_CPU_CAPS"),
+            ),
             "baseLibraries" to readBaseLibraryVersions(),
         )
         File(directory, "host.json").writeText(MesaGoldenJson.encode(host))

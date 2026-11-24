@@ -101,9 +101,21 @@ class MesaGoldenReportsTest(unittest.TestCase):
         self.directory = Path(self.temp.name)
         self.host = self.directory / 'host.json'
         self.host_data = {'runId': 'test-run', 'cpu': {'modelName': 'unknown', 'flags': []}}
+        self.manifest = self.directory / 'mesa-debs-manifest.txt'
+        self.manifest.write_text(
+            '# Fixture manifest\n'
+            'release-tag: fixture\n'
+            + ''.join(
+                f'lib{index}_1.0_amd64.deb | lib{index} | 1.0 | amd64 | {"0" * 64} | {category} | {install}\n'
+                for index, (category, install) in enumerate(
+                    [('B', 'yes'), ('B', 'yes'), ('B', 'yes'), ('A', 'yes'), ('B', 'no')]
+                )
+            ),
+            encoding='utf-8',
+        )
         self.host_data['baseLibraries'] = {
             f'lib{index}': {'version': '1.0', 'source': ('runner', 'stored')[index % 2]}
-            for index in range(40)
+            for index in range(3)
         }
         self.host.write_text(json.dumps(self.host_data), encoding='utf-8')
 
@@ -129,7 +141,7 @@ class MesaGoldenReportsTest(unittest.TestCase):
 
     def check_candidate(self, capture, observed=frozenset({GOLDEN_CASE})):
         (self.directory / 'capture.json').write_text(json.dumps(capture), encoding='utf-8')
-        check_golden(self.directory, observed)
+        check_golden(self.directory, observed, manifest_path=self.manifest)
 
     def test_complete_candidate_passes(self):
         self.check_candidate(self.candidate('complete', range(1, 91)))
@@ -224,13 +236,47 @@ class MesaGoldenReportsTest(unittest.TestCase):
     def test_missing_base_libraries_fails(self):
         del self.host_data['baseLibraries']
         self.host.write_text(json.dumps(self.host_data), encoding='utf-8')
-        with self.assertRaisesRegex(ValueError, 'requires a baseLibraries object with 40 entries'):
+        with self.assertRaisesRegex(ValueError, 'requires a baseLibraries object'):
             self.check_candidate(self.candidate('partial', [1]))
 
-    def test_short_base_libraries_fails(self):
-        del self.host_data['baseLibraries']['lib0']
+    def test_mismatched_base_libraries_fail(self):
+        libraries = self.host_data['baseLibraries']
+        libraries['lib3'] = libraries.pop('lib0')
         self.host.write_text(json.dumps(self.host_data), encoding='utf-8')
-        with self.assertRaisesRegex(ValueError, 'requires a baseLibraries object with 40 entries'):
+        with self.assertRaisesRegex(ValueError, r"baseLibraries mismatch: missing=\['lib0'\], extra=\['lib3'\]"):
+            self.check_candidate(self.candidate('partial', [1]))
+
+    def test_missing_manifest_fails(self):
+        self.manifest = self.directory / 'missing-manifest.txt'
+        with self.assertRaisesRegex(ValueError, 'Cannot read Mesa deb manifest'):
+            self.check_candidate(self.candidate('partial', [1]))
+
+    def test_manifest_without_targets_fails(self):
+        self.manifest.write_text('release-tag: fixture\n', encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'has no category B installation targets'):
+            self.check_candidate(self.candidate('partial', [1]))
+
+    def test_default_manifest_candidate_passes(self):
+        # リポジトリ内の実マニフェストを参照して候補を作る。
+        manifest = Path(__file__).resolve().parent.parent / 'gpu-mesa' / 'mesa-debs-manifest.txt'
+        libraries = {}
+        for line in manifest.read_text(encoding='utf-8').splitlines():
+            line = line.strip()
+            if line.startswith('#'):
+                continue
+            fields = line.split(' | ')
+            if len(fields) == 7 and fields[5:] == ['B', 'yes'] and fields[1].strip():
+                libraries[fields[1]] = {'version': fields[2], 'source': 'stored'}
+        self.host_data['baseLibraries'] = libraries
+        self.host.write_text(json.dumps(self.host_data), encoding='utf-8')
+        capture = self.candidate('partial', [1])
+        (self.directory / 'capture.json').write_text(json.dumps(capture), encoding='utf-8')
+        check_golden(self.directory, {GOLDEN_CASE})
+
+    def test_invalid_llvmpipe_value_fails(self):
+        self.host_data['llvmpipe'] = {'LP_NATIVE_VECTOR_WIDTH': 128, 'GALLIUM_OVERRIDE_CPU_CAPS': None}
+        self.host.write_text(json.dumps(self.host_data), encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'llvmpipe must be an object with string or null values'):
             self.check_candidate(self.candidate('partial', [1]))
 
     def test_invalid_base_library_source_fails(self):

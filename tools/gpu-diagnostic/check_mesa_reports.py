@@ -73,7 +73,7 @@ def _scan_reports(directory):
     return totals, seconds, observed
 
 
-def check_golden(candidate_dir, observed):
+def check_golden(candidate_dir, observed, *, manifest_path=None):
     if GOLDEN_CASE not in observed:
         raise ValueError(f'Missing passing Mesa harness case: {GOLDEN_CASE}')
     directory = Path(candidate_dir)
@@ -167,8 +167,28 @@ def check_golden(candidate_dir, observed):
     if not isinstance(run_id, str) or not isinstance(host_run_id, str) or run_id != host_run_id:
         raise ValueError('Golden capture and host runId must be matching strings')
     base_libraries = host_data.get('baseLibraries')
-    if not isinstance(base_libraries, dict) or len(base_libraries) != 40:
-        raise ValueError('Golden host.json requires a baseLibraries object with 40 entries')
+    if not isinstance(base_libraries, dict):
+        raise ValueError('Golden host.json requires a baseLibraries object')
+    if manifest_path is None:
+        manifest_path = Path(__file__).resolve().parent.parent / 'gpu-mesa' / 'mesa-debs-manifest.txt'
+    try:
+        manifest_lines = Path(manifest_path).read_text(encoding='utf-8').splitlines()
+    except (OSError, UnicodeError) as error:
+        raise ValueError(f'Cannot read Mesa deb manifest: {manifest_path}') from error
+    expected_libraries = set()
+    for line in manifest_lines:
+        line = line.strip()
+        if line.startswith('#'):
+            continue
+        fields = line.split(' | ')
+        if len(fields) == 7 and fields[5:] == ['B', 'yes'] and fields[1].strip():
+            expected_libraries.add(fields[1])
+    if not expected_libraries:
+        raise ValueError('Mesa deb manifest has no category B installation targets')
+    missing = sorted(expected_libraries - base_libraries.keys())
+    extra = sorted(base_libraries.keys() - expected_libraries)
+    if missing or extra:
+        raise ValueError(f'Golden host.json baseLibraries mismatch: missing={missing}, extra={extra}')
     for name, library in base_libraries.items():
         if not isinstance(library, dict):
             raise ValueError(f'Golden host.json baseLibraries entry {name} must be an object')
@@ -177,6 +197,12 @@ def check_golden(candidate_dir, observed):
             raise ValueError(f'Golden host.json baseLibraries entry {name} requires a non-empty version string')
         if library.get('source') not in ('runner', 'stored'):
             raise ValueError(f'Golden host.json baseLibraries entry {name} requires a source of runner or stored')
+    if 'llvmpipe' in host_data:
+        llvmpipe = host_data['llvmpipe']
+        if not isinstance(llvmpipe, dict) or any(
+            value is not None and not isinstance(value, str) for value in llvmpipe.values()
+        ):
+            raise ValueError('Golden host.json llvmpipe must be an object with string or null values')
     print(f'GPU_MESA_GOLDEN cases={len(cases)} status={status}', flush=True)
 
 
