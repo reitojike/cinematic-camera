@@ -7,10 +7,16 @@
 #     列は ファイル名 | パッケージ名 | 版 | arch | SHA256 | 区分 の順。
 #   - 版は epoch を含む dpkg の版そのもの (ファイル名には epoch は含まれない)。
 #   - 区分はインストール時の扱いを決める。
-#       A (描画の結果を決めるもの): 保管版を常に入れ、インストール後に版の完全一致を必須にする。
-#       B (OS の土台のもの): ランナーに同じ版か新しい版が入っていれば入れずにそのまま使い、
+#       A (画素の値を決めるもの): Mesa 本体の7件 (libegl-mesa0、libegl1-mesa-dev、libgbm1、
+#         libgl1-mesa-dri、libgles2-mesa-dev、libglx-mesa0、mesa-libgallium) と libllvm21 の計8件だけ。
+#         今回の描画は surfaceless の EGL と llvmpipe で行うため、画素の値を決めるのはこの8件である。
+#         保管版を常に入れ、インストール後に版の完全一致を必須にする。
+#       B (それ以外のすべて、61件): ランナーに同じ版か新しい版が入っていれば入れずにそのまま使い、
 #         入っていないか古い版しか入っていない場合だけ保管版を入れる。古い版に戻すことはしない。
 #         インストール後は、版が保管版以上であることを確認する。
+#   - 版の厳密一致 (=) が必要な組 (各 .deb の Depends から求める) は、インストールの前に
+#     判定 (install-stored / use-runner) が組の中で分かれていないかを確認し、
+#     分かれていれば組の内容を表示して失敗にする (ワークフロー側の処理)。
 #
 # 保管先は変更できないリリース (immutable) で、タグの削除・更新はルールセットで制限されている。
 # 版を上げるときは、新しいタグで別のリリースに保管し、このファイルのヘッダと表を差し替える。
@@ -23,8 +29,8 @@ source-suites: resolute, resolute-updates, resolute-security (Ubuntu 26.04)
 source-host: azure.archive.ubuntu.com (archive.ubuntu.com でも同一内容)
 captured-date: 2026-11-24
 package-count: 69
-class-a-count: 48
-class-b-count: 21
+class-a-count: 8
+class-b-count: 61
 total-bytes-debs: 51608225
 sha256sums-sha256: e4f722bfbd5b19dcf92294ecffc5cf11ea1dd7b764b96b1d9f8fc6a0bb65f316
 
@@ -32,65 +38,65 @@ gcc-16-base_16-20260322-1ubuntu1_amd64.deb | gcc-16-base | 16-20260322-1ubuntu1 
 libbsd0_0.12.2-2build2_amd64.deb | libbsd0 | 0.12.2-2build2 | amd64 | 62019928a6baeaba8d12d2d4cb7c1e4c9a9550a1eb4541b8de0cacfeae1d09e3 | B
 libc-gconv-modules-extra_2.43-2ubuntu2.7_amd64.deb | libc-gconv-modules-extra | 2.43-2ubuntu2.7 | amd64 | 408ba056d39651c2489b59522a614276d7a96020c6a401e73cd0da7d771764b0 | B
 libc6_2.43-2ubuntu2.7_amd64.deb | libc6 | 2.43-2ubuntu2.7 | amd64 | be83aefc14597fba683031a520f303950a7338b95d74decbe625faa51c49933e | B
-libdrm-amdgpu1_2.4.131-1_amd64.deb | libdrm-amdgpu1 | 2.4.131-1 | amd64 | f992d3b87be69d160d433626e2144f6446946143cb83bdc71adef71766783de0 | A
-libdrm-common_2.4.131-1_all.deb | libdrm-common | 2.4.131-1 | all | a32b8d623c04310d049cde28cdbbd339575cdc26c8dc741d7de708a954eff528 | A
-libdrm-intel1_2.4.131-1_amd64.deb | libdrm-intel1 | 2.4.131-1 | amd64 | 77411c3b93c8756862a18ccaa4413a65777f40819abdd1468954ba859c8aa740 | A
-libdrm2_2.4.131-1_amd64.deb | libdrm2 | 2.4.131-1 | amd64 | b87e6f715d0795a88b53fbe268004a1acbd0d728da0cc0ab9108aff5ab4e1929 | A
+libdrm-amdgpu1_2.4.131-1_amd64.deb | libdrm-amdgpu1 | 2.4.131-1 | amd64 | f992d3b87be69d160d433626e2144f6446946143cb83bdc71adef71766783de0 | B
+libdrm-common_2.4.131-1_all.deb | libdrm-common | 2.4.131-1 | all | a32b8d623c04310d049cde28cdbbd339575cdc26c8dc741d7de708a954eff528 | B
+libdrm-intel1_2.4.131-1_amd64.deb | libdrm-intel1 | 2.4.131-1 | amd64 | 77411c3b93c8756862a18ccaa4413a65777f40819abdd1468954ba859c8aa740 | B
+libdrm2_2.4.131-1_amd64.deb | libdrm2 | 2.4.131-1 | amd64 | b87e6f715d0795a88b53fbe268004a1acbd0d728da0cc0ab9108aff5ab4e1929 | B
 libedit2_3.1-20251016-1_amd64.deb | libedit2 | 3.1-20251016-1 | amd64 | 22338fcbcaae99f67ca7b2e20d1730bc29d3c02bcd2414e457f99be96442ee29 | B
-libegl-dev_1.7.0-3_amd64.deb | libegl-dev | 1.7.0-3 | amd64 | d0f96489f4937816b7e439f893e90c210290a82a5219ec16b1f13b4c3807bf85 | A
+libegl-dev_1.7.0-3_amd64.deb | libegl-dev | 1.7.0-3 | amd64 | d0f96489f4937816b7e439f893e90c210290a82a5219ec16b1f13b4c3807bf85 | B
 libegl-mesa0_26.0.8-1ubuntu0.3_amd64.deb | libegl-mesa0 | 26.0.8-1ubuntu0.3 | amd64 | 938813d9d6bb7ccf8315af1f8bb2770ad4b9d240ad177f0da420db3e94600d6b | A
 libegl1-mesa-dev_26.0.8-1ubuntu0.3_amd64.deb | libegl1-mesa-dev | 26.0.8-1ubuntu0.3 | amd64 | 703a3c2e900901363dadb630e655d6306f3f4fd7f4cd045b09870b2620b645bb | A
-libegl1_1.7.0-3_amd64.deb | libegl1 | 1.7.0-3 | amd64 | cf2a6549bbc4339671901bde97c0ca41c380c5783179ef68977bf86151f03766 | A
-libelf1t64_0.194-4_amd64.deb | libelf1t64 | 0.194-4 | amd64 | c2feae172b14d2a8317348023c5e0b6572314c097a9f7b8225c62b0988cc8d92 | A
+libegl1_1.7.0-3_amd64.deb | libegl1 | 1.7.0-3 | amd64 | cf2a6549bbc4339671901bde97c0ca41c380c5783179ef68977bf86151f03766 | B
+libelf1t64_0.194-4_amd64.deb | libelf1t64 | 0.194-4 | amd64 | c2feae172b14d2a8317348023c5e0b6572314c097a9f7b8225c62b0988cc8d92 | B
 libexpat1_2.7.4-1ubuntu0.2_amd64.deb | libexpat1 | 2.7.4-1ubuntu0.2 | amd64 | 0063e68d742facfd3c46d7d7df9eb0d85f13e0fc294908a4f138d45557607837 | B
 libffi8_3.5.2-4_amd64.deb | libffi8 | 3.5.2-4 | amd64 | 4a7423124bbd459c0aa38b7389ec7802fa6899654767a95fc27de70967fedd48 | B
 libgbm1_26.0.8-1ubuntu0.3_amd64.deb | libgbm1 | 26.0.8-1ubuntu0.3 | amd64 | 5d2d1eaf0f72c5a2c4aef692e5660c6fa61e46542c4d9cb5593ba8bd020b2eea | A
 libgcc-s1_16-20260322-1ubuntu1_amd64.deb | libgcc-s1 | 16-20260322-1ubuntu1 | amd64 | 2fb4d81c14fdf34251639ae82f5181f9f98480ea16125d535571ac1be9db3065 | B
-libgl-dev_1.7.0-3_amd64.deb | libgl-dev | 1.7.0-3 | amd64 | a8abfeb7fe6bcb9e868458d2347106bbc9ab0fecb54d92a5626f3612a2d2aef8 | A
+libgl-dev_1.7.0-3_amd64.deb | libgl-dev | 1.7.0-3 | amd64 | a8abfeb7fe6bcb9e868458d2347106bbc9ab0fecb54d92a5626f3612a2d2aef8 | B
 libgl1-mesa-dri_26.0.8-1ubuntu0.3_amd64.deb | libgl1-mesa-dri | 26.0.8-1ubuntu0.3 | amd64 | 585dfac64d7ca95a9813faad9f14c361d788069b7578859fb426c657dd528f08 | A
-libgl1_1.7.0-3_amd64.deb | libgl1 | 1.7.0-3 | amd64 | 83ec3a454b28e947a6886e9ae8167e129e25d7a2fd741aaffcdca76eddff5955 | A
-libgles-dev_1.7.0-3_amd64.deb | libgles-dev | 1.7.0-3 | amd64 | 2283eaee7d0c46dab34ae533272a51be7c53302fc88b5a49b1aaf48f4377da7a | A
-libgles1_1.7.0-3_amd64.deb | libgles1 | 1.7.0-3 | amd64 | 2979efcdebb1e45233b6e438a7ea5ca7bc461b856f064c2a7bd9b6a41b49f7d1 | A
+libgl1_1.7.0-3_amd64.deb | libgl1 | 1.7.0-3 | amd64 | 83ec3a454b28e947a6886e9ae8167e129e25d7a2fd741aaffcdca76eddff5955 | B
+libgles-dev_1.7.0-3_amd64.deb | libgles-dev | 1.7.0-3 | amd64 | 2283eaee7d0c46dab34ae533272a51be7c53302fc88b5a49b1aaf48f4377da7a | B
+libgles1_1.7.0-3_amd64.deb | libgles1 | 1.7.0-3 | amd64 | 2979efcdebb1e45233b6e438a7ea5ca7bc461b856f064c2a7bd9b6a41b49f7d1 | B
 libgles2-mesa-dev_26.0.8-1ubuntu0.3_amd64.deb | libgles2-mesa-dev | 26.0.8-1ubuntu0.3 | amd64 | d28cdd583fd612e9b438a62cdf6f1115908e3593d8487fabaf1ea73a8044834f | A
-libgles2_1.7.0-3_amd64.deb | libgles2 | 1.7.0-3 | amd64 | 60113d7ec92c7ccdbd09e90b379bb9041581af3b85e28b3f250374025bb6440e | A
-libglvnd-core-dev_1.7.0-3_amd64.deb | libglvnd-core-dev | 1.7.0-3 | amd64 | 2c19eed85fb180921281b4b6678c3dda3599c1065ec499a4f1e85d861f88c2ca | A
-libglvnd-dev_1.7.0-3_amd64.deb | libglvnd-dev | 1.7.0-3 | amd64 | 90858df52e654d5ea4450c471966f143752a2323159884d2561ec4688c7bcdde | A
-libglvnd0_1.7.0-3_amd64.deb | libglvnd0 | 1.7.0-3 | amd64 | db2cd8cff67e3e210f5223dfe41f000efd4d3d887ab05bda2e88c4a622f12b36 | A
-libglx-dev_1.7.0-3_amd64.deb | libglx-dev | 1.7.0-3 | amd64 | 749e75fa0f3ff4a1728f46ce7bffda7e0b9bec01987620e3befa4fb233ea6dff | A
+libgles2_1.7.0-3_amd64.deb | libgles2 | 1.7.0-3 | amd64 | 60113d7ec92c7ccdbd09e90b379bb9041581af3b85e28b3f250374025bb6440e | B
+libglvnd-core-dev_1.7.0-3_amd64.deb | libglvnd-core-dev | 1.7.0-3 | amd64 | 2c19eed85fb180921281b4b6678c3dda3599c1065ec499a4f1e85d861f88c2ca | B
+libglvnd-dev_1.7.0-3_amd64.deb | libglvnd-dev | 1.7.0-3 | amd64 | 90858df52e654d5ea4450c471966f143752a2323159884d2561ec4688c7bcdde | B
+libglvnd0_1.7.0-3_amd64.deb | libglvnd0 | 1.7.0-3 | amd64 | db2cd8cff67e3e210f5223dfe41f000efd4d3d887ab05bda2e88c4a622f12b36 | B
+libglx-dev_1.7.0-3_amd64.deb | libglx-dev | 1.7.0-3 | amd64 | 749e75fa0f3ff4a1728f46ce7bffda7e0b9bec01987620e3befa4fb233ea6dff | B
 libglx-mesa0_26.0.8-1ubuntu0.3_amd64.deb | libglx-mesa0 | 26.0.8-1ubuntu0.3 | amd64 | 17ff6239daaf75337d3697c1e5f1ef3e190c4c2dd73a9f0edfc36868ef41905c | A
-libglx0_1.7.0-3_amd64.deb | libglx0 | 1.7.0-3 | amd64 | e0b75c32f773201ebca2184d94dfc34f6e09470c7cf6e425d48b270e516fd909 | A
+libglx0_1.7.0-3_amd64.deb | libglx0 | 1.7.0-3 | amd64 | e0b75c32f773201ebca2184d94dfc34f6e09470c7cf6e425d48b270e516fd909 | B
 libllvm21_21.1.8-6ubuntu1_amd64.deb | libllvm21 | 1:21.1.8-6ubuntu1 | amd64 | 9e758998dcb4aa27abbe64f2dee7bc490d9eb0721afa334a82a2b1bf6c7648f9 | A
 libmd0_1.1.0-2build4_amd64.deb | libmd0 | 1.1.0-2build4 | amd64 | da684bb562e167721ae38366586aaee0b4cc580b9ee6d0220128b15ef9c5be75 | B
-libopengl-dev_1.7.0-3_amd64.deb | libopengl-dev | 1.7.0-3 | amd64 | d5787403a681e87024550ef4faa8b0c9242b34ada581ec16e9b74c0eb3baec3c | A
-libopengl0_1.7.0-3_amd64.deb | libopengl0 | 1.7.0-3 | amd64 | ccdcf477a19c1f51c20aa7569e953dbb5bc9456b57e2d3e325f8fda2650106ca | A
-libpciaccess0_0.18.1-1ubuntu4.1_amd64.deb | libpciaccess0 | 0.18.1-1ubuntu4.1 | amd64 | 8733699ae9d7102a84cd10a1f0f0769b684c6ca8842035db389bb6b8310f72dd | A
-libsensors-config_3.6.2-2build1_all.deb | libsensors-config | 1:3.6.2-2build1 | all | 57193f731de79bbad343a1369e6e95b13096c08ba166c7e193bfc24d78f960fb | A
-libsensors5_3.6.2-2build1_amd64.deb | libsensors5 | 1:3.6.2-2build1 | amd64 | 9249cd2be68acd7b589030df72a457b89fadea6c426002b00648ad2d153d9748 | A
+libopengl-dev_1.7.0-3_amd64.deb | libopengl-dev | 1.7.0-3 | amd64 | d5787403a681e87024550ef4faa8b0c9242b34ada581ec16e9b74c0eb3baec3c | B
+libopengl0_1.7.0-3_amd64.deb | libopengl0 | 1.7.0-3 | amd64 | ccdcf477a19c1f51c20aa7569e953dbb5bc9456b57e2d3e325f8fda2650106ca | B
+libpciaccess0_0.18.1-1ubuntu4.1_amd64.deb | libpciaccess0 | 0.18.1-1ubuntu4.1 | amd64 | 8733699ae9d7102a84cd10a1f0f0769b684c6ca8842035db389bb6b8310f72dd | B
+libsensors-config_3.6.2-2build1_all.deb | libsensors-config | 1:3.6.2-2build1 | all | 57193f731de79bbad343a1369e6e95b13096c08ba166c7e193bfc24d78f960fb | B
+libsensors5_3.6.2-2build1_amd64.deb | libsensors5 | 1:3.6.2-2build1 | amd64 | 9249cd2be68acd7b589030df72a457b89fadea6c426002b00648ad2d153d9748 | B
 libstdc++6_16-20260322-1ubuntu1_amd64.deb | libstdc++6 | 16-20260322-1ubuntu1 | amd64 | a32b9ad585e39bdc7bd15d1eae6293461e6d466859a1dd2f7862d1e40f89b9d8 | B
 libtinfo6_6.6+20251231-1_amd64.deb | libtinfo6 | 6.6+20251231-1 | amd64 | 42705a701a98d84c203c6f96f08c6fd6a29a1ef978683e1ffbf0e27535b20ddb | B
-libvulkan1_1.4.341.0-1_amd64.deb | libvulkan1 | 1.4.341.0-1 | amd64 | b4aca7a519d6318347f15a0e485c636603005e2553dae1a986272ac8c96176b0 | A
-libwayland-client0_1.24.0-2_amd64.deb | libwayland-client0 | 1.24.0-2 | amd64 | 094db0e190b53872e4d5310cd5fa09ca28ee3936386cd09e5f7d13e645aa12ab | A
-libx11-6_1.8.13-1ubuntu0.1_amd64.deb | libx11-6 | 2:1.8.13-1ubuntu0.1 | amd64 | 495363a728a03c9a9eee73439ec15a6ea78d6ec544a696c2e97dc5f3559547ae | A
-libx11-data_1.8.13-1ubuntu0.1_all.deb | libx11-data | 2:1.8.13-1ubuntu0.1 | all | 1bfa63f90ab6bd57ad2f1f87d820ddf70b1ff4eeae65b8e04346889693de2b5c | A
+libvulkan1_1.4.341.0-1_amd64.deb | libvulkan1 | 1.4.341.0-1 | amd64 | b4aca7a519d6318347f15a0e485c636603005e2553dae1a986272ac8c96176b0 | B
+libwayland-client0_1.24.0-2_amd64.deb | libwayland-client0 | 1.24.0-2 | amd64 | 094db0e190b53872e4d5310cd5fa09ca28ee3936386cd09e5f7d13e645aa12ab | B
+libx11-6_1.8.13-1ubuntu0.1_amd64.deb | libx11-6 | 2:1.8.13-1ubuntu0.1 | amd64 | 495363a728a03c9a9eee73439ec15a6ea78d6ec544a696c2e97dc5f3559547ae | B
+libx11-data_1.8.13-1ubuntu0.1_all.deb | libx11-data | 2:1.8.13-1ubuntu0.1 | all | 1bfa63f90ab6bd57ad2f1f87d820ddf70b1ff4eeae65b8e04346889693de2b5c | B
 libx11-dev_1.8.13-1ubuntu0.1_amd64.deb | libx11-dev | 2:1.8.13-1ubuntu0.1 | amd64 | b751b15b1661789ea179a3c01948b4e6eef819a8c3b5d27da679e345b46dccf5 | B
-libx11-xcb1_1.8.13-1ubuntu0.1_amd64.deb | libx11-xcb1 | 2:1.8.13-1ubuntu0.1 | amd64 | 23d0a8c5d8be6dc1ca39d5ea66c139ee56ab20116f11bae586e0dc1685682578 | A
+libx11-xcb1_1.8.13-1ubuntu0.1_amd64.deb | libx11-xcb1 | 2:1.8.13-1ubuntu0.1 | amd64 | 23d0a8c5d8be6dc1ca39d5ea66c139ee56ab20116f11bae586e0dc1685682578 | B
 libxau-dev_1.0.11-1build2_amd64.deb | libxau-dev | 1:1.0.11-1build2 | amd64 | 55a7100aa12d940c41e0735212122cc835192bce385e7bbfe14b234759aad51c | B
-libxau6_1.0.11-1build2_amd64.deb | libxau6 | 1:1.0.11-1build2 | amd64 | 6c0b2dd4654db30449754e6e1adf84a34d8a8d7dddeb75f8c9c463ad86645274 | A
-libxcb-dri3-0_1.17.0-2ubuntu1_amd64.deb | libxcb-dri3-0 | 1.17.0-2ubuntu1 | amd64 | 2e0e3916c647a74e081621f385aa296dab3052b2582b0781d9fbea2f15696ef4 | A
-libxcb-glx0_1.17.0-2ubuntu1_amd64.deb | libxcb-glx0 | 1.17.0-2ubuntu1 | amd64 | 857c34618ae56b2577d8d439cf86f80375582626193efaa3229c6767106a1a20 | A
-libxcb-present0_1.17.0-2ubuntu1_amd64.deb | libxcb-present0 | 1.17.0-2ubuntu1 | amd64 | 64f23e7166461758d158220305e93a98fe75c570b68f96303a1c2395a58d5d7d | A
-libxcb-randr0_1.17.0-2ubuntu1_amd64.deb | libxcb-randr0 | 1.17.0-2ubuntu1 | amd64 | 78977a067ec1d59bb4ded1b35835d0ba70e6538aac1ea7edefe413795aaa0d4f | A
-libxcb-shm0_1.17.0-2ubuntu1_amd64.deb | libxcb-shm0 | 1.17.0-2ubuntu1 | amd64 | e70d52936aabd7a90e9cd8af0f54ca050cde244f8382ffc5524ba65117c199c4 | A
-libxcb-sync1_1.17.0-2ubuntu1_amd64.deb | libxcb-sync1 | 1.17.0-2ubuntu1 | amd64 | 8883f5e6badab24cb7487390bf1a888bb714e406f6c799345c33e4b69a8f3112 | A
-libxcb-xfixes0_1.17.0-2ubuntu1_amd64.deb | libxcb-xfixes0 | 1.17.0-2ubuntu1 | amd64 | 00c1381b61e2e5b8a78e89b15818a214a8f44f1fae6a9ddd95e7c61de8ea33d2 | A
+libxau6_1.0.11-1build2_amd64.deb | libxau6 | 1:1.0.11-1build2 | amd64 | 6c0b2dd4654db30449754e6e1adf84a34d8a8d7dddeb75f8c9c463ad86645274 | B
+libxcb-dri3-0_1.17.0-2ubuntu1_amd64.deb | libxcb-dri3-0 | 1.17.0-2ubuntu1 | amd64 | 2e0e3916c647a74e081621f385aa296dab3052b2582b0781d9fbea2f15696ef4 | B
+libxcb-glx0_1.17.0-2ubuntu1_amd64.deb | libxcb-glx0 | 1.17.0-2ubuntu1 | amd64 | 857c34618ae56b2577d8d439cf86f80375582626193efaa3229c6767106a1a20 | B
+libxcb-present0_1.17.0-2ubuntu1_amd64.deb | libxcb-present0 | 1.17.0-2ubuntu1 | amd64 | 64f23e7166461758d158220305e93a98fe75c570b68f96303a1c2395a58d5d7d | B
+libxcb-randr0_1.17.0-2ubuntu1_amd64.deb | libxcb-randr0 | 1.17.0-2ubuntu1 | amd64 | 78977a067ec1d59bb4ded1b35835d0ba70e6538aac1ea7edefe413795aaa0d4f | B
+libxcb-shm0_1.17.0-2ubuntu1_amd64.deb | libxcb-shm0 | 1.17.0-2ubuntu1 | amd64 | e70d52936aabd7a90e9cd8af0f54ca050cde244f8382ffc5524ba65117c199c4 | B
+libxcb-sync1_1.17.0-2ubuntu1_amd64.deb | libxcb-sync1 | 1.17.0-2ubuntu1 | amd64 | 8883f5e6badab24cb7487390bf1a888bb714e406f6c799345c33e4b69a8f3112 | B
+libxcb-xfixes0_1.17.0-2ubuntu1_amd64.deb | libxcb-xfixes0 | 1.17.0-2ubuntu1 | amd64 | 00c1381b61e2e5b8a78e89b15818a214a8f44f1fae6a9ddd95e7c61de8ea33d2 | B
 libxcb1-dev_1.17.0-2ubuntu1_amd64.deb | libxcb1-dev | 1.17.0-2ubuntu1 | amd64 | 9be071fbb1cc4cb311d477456dbe4e1e97ae9b46468cff51b015c76700da9887 | B
-libxcb1_1.17.0-2ubuntu1_amd64.deb | libxcb1 | 1.17.0-2ubuntu1 | amd64 | 069e64705e4a5721a223b4d22643bbaeaa63a6efbb56ebd3d7c4a31c4a26fa1c | A
+libxcb1_1.17.0-2ubuntu1_amd64.deb | libxcb1 | 1.17.0-2ubuntu1 | amd64 | 069e64705e4a5721a223b4d22643bbaeaa63a6efbb56ebd3d7c4a31c4a26fa1c | B
 libxdmcp-dev_1.1.5-2_amd64.deb | libxdmcp-dev | 1:1.1.5-2 | amd64 | 6f80b42ba84d5a55e4d3cf1850954bc2e37af585d47fc85721c8928f3c4c98e6 | B
-libxdmcp6_1.1.5-2_amd64.deb | libxdmcp6 | 1:1.1.5-2 | amd64 | d5d51e67063ff11e81698d8ee90bab5af763dc0a793929f33712bb74e7633768 | A
-libxext6_1.3.4-1build3_amd64.deb | libxext6 | 2:1.3.4-1build3 | amd64 | b867ba9daa9437ba3f18cba9646d9e3db55e5197bd4feb53184b1414c05210ca | A
+libxdmcp6_1.1.5-2_amd64.deb | libxdmcp6 | 1:1.1.5-2 | amd64 | d5d51e67063ff11e81698d8ee90bab5af763dc0a793929f33712bb74e7633768 | B
+libxext6_1.3.4-1build3_amd64.deb | libxext6 | 2:1.3.4-1build3 | amd64 | b867ba9daa9437ba3f18cba9646d9e3db55e5197bd4feb53184b1414c05210ca | B
 libxml2-16_2.15.2+dfsg-0.1ubuntu0.3_amd64.deb | libxml2-16 | 2.15.2+dfsg-0.1ubuntu0.3 | amd64 | e82ce35fd61483c1febf83232e76e54a296a6a78391983a24a904ff640b75c09 | B
-libxshmfence1_1.3.3-1build1_amd64.deb | libxshmfence1 | 1.3.3-1build1 | amd64 | 85d6b6883a35e1a3b78af3dda6bb6b843c06cbead030a00d9de7d31a8077d562 | A
-libxxf86vm1_1.1.4-2_amd64.deb | libxxf86vm1 | 1:1.1.4-2 | amd64 | ff01ae50526c23c6c747e1efd98ee3785a1d28458e865277fc367c565bb94703 | A
+libxshmfence1_1.3.3-1build1_amd64.deb | libxshmfence1 | 1.3.3-1build1 | amd64 | 85d6b6883a35e1a3b78af3dda6bb6b843c06cbead030a00d9de7d31a8077d562 | B
+libxxf86vm1_1.1.4-2_amd64.deb | libxxf86vm1 | 1:1.1.4-2 | amd64 | ff01ae50526c23c6c747e1efd98ee3785a1d28458e865277fc367c565bb94703 | B
 libzstd1_1.5.7+dfsg-3_amd64.deb | libzstd1 | 1.5.7+dfsg-3 | amd64 | 34365d611ccf1f717f90a92fbe52ed96ae1829ab9be363c68a83563322797f8f | B
 mesa-libgallium_26.0.8-1ubuntu0.3_amd64.deb | mesa-libgallium | 26.0.8-1ubuntu0.3 | amd64 | 7f123a545774034793ba3516c5fad0be88de68ad91319a4b220d98b32a289451 | A
 x11proto-dev_2025.1-1_all.deb | x11proto-dev | 2025.1-1 | all | a800a05f9e22011add40fe7deef712be53c721d9e23281bfd07ede46e514dd45 | B
