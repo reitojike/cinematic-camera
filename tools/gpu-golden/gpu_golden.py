@@ -76,18 +76,25 @@ def validate(root):
     if not isinstance(host, dict) or host.get('schema') != 1:
         raise ValueError('Unsupported host schema')
     mesa = host.get('mesaEnabled') is True
+    if mesa:
+        android_fields = ('instrumentationPassed', 'sourceDirty', 'phase', 'appApkSha256', 'testApkSha256')
+        if any(field in host for field in android_fields):
+            raise ValueError('Mesa host contains Android-only fields')
+    elif 'mesaEnabled' in host:
+        raise ValueError('Android host contains mesaEnabled')
     if not mesa and (host.get('instrumentationPassed') is not True or host.get('sourceDirty') is not False or host.get('phase') != 'complete'):
         raise ValueError('Host run did not pass against a clean source')
     for field in ('sourceCommit', 'sourceTree'):
         value = host.get(field)
-        if not isinstance(value, str) or not re.fullmatch('[0-9a-f]{40}', value, re.IGNORECASE if mesa else 0):
+        if not isinstance(value, str) or not re.fullmatch('[0-9a-f]{40}', value):
             raise ValueError(f'Missing {field}')
     if mesa:
         run_id = host.get('runId')
         if not isinstance(run_id, str) or not run_id or run_id != capture.get('runId'):
             raise ValueError('Mesa runId is missing or differs from capture')
         for field in GL_FIELDS:
-            if not host.get(field):
+            value = host.get(field)
+            if not isinstance(value, str) or not value.strip():
                 raise ValueError(f'Missing Mesa identity: {field}')
     else:
         for field in ('appApkSha256', 'testApkSha256'):
@@ -183,7 +190,16 @@ def approve(root, output, approval_ref):
 
 def environment_identity(capture, host):
     if host.get('mesaEnabled') is True:
-        return {'mesa': {field: host[field] for field in GL_FIELDS}}
+        cpu = host.get('cpu')
+        llvmpipe = host.get('llvmpipe')
+        return {'mesa': {
+            **{field: host[field] for field in GL_FIELDS},
+            'cpu': {'modelName': cpu.get('modelName') if isinstance(cpu, dict) else None},
+            'llvmpipe': {
+                field: llvmpipe.get(field) if isinstance(llvmpipe, dict) else None
+                for field in ('LP_NATIVE_VECTOR_WIDTH', 'GALLIUM_OVERRIDE_CPU_CAPS')
+            },
+        }}
     return {'android': capture['android'], 'host': host['environment']}
 
 

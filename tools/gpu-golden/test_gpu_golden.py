@@ -79,7 +79,11 @@ class GoldenToolsTest(unittest.TestCase):
         for field, value, message in (
             ('runId', 'full-2', 'Mesa runId'),
             ('glRenderer', None, 'Missing Mesa identity: glRenderer'),
-            ('mesaEnabled', 1, 'Host run did not pass'),
+            ('glRenderer', ' \t', 'Missing Mesa identity: glRenderer'),
+            ('glRenderer', 1, 'Missing Mesa identity: glRenderer'),
+            ('sourceCommit', 'A' * 40, 'Missing sourceCommit'),
+            ('sourceTree', 'B' * 40, 'Missing sourceTree'),
+            ('mesaEnabled', 1, 'Android host contains mesaEnabled'),
         ):
             with self.subTest(field=field):
                 self.make_mesa_candidate()
@@ -90,6 +94,55 @@ class GoldenToolsTest(unittest.TestCase):
                 self.save()
                 with self.assertRaisesRegex(ValueError, message):
                     g.validate(self.candidate)
+
+    def test_android_candidate_cannot_pose_as_mesa(self):
+        self.capture['runId'] = 'full-1'
+        self.host.update(mesaEnabled=True, runId='full-1')
+        self.host.update(dict.fromkeys(g.GL_FIELDS, 'Mesa'))
+        self.save()
+        with self.assertRaisesRegex(ValueError, 'Mesa host contains Android-only fields'):
+            g.validate(self.candidate)
+
+    def test_mesa_candidate_rejects_android_fields(self):
+        for field in ('instrumentationPassed', 'sourceDirty', 'phase', 'appApkSha256', 'testApkSha256'):
+            with self.subTest(field=field):
+                self.make_mesa_candidate()
+                self.host[field] = None
+                self.save()
+                with self.assertRaisesRegex(ValueError, 'Mesa host contains Android-only fields'):
+                    g.validate(self.candidate)
+
+    def test_android_candidate_rejects_mesa_enabled_key(self):
+        for value in (False, 1, None):
+            with self.subTest(value=value):
+                self.host['mesaEnabled'] = value
+                self.save()
+                with self.assertRaisesRegex(ValueError, 'Android host contains mesaEnabled'):
+                    g.validate(self.candidate)
+
+    def test_mesa_comparison_tracks_cpu_and_llvmpipe(self):
+        for index, (before, after, changed) in enumerate((
+            ({'cpu': {'modelName': 'CPU A'}}, {'cpu': {'modelName': 'CPU B'}}, True),
+            ({'llvmpipe': {'LP_NATIVE_VECTOR_WIDTH': '128'}},
+             {'llvmpipe': {'LP_NATIVE_VECTOR_WIDTH': '256'}}, True),
+            ({'llvmpipe': {'GALLIUM_OVERRIDE_CPU_CAPS': 'sse2'}},
+             {'llvmpipe': {'GALLIUM_OVERRIDE_CPU_CAPS': 'avx'}}, True),
+            ({}, {}, False),
+            ({}, {'cpu': {}, 'llvmpipe': {}}, False),
+        )):
+            with self.subTest(before=before, after=after):
+                self.make_mesa_candidate()
+                mesa_host = self.host.copy()
+                self.host.update(before)
+                self.save()
+                baseline = self.root / f'baseline-{index}'
+                g.approve(self.candidate, baseline, 'unit-test-only owner approval placeholder')
+                self.host = {**mesa_host, **after}
+                self.save()
+                output = self.root / f'result-{index}'
+                self.assertTrue(g.compare(baseline, self.candidate, output))
+                result = g.load_json(output / 'comparison.json')
+                self.assertEqual(result['environmentChanged'], changed)
 
     def test_valid_candidate_and_unchanged_comparison(self):
         g.validate(self.candidate)

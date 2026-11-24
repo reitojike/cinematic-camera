@@ -63,6 +63,15 @@ python tools/gpu-golden/gpu_golden.py compare <承認済みbaseline> <次のcand
 
 比較では破損・欠落・未承認の基準・条件変更はHOLD。環境変更時の採否は下記の運用に従う。画像差は同寸法の基準/候補/差分32倍PNGと座標・最大差・p99.9を残す。承認のない基準はコミットしない。
 
+### Mesa 候補の比較と登録
+
+`compare` は Mesa の候補も受け付ける。`host.json` には `schema: 1`、`mesaEnabled: true`、`capture.json` と一致する空でない文字列の `runId` が必要。
+`sourceCommit` と `sourceTree` は各40桁の小文字16進数、GL の4項目（`glVendor`、`glRenderer`、`glVersion`、`glslVersion`）は空白だけではない空でない文字列とする。
+Android 用の項目（`instrumentationPassed`、`sourceDirty`、`phase`、`appApkSha256`、`testApkSha256`）は含めない。
+
+同じ形式の `host.json` はローカルでも作成できる。ホストの自己申告だけではクリーンなソースから採取した証明にはならず、`compare` は候補の由来を認証しない。運用では CI の成果物から取得した Mesa 候補に限って使用する。
+`approve` で登録すると、`approval.json` の `approvedFiles` に `capture.json` と `host.json` のハッシュが記録され、承認が候補のファイルに結び付く。
+
 ## ツール自身の検査
 
 ```text
