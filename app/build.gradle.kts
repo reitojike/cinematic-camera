@@ -84,6 +84,17 @@ android {
                 if (it.name != "testDebugUnitTest") return@all
                 it.systemProperty("gpu.mesa.assetRoot", file("src/main/assets/gpu").absolutePath)
                 it.systemProperty("gpu.mesa.testAssetRoot", file("src/androidTest/assets/gpu").absolutePath)
+                it.systemProperty(
+                    "gpu.mesa.goldenBaseline",
+                    rootProject.file("docs/gpu-golden-baselines/golden-20261112-131916-51b691ad/capture.json").absolutePath,
+                )
+                val test = it
+                listOf("Golden", "GoldenCases", "GoldenRunId", "GoldenDir", "GoldenBaseCommit", "GoldenBaseTree")
+                    .forEach { suffix ->
+                        providers.gradleProperty("cinematicGpuMesa$suffix").orNull?.let { value ->
+                            test.systemProperty("gpu.mesa.${suffix.replaceFirstChar { it.lowercaseChar() }}", value)
+                        }
+                    }
                 it.maxHeapSize = "3g"
                 it.maxParallelForks = 1
                 it.testLogging { events("passed", "failed", "skipped"); showStandardStreams = true }

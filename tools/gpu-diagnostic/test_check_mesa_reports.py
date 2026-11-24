@@ -1,8 +1,11 @@
+import gzip
+import hashlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
 import xml.etree.ElementTree as ET
-from check_mesa_reports import REQUIRED, check_reports
+from check_mesa_reports import GOLDEN_CASE, REQUIRED, check_golden, check_reports
 
 
 class MesaReportsTest(unittest.TestCase):
@@ -27,6 +30,16 @@ class MesaReportsTest(unittest.TestCase):
         totals, seconds = check_reports(self.directory)
         self.assertEqual(11, totals['tests'])
         self.assertEqual(6.0, seconds)
+
+    def test_catalog_with_harness_passes(self):
+        classname, name = GOLDEN_CASE
+        root = ET.Element('testsuite', name=classname, tests='1',
+                          failures='0', errors='0', skipped='0', time='1')
+        ET.SubElement(root, 'testcase', classname=classname, name=name, time='1')
+        ET.ElementTree(root).write(self.directory / 'TEST-golden.xml')
+        totals, seconds = check_reports(self.directory)
+        self.assertEqual(12, totals['tests'])
+        self.assertEqual(7.0, seconds)
 
     def test_missing_suite_fails(self):
         (self.directory / 'TEST-0.xml').unlink()
@@ -79,6 +92,91 @@ class MesaReportsTest(unittest.TestCase):
             self.mutate(lambda root: root.set('time', value))
             with self.assertRaisesRegex(ValueError, 'Invalid JUnit time'):
                 check_reports(self.directory)
+
+
+class MesaGoldenReportsTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.directory = Path(self.temp.name)
+        self.host = self.directory / 'host.json'
+        self.host.write_text(json.dumps({'cpu': {'modelName': 'unknown', 'flags': []}}), encoding='utf-8')
+
+    def candidate(self, status, indices):
+        rgb = b'\x00\x01\x02'
+        compressed = gzip.compress(rgb)
+        cases = []
+        for index in indices:
+            case_id = f'c{index:03d}'
+            group = 'small' if index <= 58 else 'preview' if index <= 76 else 'export'
+            path = self.directory / f'{case_id}.rgb8.gz'
+            path.write_bytes(compressed)
+            record = dict(id=case_id, group=group, file=path.name,
+                          rgbSha256=hashlib.sha256(rgb).hexdigest(),
+                          fileSha256=hashlib.sha256(compressed).hexdigest(),
+                          compressedBytes=len(compressed), bandRowsPassed=[])
+            if group == 'export':
+                record['bandRowsPassed'] = [64, 256]
+                for rows in (64, 256):
+                    record[f'bands{rows}'] = dict(changedPixels=0, maxDelta=0, firstChangedXY='')
+            cases.append(record)
+        return dict(status=status, caseCount=len(cases), cases=cases)
+
+    def check_candidate(self, capture, observed=frozenset({GOLDEN_CASE})):
+        (self.directory / 'capture.json').write_text(json.dumps(capture), encoding='utf-8')
+        check_golden(self.directory, observed)
+
+    def test_complete_candidate_passes(self):
+        self.check_candidate(self.candidate('complete', range(1, 91)))
+
+    def test_partial_candidate_passes(self):
+        self.check_candidate(self.candidate('partial', [1, 76, 90]))
+
+    def test_missing_complete_case_fails(self):
+        with self.assertRaisesRegex(ValueError, 'Missing golden IDs.*c090'):
+            self.check_candidate(self.candidate('complete', range(1, 90)))
+
+    def test_empty_partial_fails(self):
+        with self.assertRaisesRegex(ValueError, 'at least one golden case'):
+            self.check_candidate(self.candidate('partial', []))
+
+    def test_unknown_id_fails(self):
+        with self.assertRaisesRegex(ValueError, 'Unexpected golden ID.*c091'):
+            self.check_candidate(self.candidate('partial', [91]))
+
+    def test_duplicate_id_fails(self):
+        with self.assertRaisesRegex(ValueError, 'Duplicate golden ID.*c001'):
+            self.check_candidate(self.candidate('partial', [1, 1]))
+
+    def test_file_sha256_mismatch_fails(self):
+        capture = self.candidate('partial', [1])
+        capture['cases'][0]['fileSha256'] = '0' * 64
+        with self.assertRaisesRegex(ValueError, 'fileSha256 mismatch'):
+            self.check_candidate(capture)
+
+    def test_missing_band_record_fails(self):
+        capture = self.candidate('partial', [90])
+        del capture['cases'][0]['bands256']
+        with self.assertRaisesRegex(ValueError, 'missing bands256'):
+            self.check_candidate(capture)
+
+    def test_missing_host_fails(self):
+        self.host.unlink()
+        with self.assertRaisesRegex(ValueError, 'Missing golden host.json'):
+            self.check_candidate(self.candidate('partial', [1]))
+
+    def test_missing_harness_fails(self):
+        with self.assertRaisesRegex(ValueError, 'Missing passing Mesa harness'):
+            self.check_candidate(self.candidate('partial', [1]), observed=set())
+
+    def test_missing_host_cpu_fails(self):
+        self.host.write_text('{}', encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'requires a cpu object with a modelName string'):
+            self.check_candidate(self.candidate('partial', [1]))
+
+    def test_incomplete_candidate_fails(self):
+        with self.assertRaisesRegex(ValueError, 'Invalid golden status'):
+            self.check_candidate(self.candidate('incomplete', [1]))
 
 
 if __name__ == '__main__':
