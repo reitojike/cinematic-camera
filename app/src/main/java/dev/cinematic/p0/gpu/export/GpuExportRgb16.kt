@@ -1,6 +1,6 @@
 package dev.cinematic.p0.gpu.export
 
-import dev.cinematic.p0.gpu.EglContexts
+import dev.cinematic.p0.gpu.GpuExecutionContext
 import dev.cinematic.p0.gpu.FragmentPass
 import dev.cinematic.p0.gpu.GpuTexture
 import dev.cinematic.p0.gpu.TextureInput
@@ -19,7 +19,7 @@ internal object GpuExportRgb16 {
         return bits
     }
 
-    fun decode(egl: EglContexts, rgb16: GpuTexture, lut: GpuTexture, output: GpuTexture) {
+    fun decode(egl: GpuExecutionContext, rgb16: GpuTexture, lut: GpuTexture, output: GpuTexture) {
         egl.passes().run(FragmentPass(
             egl.shaders().fragment("export/rgb16_to_rgba32f.frag"),
             listOf(TextureInput("s_rgb16", rgb16, 0), TextureInput("s_lut", lut, 1)),

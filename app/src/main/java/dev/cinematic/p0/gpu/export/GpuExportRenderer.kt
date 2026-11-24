@@ -7,7 +7,6 @@ import dev.cinematic.p0.gpu.constants.StageClearCharacterV1
 import dev.cinematic.p0.gpu.constants.StageClearOrtonV1
 import dev.cinematic.p0.gpu.constants.StageClearMistV1
 import dev.cinematic.p0.gpu.constants.StageClearGlowV1
-import android.opengl.GLES32
 import dev.cinematic.p0.gpu.*
 import dev.cinematic.p0.gpu.analysis.GpuAnalysis
 import dev.cinematic.p0.gpu.diag.GpuStageTap
@@ -25,17 +24,19 @@ import kotlin.math.pow
 import kotlin.math.round
 
 /** GL-thread-only, bounded export. No full-size GPU image or intermediate disk raster.
- * EGL and ledger are borrowed. Every render owns and releases all of its fields/textures.
+ * The execution context and ledger are borrowed. Every render owns and releases all of its fields/textures.
  * FINAL bands contain borrowed, opaque 0xffRRGGBB pixels in output row order.
  */
 internal class GpuExportRenderer(
-    private val egl: EglContexts,
+    private val egl: GpuExecutionContext,
     private val ledger: GpuMemoryLedger = GpuMemoryLedger(GpuMemoryLedger.EXPORT_BUDGET),
     private val bandHeight: Int = GpuExportBands.HEIGHT,
     private val reuseTextures: Boolean = true,
 ) {
     internal data class Result(val toneQuantiles: DoubleArray, val nearWhiteCount: Long,
         val mistAutoStrength: Double, val peakTextureBytes: Long, val boundaryNanos: Map<String, Long>)
+    private val commands = egl.passOperations
+
     private var rendering = false
 
     fun render(input: OriginalRaster, externalEv: Double, warmthGains: DoubleArray, strength: Double,
@@ -266,8 +267,8 @@ internal class GpuExportRenderer(
             private fun expanded(field: GpuExportField) = own(field.band(origin, rows))
             fun profile(): GpuTexture {
                 val profile = draw("r7/profile.frag", listOf("s_input" to inputTexture)) { program ->
-                    GLES32.glUniform3f(location(program, "u_warmthGain"), warmth[0].toFloat(), warmth[1].toFloat(), warmth[2].toFloat())
-                    GLES32.glUniform1i(location(program, "u_warmthOnly"), 0)
+                    commands.uniform3f(location(program, "u_warmthGain"), warmth[0].toFloat(), warmth[1].toFloat(), warmth[2].toFloat())
+                    commands.uniform1i(location(program, "u_warmthOnly"), 0)
                 }
                 release(inputTexture)
                 return profile
@@ -275,15 +276,13 @@ internal class GpuExportRenderer(
             fun base(): GpuTexture {
                 val profile = profile(); val smooth = expanded(tone)
                 val toned = draw("r7/tone_apply.frag", listOf("s_input" to profile, "s_smoothLogLuma" to smooth)) { program ->
-                    GLES32.glUniform2f(location(program, "u_quantiles"), quantiles[0].toFloat(), quantiles[1].toFloat())
+                    commands.uniform2f(location(program, "u_quantiles"), quantiles[0].toFloat(), quantiles[1].toFloat())
                 }
                 release(profile); release(smooth)
                 val roi = own(GpuTexture.create(egl, ledger, width, rows, GpuTexture.Format.R32F, pool))
-                GLES32.glBindFramebuffer(GLES32.GL_FRAMEBUFFER, roi.framebufferId)
-                GLES32.glDisable(GLES32.GL_SCISSOR_TEST); GLES32.glColorMask(true, true, true, true)
-                GLES32.glClearBufferfv(GLES32.GL_COLOR, 0, floatArrayOf(0f, 0f, 0f, 0f), 0)
+                commands.clearColorToZero(roi.framebufferId)
                 val foundation = draw("r7/foundation.frag", listOf("s_input" to toned, "s_roi" to roi)) { program ->
-                    GLES32.glUniform1f(location(program, "u_gain"), gain)
+                    commands.uniform1f(location(program, "u_gain"), gain)
                 }
                 release(toned); release(roi)
                 val result = draw("r7/finish.frag", listOf("s_input" to foundation)); release(foundation)
@@ -310,15 +309,15 @@ internal class GpuExportRenderer(
                     soft = expanded(diffusion)
                     draw("look/glow_diffusion.frag", inputs + ("s_soft" to soft)) { program ->
                         glowUniforms(program)
-                        GLES32.glUniform1f(location(program, "u_diffusionAmount"), (StageClearGlowV1.DIFFUSION * strength).toFloat())
+                        commands.uniform1f(location(program, "u_diffusionAmount"), (StageClearGlowV1.DIFFUSION * strength).toFloat())
                     }
                 } else draw("look/glow_compose.frag", inputs, uniforms = ::glowUniforms)
                 release(base); release(bloomBand); release(halo); soft?.let(::release)
                 return result
             }
             private fun glowUniforms(program: Int) {
-                GLES32.glUniform1f(location(program, "u_bloomAmount"), (StageClearGlowV1.BLOOM * strength).toFloat())
-                GLES32.glUniform1f(location(program, "u_halationAmount"), (StageClearGlowV1.HALATION * strength).toFloat())
+                commands.uniform1f(location(program, "u_bloomAmount"), (StageClearGlowV1.BLOOM * strength).toFloat())
+                commands.uniform1f(location(program, "u_halationAmount"), (StageClearGlowV1.HALATION * strength).toFloat())
             }
             fun misted(): GpuTexture {
                 val glowed = glow()
@@ -331,7 +330,7 @@ internal class GpuExportRenderer(
                 val result = draw("look/mist_compose.frag", listOf("s_glowed" to glowed, "s_skinWeight" to skinWeight(),
                     "s_halo0" to halos[0], "s_halo1" to halos[1], "s_weights0" to identity.values,
                     "s_first0" to identity.first, "s_weights1" to identity.values, "s_first1" to identity.first)) { program ->
-                    GLES32.glUniform1f(location(program, "u_amount"), amount.toFloat())
+                    commands.uniform1f(location(program, "u_amount"), amount.toFloat())
                 }
                 release(glowed); halos.forEach(::release)
                 return result
@@ -343,21 +342,21 @@ internal class GpuExportRenderer(
                     val soft = expanded(orton)
                     val mixed = draw("look/orton_mix.frag", listOf("s_mist" to current, "s_soft" to soft)); release(soft)
                     val protected = draw("look/orton_protect.frag", listOf("s_mist" to current, "s_mixed" to mixed,
-                        "s_skinWeight" to skinWeight())) { program -> GLES32.glUniform1f(location(program, "u_amount"), amount.toFloat()) }
+                        "s_skinWeight" to skinWeight())) { program -> commands.uniform1f(location(program, "u_amount"), amount.toFloat()) }
                     release(mixed); release(current); current = protected
                 }
                 clippedSkin?.let(::release); clippedSkin = null
                 val character = draw("look/character.frag", listOf("s_orton" to current)) { program ->
                     val aspect = width.toDouble() / height
-                    GLES32.glUniform2i(location(program, "u_imageSize"), width, height)
-                    GLES32.glUniform2i(location(program, "u_origin"), 0, origin)
-                    GLES32.glUniform2f(location(program, "u_aspect"), min(aspect, 1.0).toFloat(), max(aspect, 1.0).toFloat())
-                    GLES32.glUniform1f(location(program, "u_vignetteAmount"), (StageClearCharacterV1.VIGNETTE * strength).toFloat())
-                    GLES32.glUniform1f(location(program, "u_vibranceAmount"), (StageClearCharacterV1.VIBRANCE * strength).toFloat())
+                    commands.uniform2i(location(program, "u_imageSize"), width, height)
+                    commands.uniform2i(location(program, "u_origin"), 0, origin)
+                    commands.uniform2f(location(program, "u_aspect"), min(aspect, 1.0).toFloat(), max(aspect, 1.0).toFloat())
+                    commands.uniform1f(location(program, "u_vignetteAmount"), (StageClearCharacterV1.VIGNETTE * strength).toFloat())
+                    commands.uniform1f(location(program, "u_vibranceAmount"), (StageClearCharacterV1.VIBRANCE * strength).toFloat())
                 }
                 release(current)
                 val cap = draw("look/skin_chroma_cap.frag", listOf("s_character" to character, "s_faceMask" to character)) {
-                    GLES32.glUniform1i(location(it, "u_hasFaceMask"), 0)
+                    commands.uniform1i(location(it, "u_hasFaceMask"), 0)
                 }
                 release(character)
                 val shoulder = draw("look/shoulder.frag", listOf("s_skinCap" to cap)); release(cap)
@@ -384,7 +383,7 @@ internal class GpuExportRenderer(
         }
         failure?.let { throw it }
     }
-    private fun location(program: Int, name: String) = GLES32.glGetUniformLocation(program, name).also {
+    private fun location(program: Int, name: String) = egl.shaders().uncachedUniformLocation(program, name).also {
         check(it >= 0) { "Missing export uniform $name" }
     }
 }

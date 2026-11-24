@@ -60,6 +60,10 @@ internal class ShaderLibrary(
         requireOpen()
         return checkNotNull(linkedPrograms[program]) { "Program is not owned by this shader library" }.uniformLocation(name)
     }
+    /** Export pass callbacks retain their per-pass uniform queries. */
+    fun uncachedUniformLocation(program: Int, name: String): Int =
+        operations.uniformLocation(program, name)
+
     private fun cached(compute: Boolean, path: String, build: () -> GpuProgram): GpuProgram {
         requireOpen()
         return programs.getOrPut(compute to path, build).also { it.id }
