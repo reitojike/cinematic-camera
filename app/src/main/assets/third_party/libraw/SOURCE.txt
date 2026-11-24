@@ -11,16 +11,11 @@ No LibRaw source files are patched. CDDL-1.0 is selected for this distribution.
 Build recipe: app/src/main/cpp/CMakeLists.txt in the same repository.
 LibRaw is linked STATIC into libcinematic_dng.so (JNI SHARED), not a shared libraw.so.
 NDK r29's C++ runtime is also linked statically (-static-libstdc++).
-LibRaw is built with OpenMP (-fopenmp) and without LIBRAW_NOTHREADS.
-The JNI library links libomp statically (-fopenmp -fstatic-openmp).
 LibRaw COPYRIGHT, CDDL, DCB BSD, Adobe MIT and the installed NDK r29 toolchain
 NOTICE accompany this file. NDK NOTICE covers more than just the linked runtime.
-NDK29-toolchain-NOTICE.txt includes the OpenMP Runtime license text.
-The final determination of any additional NOTICE requirements is pending.
 Built without external DNG SDK, JPEG, LCMS, RawSpeed, X3FTOOLS or demosaic packs.
-After building, inspect each ABI's libcinematic_dng.so with llvm-readelf -d.
-Verify that DT_NEEDED still lists only the Android-provided libz.so, libm.so,
-libdl.so and libc.so, with no libomp.so entry.
+Runtime DT_NEEDED: Android-provided libz.so, libm.so, libdl.so and libc.so.
+Those system libraries are not packaged in this APK.
 Rebuild: JDK 25, Android SDK 37.0/build-tools 36.0.0, NDK 29.0.14206865,
 CMake 3.22.1, Gradle wrapper 9.8.2; run :app:assembleDebug.
 This reproduces the build process, not a promise of byte-identical signed APKs.

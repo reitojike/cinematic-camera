@@ -1,6 +1,5 @@
 #include <jni.h>
 #include <libraw/libraw.h>
-#include <omp.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <algorithm>
@@ -39,9 +38,9 @@ namespace {
 #endif
 
 void applyDecodeOpenMpSettings(int threadCount) {
-    omp_set_dynamic(0);
-    omp_set_num_threads(threadCount);
-    kmp_set_blocktime(0);
+    // Control build (ahd-control): the AHD/OpenMP changes are removed, so the
+    // configured thread count is recorded but never applied.
+    (void)threadCount;
 }
 
 #ifdef CINEMATIC_ENABLE_DECODE_PARITY
@@ -56,7 +55,7 @@ thread_local DecodeThreadOverride nextDecodeOverride;
 
 struct RestoreDecodeThreads {
     int threads;
-    ~RestoreDecodeThreads() { if (threads > 0) omp_set_num_threads(threads); }
+    ~RestoreDecodeThreads() { /* Control build: no OpenMP setting to restore. */ }
 };
 
 std::string trimConfigField(const std::string& text) {
@@ -405,7 +404,8 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
 #if defined(CINEMATIC_ENABLE_DECODE_TIMING) || defined(CINEMATIC_ENABLE_DECODE_PARITY)
     applyDecodeOpenMpSettings(decodeConfig.threads);
     if (original && !original->isHalfPreview()) {
-        decodeConfig.blocktime = kmp_get_blocktime();
+        // Control build: no OpenMP runtime, so blocktime stays at its default
+        // and is recorded as UNAVAILABLE.
         original->setDecodeConfig(decodeConfig);
     }
 #else

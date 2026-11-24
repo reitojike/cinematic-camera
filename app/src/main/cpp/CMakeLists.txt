@@ -14,11 +14,9 @@ file(GLOB_RECURSE libraw_sources CONFIGURE_DEPENDS "${libraw_SOURCE_DIR}/src/*.c
 add_library(raw STATIC ${libraw_sources})
 set_target_properties(raw PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(raw PUBLIC "${libraw_SOURCE_DIR}")
-target_compile_definitions(raw PRIVATE USE_ZLIB)
-target_compile_options(raw PRIVATE -fopenmp)
+target_compile_definitions(raw PRIVATE LIBRAW_NOTHREADS USE_ZLIB)
 target_compile_features(raw PUBLIC cxx_std_17)
-# Android zlib and OpenMP (libomp linked statically into the JNI library).
-# No JPEG/LCMS/RawSpeed/DNG SDK/GPL demosaic packs.
+# Android zlib only. No JPEG/LCMS/RawSpeed/DNG SDK/GPL demosaic packs/OpenMP.
 target_link_libraries(raw PUBLIC z)
 
 add_library(cinematic_dng SHARED dng_decoder.cpp w1_trial.cpp as_shot_xy.cpp original_raster_sink.cpp)
@@ -55,8 +53,3 @@ endif()
 target_link_options(cinematic_dng PRIVATE "-Wl,--version-script=${dng_exports}")
 set_property(TARGET cinematic_dng APPEND PROPERTY LINK_DEPENDS "${dng_exports}")
 target_link_libraries(cinematic_dng PRIVATE raw)
-
-set(CINEMATIC_DECODE_THREADS 4 CACHE STRING "OpenMP thread count for DNG decoding")
-target_compile_definitions(cinematic_dng PRIVATE CINEMATIC_DECODE_THREADS=${CINEMATIC_DECODE_THREADS})
-target_compile_options(cinematic_dng PRIVATE -fopenmp)
-target_link_options(cinematic_dng PRIVATE -fopenmp -static-openmp)
