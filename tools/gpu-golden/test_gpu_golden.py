@@ -51,6 +51,46 @@ class GoldenToolsTest(unittest.TestCase):
         g.approve(self.candidate, output, 'unit-test-only owner approval placeholder')
         return output
 
+    def make_mesa_candidate(self):
+        self.capture.pop('android', None)
+        self.capture['runId'] = 'full-1'
+        self.host = {'schema': 1, 'mesaEnabled': True, 'runId': 'full-1',
+                     'sourceCommit': 'a' * 40, 'sourceTree': 'b' * 40,
+                     'glVendor': 'Mesa', 'glRenderer': 'llvmpipe (LLVM 21.1.8, 256 bits)',
+                     'glVersion': '4.5', 'glslVersion': '4.50', 'osName': 'Linux'}
+        self.save()
+
+    def test_valid_mesa_candidate(self):
+        self.make_mesa_candidate()
+        self.assertEqual(g.validate(self.candidate), (self.capture, self.host))
+
+    def test_mesa_comparison_with_approved_android_baseline(self):
+        baseline = self.approved()
+        self.make_mesa_candidate()
+        output = self.root / 'result'
+        self.assertTrue(g.compare(baseline, self.candidate, output))
+        result = g.load_json(output / 'comparison.json')
+        self.assertEqual(result['status'], 'pass')
+        self.assertTrue(result['environmentChanged'])
+        self.assertEqual(result['baselineEnvironment']['android']['fingerprint'], 'test')
+        self.assertEqual(result['candidateEnvironment']['mesa']['glRenderer'], self.host['glRenderer'])
+
+    def test_invalid_mesa_host_is_rejected(self):
+        for field, value, message in (
+            ('runId', 'full-2', 'Mesa runId'),
+            ('glRenderer', None, 'Missing Mesa identity: glRenderer'),
+            ('mesaEnabled', 1, 'Host run did not pass'),
+        ):
+            with self.subTest(field=field):
+                self.make_mesa_candidate()
+                if value is None:
+                    del self.host[field]
+                else:
+                    self.host[field] = value
+                self.save()
+                with self.assertRaisesRegex(ValueError, message):
+                    g.validate(self.candidate)
+
     def test_valid_candidate_and_unchanged_comparison(self):
         g.validate(self.candidate)
         self.assertTrue(g.compare(self.approved(), self.candidate, self.root / 'result'))
