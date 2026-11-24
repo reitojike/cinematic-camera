@@ -264,12 +264,15 @@ jobs:
           export LC_ALL=C
           manifest="tools/gpu-mesa/mesa-debs-manifest.txt"
           cache="$RUNNER_TEMP/mesa-debs"
+          # Verification covers all 69 stored files: it confirms the identity of the
+          # release contents themselves. Installation (next step) covers only the
+          # dependency closure recorded in the manifest.
           # The downloaded SHA256SUMS must itself match the digest recorded in the manifest.
           expected_sums_sha="$(awk -F': ' '$1 == "sha256sums-sha256" { print $2 }' "$manifest")"
           actual_sums_sha="$(sha256sum "$cache/SHA256SUMS" | awk '{ print $1 }')"
           [[ "$actual_sums_sha" == "$expected_sums_sha" ]]
-          # Manifest data rows (filename | package | version | arch | sha256 | class) as TSV.
-          awk -F' \\| ' '!/^#/ && NF == 6 { print $1"\t"$2"\t"$3"\t"$4"\t"$5"\t"$6 }' "$manifest" > "$RUNNER_TEMP/mesa-manifest.tsv"
+          # Manifest data rows (filename | package | version | arch | sha256 | class | install) as TSV.
+          awk -F' \| ' '!/^#/ && NF == 7 { print $1"\t"$2"\t"$3"\t"$4"\t"$5"\t"$6"\t"$7 }' "$manifest" > "$RUNNER_TEMP/mesa-manifest.tsv"
           [[ "$(wc -l < "$RUNNER_TEMP/mesa-manifest.tsv")" -eq 69 ]]
           # Three-way set equality: manifest rows, SHA256SUMS entries, downloaded .deb files.
           cut -f1 "$RUNNER_TEMP/mesa-manifest.tsv" | sort > "$RUNNER_TEMP/mesa-expected-files.txt"
@@ -282,7 +285,7 @@ jobs:
           architecture="$(dpkg --print-architecture)"
           packages="$RUNNER_TEMP/mesa-package-names.txt"
           : > "$packages"
-          while IFS=$'\t' read -r file package version arch sha class; do
+          while IFS=$'\t' read -r file package version arch sha class install; do
             deb="$cache/$file"
             test -f "$deb" && test ! -L "$deb"
             [[ "$(sha256sum "$deb" | awk '{ print $1 }')" == "$sha" ]]
@@ -297,22 +300,33 @@ jobs:
         run: |
           set -euo pipefail
           export LC_ALL=C
+          manifest="tools/gpu-mesa/mesa-debs-manifest.txt"
           cache="$RUNNER_TEMP/mesa-debs"
           packages="$RUNNER_TEMP/mesa-package-names.txt"
           record="$GITHUB_WORKSPACE/mesa-install-record"
           mkdir -p "$record"
-          for package in libegl1-mesa-dev libgles2-mesa-dev libgl1-mesa-dri; do
+          # The install seeds are the runtime packages the LWJGL tests load:
+          # versioned library names (libEGL.so.1, libGLESv2.so.2) only, so the -dev
+          # packages (headers, unversioned .so links) are never needed.
+          for package in libegl1 libgles2 libegl-mesa0 libgl1-mesa-dri; do
             grep -Fx "$package" "$packages"
           done
+          # Installation targets are the rows marked install=yes in the manifest:
+          # the dependency closure of the seeds, computed inside the stored 69.
+          # Rows marked install=no (the -dev packages and their subtree) are
+          # verified above but never installed.
+          awk -F'\t' '$7 == "yes"' "$RUNNER_TEMP/mesa-manifest.tsv" > "$RUNNER_TEMP/mesa-install-targets.tsv"
+          expected_install="$(awk -F': ' '$1 == "install-count" { print $2 }' "$manifest")"
+          [[ "$(wc -l < "$RUNNER_TEMP/mesa-install-targets.tsv")" -eq "$expected_install" ]]
           # Decide per package, by the class recorded in the manifest.
           # Class A (rendering-determining): always install the stored .deb.
-          # Class B (OS foundation): if the runner already has the same or a newer
-          # version, keep the runner's version and do not install the stored .deb.
-          # Install the stored .deb only when the package is missing or older.
+          # Class B: if the runner already has the same or a newer version, keep
+          # the runner's version and do not install the stored .deb. Install the
+          # stored .deb only when the package is missing or older.
           # A package is never downgraded. The decision is recorded per package.
           : > "$record/dpkg-before.txt"
           install_files=()
-          while IFS=$'\t' read -r file package version arch sha class; do
+          while IFS=$'\t' read -r file package version arch sha class install; do
             installed="$(dpkg-query -W -f='${Version}' "$package" 2>/dev/null || true)"
             [[ -n "$installed" ]] || installed="not-installed"
             if [[ "$class" == "B" && "$installed" != "not-installed" ]] \
@@ -324,34 +338,50 @@ jobs:
             fi
             echo "$package class=$class manifest=$version before=$installed decision=$decision" >> "$record/dpkg-before.txt"
             echo "$decision" > "$RUNNER_TEMP/mesa-decision-$package.txt"
-          done < "$RUNNER_TEMP/mesa-manifest.tsv"
-          # Exact-version groups: some packages are tied together by (=) version
-          # requirements in their .deb control data (for example libc6 with
-          # libc-gconv-modules-extra, libgcc-s1 / libstdc++6 with gcc-16-base, the
-          # libglvnd family, and the libx11 / libxcb -dev pairs). If the decisions
-          # split inside such a group (some members install the stored .deb while
-          # others keep the runner's version), the installed versions would diverge
-          # and break the (=) ties. Derive the groups mechanically from the
-          # downloaded .deb files and stop here, before installing anything, if a
-          # group is split. Groups are never merged into a single install decision:
-          # a foundation library is never pulled back to an older version just to
-          # match the rest of its group.
-          python3 - "$cache" "$RUNNER_TEMP" <<'PYEOF' | tee "$record/dpkg-groups.txt"
+          done < "$RUNNER_TEMP/mesa-install-targets.tsv"
+          # Exact-version relations, checked inside the install targets only:
+          # some packages require another package at exactly one version in
+          # their .deb control data (for example libc6 requires
+          # libc-gconv-modules-extra, libgcc-s1 / libstdc++6 require
+          # gcc-16-base, libegl1 / libgles2 require libglvnd0, and libx11-xcb1
+          # requires libx11-6). The check is done on the versions in effect
+          # after installation, not on the decisions themselves: a package
+          # that installs the stored .deb is predicted at the stored version,
+          # and a package that keeps the runner's version is predicted at the
+          # runner's version. Decisions may differ inside a relation as long
+          # as the resulting versions agree (for example libegl1 installs the
+          # stored .deb while libglvnd0 keeps the runner's copy of the same
+          # version). Derive the relations mechanically from the downloaded
+          # .deb files and stop here, before installing anything, if a
+          # required version does not match the predicted version of the
+          # package it names. Every relation and its result is recorded
+          # either way.
+          python3 - "$cache" "$RUNNER_TEMP" "$record" <<'PYEOF' | tee "$record/dpkg-groups.txt"
           import re, subprocess, sys
-          from collections import defaultdict
-          cache, temp = sys.argv[1], sys.argv[2]
+          cache, temp, record = sys.argv[1], sys.argv[2], sys.argv[3]
           rows = []
-          with open(f"{temp}/mesa-manifest.tsv") as fh:
+          with open(f"{temp}/mesa-install-targets.tsv") as fh:
               for line in fh:
                   rows.append(line.rstrip("\n").split("\t"))
           known = {r[1] for r in rows}
-          parent = {p: p for p in known}
-          def find(x):
-              while parent[x] != x:
-                  parent[x] = parent[parent[x]]
-                  x = parent[x]
-              return x
-          edges = []
+          # Decisions and the runner's current versions, as recorded by the
+          # shell loop above in dpkg-before.txt.
+          info = {}
+          with open(f"{record}/dpkg-before.txt") as fh:
+              for line in fh:
+                  fields = dict(tok.split("=", 1) for tok in line.split()[1:])
+                  info[line.split()[0]] = fields
+          # Predicted version after installation: the stored version for
+          # install-stored, the runner's current version for use-runner.
+          predicted = {}
+          for _, package, version, *_ in rows:
+              if info[package]["decision"] == "install-stored":
+                  predicted[package] = version
+              else:
+                  predicted[package] = info[package]["before"]
+          # Exact-version (=) relations between install targets, derived from
+          # the downloaded .deb control data.
+          relations = set()
           for file, package, *_ in rows:
               out = subprocess.run(["dpkg-deb", "-f", f"{cache}/{file}", "Depends", "Pre-Depends"],
                                    capture_output=True, text=True).stdout
@@ -359,29 +389,26 @@ jobs:
               for group in deps.split(","):
                   for alt in group.split("|"):
                       m = re.match(r"\s*([A-Za-z0-9.+-]+)\s*\(([^)]*)\)", alt)
-                      if m and m.group(1) in known and m.group(2).strip().startswith("="):
-                          edges.append((package, m.group(1)))
-                          ra, rb = find(package), find(m.group(1))
-                          if ra != rb:
-                              parent[ra] = rb
-          members = defaultdict(set)
-          for a, b in edges:
-              members[find(a)].update((a, b))
-          decisions = {}
-          for _, package, *_ in rows:
-              with open(f"{temp}/mesa-decision-{package}.txt") as fh:
-                  decisions[package] = fh.read().strip()
-          split = False
-          for root in sorted(members, key=lambda r: sorted(members[r])):
-              mem = sorted(members[root])
-              print("group: " + ", ".join(f"{p}={decisions[p]}" for p in mem))
-              if len({decisions[p] for p in mem}) > 1:
-                  split = True
-                  print("ERROR: decisions split inside an exact-version group: " + ", ".join(mem))
-          if split:
-              sys.exit("exact-version group decision check failed; not installing anything")
-          print("exact-version groups: all decisions uniform")
+                      if m and m.group(1) in known:
+                          constraint = m.group(2).strip()
+                          if constraint.startswith("="):
+                              relations.add((package, m.group(1), constraint[1:].strip()))
+          mismatches = []
+          for requirer, name, required in sorted(relations):
+              pred = predicted[name]
+              result = "match" if pred == required else "MISMATCH"
+              print(f"relation: {requirer} requires {name} (= {required}); "
+                    f"{name} predicted={pred} decision={info[name]['decision']} -> {result}")
+              if pred != required:
+                  mismatches.append((requirer, name, required, pred))
+          for requirer, name, required, pred in mismatches:
+              print(f"ERROR: {requirer} requires {name} at exactly {required}, "
+                    f"but {name} would be at {pred} after installation; not installing anything")
+          if mismatches:
+              sys.exit("exact-version relation check failed; not installing anything")
+          print(f"exact-version relations: {len(relations)} checked, all matched")
           PYEOF
+
           # Incomplete dependency closure fails here instead of fetching or skipping Mesa.
           if [[ "${#install_files[@]}" -gt 0 ]]; then
             sudo dpkg --install "${install_files[@]}" 2>&1 | tee "$record/dpkg-install.log"
@@ -393,7 +420,7 @@ jobs:
           # installed. Class B must be fully installed at the manifest version or newer
           # (the runner's version, when it was kept). Anything else fails the job.
           : > "$record/dpkg-after.txt"
-          while IFS=$'\t' read -r file package version arch sha class; do
+          while IFS=$'\t' read -r file package version arch sha class install; do
             state="$(dpkg-query -W -f='${Version} ${Status}' "$package")"
             decision="$(cat "$RUNNER_TEMP/mesa-decision-$package.txt")"
             source="runner"
@@ -406,8 +433,8 @@ jobs:
             else
               dpkg --compare-versions "$after_version" ge "$version"
             fi
-          done < "$RUNNER_TEMP/mesa-manifest.tsv"
-          dpkg-query -W libegl-mesa0 libgl1-mesa-dri libgles2 | tee "$record/dpkg-key-packages.txt"
+          done < "$RUNNER_TEMP/mesa-install-targets.tsv"
+          dpkg-query -W libegl1 libgles2 libegl-mesa0 libgl1-mesa-dri | tee "$record/dpkg-key-packages.txt"
       - name: Mesa GLES 3.2 shader / pixel regression (not Android acceptance)
         env:
           EGL_PLATFORM: surfaceless
