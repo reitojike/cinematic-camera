@@ -101,6 +101,10 @@ class MesaGoldenReportsTest(unittest.TestCase):
         self.directory = Path(self.temp.name)
         self.host = self.directory / 'host.json'
         self.host_data = {'runId': 'test-run', 'cpu': {'modelName': 'unknown', 'flags': []}}
+        self.host_data['baseLibraries'] = {
+            f'lib{index}': {'version': '1.0', 'source': ('runner', 'stored')[index % 2]}
+            for index in range(40)
+        }
         self.host.write_text(json.dumps(self.host_data), encoding='utf-8')
 
     def candidate(self, status, indices):
@@ -215,6 +219,30 @@ class MesaGoldenReportsTest(unittest.TestCase):
     def test_missing_host_cpu_fails(self):
         self.host.write_text('{}', encoding='utf-8')
         with self.assertRaisesRegex(ValueError, 'requires a cpu object with a modelName string'):
+            self.check_candidate(self.candidate('partial', [1]))
+
+    def test_missing_base_libraries_fails(self):
+        del self.host_data['baseLibraries']
+        self.host.write_text(json.dumps(self.host_data), encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'requires a baseLibraries object with 40 entries'):
+            self.check_candidate(self.candidate('partial', [1]))
+
+    def test_short_base_libraries_fails(self):
+        del self.host_data['baseLibraries']['lib0']
+        self.host.write_text(json.dumps(self.host_data), encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'requires a baseLibraries object with 40 entries'):
+            self.check_candidate(self.candidate('partial', [1]))
+
+    def test_invalid_base_library_source_fails(self):
+        self.host_data['baseLibraries']['lib0']['source'] = 'unknown'
+        self.host.write_text(json.dumps(self.host_data), encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'baseLibraries entry lib0 requires a source of runner or stored'):
+            self.check_candidate(self.candidate('partial', [1]))
+
+    def test_missing_base_library_version_fails(self):
+        del self.host_data['baseLibraries']['lib0']['version']
+        self.host.write_text(json.dumps(self.host_data), encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'baseLibraries entry lib0 requires a non-empty version string'):
             self.check_candidate(self.candidate('partial', [1]))
 
     def test_incomplete_candidate_fails(self):

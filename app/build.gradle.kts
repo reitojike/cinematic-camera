@@ -92,6 +92,10 @@ android {
                     "gpu.mesa.debManifest",
                     rootProject.file("tools/gpu-mesa/mesa-debs-manifest.txt").absolutePath,
                 )
+                it.systemProperty(
+                    "gpu.mesa.installRecord",
+                    rootProject.file("mesa-install-record/dpkg-after.txt").absolutePath,
+                )
                 val test = it
                 listOf("Golden", "GoldenCases", "GoldenRunId", "GoldenDir", "GoldenBaseCommit", "GoldenBaseTree")
                     .forEach { suffix ->

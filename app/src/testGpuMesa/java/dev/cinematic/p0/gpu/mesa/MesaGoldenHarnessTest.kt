@@ -177,9 +177,9 @@ class MesaGoldenHarnessTest {
         )
     }
 
-    // 段階1の環境の記録として、OS の土台のライブラリ (マニフェストの区分B) の実際の版を残す。
-    // ステップ5の比較で、土台の版の違いが Mesa の出力に影響しないかを確認するため。
-    private fun readBaseLibraryVersions(): Map<String, String> {
+    // マニフェストでインストール対象の区分Bについて、Mesa ジョブの記録から実際の版と由来を残す。
+    // 由来はランナーの版を使ったか、保管版をインストールしたかを示す。
+    private fun readBaseLibraryVersions(): Map<String, Map<String, String>> {
         val path = System.getProperty("gpu.mesa.debManifest")
         check(path != null) { "Missing gpu.mesa.debManifest" }
         val lines = try {
@@ -194,34 +194,36 @@ class MesaGoldenHarnessTest {
             .map { it.trim() }
             .filterNot { it.startsWith("#") }
             .map { it.split(" | ") }
-            .filter { it.size == 7 && it[5] == "B" && it[1].isNotBlank() }
+            .filter { it.size == 7 && it[5] == "B" && it[6] == "yes" && it[1].isNotBlank() }
             .map { it[1] }
             .toSet()
-        check(packages.isNotEmpty()) { "Mesa deb manifest has no category B packages" }
+        check(packages.isNotEmpty()) { "Mesa deb manifest has no category B installation targets" }
 
-        val text = try {
-            File("/var/lib/dpkg/status").readText()
+        val recordPath = System.getProperty("gpu.mesa.installRecord")
+        check(recordPath != null) { "Missing gpu.mesa.installRecord" }
+        val records = try {
+            File(recordPath).readLines()
         } catch (_: IOException) {
-            return packages.associateWith { "unknown" }
+            null
         } catch (_: SecurityException) {
-            return packages.associateWith { "unknown" }
+            null
         }
-        val installed = HashMap<String, String>()
-        val amd64Packages = HashSet<String>()
-        for (stanza in text.split(Regex("\\n\\n+"))) {
-            val fields = stanza.lineSequence()
-                .filter { it.isNotEmpty() && !it.first().isWhitespace() && ':' in it }
-                .associate { it.substringBefore(':').trim() to it.substringAfter(':').trim() }
-            val name = fields["Package"] ?: continue
-            if (name !in packages || fields["Status"] != "install ok installed") continue
-            val version = fields["Version"] ?: continue
-            if (fields["Architecture"] == "amd64" && amd64Packages.add(name)) {
-                installed[name] = version
-            } else {
-                installed.putIfAbsent(name, version)
-            }
+        check(records != null) { "Cannot read Mesa install record: $recordPath" }
+
+        val recordPattern = Regex("""(\S+) class=([AB]) source=(runner|stored) (\S+) install ok installed""")
+        val installed = mutableMapOf<String, Map<String, String>>()
+        for ((index, line) in records.withIndex()) {
+            val match = recordPattern.matchEntire(line)
+            check(match != null) { "Invalid Mesa install record at line ${index + 1}" }
+            val (name, category, source, version) = match.destructured
+            if (category != "B") continue
+            check(name !in installed) { "Duplicate category B package in Mesa install record: $name" }
+            installed[name] = mapOf("version" to version, "source" to source)
         }
-        return packages.associateWith { installed[it] ?: "not-installed" }
+        check(installed.keys == packages) {
+            "Mesa install record category B mismatch: missing=${packages - installed.keys}, extra=${installed.keys - packages}"
+        }
+        return packages.associateWith { installed.getValue(it) }
     }
 
     // renderForTest は presenter を使わない。Mesa のコンテキストは既に current。

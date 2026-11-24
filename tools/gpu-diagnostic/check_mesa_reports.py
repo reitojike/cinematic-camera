@@ -166,6 +166,17 @@ def check_golden(candidate_dir, observed):
     host_run_id = host_data.get('runId')
     if not isinstance(run_id, str) or not isinstance(host_run_id, str) or run_id != host_run_id:
         raise ValueError('Golden capture and host runId must be matching strings')
+    base_libraries = host_data.get('baseLibraries')
+    if not isinstance(base_libraries, dict) or len(base_libraries) != 40:
+        raise ValueError('Golden host.json requires a baseLibraries object with 40 entries')
+    for name, library in base_libraries.items():
+        if not isinstance(library, dict):
+            raise ValueError(f'Golden host.json baseLibraries entry {name} must be an object')
+        version = library.get('version')
+        if not isinstance(version, str) or not version:
+            raise ValueError(f'Golden host.json baseLibraries entry {name} requires a non-empty version string')
+        if library.get('source') not in ('runner', 'stored'):
+            raise ValueError(f'Golden host.json baseLibraries entry {name} requires a source of runner or stored')
     print(f'GPU_MESA_GOLDEN cases={len(cases)} status={status}', flush=True)
 
 
