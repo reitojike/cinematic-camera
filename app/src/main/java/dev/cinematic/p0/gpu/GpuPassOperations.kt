@@ -11,6 +11,7 @@ internal interface GpuPassOperations {
     fun bindTexture2d(texture: Int)
     fun uniform1i(location: Int, value: Int)
     fun uniform2i(location: Int, x: Int, y: Int)
+    fun uniform4uiv(location: Int, count: Int, values: IntArray, offset: Int)
     fun uniform1f(location: Int, value: Float)
     fun uniform2f(location: Int, x: Float, y: Float)
     fun uniform3f(location: Int, x: Float, y: Float, z: Float)
@@ -38,3 +39,5 @@ internal interface GpuPassOperations {
 
 internal const val GPU_ALL_BARRIER_BITS = -1
 internal const val GPU_SHADER_IMAGE_ACCESS_BARRIER_BIT = 0x00000020
+internal const val GPU_SHADER_STORAGE_BARRIER_BIT = 0x00002000
+internal const val GPU_BUFFER_UPDATE_BARRIER_BIT = 0x00000200
