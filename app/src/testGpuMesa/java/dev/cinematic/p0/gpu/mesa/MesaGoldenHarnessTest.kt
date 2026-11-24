@@ -146,6 +146,7 @@ class MesaGoldenHarnessTest {
             "runId" to runId,
             "capturedUtc" to Instant.now().toString(),
             "cpu" to readHostCpu(),
+            "baseLibraries" to readBaseLibraryVersions(),
         )
         File(directory, "host.json").writeText(MesaGoldenJson.encode(host))
     }
@@ -172,6 +173,36 @@ class MesaGoldenHarnessTest {
             "flags" to vectorFlags.filter { it in flags },
             "count" to entries["processor"].orEmpty().size,
         )
+    }
+
+    // 段階1の環境の記録として、OS の土台のライブラリ (マニフェストの区分B) の実際の版を残す。
+    // ステップ5の比較で、土台の版の違いが Mesa の出力に影響しないかを確認するため。
+    // 区分Bの一覧は tools/gpu-mesa/mesa-debs-manifest.txt の区分列と一致させること。
+    private fun readBaseLibraryVersions(): Map<String, String> {
+        val packages = listOf(
+            "gcc-16-base", "libbsd0", "libc-gconv-modules-extra", "libc6", "libedit2",
+            "libexpat1", "libffi8", "libgcc-s1", "libmd0", "libstdc++6", "libtinfo6",
+            "libx11-dev", "libxau-dev", "libxcb1-dev", "libxdmcp-dev", "libxml2-16",
+            "libzstd1", "x11proto-dev", "xorg-sgml-doctools", "xtrans-dev", "zlib1g",
+        )
+        val text = try {
+            File("/var/lib/dpkg/status").readText()
+        } catch (_: IOException) {
+            return packages.associateWith { "unknown" }
+        } catch (_: SecurityException) {
+            return packages.associateWith { "unknown" }
+        }
+        val installed = HashMap<String, String>()
+        for (stanza in text.split(Regex("\\n\\n+"))) {
+            val fields = stanza.lineSequence()
+                .filter { ':' in it }
+                .associate { it.substringBefore(':').trim() to it.substringAfter(':').trim() }
+            val name = fields["Package"] ?: continue
+            if (fields["Status"] == "install ok installed") {
+                fields["Version"]?.let { installed[name] = it }
+            }
+        }
+        return packages.associateWith { installed[it] ?: "not-installed" }
     }
 
     // renderForTest は presenter を使わない。Mesa のコンテキストは既に current。
