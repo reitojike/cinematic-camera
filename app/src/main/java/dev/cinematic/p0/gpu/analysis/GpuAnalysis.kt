@@ -72,28 +72,28 @@ internal object GpuAnalysis {
         require(input.format == GpuTexture.Format.RGBA32F)
         val egl = input.context
         input.requireContext(egl)
+        val ssbo = egl.ssboOperations
         val buffer = IntArray(1)
-        GLES32.glGenBuffers(1, buffer, 0)
+        ssbo.generateBuffers(1, buffer)
         check(buffer[0] != 0) { "Near-white counter allocation failed" }
         try {
-            GLES32.glBindBuffer(GLES32.GL_SHADER_STORAGE_BUFFER, buffer[0])
+            ssbo.bindBuffer(buffer[0])
             val zero = ByteBuffer.allocateDirect(4).order(ByteOrder.nativeOrder()).putInt(0).apply { flip() }
-            GLES32.glBufferData(GLES32.GL_SHADER_STORAGE_BUFFER, 4, zero, GLES32.GL_DYNAMIC_READ)
+            ssbo.allocateDynamicRead(4, zero)
             egl.passes().run(ComputePass(egl.shaders().compute("analysis/count_near_white.comp"),
                 listOf(TextureInput("s_glowed", input, 0)), (width + 15) / 16, (height + 15) / 16,
                 uniforms = { program ->
                     val location = egl.shaders().uniformLocation(program, "u_size")
                     check(location >= 0)
                     GLES32.glUniform2i(location, width, height)
-                }, bindResources = { GLES32.glBindBufferBase(GLES32.GL_SHADER_STORAGE_BUFFER, 0, buffer[0]) },
+                }, bindResources = { ssbo.bindBufferBase(0, buffer[0]) },
                 memoryBarrier = GLES32.GL_SHADER_STORAGE_BARRIER_BIT or GLES32.GL_BUFFER_UPDATE_BARRIER_BIT))
             gpuWork(timings, GpuExportDetail.FENCE_WAIT) { GpuFence(egl).use { it.await() } }
             val count = gpuWork(timings, GpuExportDetail.READBACK) {
-                GLES32.glBindBuffer(GLES32.GL_SHADER_STORAGE_BUFFER, buffer[0])
-                val mapped = GLES32.glMapBufferRange(GLES32.GL_SHADER_STORAGE_BUFFER, 0, 4,
-                    GLES32.GL_MAP_READ_BIT) as? ByteBuffer ?: error("Near-white counter read failed")
+                ssbo.bindBuffer(buffer[0])
+                val mapped = ssbo.mapRead(0, 4) ?: error("Near-white counter read failed")
                 val value = try { mapped.order(ByteOrder.nativeOrder()).getInt(0).toLong() and 0xffffffffL }
-                finally { check(GLES32.glUnmapBuffer(GLES32.GL_SHADER_STORAGE_BUFFER)) { "Near-white counter became invalid" } }
+                finally { check(ssbo.unmapBuffer()) { "Near-white counter became invalid" } }
                 egl.checkGl("read near-white scalar")
                 value
             }
@@ -101,9 +101,9 @@ internal object GpuAnalysis {
             return count
         } finally {
             egl.releaseResource {
-                GLES32.glBindBufferBase(GLES32.GL_SHADER_STORAGE_BUFFER, 0, 0)
-                GLES32.glBindBuffer(GLES32.GL_SHADER_STORAGE_BUFFER, 0)
-                GLES32.glDeleteBuffers(1, buffer, 0)
+                ssbo.bindBufferBase(0, 0)
+                ssbo.bindBuffer(0)
+                ssbo.deleteBuffers(1, buffer)
             }
         }
     }
