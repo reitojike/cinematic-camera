@@ -77,11 +77,19 @@ def validate(root):
         raise ValueError('Unsupported host schema')
     mesa = host.get('mesaEnabled') is True
     if mesa:
-        android_fields = ('instrumentationPassed', 'sourceDirty', 'phase', 'appApkSha256', 'testApkSha256')
+        android_fields = ('instrumentationPassed', 'sourceDirty', 'phase', 'appApkSha256', 'testApkSha256', 'environment')
         if any(field in host for field in android_fields):
             raise ValueError('Mesa host contains Android-only fields')
-    elif 'mesaEnabled' in host:
-        raise ValueError('Android host contains mesaEnabled')
+        if 'android' in capture:
+            raise ValueError('Mesa capture contains android')
+    else:
+        mesa_fields = ('mesaEnabled', 'runId', *GL_FIELDS, 'javaVersion', 'osName', 'osArch',
+                       'cpu', 'llvmpipe', 'baseLibraries')
+        for field in mesa_fields:
+            if field in host:
+                raise ValueError(f'Android host contains {field}')
+        if 'runId' in capture:
+            raise ValueError('Android capture contains runId')
     if not mesa and (host.get('instrumentationPassed') is not True or host.get('sourceDirty') is not False or host.get('phase') != 'complete'):
         raise ValueError('Host run did not pass against a clean source')
     for field in ('sourceCommit', 'sourceTree'):

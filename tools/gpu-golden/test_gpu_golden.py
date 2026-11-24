@@ -104,13 +104,20 @@ class GoldenToolsTest(unittest.TestCase):
             g.validate(self.candidate)
 
     def test_mesa_candidate_rejects_android_fields(self):
-        for field in ('instrumentationPassed', 'sourceDirty', 'phase', 'appApkSha256', 'testApkSha256'):
+        for field in ('instrumentationPassed', 'sourceDirty', 'phase', 'appApkSha256', 'testApkSha256', 'environment'):
             with self.subTest(field=field):
                 self.make_mesa_candidate()
                 self.host[field] = None
                 self.save()
                 with self.assertRaisesRegex(ValueError, 'Mesa host contains Android-only fields'):
                     g.validate(self.candidate)
+
+    def test_mesa_capture_rejects_android_key(self):
+        self.make_mesa_candidate()
+        self.capture['android'] = None
+        self.save()
+        with self.assertRaisesRegex(ValueError, 'Mesa capture contains android'):
+            g.validate(self.candidate)
 
     def test_android_candidate_rejects_mesa_enabled_key(self):
         for value in (False, 1, None):
@@ -120,15 +127,33 @@ class GoldenToolsTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'Android host contains mesaEnabled'):
                     g.validate(self.candidate)
 
-    def test_mesa_comparison_tracks_cpu_and_llvmpipe(self):
+    def test_android_host_rejects_mesa_fields(self):
+        for field in ('runId', 'glVendor', 'glRenderer', 'glVersion', 'glslVersion',
+                      'javaVersion', 'osName', 'osArch', 'cpu', 'llvmpipe', 'baseLibraries'):
+            with self.subTest(field=field):
+                self.host[field] = None
+                self.save()
+                with self.assertRaisesRegex(ValueError, f'Android host contains {field}'):
+                    g.validate(self.candidate)
+                del self.host[field]
+
+    def test_android_capture_rejects_mesa_run_id(self):
+        self.capture['runId'] = None
+        self.save()
+        with self.assertRaisesRegex(ValueError, 'Android capture contains runId'):
+            g.validate(self.candidate)
+
+    def test_mesa_comparison_tracks_environment_identity(self):
         for index, (before, after, changed) in enumerate((
             ({'cpu': {'modelName': 'CPU A'}}, {'cpu': {'modelName': 'CPU B'}}, True),
+            ({}, {'cpu': {'modelName': 'CPU A'}}, True),
             ({'llvmpipe': {'LP_NATIVE_VECTOR_WIDTH': '128'}},
              {'llvmpipe': {'LP_NATIVE_VECTOR_WIDTH': '256'}}, True),
             ({'llvmpipe': {'GALLIUM_OVERRIDE_CPU_CAPS': 'sse2'}},
              {'llvmpipe': {'GALLIUM_OVERRIDE_CPU_CAPS': 'avx'}}, True),
             ({}, {}, False),
             ({}, {'cpu': {}, 'llvmpipe': {}}, False),
+            *(({}, {field: 'changed'}, True) for field in ('glVendor', 'glRenderer', 'glVersion', 'glslVersion')),
         )):
             with self.subTest(before=before, after=after):
                 self.make_mesa_candidate()
