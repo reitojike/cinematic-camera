@@ -96,6 +96,10 @@ internal class SaveTiming private constructor(private val version: Int, private 
             records.addLast(SaveTimingRecord(id, version, kind, stage, outcome, pixels, nanos))
         }
     }
+    /** Records the requested OpenMP thread count when the decode report supplies a positive value. */
+    fun recordDecodeConfig(threads: Long) {
+        if (threads > 0) event(SaveTimingStage.DECODE_CONFIG, SaveTimingOutcome.COMPLETED, nanos = threads)
+    }
     @Synchronized override fun started(stage: OriginalStage) = timingBestEffort {
         mapped(stage)?.let {
             starts.remove(it)

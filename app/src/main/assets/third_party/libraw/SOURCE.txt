@@ -15,8 +15,8 @@ LibRaw is built with OpenMP (-fopenmp) and threading enabled.
 The JNI library links libomp statically (-fopenmp -static-openmp).
 LibRaw COPYRIGHT, CDDL, DCB BSD, Adobe MIT and the installed NDK r29 toolchain
 NOTICE accompany this file. NDK NOTICE covers more than just the linked runtime.
-NDK29-toolchain-NOTICE.txt includes the OpenMP Runtime license text.
-The final determination of any additional NOTICE requirements is pending.
+The accompanying NDK29-toolchain-NOTICE.txt includes the OpenMP Runtime license
+text, including Apache License 2.0 with LLVM Exceptions and the Legacy LLVM License.
 Built without external DNG SDK, JPEG, LCMS, RawSpeed, X3FTOOLS or demosaic packs.
 After building, inspect each ABI's libcinematic_dng.so with llvm-readelf -d.
 Verify that DT_NEEDED lists only the Android-provided libz.so, libm.so,

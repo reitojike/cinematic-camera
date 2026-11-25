@@ -18,6 +18,21 @@ class SaveTimingTest {
     private fun record(index: Int = 0) = SaveTimingRecord(index.toString(16).padStart(32, '0'), 10,
         SaveTimingKind.SAVE, SaveTimingStage.NATIVE_DECODE, SaveTimingOutcome.COMPLETED, 12_000_000, 123)
 
+    @Test fun decodeConfigRecordsOnlyPositiveThreadCounts() {
+        val records = mutableListOf<SaveTimingRecord>()
+        val timing = SaveTiming.start(10, SaveTimingKind.SAVE, records::addAll)!!
+
+        timing.recordDecodeConfig(4)
+        // JSONObject.optLong("threads", 0) returns 0 when the report has no threads field.
+        timing.recordDecodeConfig(0)
+        timing.recordDecodeConfig(-1)
+        timing.finish(SaveTimingOutcome.PUBLISHED)
+
+        val config = records.single { it.stage == SaveTimingStage.DECODE_CONFIG }
+        assertEquals(SaveTimingOutcome.COMPLETED, config.outcome)
+        assertEquals(4L, config.nanos)
+    }
+
     @Test fun decodeConfigSerializesThreadCount() {
         val records = mutableListOf<SaveTimingRecord>()
         val timing = SaveTiming.start(10, SaveTimingKind.SAVE, records::addAll)!!

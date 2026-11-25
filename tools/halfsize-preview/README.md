@@ -19,8 +19,9 @@ ctest --test-dir build/halfsize-preview --output-on-failure
 
 ## 確認範囲
 
-アプリと同じ固定 LibRaw 0.22.3（アーカイブ SHA 検証、USE_ZLIB、OpenMPなし）と、変更していない
+アプリと同じ固定 LibRaw 0.22.3（アーカイブ SHA 検証、USE_ZLIB）と、変更していない
 `OriginalRasterSink::parse / applyCrop / preflightGeometry` をリンクする。
+アプリは OpenMP を有効にしているが、本ツールは意図的に `LIBRAW_NOTHREADS` を維持し、単スレッド構成とする。
 合成 Bayer DNG は既存 `SyntheticCropDng.kt` と同じ非撮影信号を生成する。
 
 - 4 CFA × 8 向き（鏡像含む）× crop の x/y 各2偶奇 × crop 幅/高さ各2偶奇 = **512 条件**。

@@ -15,7 +15,6 @@ import dev.cinematic.p0.raw.R7PreviewInputs
 import dev.cinematic.p0.raw.original.*
 import dev.cinematic.p0.rawcapture.*
 import dev.cinematic.p0.metrics.SaveTiming
-import dev.cinematic.p0.metrics.SaveTimingOutcome
 import dev.cinematic.p0.metrics.SaveTimingStage
 import dev.cinematic.p0.metrics.measured
 import dev.cinematic.p0.metrics.timingBestEffort
@@ -51,8 +50,7 @@ internal class Original24Attempt(context: Context, private val request: Original
     private val saveTiming: SaveTiming? = null, private val progress: SaveProgressSink? = null) : AutoCloseable {
     private fun recordDecodeConfig(metadata: JSONObject) {
         val timing = saveTiming ?: return
-        val threads = metadata.optLong("threads", 0)
-        if (threads > 0) timing.event(SaveTimingStage.DECODE_CONFIG, SaveTimingOutcome.COMPLETED, nanos = threads)
+        timing.recordDecodeConfig(metadata.optLong("threads", 0))
     }
 
     init { require(developEngine == DevelopEngine.GPU) { "CPU rendering has been retired" } }

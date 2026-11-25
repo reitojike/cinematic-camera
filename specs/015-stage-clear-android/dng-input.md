@@ -38,7 +38,8 @@ LibRawはJNI共有ライブラリへ**静的**に取り込まれ、NDKのC++ run
 実ELFのDT_NEEDEDはAndroid提供のlibz/libm/libdl/libc。ソース/リンク/通知/再ビルドは
 [保持ソースの案内](../../third_party/libraw/README.md)で追跡する。
 依存はNDK 29.0.14206865 / CMake 3.22.1、Android system zlib。
-外部JPEG/LCMS/RawSpeed/DNG SDK/X3FTOOLS/OpenMP/追加demosaic packは有効にしない。
+外部JPEG/LCMS/RawSpeed/DNG SDK/X3FTOOLS/追加demosaic packは有効にしない。
+OpenMPは有効にし、libompを静的リンクして、デコードのスレッド数は4に固定する。
 arm64-v8a（Pixel）とx86_64（合成検証）のみをビルドする。
 
 ## メモリと解放
