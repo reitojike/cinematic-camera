@@ -5,6 +5,10 @@
 既存 approve コマンドで目視済み候補からbyte不変コピーし、capture.json / host.json とそのhashを承認に結び付けています。
 capture.json の baselineApproved=false は採取時点の不変フィールドであり、現在の採用状態とは別です。
 
+## Mesa 基準（llvmpipe）
+
+Mesa のソフトウェア描画での回帰基準は `mesa-golden-20261124-152628-2c13cdb` です（起点は main 2c13cdb、Mesa 26.0.8-1ubuntu0.3、llvmpipe 未指定）。上の GPU-A の基準とは別の基準で、詳細と承認の経緯は同ディレクトリの README にあります。
+
 ## 本人確認と対象
 
 [本人に提示した90条件・代表7条件・前後差](https://github.com/reitojike/cinematic-camera/blob/68b703fb00bd2c24a935298db12b32f2a33fe699/docs/r7-foundation-review/51b691ad/README.md) に対して、2026-11-12 に本人は次のように確認しました。
