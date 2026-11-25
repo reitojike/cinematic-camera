@@ -17,7 +17,7 @@ UTF-8互換のASCII TSV、1行1イベント、ヘッダなし。列の順は次�
 | stage | 固定工程名 |
 | outcome | 固定結果名 |
 | pixels | 検証済み出力幅×高さ。未取得は `NA` |
-| nanos | CPU単調時計の経過ナノ秒。未計測は `NA`（0と区別） |
+| nanos | CPU単調時計の経過ナノ秒。未計測は `NA`（0と区別）。`DECODE_CONFIG` ではスレッド数を格納する |
 
 名前、URI、captureId、世代要求、写真fingerprint、画像、例外本文/stack、実時計、端末識別子は記録しない。
 同じattemptの寸法確認後のイベントに画素数が入り、展開前や展開直後の寸法確認前は `NA` になる。
@@ -41,6 +41,7 @@ UTF-8互換のASCII TSV、1行1イベント、ヘッダなし。列の順は次�
 | RESOURCE_CLOSE | 既存資源解放の各呼出し。複数回を別イベントとして保持し、最後の値で上書きしない |
 | PUBLICATION | 既存publisherのadvance全体。pending行処理・copy・検証・公開やjournal処理のうち実際にadvanceが実行した範囲。再試行では再利用/再照合のみの場合もある |
 | RECONCILIATION | 明示的な既存公開記録の読取りとreconcile。生成とは別イベント |
+| DECODE_CONFIG | スレッド数を含む原寸デコードのレポートを受け取るたびに1行。outcome は `COMPLETED`。経過時間の代わりに適用した OpenMP スレッド数（4）を `nanos` に格納する |
 
 `COMPLETED` はその区間の正常returnだけを示す。公開成功の証拠は既存journalであり、
 記録上の全体結果は `ATTEMPT/PUBLISHED` 等で区別する。`INCOMPLETE` は区間途中の例外・取消等であり、

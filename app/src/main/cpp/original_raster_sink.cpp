@@ -184,7 +184,9 @@ std::string OriginalRasterSink::report() const {
         << ",\"height\":" << outputHeight() << ",\"pixelsWritten\":" << uint64_t(outputWidth()) * outputHeight()
         << ",\"bits\":16,\"channels\":3,\"halfSize\":" << (isHalfPreview() ? 1 : 0)
         << ",\"color\":\"linear-sRGB-D65\",\"scope\":\""
-        << (isHalfPreview() ? "HALF_PREVIEW_CANDIDATE_NOT_SAVE_INPUT" : "PRELIMINARY_ORIGINAL_NO_FACE_NO_VERIFIED_EV") << "\"}";
+        << (isHalfPreview() ? "HALF_PREVIEW_CANDIDATE_NOT_SAVE_INPUT" : "PRELIMINARY_ORIGINAL_NO_FACE_NO_VERIFIED_EV") << '"';
+    if (!isHalfPreview() && decodeThreads > 0) out << ",\"threads\":" << decodeThreads;
+    out << '}';
     return out.str();
 }
 
