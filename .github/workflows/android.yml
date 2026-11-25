@@ -533,7 +533,6 @@ jobs:
         shell: bash
         run: |
           status=0
-          mkdir -p app/build/gpuMesaGoldenBaselineReport
           python3 -B tools/gpu-diagnostic/check_mesa_reports.py --golden-dir app/build/gpuMesaGolden/baseline-check app/build/test-results/gpuMesa/testDebugUnitTest || status=1
           python3 -B tools/gpu-golden/gpu_golden.py compare docs/gpu-golden-baselines/mesa-golden-20261124-152628-2c13cdb app/build/gpuMesaGolden/baseline-check app/build/gpuMesaGoldenBaselineReport || status=1
           {
