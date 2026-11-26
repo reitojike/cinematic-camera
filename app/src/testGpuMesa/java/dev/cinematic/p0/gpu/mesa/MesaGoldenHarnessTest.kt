@@ -26,8 +26,9 @@ class MesaGoldenHarnessTest {
         check(matrix.size == 90 && matrix.map { it.id }.toSet().size == 90)
         checkBaseline(matrix)
 
-        // 全件は10〜40分級のため、本人の指示により手動起動または main 向けに限る。
-        // 既定の Mesa ジョブでは早期 return し、JUnit の skip を発生させない。
+        // 全件の実行は、有効化の指定がある場合に限る。A3 以降、通常の Mesa ジョブは
+        // 基準チェック用に全件を実行する指定を渡す。手動起動でも実行できる。
+        // 指定がない実行では早期 return し、JUnit の skip を発生させない。
         if (System.getProperty("gpu.mesa.golden") != "true") return
 
         val runId = System.getProperty("gpu.mesa.goldenRunId", "mesa-run")
