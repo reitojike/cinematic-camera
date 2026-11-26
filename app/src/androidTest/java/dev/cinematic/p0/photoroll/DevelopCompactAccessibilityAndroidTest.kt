@@ -281,12 +281,63 @@ class DevelopCompactAccessibilityAndroidTest {
                     // Update visualReview only after visually reviewing the PNGs.
                     File(output, "360x480-font2-checks.txt").writeText(
                         "viewportDp=360x480\nfontScale=2.0\nouterScrollReachedSave=true\ncomparisonPixels=blue-to-gray\nsaveCallbacks=1\nvisualReview=pending\n")
+                    data class SwitchLabelCheck(
+                        val label: String,
+                        val layout: TextLayoutResult,
+                        val oneLineWidth: Float,
+                        val availableWidth: Int,
+                    )
+
+                    val switchLabelChecks = switchLabelLayouts.map { (label, layout) ->
+                        val oneLineWidth = layout.multiParagraph.maxIntrinsicWidth
+                        val availableWidth = minOf(layout.size.width, layout.layoutInput.constraints.maxWidth)
+                        SwitchLabelCheck(label, layout, oneLineWidth, availableWidth)
+                    }
+                    // hasVisualOverflow だけが落ちた原因を次回実行で数値から確定するために書き出す。
+                    File(output, "360x480-font2-checks.txt").appendText(buildString {
+                        for ((label, layout, oneLineWidth, availableWidth) in switchLabelChecks) {
+                            val paragraph = layout.multiParagraph
+                            val input = layout.layoutInput
+                            val constraints = input.constraints
+                            val lastCharIndex = input.text.length - 1
+                            val hasCharacterBounds = lastCharIndex >= 0 && layout.lineCount > 0
+                            val firstChar = if (hasCharacterBounds) layout.getBoundingBox(0) else null
+                            val lastChar = if (hasCharacterBounds) layout.getBoundingBox(lastCharIndex) else null
+                            val lineWidth = if (layout.lineCount > 0) layout.getLineWidth(0) else -1f
+                            appendLine("$label.lineCount=${layout.lineCount}")
+                            appendLine("$label.sizeWidthPx=${layout.size.width}")
+                            appendLine("$label.sizeHeightPx=${layout.size.height}")
+                            appendLine("$label.multiParagraphWidthPx=${paragraph.width}")
+                            appendLine("$label.multiParagraphHeightPx=${paragraph.height}")
+                            appendLine("$label.maxIntrinsicWidthPx=${paragraph.maxIntrinsicWidth}")
+                            appendLine("$label.minIntrinsicWidthPx=${paragraph.minIntrinsicWidth}")
+                            appendLine("$label.constraintsMinWidthPx=${constraints.minWidth}")
+                            appendLine("$label.constraintsMaxWidthPx=${constraints.maxWidth}")
+                            appendLine("$label.constraintsMinHeightPx=${constraints.minHeight}")
+                            appendLine("$label.constraintsMaxHeightPx=${constraints.maxHeight}")
+                            appendLine("$label.assertOneLineWidthPx=$oneLineWidth")
+                            appendLine("$label.assertAvailableWidthPx=$availableWidth")
+                            appendLine("$label.lineWidthPx=$lineWidth")
+                            appendLine("$label.firstCharLeftPx=${firstChar?.left ?: -1f}")
+                            appendLine("$label.firstCharRightPx=${firstChar?.right ?: -1f}")
+                            appendLine("$label.lastCharLeftPx=${lastChar?.left ?: -1f}")
+                            appendLine("$label.lastCharRightPx=${lastChar?.right ?: -1f}")
+                            appendLine("$label.didOverflowWidth=${layout.didOverflowWidth}")
+                            appendLine("$label.didOverflowHeight=${layout.didOverflowHeight}")
+                            appendLine("$label.hasVisualOverflow=${layout.hasVisualOverflow}")
+                            appendLine("$label.softWrap=${input.softWrap}")
+                            appendLine("$label.maxLines=${input.maxLines}")
+                            appendLine("$label.overflow=${input.overflow}")
+                            appendLine("$label.density=${input.density.density}")
+                            appendLine("$label.fontScale=${input.density.fontScale}")
+                            appendLine("$label.styleFontSizeSp=${input.style.fontSize}")
+                            appendLine("$label.styleLetterSpacingSp=${input.style.letterSpacing}")
+                        }
+                    })
                     // boundsInRoot は制約内のノード矩形なので、字形が横に切れても幅・高さの閾値を通り得る。
                     // 行数で折り返しを検出し、横切れは同じ段落の全文の1行幅と実際の配置幅を比較する。
                     // 段落自体が幅制約に収まり overflow が false の場合も、1行に必要な幅の不足を検出できる。
-                    for ((label, layout) in switchLabelLayouts) {
-                        val oneLineWidth = layout.multiParagraph.maxIntrinsicWidth
-                        val availableWidth = minOf(layout.size.width, layout.layoutInput.constraints.maxWidth)
+                    for ((label, layout, oneLineWidth, availableWidth) in switchLabelChecks) {
                         assertEquals("$label wraps: expected one line", 1, layout.lineCount)
                         assertTrue(
                             "$label horizontal clipping: needs ${oneLineWidth}px for one line, has ${availableWidth}px",
