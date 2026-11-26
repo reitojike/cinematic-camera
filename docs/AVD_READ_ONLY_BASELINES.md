@@ -86,9 +86,9 @@ Emulator/image/AVD設定の更新でsnapshotは無効化され得る。基準を
   論理ファイル長と実ディスク空きの増減を分けて記録する。空きのある開発ドライブへ配置する。
 - read-onlyでもhost側の起動情報、snapshot利用metadata、qcow2のmtimeが変わり得る。
   guestの状態隔離と、hostの全ファイル不変性は別。稼働中の基準移動・削除・更新は禁止。
-- 基準のファイルごとの照合では、`snapshots/prepared_v1/snapshot.pb` は「変わりうるもの」として別扱いにする。文書どおりの起動（`-snapshot prepared_v1 -read-only -no-snapshot-save`）でも、起動のたびに snapshot.pb の内容（SHA-256）と更新日時が変わることを確認済みである（2026-11-26 の確認: 起動前後で boot UUID は一致し、確認した6ファイルのうち snapshot.pb だけが変わり、残りの5ファイルは変わらなかった）。snapshot.pb はスナップショットの利用メタデータであり、その書き換えは guest の開始状態の変化を意味しない。
-- したがって、基準の同一性の判定は、snapshot.pb を除くファイルの不変と、boot UUID の完全一致（および system_server の安定・ANR なし）で行う。snapshot.pb のハッシュは記録には残すが、合否の条件にはしない。
-- ただし、snapshot.pb 以外のファイル（RAM・ディスクのイメージ、config.ini、hardware.ini 等）が変わった場合は、従来どおり基準が変わったものとして扱い、原因を確認する。Emulator や system image の更新で snapshot の互換性が失われた場合は、基準の更新の手順による。
+- 基準のファイルごとの照合では、`snapshots/prepared_v1/snapshot.pb` は「変わりうるもの」として別扱いにする。2026-11-26 の確認では、文書どおりの起動（`-snapshot prepared_v1 -read-only -no-snapshot-save`）の前後で boot UUID が一致し、確認した6ファイルのうち snapshot.pb だけが内容（SHA-256）と更新日時が変わった。snapshot.pb はスナップショットの利用メタデータであり、そのハッシュ差だけでは guest の開始状態が変化したとは判断できない。
+- 基準の同一性の判定は、「task ごとの起動・実走」の復帰の判定を満たすことに加え、ファイル照合を行う場合は、snapshot.pb を除く対象ファイル（RAM・関連ディスクのイメージ、config.ini、hardware.ini 等）の内容が SHA-256 で一致することで行う。更新日時（mtime）は判定に使わない（host 側のメタデータや qcow2 の mtime は変わり得るため）。snapshot.pb のハッシュは記録には残すが、合否の条件にはしない。
+- ただし、ロードの失敗・snapshot の無効化・構成の変更・再保存が疑われる場合は、snapshot.pb の変化を「変わりうるもの」で済ませず、復帰ログや、必要に応じてメタデータの差分を確認する。snapshot.pb 以外の対象ファイルに内容の差があれば、基準が変わったものとして原因を確認する。Emulator や system image の更新で snapshot の互換性が失われた場合は、基準の更新の手順による。
 - 同一snapshotのネットワーク/MAC状態まで独立とは仮定しない。通信依存の試験は別途確認する。
 
 ## 2026-11-15 の確認結果
