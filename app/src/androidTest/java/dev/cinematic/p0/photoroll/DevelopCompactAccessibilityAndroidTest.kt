@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Rect
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
@@ -59,6 +60,13 @@ class DevelopCompactAccessibilityAndroidTest {
             SharedOriginalReference("content://fixture/develop-451",
                 OriginalFingerprint(100, "a".repeat(64)), OriginalGrant.USER_SELECTED)))
         val editor = shown.shown(shown.ticket, shown.requestedValues)
+        fun runSettingsCommand(command: String): String = ParcelFileDescriptor.AutoCloseInputStream(
+            instrumentation.uiAutomation.executeShellCommand(command)
+        ).bufferedReader().use { it.readText().trim() }
+        fun readFontScale(): String? = runSettingsCommand("settings get system font_scale")
+            .takeUnless { it.isEmpty() || it == "null" }
+            ?.also { check(it.toFloatOrNull() != null) { "Could not read system font_scale: $it" } }
+        val originalFontScale = readFontScale()
         val current = Bitmap.createBitmap(480, 640, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.BLUE) }
         val before = Bitmap.createBitmap(480, 640, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.GRAY) }
         val state = DevelopMessageState(PhotoRollPhase.DISPLAYED, PhotoRollSavePhase.READY)
@@ -198,10 +206,21 @@ class DevelopCompactAccessibilityAndroidTest {
             catch (captureFailure: Exception) { failure.addSuppressed(captureFailure) }
             catch (captureFailure: AssertionError) { failure.addSuppressed(captureFailure) }
         }
+        // システム文字サイズ2倍が前提の試験なので、端末の状態に依存しないよう起動前に設定し、終了後に元へ戻す。
+        var testFailure: Throwable? = null
         try {
+            runSettingsCommand("settings put system font_scale 2.0")
+            check(readFontScale()?.toFloatOrNull() == 2f) { "Could not set system font_scale to 2.0" }
             ActivityScenario.launch(PhotoRollActivity::class.java).use { scenario ->
                 try {
-                    scenario.onActivity { assertEquals(2f, it.resources.configuration.fontScale, 0.001f) }
+                    val fontScaleDeadline = SystemClock.uptimeMillis() + 10_000L
+                    var fontScale = 0f
+                    do {
+                        scenario.onActivity { fontScale = it.resources.configuration.fontScale }
+                        if (fontScale == 2f || SystemClock.uptimeMillis() >= fontScaleDeadline) break
+                        SystemClock.sleep(100)
+                    } while (true)
+                    assertEquals(2f, fontScale, 0.001f)
                     val viewport = awaitMatch("現像画像の表示領域")
                     assertEquals(Triple(360f, 480f, 2f), configuration.get())
                     capturePng("360x480-font2-initial")
@@ -286,9 +305,24 @@ class DevelopCompactAccessibilityAndroidTest {
                     throw failure
                 }
             }
+        } catch (failure: Throwable) {
+            testFailure = failure
+            throw failure
         } finally {
-            current.recycle()
-            before.recycle()
+            try {
+                if (originalFontScale == null) {
+                    runSettingsCommand("settings delete system font_scale")
+                } else {
+                    runSettingsCommand("settings put system font_scale $originalFontScale")
+                }
+                check(readFontScale() == originalFontScale) { "Could not restore system font_scale" }
+            } catch (restoreFailure: Throwable) {
+                val failure = testFailure ?: throw restoreFailure
+                failure.addSuppressed(restoreFailure)
+            } finally {
+                current.recycle()
+                before.recycle()
+            }
         }
     }
 }
