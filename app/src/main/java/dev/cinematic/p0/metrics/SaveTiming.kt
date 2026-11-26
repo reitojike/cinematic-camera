@@ -20,6 +20,7 @@ internal enum class SaveTimingStage {
     FINAL_INPUT_WAIT, FINAL_INPUT_READ_CONVERT, FINAL_UPLOAD, FINAL_FENCE_WAIT,
     B4_READBACK, B1_QUANTILES_READBACK, B1_QUANTILES_FENCE_WAIT, FINAL_READBACK, FINAL_ROW_PROCESS,
     B1, B1_QUANTILES, B2, B3, B4, B5, FINAL, GPU_RENDER, PUBLICATION, RECONCILIATION,
+    DECODE_CONFIG,
 }
 internal enum class SaveTimingOutcome {
     STARTED, COMPLETED, INCOMPLETE, SKIPPED, NOT_REACHED, UNAVAILABLE,
@@ -94,6 +95,10 @@ internal class SaveTiming private constructor(private val version: Int, private 
             if (records.size == SaveTimingStore.MAX_RECORDS) records.removeFirst()
             records.addLast(SaveTimingRecord(id, version, kind, stage, outcome, pixels, nanos))
         }
+    }
+    /** Records the requested OpenMP thread count when the decode report supplies a positive value. */
+    fun recordDecodeConfig(threads: Long) {
+        if (threads > 0) event(SaveTimingStage.DECODE_CONFIG, SaveTimingOutcome.COMPLETED, nanos = threads)
     }
     @Synchronized override fun started(stage: OriginalStage) = timingBestEffort {
         mapped(stage)?.let {

@@ -17,6 +17,7 @@ import dev.cinematic.p0.rawcapture.*
 import dev.cinematic.p0.metrics.SaveTiming
 import dev.cinematic.p0.metrics.SaveTimingStage
 import dev.cinematic.p0.metrics.measured
+import dev.cinematic.p0.metrics.timingBestEffort
 import dev.cinematic.p0.gpu.export.GpuExportTimings
 import java.io.File
 import java.io.IOException
@@ -47,6 +48,11 @@ internal class Original24Attempt(context: Context, private val request: Original
     private val scratchDirectory: File, private val trace: OriginalStageTrace? = null,
     private val developEngine: DevelopEngine = DevelopEngine.GPU,
     private val saveTiming: SaveTiming? = null, private val progress: SaveProgressSink? = null) : AutoCloseable {
+    private fun recordDecodeConfig(metadata: JSONObject) {
+        val timing = saveTiming ?: return
+        timing.recordDecodeConfig(metadata.optLong("threads", 0))
+    }
+
     init { require(developEngine == DevelopEngine.GPU) { "CPU rendering has been retired" } }
     private val context = context.applicationContext
     private val active = AtomicBoolean(false)
@@ -106,6 +112,7 @@ internal class Original24Attempt(context: Context, private val request: Original
                     throw error
                 }
             })
+            timingBestEffort { recordDecodeConfig(metadata) }
             originalStage(trace, OriginalStage.DECODE_CLOSE) { closeDescriptorOwners() }
             checkpoint(); Original24Resources.requireAvailable(context, checkMemory = false)
             val width = metadata.getInt("width"); val height = metadata.getInt("height")

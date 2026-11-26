@@ -14,15 +14,17 @@ file(GLOB_RECURSE libraw_sources CONFIGURE_DEPENDS "${libraw_SOURCE_DIR}/src/*.c
 add_library(raw STATIC ${libraw_sources})
 set_target_properties(raw PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(raw PUBLIC "${libraw_SOURCE_DIR}")
-target_compile_definitions(raw PRIVATE LIBRAW_NOTHREADS USE_ZLIB)
+target_compile_definitions(raw PRIVATE USE_ZLIB)
+target_compile_options(raw PRIVATE -fopenmp)
 target_compile_features(raw PUBLIC cxx_std_17)
-# Android zlib only. No JPEG/LCMS/RawSpeed/DNG SDK/GPL demosaic packs/OpenMP.
+# Android zlib and OpenMP (libomp linked statically into the JNI library).
+# No JPEG/LCMS/RawSpeed/DNG SDK/GPL demosaic packs.
 target_link_libraries(raw PUBLIC z)
 
 add_library(cinematic_dng SHARED dng_decoder.cpp w1_trial.cpp as_shot_xy.cpp original_raster_sink.cpp)
-target_compile_options(cinematic_dng PRIVATE -Wall -Wextra -Werror -fvisibility=hidden)
+target_compile_options(cinematic_dng PRIVATE -Wall -Wextra -Werror -fvisibility=hidden -fopenmp)
 # Keep static LibRaw/C++ runtime symbols private to this JNI boundary.
-target_link_options(cinematic_dng PRIVATE "-Wl,--exclude-libs,ALL")
+target_link_options(cinematic_dng PRIVATE "-Wl,--exclude-libs,ALL" -fopenmp -static-openmp)
 option(CINEMATIC_ENABLE_RAW_PROBE "Build the isolated full-resolution diagnostic JNI entry" OFF)
 set(dng_exports "${CMAKE_CURRENT_LIST_DIR}/dng.exports")
 if(CINEMATIC_ENABLE_RAW_PROBE)
