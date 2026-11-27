@@ -55,7 +55,7 @@ jobs:
         with:
           log-accepted-android-sdk-licenses: false
       - name: Android SDK 37 and pinned native tools
-        run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0" "ndk;29.0.14206865" "cmake;3.22.1"
+        run: sdkmanager "platforms;android-37.0" "platforms;android-37.2" "build-tools;36.0.0" "ndk;29.0.14206865" "cmake;3.22.1"
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
@@ -145,7 +145,7 @@ jobs:
         with:
           log-accepted-android-sdk-licenses: false
       - name: Android SDK 37 and pinned native tools
-        run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0" "ndk;29.0.14206865" "cmake;3.22.1"
+        run: sdkmanager "platforms;android-37.0" "platforms;android-37.2" "build-tools;36.0.0" "ndk;29.0.14206865" "cmake;3.22.1"
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
@@ -258,7 +258,7 @@ jobs:
         with:
           log-accepted-android-sdk-licenses: false
       - name: Android SDK 37 and pinned native tools
-        run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0" "ndk;29.0.14206865" "cmake;3.22.1"
+        run: sdkmanager "platforms;android-37.0" "platforms;android-37.2" "build-tools;36.0.0" "ndk;29.0.14206865" "cmake;3.22.1"
       - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic

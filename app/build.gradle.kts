@@ -24,7 +24,11 @@ if (stableInternalSigning) {
 }
 android {
     namespace = "dev.cinematic.p0"
-    compileSdk = 37
+    compileSdk {
+        version = release(37) {
+            minorApiLevel = 2
+        }
+    }
     ndkVersion = "29.0.14206865"
     externalNativeBuild {
         cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" }
@@ -151,7 +155,7 @@ if (gpuMesa) {
     }
 }
 dependencies {
-    implementation(platform("androidx.compose:compose-bom:2026.09.00"))
+    implementation(platform("androidx.compose:compose-bom:2026.11.01"))
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui")

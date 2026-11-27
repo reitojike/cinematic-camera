@@ -43,7 +43,7 @@ jobs:
         run: |
           mkdir -p atd-evidence
           sdkmanager --list > atd-evidence/sdk-packages.txt
-          sdkmanager 'platforms;android-37.0' 'build-tools;36.0.0' 'ndk;29.0.14206865' 'cmake;3.22.1' 'emulator' 'system-images;android-37.0;google_atd;x86_64'
+          sdkmanager 'platforms;android-37.0' 'platforms;android-37.2' 'build-tools;36.0.0' 'ndk;29.0.14206865' 'cmake;3.22.1' 'emulator' 'system-images;android-37.0;google_atd;x86_64'
           "$ANDROID_HOME/emulator/emulator" -version > atd-evidence/emulator.txt 2>&1
           cat "$ANDROID_HOME/system-images/android-37.0/google_atd/x86_64/source.properties" > atd-evidence/image.txt
       # Owner approved KVM access on disposable GitHub runners only.
