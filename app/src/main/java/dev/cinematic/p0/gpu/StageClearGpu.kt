@@ -1,6 +1,5 @@
 package dev.cinematic.p0.gpu
 
-import android.opengl.GLES32
 import dev.cinematic.p0.gpu.diag.GpuStageTap
 import dev.cinematic.p0.gpu.look.StageClearFinishGpu
 import dev.cinematic.p0.gpu.look.StageClearGlowGpu
@@ -78,7 +77,7 @@ internal interface StageClearGpuPipeline : AutoCloseable {
  * INPUT/Beforeはルックを通さず、同じ常駐AS_SHOTから描画する。
  */
 internal class DefaultStageClearGpu(
-    private val egl: EglContexts,
+    private val egl: GpuExecutionContext,
     private val ledger: GpuMemoryLedger,
     frameMode: GpuFrameMode = GpuFrameMode.NORMAL,
     private val createPresenter: (GpuPreviewTarget, GpuDisplayOptions) -> GpuPreviewPresenter,
@@ -179,14 +178,9 @@ internal class DefaultStageClearGpu(
             texture.requireContext(egl)
             GpuFence(egl).use { it.await() }
             val bytes = ByteBuffer.allocateDirect(texture.width * texture.height * 4)
-            GLES32.glBindFramebuffer(GLES32.GL_FRAMEBUFFER, texture.framebufferId)
-            GLES32.glReadBuffer(GLES32.GL_COLOR_ATTACHMENT0)
-            GLES32.glBindBuffer(GLES32.GL_PIXEL_PACK_BUFFER, 0)
-            GLES32.glPixelStorei(GLES32.GL_PACK_ALIGNMENT, 1)
-            GLES32.glPixelStorei(GLES32.GL_PACK_ROW_LENGTH, 0)
-            GLES32.glPixelStorei(GLES32.GL_PACK_SKIP_PIXELS, 0)
-            GLES32.glPixelStorei(GLES32.GL_PACK_SKIP_ROWS, 0)
-            GLES32.glReadPixels(0, 0, texture.width, texture.height, GLES32.GL_RGBA, GLES32.GL_UNSIGNED_BYTE, bytes)
+            val pixelTransfer = egl.pixelTransferOperations
+            pixelTransfer.prepareReadback(texture.framebufferId)
+            pixelTransfer.readRgba8(texture.width, texture.height, bytes)
             egl.checkGl("read DISPLAY8 tap")
             // Preserve the public linear-RGB return type. Re-encoding these quantized values
             // recovers the exact display bytes; never label normalized sRGB bytes as linear RGB.
@@ -212,7 +206,7 @@ internal class DefaultStageClearGpu(
             return passes ?: createPipeline(input, analysis).also { passes = it }
         }
         override fun close() {
-            egl.glThread.requireCurrent()
+            egl.requireOwnerThread()
             if (photoClosed) return
             // Preserve failed owners for an explicit cleanup retry. Never release borrowed input
             // while its pipeline still has an unconfirmed close.
@@ -237,7 +231,7 @@ internal class DefaultStageClearGpu(
         if (stop()) throw CancellationException("GPU photo preparation stopped")
     }
     override fun close() {
-        egl.glThread.requireCurrent()
+        egl.requireOwnerThread()
         if (closed) return
         var failure: Throwable? = null
         photos.toList().forEach { photo ->

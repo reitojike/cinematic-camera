@@ -51,6 +51,124 @@ class GoldenToolsTest(unittest.TestCase):
         g.approve(self.candidate, output, 'unit-test-only owner approval placeholder')
         return output
 
+    def make_mesa_candidate(self):
+        self.capture.pop('android', None)
+        self.capture['runId'] = 'full-1'
+        self.host = {'schema': 1, 'mesaEnabled': True, 'runId': 'full-1',
+                     'sourceCommit': 'a' * 40, 'sourceTree': 'b' * 40,
+                     'glVendor': 'Mesa', 'glRenderer': 'llvmpipe (LLVM 21.1.8, 256 bits)',
+                     'glVersion': '4.5', 'glslVersion': '4.50', 'osName': 'Linux'}
+        self.save()
+
+    def test_valid_mesa_candidate(self):
+        self.make_mesa_candidate()
+        self.assertEqual(g.validate(self.candidate), (self.capture, self.host))
+
+    def test_mesa_comparison_with_approved_android_baseline(self):
+        baseline = self.approved()
+        self.make_mesa_candidate()
+        output = self.root / 'result'
+        self.assertTrue(g.compare(baseline, self.candidate, output))
+        result = g.load_json(output / 'comparison.json')
+        self.assertEqual(result['status'], 'pass')
+        self.assertTrue(result['environmentChanged'])
+        self.assertEqual(result['baselineEnvironment']['android']['fingerprint'], 'test')
+        self.assertEqual(result['candidateEnvironment']['mesa']['glRenderer'], self.host['glRenderer'])
+
+    def test_invalid_mesa_host_is_rejected(self):
+        for field, value, message in (
+            ('runId', 'full-2', 'Mesa runId'),
+            ('glRenderer', None, 'Missing Mesa identity: glRenderer'),
+            ('glRenderer', ' \t', 'Missing Mesa identity: glRenderer'),
+            ('glRenderer', 1, 'Missing Mesa identity: glRenderer'),
+            ('sourceCommit', 'A' * 40, 'Missing sourceCommit'),
+            ('sourceTree', 'B' * 40, 'Missing sourceTree'),
+            ('mesaEnabled', 1, 'Android host contains mesaEnabled'),
+        ):
+            with self.subTest(field=field):
+                self.make_mesa_candidate()
+                if value is None:
+                    del self.host[field]
+                else:
+                    self.host[field] = value
+                self.save()
+                with self.assertRaisesRegex(ValueError, message):
+                    g.validate(self.candidate)
+
+    def test_android_candidate_cannot_pose_as_mesa(self):
+        self.capture['runId'] = 'full-1'
+        self.host.update(mesaEnabled=True, runId='full-1')
+        self.host.update(dict.fromkeys(g.GL_FIELDS, 'Mesa'))
+        self.save()
+        with self.assertRaisesRegex(ValueError, 'Mesa host contains Android-only fields'):
+            g.validate(self.candidate)
+
+    def test_mesa_candidate_rejects_android_fields(self):
+        for field in ('instrumentationPassed', 'sourceDirty', 'phase', 'appApkSha256', 'testApkSha256', 'environment'):
+            with self.subTest(field=field):
+                self.make_mesa_candidate()
+                self.host[field] = None
+                self.save()
+                with self.assertRaisesRegex(ValueError, 'Mesa host contains Android-only fields'):
+                    g.validate(self.candidate)
+
+    def test_mesa_capture_rejects_android_key(self):
+        self.make_mesa_candidate()
+        self.capture['android'] = None
+        self.save()
+        with self.assertRaisesRegex(ValueError, 'Mesa capture contains android'):
+            g.validate(self.candidate)
+
+    def test_android_candidate_rejects_mesa_enabled_key(self):
+        for value in (False, 1, None):
+            with self.subTest(value=value):
+                self.host['mesaEnabled'] = value
+                self.save()
+                with self.assertRaisesRegex(ValueError, 'Android host contains mesaEnabled'):
+                    g.validate(self.candidate)
+
+    def test_android_host_rejects_mesa_fields(self):
+        for field in ('runId', 'glVendor', 'glRenderer', 'glVersion', 'glslVersion',
+                      'javaVersion', 'osName', 'osArch', 'cpu', 'llvmpipe', 'baseLibraries'):
+            with self.subTest(field=field):
+                self.host[field] = None
+                self.save()
+                with self.assertRaisesRegex(ValueError, f'Android host contains {field}'):
+                    g.validate(self.candidate)
+                del self.host[field]
+
+    def test_android_capture_rejects_mesa_run_id(self):
+        self.capture['runId'] = None
+        self.save()
+        with self.assertRaisesRegex(ValueError, 'Android capture contains runId'):
+            g.validate(self.candidate)
+
+    def test_mesa_comparison_tracks_environment_identity(self):
+        for index, (before, after, changed) in enumerate((
+            ({'cpu': {'modelName': 'CPU A'}}, {'cpu': {'modelName': 'CPU B'}}, True),
+            ({}, {'cpu': {'modelName': 'CPU A'}}, True),
+            ({'llvmpipe': {'LP_NATIVE_VECTOR_WIDTH': '128'}},
+             {'llvmpipe': {'LP_NATIVE_VECTOR_WIDTH': '256'}}, True),
+            ({'llvmpipe': {'GALLIUM_OVERRIDE_CPU_CAPS': 'sse2'}},
+             {'llvmpipe': {'GALLIUM_OVERRIDE_CPU_CAPS': 'avx'}}, True),
+            ({}, {}, False),
+            ({}, {'cpu': {}, 'llvmpipe': {}}, False),
+            *(({}, {field: 'changed'}, True) for field in ('glVendor', 'glRenderer', 'glVersion', 'glslVersion')),
+        )):
+            with self.subTest(before=before, after=after):
+                self.make_mesa_candidate()
+                mesa_host = self.host.copy()
+                self.host.update(before)
+                self.save()
+                baseline = self.root / f'baseline-{index}'
+                g.approve(self.candidate, baseline, 'unit-test-only owner approval placeholder')
+                self.host = {**mesa_host, **after}
+                self.save()
+                output = self.root / f'result-{index}'
+                self.assertTrue(g.compare(baseline, self.candidate, output))
+                result = g.load_json(output / 'comparison.json')
+                self.assertEqual(result['environmentChanged'], changed)
+
     def test_valid_candidate_and_unchanged_comparison(self):
         g.validate(self.candidate)
         self.assertTrue(g.compare(self.approved(), self.candidate, self.root / 'result'))

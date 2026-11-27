@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "ownerVisualApprovalRef": "Owner CP3 approval on 2026-11-25, after reviewing the CP3 stage-1 deliverables for the Mesa golden runs on main 2c13cdb88948ae6db684c1d799102f50a0aca455: full-1 versus the GPU-A golden (golden-20261112-131916-51b691ad) differs by at most 1 in every channel across all 90 cases (changed pixels 8,291 of 43,258,739, 0.019 percent); full-1 and full-2 are RGB8-identical on all 90 cases across different runner CPUs (AMD EPYC 7763 without AVX-512 and Intel Xeon 6975P-C with AVX-512); full-w128 (LP_NATIVE_VECTOR_WIDTH=128) is also RGB8-identical to full-1. The owner approved registering the Mesa output (Mesa 26.0.8-1ubuntu0.3, llvmpipe, no llvmpipe mode specified) of run full-1 (Actions run 45424947920) as the Mesa baseline. This adopts the Mesa output as the Mesa regression baseline only; it does not change the GPU-A golden.",
+  "approvedFiles": {
+    "capture.json": "d299e9defa1f9512cd75c053b471f163a30acb4283f25d71831ecac1a5da88df",
+    "host.json": "54c057c747b7ffad1caa50932ac78a4696d253aedfd2dcb3a1813ca20132f69a"
+  }
+}

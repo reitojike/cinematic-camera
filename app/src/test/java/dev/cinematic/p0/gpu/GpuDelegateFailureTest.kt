@@ -1,7 +1,10 @@
 package dev.cinematic.p0.gpu
 
+import dev.cinematic.p0.gpu.analysis.GpuQuantileWorkspace
+import dev.cinematic.p0.gpu.analysis.HistogramRanks
 import java.nio.Buffer
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
@@ -14,7 +17,8 @@ class GpuDelegateFailureTest {
     private val programs = RecordingProgramOperations(calls)
     private val library = ShaderLibrary(context, ShaderSource({ "#version 320 es\nvoid main() {}" }), programs)
     private val textures = RecordingTextureOperations(calls)
-    private val execution = RecordingExecutionContext(context, textures)
+    private val ssbo = RecordingSsboOperations(calls)
+    private val execution = RecordingExecutionContext(context, textures, ssbo)
     private val ledger = GpuMemoryLedger()
 
     private val compileCalls = listOf(
@@ -25,6 +29,12 @@ class GpuDelegateFailureTest {
     private val linkCalls = compileCalls + listOf("createProgram", "linkProgram 3 [1, 2]", "programLinked 3")
     private val deleteShaders = listOf("deleteShader 1", "deleteShader 2")
     private val framebufferCalls = listOf("current", "generateFramebuffer", "attach 5 4", "framebufferComplete")
+    private val histogramStorageCalls = listOf(
+        "current", "generateBuffers 1 [7]", "bindBuffer 7", "allocateDynamicRead 1048576",
+        "checkGl allocate histogram storage",
+    )
+    private val histogramClearCalls = histogramStorageCalls +
+        listOf("bindBuffer 7", "updateBuffer 0 262144", "checkGl clear histogram")
 
     @Test fun compileFailureDeletesBothShadersAndRetriesFromCreation() {
         programs.failingShader = 2
@@ -156,6 +166,36 @@ class GpuDelegateFailureTest {
         assertEquals(listOf("prepareTextureUpload", "current", "uploadTexture 4", "checkGl upload texture"), calls)
     }
 
+    @Test fun zeroSsboBufferNameIsRetriedFromGeneration() {
+        ssbo.generatedName = 0
+        val workspace = GpuQuantileWorkspace(execution)
+        repeat(2) {
+            assertFailure("Cannot allocate histogram buffer") { workspace.clear(HistogramRanks.BINS) }
+        }
+        val attempt = listOf("current", "generateBuffers 1 [0]")
+        assertEquals(attempt + attempt, calls)
+
+        ssbo.generatedName = 7
+        workspace.clear(HistogramRanks.BINS)
+        assertEquals(attempt + attempt + histogramClearCalls, calls)
+        assertEquals(1, workspace.allocations)
+    }
+
+    @Test fun ssboStorageGlErrorDeletesBufferAndRetries() {
+        val workspace = GpuQuantileWorkspace(execution)
+        val failure = IllegalStateException("allocate histogram storage failed: GL 0x502")
+        context.glFailure = failure
+        val thrown = assertThrows(IllegalStateException::class.java) { workspace.clear(HistogramRanks.BINS) }
+        assertSame(failure, thrown)
+        val attempt = histogramStorageCalls + listOf("releaseResource", "deleteBuffers 1 [7]")
+        assertEquals(attempt, calls)
+
+        context.glFailure = null
+        workspace.clear(HistogramRanks.BINS)
+        assertEquals(attempt + histogramClearCalls, calls)
+        assertEquals(1, workspace.allocations)
+    }
+
     private fun storage() = GpuTexture.Storage(execution, ledger, 2, 2, GpuTexture.Format.RGBA8)
 
     private fun assertFailure(message: String, block: () -> Unit) {
@@ -165,6 +205,9 @@ class GpuDelegateFailureTest {
     private class RecordingResourceContext(private val calls: MutableList<String>) : GpuResourceContext {
         var currentFailure: IllegalStateException? = null
         var glFailure: IllegalStateException? = null
+
+        override val syncOperations: GpuSyncOperations
+            get() = error("Unexpected sync operations lookup")
 
         override fun requireOwnerThread() {
             calls += "ownerThread"
@@ -189,10 +232,17 @@ class GpuDelegateFailureTest {
     private class RecordingExecutionContext(
         context: GpuResourceContext,
         override val textureOperations: GpuTextureOperations,
+        override val ssboOperations: GpuSsboOperations,
     ) : GpuExecutionContext, GpuResourceContext by context {
+        override val syncOperations: GpuSyncOperations
+            get() = error("Unexpected sync operations lookup")
+        override val pixelTransferOperations: GpuPixelTransferOperations
+            get() = error("Unexpected pixel transfer operations lookup")
         override fun capabilities(): GlCapabilities.Result = error("Unexpected capabilities lookup")
         override fun shaders(): ShaderLibrary = error("Unexpected shader library lookup")
         override fun passes(): PassGraph = error("Unexpected pass graph lookup")
+        override val passOperations: GpuPassOperations
+            get() = error("Unexpected pass operations lookup")
     }
 
     private class RecordingProgramOperations(private val calls: MutableList<String>) : GpuProgramOperations {
@@ -298,6 +348,51 @@ class GpuDelegateFailureTest {
 
         override fun deleteTexture(texture: Int) {
             calls += "deleteTexture $texture"
+        }
+    }
+
+    private class RecordingSsboOperations(private val calls: MutableList<String>) : GpuSsboOperations {
+        var generatedName = 7
+        var mapReturnsNull = false
+        var mapped: ByteBuffer? = null
+        var unmapResult = true
+
+        override fun generateBuffers(count: Int, names: IntArray) {
+            for (index in names.indices) {
+                names[index] = if (generatedName == 0) 0 else generatedName + index
+            }
+            calls += "generateBuffers $count ${names.toList()}"
+        }
+
+        override fun bindBuffer(name: Int) {
+            calls += "bindBuffer $name"
+        }
+
+        override fun bindBufferBase(binding: Int, name: Int) {
+            calls += "bindBufferBase $binding $name"
+        }
+
+        override fun allocateDynamicRead(bytes: Int, data: ByteBuffer?) {
+            calls += "allocateDynamicRead $bytes"
+        }
+
+        override fun updateBuffer(offset: Int, bytes: Int, data: ByteBuffer) {
+            calls += "updateBuffer $offset $bytes"
+        }
+
+        override fun mapRead(offset: Int, bytes: Int): ByteBuffer? {
+            calls += "mapRead $offset $bytes"
+            if (mapReturnsNull) return null
+            return mapped ?: ByteBuffer.allocateDirect(bytes).order(ByteOrder.nativeOrder())
+        }
+
+        override fun unmapBuffer(): Boolean {
+            calls += "unmapBuffer"
+            return unmapResult
+        }
+
+        override fun deleteBuffers(count: Int, names: IntArray) {
+            calls += "deleteBuffers $count ${names.toList()}"
         }
     }
 }

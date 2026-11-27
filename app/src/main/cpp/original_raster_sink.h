@@ -13,6 +13,7 @@ public:
     enum class Output { Full, HalfPreview };
     explicit OriginalRasterSink(int output, Output mode = Output::Full) : outputFd(output), mode(mode) {}
     bool isHalfPreview() const { return mode == Output::HalfPreview; }
+    void setDecodeThreads(int value) { decodeThreads = value; }
     void parse(const std::vector<unsigned char>&, const LibRaw&);
     void applyCrop(LibRaw&) const;
     void validateProcessedGeometry(const LibRaw&) const;
@@ -24,6 +25,7 @@ private:
     bool needsCropbox(const LibRaw&) const;
     int outputFd;
     const Output mode;
+    int decodeThreads = 0;
     unsigned outputWidth() const;
     unsigned outputHeight() const;
     unsigned rawWidth = 0, rawHeight = 0, orientation = 1;

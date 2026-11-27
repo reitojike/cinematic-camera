@@ -1,6 +1,5 @@
 package dev.cinematic.p0.gpu.look
 
-import android.opengl.GLES32
 import dev.cinematic.p0.gpu.*
 import dev.cinematic.p0.gpu.diag.GpuStageTap.Point
 import dev.cinematic.p0.gpu.resample.GpuResample
@@ -38,16 +37,16 @@ internal class StageClearFinishGpu(private val egl: GpuExecutionContext, private
             next(Point.CHARACTER) {
                 pass("look/character.frag", current, listOf(TextureInput("s_orton", current, 0))) { program ->
                     val aspect = current.width.toDouble() / current.height
-                    GLES32.glUniform2i(location(program, "u_imageSize"), current.width, current.height)
-                    GLES32.glUniform2i(location(program, "u_origin"), 0, 0)
-                    GLES32.glUniform2f(location(program, "u_aspect"), min(aspect, 1.0).toFloat(), max(aspect, 1.0).toFloat())
-                    GLES32.glUniform1f(location(program, "u_vignetteAmount"), (StageClearCharacterV1.VIGNETTE * strength).toFloat())
-                    GLES32.glUniform1f(location(program, "u_vibranceAmount"), (StageClearCharacterV1.VIBRANCE * strength).toFloat())
+                    egl.passOperations.uniform2i(location(program, "u_imageSize"), current.width, current.height)
+                    egl.passOperations.uniform2i(location(program, "u_origin"), 0, 0)
+                    egl.passOperations.uniform2f(location(program, "u_aspect"), min(aspect, 1.0).toFloat(), max(aspect, 1.0).toFloat())
+                    egl.passOperations.uniform1f(location(program, "u_vignetteAmount"), (StageClearCharacterV1.VIGNETTE * strength).toFloat())
+                    egl.passOperations.uniform1f(location(program, "u_vibranceAmount"), (StageClearCharacterV1.VIBRANCE * strength).toFloat())
                 }
             }
             next(Point.SKIN_CAP) { pass("look/skin_chroma_cap.frag", current,
                 listOf(TextureInput("s_character", current, 0), TextureInput("s_faceMask", faceMask ?: current, 1))) { program ->
-                    GLES32.glUniform1i(location(program, "u_hasFaceMask"), if (faceMask == null) 0 else 1)
+                    egl.passOperations.uniform1i(location(program, "u_hasFaceMask"), if (faceMask == null) 0 else 1)
                 } }
             next(Point.SHOULDER) { pass("look/shoulder.frag", current, listOf(TextureInput("s_skinCap", current, 0))) }
             return current
@@ -67,7 +66,7 @@ internal class StageClearFinishGpu(private val egl: GpuExecutionContext, private
             finally { soft.close() }
         return mixed.use { pass("look/orton_protect.frag", mist.image,
             listOf(TextureInput("s_mist", mist.image, 0), TextureInput("s_mixed", mixed, 1), TextureInput("s_skinWeight", mist.skinWeight, 2))) { program ->
-                GLES32.glUniform1f(location(program, "u_amount"), mist.lightAddingStrength.toFloat())
+                egl.passOperations.uniform1f(location(program, "u_amount"), mist.lightAddingStrength.toFloat())
             }
         }
     }

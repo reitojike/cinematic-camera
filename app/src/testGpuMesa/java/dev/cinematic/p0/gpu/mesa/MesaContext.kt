@@ -71,6 +71,8 @@ internal class MesaContext : AutoCloseable {
         }
     }
 
+    internal fun isCurrentContext(): Boolean = context != EGL_NO_CONTEXT && eglGetCurrentContext() == context
+
     private fun eglCheck(ok: Boolean, operation: String) {
         check(ok) { "$operation failed: EGL 0x${eglGetError().toString(16)}" }
     }

@@ -1,5 +1,6 @@
 #include <jni.h>
 #include <libraw/libraw.h>
+#include <omp.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <algorithm>
@@ -22,6 +23,14 @@
 namespace {
 constexpr uint64_t kMaxFileBytes = 64ULL * 1024 * 1024;
 constexpr uint64_t kMaxRawPixels = 16'000'000;
+// Fix LibRaw's OpenMP decode thread count at 4 based on benchmark results.
+constexpr int kDecodeThreads = 4;
+
+void applyDecodeOpenMpSettings() {
+    omp_set_dynamic(0);
+    omp_set_num_threads(kDecodeThreads);
+    kmp_set_blocktime(0);
+}
 
 struct Cancellation {
     JNIEnv* env;
@@ -207,7 +216,9 @@ jobject decodeDng(JNIEnv* env, jint fd, jint longEdge, jobject signal, jint wbMo
 #ifdef CINEMATIC_ENABLE_RAW_PROBE
     if (probe) probe->stage("process", cancel);
 #endif
+    applyDecodeOpenMpSettings();
     check(raw.dcraw_process());
+    if (original && !original->isHalfPreview()) original->setDecodeThreads(kDecodeThreads);
     if (raw.error_count()) fail("DNG_UNSUPPORTED");
     if (original) original->validateProcessedGeometry(raw);
     int error = 0;

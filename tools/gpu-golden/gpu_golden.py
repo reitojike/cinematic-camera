@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate, review and compare Android GPU RGB8 candidates (standard library only)."""
+"""Validate, review and compare GPU RGB8 candidates (standard library only)."""
 import argparse
 import collections
 import gzip
@@ -16,6 +16,8 @@ import zlib
 
 LIMIT = 20_000_000
 FIELDS = ('id', 'group', 'kind', 'width', 'height', 'strength', 'warmth', 'ev', 'analysis')
+
+GL_FIELDS = ('glVendor', 'glRenderer', 'glVersion', 'glslVersion')
 
 
 def digest(data):
@@ -71,20 +73,49 @@ def validate(root):
     if {p.name for p in root.glob('*.rgb8.gz')} != files:
         raise ValueError('Unexpected image files')
     host = load_json(root / 'host.json')
-    if host['schema'] != 1 or host['instrumentationPassed'] is not True or host['sourceDirty'] is not False or host.get('phase') != 'complete':
+    if not isinstance(host, dict) or host.get('schema') != 1:
+        raise ValueError('Unsupported host schema')
+    mesa = host.get('mesaEnabled') is True
+    if mesa:
+        android_fields = ('instrumentationPassed', 'sourceDirty', 'phase', 'appApkSha256', 'testApkSha256', 'environment')
+        if any(field in host for field in android_fields):
+            raise ValueError('Mesa host contains Android-only fields')
+        if 'android' in capture:
+            raise ValueError('Mesa capture contains android')
+    else:
+        mesa_fields = ('mesaEnabled', 'runId', *GL_FIELDS, 'javaVersion', 'osName', 'osArch',
+                       'cpu', 'llvmpipe', 'baseLibraries')
+        for field in mesa_fields:
+            if field in host:
+                raise ValueError(f'Android host contains {field}')
+        if 'runId' in capture:
+            raise ValueError('Android capture contains runId')
+    if not mesa and (host.get('instrumentationPassed') is not True or host.get('sourceDirty') is not False or host.get('phase') != 'complete'):
         raise ValueError('Host run did not pass against a clean source')
     for field in ('sourceCommit', 'sourceTree'):
-        if not re.fullmatch('[0-9a-f]{40}', host[field]):
+        value = host.get(field)
+        if not isinstance(value, str) or not re.fullmatch('[0-9a-f]{40}', value):
             raise ValueError(f'Missing {field}')
-    for field in ('appApkSha256', 'testApkSha256'):
-        if not re.fullmatch('[0-9a-f]{64}', host[field]):
-            raise ValueError(f'Missing {field}')
-    for field in ('emulatorVersion', 'systemImageRevision', 'avdImage', 'gpuMode', 'gpuFeatures', 'hostGpuDrivers'):
-        if not host['environment'].get(field):
-            raise ValueError(f'Missing environment identity: {field}')
-    for field in ('glVendor', 'glRenderer', 'glVersion', 'glslVersion', 'fingerprint'):
-        if not capture['android'].get(field):
-            raise ValueError(f'Missing Android identity: {field}')
+    if mesa:
+        run_id = host.get('runId')
+        if not isinstance(run_id, str) or not run_id or run_id != capture.get('runId'):
+            raise ValueError('Mesa runId is missing or differs from capture')
+        for field in GL_FIELDS:
+            value = host.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f'Missing Mesa identity: {field}')
+    else:
+        for field in ('appApkSha256', 'testApkSha256'):
+            value = host.get(field)
+            if not isinstance(value, str) or not re.fullmatch('[0-9a-f]{64}', value):
+                raise ValueError(f'Missing {field}')
+        environment = host.get('environment')
+        for field in ('emulatorVersion', 'systemImageRevision', 'avdImage', 'gpuMode', 'gpuFeatures', 'hostGpuDrivers'):
+            if not isinstance(environment, dict) or not environment.get(field):
+                raise ValueError(f'Missing environment identity: {field}')
+        for field in (*GL_FIELDS, 'fingerprint'):
+            if not capture['android'].get(field):
+                raise ValueError(f'Missing Android identity: {field}')
     return capture, host
 
 
@@ -165,6 +196,21 @@ def approve(root, output, approval_ref):
         'approvedFiles': identities(root)}, indent=2) + '\n', encoding='utf-8')
 
 
+def environment_identity(capture, host):
+    if host.get('mesaEnabled') is True:
+        cpu = host.get('cpu')
+        llvmpipe = host.get('llvmpipe')
+        return {'mesa': {
+            **{field: host[field] for field in GL_FIELDS},
+            'cpu': {'modelName': cpu.get('modelName') if isinstance(cpu, dict) else None},
+            'llvmpipe': {
+                field: llvmpipe.get(field) if isinstance(llvmpipe, dict) else None
+                for field in ('LP_NATIVE_VECTOR_WIDTH', 'GALLIUM_OVERRIDE_CPU_CAPS')
+            },
+        }}
+    return {'android': capture['android'], 'host': host['environment']}
+
+
 def compare(baseline, candidate, output):
     old, old_host = validate(baseline)
     new, new_host = validate(candidate)
@@ -173,7 +219,9 @@ def compare(baseline, candidate, output):
         raise ValueError('Baseline has no matching owner visual approval record')
     if [[c[k] for k in FIELDS] for c in old['cases']] != [[c[k] for k in FIELDS] for c in new['cases']]:
         raise ValueError('Case definitions changed; owner approval needed before changing matrix')
-    environment_changed = old['android'] != new['android'] or old_host['environment'] != new_host['environment']
+    baseline_environment = environment_identity(old, old_host)
+    candidate_environment = environment_identity(new, new_host)
+    environment_changed = baseline_environment != candidate_environment
     new_directory(output)
     results = []
     changed = []
@@ -193,8 +241,8 @@ def compare(baseline, candidate, output):
     report = {'status': 'pass' if passed else 'hold', 'environmentChanged': environment_changed,
               'baselineCommit': old_host['sourceCommit'], 'candidateCommit': new_host['sourceCommit'],
               'policy': 'Exact RGB8 across environments. Pixel differences require owner review; no automatic update. Other required safety tests remain separate merge gates.',
-              'baselineEnvironment': {'android': old['android'], 'host': old_host['environment']},
-              'candidateEnvironment': {'android': new['android'], 'host': new_host['environment']}, 'cases': results}
+              'baselineEnvironment': baseline_environment,
+              'candidateEnvironment': candidate_environment, 'cases': results}
     (output / 'comparison.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
     (output / 'index.html').write_text('<!doctype html><meta charset="utf-8"><h1>GPU baseline comparison</h1><p>' +
         html.escape(report['policy']) + f'</p><p>Status: {report["status"]}; environmentChanged={environment_changed}</p>' + ''.join(changed), encoding='utf-8')

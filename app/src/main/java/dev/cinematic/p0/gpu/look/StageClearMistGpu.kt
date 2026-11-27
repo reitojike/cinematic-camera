@@ -1,6 +1,5 @@
 package dev.cinematic.p0.gpu.look
 
-import android.opengl.GLES32
 import dev.cinematic.p0.gpu.FragmentPass
 import dev.cinematic.p0.gpu.GpuTexture
 import dev.cinematic.p0.gpu.TextureInput
@@ -47,7 +46,7 @@ internal object StageClearMistGpu {
             val output = draw(glowed, "look/mist_compose.frag", inputs) { program ->
                 val location = glowed.context.shaders().uniformLocation(program, "u_amount")
                 check(location >= 0)
-                GLES32.glUniform1f(location, amount.toFloat())
+                glowed.context.passOperations.uniform1f(location, amount.toFloat())
             }
             return MistGpuResult(output, amount, skinWeight)
         } finally { halos.asReversed().forEach { it.close() } }
@@ -72,9 +71,9 @@ internal object StageClearMistGpu {
             horizontal = if (resized !== source) resized else {
                 // Tiny dimensions can alias. Own a copy before the source scope ends.
                 source.createSibling().also {
-                    try { GLES32.glCopyImageSubData(source.textureId, GLES32.GL_TEXTURE_2D, 0, 0, 0, 0,
-                        it.textureId, GLES32.GL_TEXTURE_2D, 0, 0, 0, 0, source.width, source.height, 1)
-                    source.context.checkGl("copy aliased Mist halo")
+                    try {
+                        source.context.passOperations.copyTexture2d(source.textureId, it.textureId, source.width, source.height)
+                        source.context.checkGl("copy aliased Mist halo")
                     } catch (failure: Throwable) { it.close(); throw failure }
                 }
             }

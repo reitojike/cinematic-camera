@@ -1,8 +1,9 @@
 package dev.cinematic.p0.gpu.export
 
-import android.opengl.GLES32
 import dev.cinematic.p0.gpu.ComputePass
-import dev.cinematic.p0.gpu.EglContexts
+import dev.cinematic.p0.gpu.GPU_BUFFER_UPDATE_BARRIER_BIT
+import dev.cinematic.p0.gpu.GPU_SHADER_STORAGE_BARRIER_BIT
+import dev.cinematic.p0.gpu.GpuExecutionContext
 import dev.cinematic.p0.gpu.GpuFence
 import dev.cinematic.p0.gpu.GpuTexture
 import dev.cinematic.p0.gpu.TextureInput
@@ -20,7 +21,7 @@ internal object GpuExportAnalysis {
      * 全帯を通した整数 histogram のため、帯の分割は分位値に影響しない。
      */
     fun quantiles(
-        egl: EglContexts,
+        egl: GpuExecutionContext,
         width: Int,
         height: Int,
         stop: () -> Boolean,
@@ -35,8 +36,9 @@ internal object GpuExportAnalysis {
         checkStopped()
         val count = width * height
         val bins = 65536
+        val ssbo = egl.ssboOperations
         val names = IntArray(1)
-        GLES32.glGenBuffers(1, names, 0)
+        ssbo.generateBuffers(1, names)
         check(names[0] != 0) { "Cannot allocate export histogram buffer" }
         try {
             fun histogram(targets: IntArray?): IntArray {
@@ -46,8 +48,8 @@ internal object GpuExportAnalysis {
                 // 各走査の開始時だけ初期化し、全帯が同じ SSBO に累積する。
                 // glBufferData(null) は未初期化になるため、ゼロ初期化された direct buffer を渡す。
                 val zero = ByteBuffer.allocateDirect(bytes).order(ByteOrder.nativeOrder())
-                GLES32.glBindBuffer(GLES32.GL_SHADER_STORAGE_BUFFER, names[0])
-                GLES32.glBufferData(GLES32.GL_SHADER_STORAGE_BUFFER, bytes, zero, GLES32.GL_DYNAMIC_READ)
+                ssbo.bindBuffer(names[0])
+                ssbo.allocateDynamicRead(bytes, zero)
                 egl.checkGl("allocate zeroed export histogram")
                 val path = if (targets == null) "analysis/histogram_high.comp" else "analysis/histogram_low.comp"
                 val program = egl.shaders().compute(path)
@@ -62,15 +64,21 @@ internal object GpuExportAnalysis {
                     egl.passes().run(ComputePass(program, listOf(TextureInput("s_input", input, 0)),
                         groupsX = (width + 7) / 8, groupsY = (input.height + 7) / 8,
                         uniforms = { id ->
-                            GLES32.glUniform2i(GLES32.glGetUniformLocation(id, "u_size"), width, input.height)
+                            egl.passOperations.uniform2i(
+                                egl.shaders().uncachedUniformLocation(id, "u_size"), width, input.height,
+                            )
                             if (targets != null) {
-                                GLES32.glUniform1i(GLES32.glGetUniformLocation(id, "u_targetCount"), targets.size)
-                                GLES32.glUniform4uiv(GLES32.glGetUniformLocation(id, "u_highBins"), 1, targets.copyOf(4), 0)
+                                egl.passOperations.uniform1i(
+                                    egl.shaders().uncachedUniformLocation(id, "u_targetCount"), targets.size,
+                                )
+                                egl.passOperations.uniform4uiv(
+                                    egl.shaders().uncachedUniformLocation(id, "u_highBins"), 1, targets.copyOf(4), 0,
+                                )
                             }
                         },
                         // 帯の生成処理が別の SSBO を使っていても、各 dispatch で再設定する。
-                        bindResources = { GLES32.glBindBufferBase(GLES32.GL_SHADER_STORAGE_BUFFER, 0, names[0]) },
-                        memoryBarrier = GLES32.GL_SHADER_STORAGE_BARRIER_BIT or GLES32.GL_BUFFER_UPDATE_BARRIER_BIT))
+                        bindResources = { ssbo.bindBufferBase(0, names[0]) },
+                        memoryBarrier = GPU_SHADER_STORAGE_BARRIER_BIT or GPU_BUFFER_UPDATE_BARRIER_BIT))
                     rows += input.height
                     checkStopped()
                 }
@@ -79,12 +87,11 @@ internal object GpuExportAnalysis {
                 // 帯ごとに readback せず、全帯を累積した後に一度だけ待機する。
                 gpuWork(timings, GpuExportDetail.FENCE_WAIT) { GpuFence(egl).use { it.await(stop) } }
                 val result = gpuWork(timings, GpuExportDetail.READBACK) {
-                    GLES32.glBindBuffer(GLES32.GL_SHADER_STORAGE_BUFFER, names[0])
-                    val mapped = GLES32.glMapBufferRange(GLES32.GL_SHADER_STORAGE_BUFFER, 0, bytes, GLES32.GL_MAP_READ_BIT)
-                        as? ByteBuffer ?: error("Cannot map export histogram")
+                    ssbo.bindBuffer(names[0])
+                    val mapped = ssbo.mapRead(0, bytes) ?: error("Cannot map export histogram")
                     val values = IntArray(length)
                     try { mapped.order(ByteOrder.nativeOrder()).asIntBuffer().get(values) }
-                    finally { check(GLES32.glUnmapBuffer(GLES32.GL_SHADER_STORAGE_BUFFER)) { "Export histogram buffer corrupted" } }
+                    finally { check(ssbo.unmapBuffer()) { "Export histogram buffer corrupted" } }
                     egl.checkGl("read export histogram")
                     values
                 }
@@ -132,9 +139,9 @@ internal object GpuExportAnalysis {
             }
         } finally {
             egl.releaseResource {
-                GLES32.glBindBufferBase(GLES32.GL_SHADER_STORAGE_BUFFER, 0, 0)
-                GLES32.glBindBuffer(GLES32.GL_SHADER_STORAGE_BUFFER, 0)
-                GLES32.glDeleteBuffers(1, names, 0)
+                ssbo.bindBufferBase(0, 0)
+                ssbo.bindBuffer(0)
+                ssbo.deleteBuffers(1, names)
             }
         }
     }
