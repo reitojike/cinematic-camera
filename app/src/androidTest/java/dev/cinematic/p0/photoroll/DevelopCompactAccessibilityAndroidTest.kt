@@ -341,15 +341,21 @@ class DevelopCompactAccessibilityAndroidTest {
                     // boundsInRoot は制約内のノード矩形なので、字形が横に切れても幅・高さの閾値を通り得る。
                     // 行数で折り返しを検出し、横切れは同じ段落の全文の1行幅と実際の配置幅を比較する。
                     // 段落自体が幅制約に収まり overflow が false の場合も、1行に必要な幅の不足を検出できる。
+                    // 最後の文字の右端が確定幅に収まり、高さのはみ出しがないことも確認する。
                     for ((label, layout, oneLineWidth, availableWidth) in switchLabelChecks) {
                         assertEquals("$label wraps: expected one line", 1, layout.lineCount)
                         assertTrue(
                             "$label horizontal clipping: needs ${oneLineWidth}px for one line, has ${availableWidth}px",
                             oneLineWidth <= availableWidth,
                         )
-                        assertFalse(
-                            "$label layout overflow: width=${layout.didOverflowWidth}, height=${layout.didOverflowHeight}",
-                            layout.hasVisualOverflow,
+                        val lastCharIndex = layout.layoutInput.text.length - 1
+                        val hasCharacterBounds = lastCharIndex >= 0 && layout.lineCount > 0
+                        val lastCharRight = if (hasCharacterBounds) layout.getBoundingBox(lastCharIndex).right else null
+                        assertTrue(
+                            "$label layout overflow: lastCharRightPx=$lastCharRight, " +
+                                "sizeWidthPx=${layout.size.width}, didOverflowHeight=${layout.didOverflowHeight}, " +
+                                "multiParagraphHeightPx=${layout.multiParagraph.height}, sizeHeightPx=${layout.size.height}",
+                            lastCharRight != null && lastCharRight <= layout.size.width && !layout.didOverflowHeight,
                         )
                     }
                 } catch (failure: AssertionError) {
