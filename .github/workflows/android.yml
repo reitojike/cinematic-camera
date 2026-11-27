@@ -340,6 +340,34 @@ jobs:
           awk -F'\t' '$7 == "yes"' "$RUNNER_TEMP/mesa-manifest.tsv" > "$RUNNER_TEMP/mesa-install-targets.tsv"
           expected_install="$(awk -F': ' '$1 == "install-count" { print $2 }' "$manifest")"
           [[ "$(wc -l < "$RUNNER_TEMP/mesa-install-targets.tsv")" -eq "$expected_install" ]]
+          architecture="$(dpkg --print-architecture)"
+          # Print "<version>\t<status>" of the one installed row that the
+          # pre-flight check below selects for a package, so the shell and
+          # the Python check always use the same row. A row counts as
+          # installed when the first Status field is "install" or "hold"
+          # and the third is "installed". Among such rows the native
+          # architecture wins, then "all", then lexicographic order of the
+          # architecture name. Prints nothing when no such row exists.
+          mesa_selected_installed_row() {
+            local package="$1"
+            local rows
+            rows="$(dpkg-query -W -f='${Architecture}\t${Version}\t${Status}\n' "$package" 2>/dev/null || true)"
+            [[ -n "$rows" ]] || return 0
+            printf '%s\n' "$rows" | awk -F'\t' -v native="$architecture" '
+              NF == 3 {
+                count = split($3, fields, " ")
+                if (count == 3 && (fields[1] == "install" || fields[1] == "hold") && fields[3] == "installed") {
+                  key = ($1 != native) ($1 != "all") $1
+                  if (!seen || key < best) {
+                    best = key
+                    selected = $2 "\t" $3
+                    seen = 1
+                  }
+                }
+              }
+              END { if (seen) print selected }
+            '
+          }
           # Decide per package, by the class recorded in the manifest.
           # Class A (rendering-determining): always install the stored .deb.
           # Class B: if the runner already has the same or a newer version, keep
@@ -349,7 +377,8 @@ jobs:
           : > "$record/dpkg-before.txt"
           install_files=()
           while IFS=$'\t' read -r file package version arch sha class install; do
-            installed="$(dpkg-query -W -f='${Version}' "$package" 2>/dev/null || true)"
+            selected="$(mesa_selected_installed_row "$package")"
+            installed="${selected%%$'\t'*}"
             [[ -n "$installed" ]] || installed="not-installed"
             if [[ "$class" == "B" && "$installed" != "not-installed" ]] \
               && dpkg --compare-versions "$installed" ge "$version"; then
@@ -389,7 +418,13 @@ jobs:
           with open(f"{record}/dpkg-runner-state.txt") as fh:
               for line in fh:
                   package, arch, version, status, depends, pre_depends = line.rstrip("\n").split("\t")
-                  if status != "install ok installed":
+                  # Installed means the third Status field is "installed";
+                  # the first field may be "install" or "hold" (a held
+                  # package is installed and its dependencies are in
+                  # effect). This matches mesa_selected_installed_row.
+                  status_fields = status.split()
+                  if len(status_fields) != 3 or status_fields[0] not in ("install", "hold") \
+                          or status_fields[2] != "installed":
                       continue
                   if not all((package, arch, version)):
                       sys.exit("ERROR: incomplete installed package in runner state")
@@ -487,13 +522,22 @@ jobs:
           # (the runner's version, when it was kept). Anything else fails the job.
           : > "$record/dpkg-after.txt"
           while IFS=$'\t' read -r file package version arch sha class install; do
-            state="$(dpkg-query -W -f='${Version} ${Status}' "$package")"
+            selected="$(mesa_selected_installed_row "$package")"
+            if [[ -z "$selected" ]]; then
+              echo "ERROR: $package has no installed row after installation" >&2
+              exit 1
+            fi
+            after_version="${selected%%$'\t'*}"
+            after_status="${selected#*$'\t'}"
             decision="$(cat "$RUNNER_TEMP/mesa-decision-$package.txt")"
             source="runner"
             [[ "$decision" == "install-stored" ]] && source="stored"
-            echo "$package class=$class source=$source $state" >> "$record/dpkg-after.txt"
-            after_version="${state%% *}"
-            [[ "$state" == "$after_version install ok installed" ]]
+            echo "$package class=$class source=$source $after_version $after_status" >> "$record/dpkg-after.txt"
+            status_fields=()
+            read -r -a status_fields <<< "$after_status"
+            [[ "${#status_fields[@]}" -eq 3 ]]
+            [[ "${status_fields[0]}" == "install" || "${status_fields[0]}" == "hold" ]]
+            [[ "${status_fields[2]}" == "installed" ]]
             if [[ "$class" == "A" ]]; then
               [[ "$after_version" == "$version" ]]
             else
