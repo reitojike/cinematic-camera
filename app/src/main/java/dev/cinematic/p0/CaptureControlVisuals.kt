@@ -33,13 +33,15 @@ internal fun Modifier.captureControlSurface(selected: Boolean, decorationAlpha: 
             size = Size(1.dp.toPx(), size.height))
     }
 
+internal val CaptureModeSwitchSurfacePadding = 2.dp
+
 /** Shared switch frame and animated thumb, without imposing toggle or direct-selection input. */
 @Composable
 internal fun CaptureModeSwitchSurface(secondSelected: Boolean, modifier: Modifier = Modifier,
     switchWidth: Dp = 100.dp, content: @Composable RowScope.() -> Unit) {
     BoxWithConstraints(modifier.width(switchWidth).height(48.dp)
         .background(CaptureDesign.SwitchBackground, RoundedCornerShape(6.dp))
-        .border(1.dp, CaptureDesign.SwitchBorder, RoundedCornerShape(6.dp)).padding(2.dp)) {
+        .border(1.dp, CaptureDesign.SwitchBorder, RoundedCornerShape(6.dp)).padding(CaptureModeSwitchSurfacePadding)) {
         val thumbWidth = maxWidth / 2
         val thumbOffset by animateDpAsState(if (secondSelected) thumbWidth else 0.dp, tween(180), label = "mode-thumb")
         Box(Modifier.offset(x = thumbOffset).width(thumbWidth).fillMaxHeight()

@@ -35,6 +35,7 @@ import dev.cinematic.p0.captureNeedsFullScroll
 import dev.cinematic.p0.CaptureDesign
 import dev.cinematic.p0.captureControlSurface
 import dev.cinematic.p0.CaptureModeSwitchSurface
+import dev.cinematic.p0.CaptureModeSwitchSurfacePadding
 import dev.cinematic.p0.photoedit.*
 
 private val DevelopInlineSwitchWidth = 100.dp
@@ -42,10 +43,16 @@ private val DevelopSwitchButtonPadding = 2.dp
 private const val DevelopDisplayLabel = "表示"
 private const val DevelopCompareLabel = "比較"
 
-// CaptureModeSwitchSurface の枠 1dp と内側 padding 2dp を左右分引いて 2 項目で分け、
-// ボタンの contentPadding を左右分引くと、1 項目の字面幅は 43dp。
-private val DevelopInlineSwitchLabelWidth =
-    (DevelopInlineSwitchWidth - (1.dp + 2.dp) * 2) / 2 - DevelopSwitchButtonPadding * 2
+// border は描画のみで幅を消費しない。実際の丸めに合わせて px で計算し、
+// Row の配分が 1px 異なる場合に備えて、狭い側の字面幅を使う。
+internal fun developSwitchLabelWidthPx(switchWidthPx: Int, surfacePaddingPx: Int, buttonPaddingPx: Int): Int {
+    val innerWidthPx = switchWidthPx - surfacePaddingPx * 2
+    val buttonWidthPx = innerWidthPx / 2
+    return buttonWidthPx - buttonPaddingPx * 2
+}
+
+internal fun developSwitchNeedsTwoRows(widestLabelPx: Int, availableLabelWidthPx: Int): Boolean =
+    widestLabelPx > availableLabelWidthPx
 
 internal fun developModeColor(mode: PhotoRollPreviewMode) =
     if (mode == PhotoRollPreviewMode.PRIVATE_TRIAL) CaptureDesign.Amber else CaptureDesign.Text
@@ -282,8 +289,14 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
             val widestSwitchLabelPx = listOf(DevelopDisplayLabel, DevelopCompareLabel).maxOf { label ->
                 textMeasurer.measure(label, style = CaptureDesign.Label, maxLines = 1, softWrap = false).size.width
             }
-            val switchLabelsNeedFullWidth =
-                widestSwitchLabelPx > with(LocalDensity.current) { DevelopInlineSwitchLabelWidth.toPx() }
+            val availableSwitchLabelWidthPx = with(LocalDensity.current) {
+                developSwitchLabelWidthPx(
+                    DevelopInlineSwitchWidth.roundToPx(),
+                    CaptureModeSwitchSurfacePadding.roundToPx(),
+                    DevelopSwitchButtonPadding.roundToPx(),
+                )
+            }
+            val switchLabelsNeedFullWidth = developSwitchNeedsTwoRows(widestSwitchLabelPx, availableSwitchLabelWidthPx)
             if (switchLabelsNeedFullWidth) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
                     Row(Modifier.fillMaxWidth().heightIn(min = 96.dp), verticalAlignment = Alignment.CenterVertically,
