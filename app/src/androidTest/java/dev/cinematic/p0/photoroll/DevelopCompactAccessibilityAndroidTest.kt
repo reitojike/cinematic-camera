@@ -303,7 +303,11 @@ class DevelopCompactAccessibilityAndroidTest {
                             val hasCharacterBounds = lastCharIndex >= 0 && layout.lineCount > 0
                             val firstChar = if (hasCharacterBounds) layout.getBoundingBox(0) else null
                             val lastChar = if (hasCharacterBounds) layout.getBoundingBox(lastCharIndex) else null
-                            val lineWidth = if (layout.lineCount > 0) layout.getLineWidth(0) else -1f
+                            val lineWidth = if (layout.lineCount > 0) {
+                                layout.getLineRight(0) - layout.getLineLeft(0)
+                            } else {
+                                -1f
+                            }
                             appendLine("$label.lineCount=${layout.lineCount}")
                             appendLine("$label.sizeWidthPx=${layout.size.width}")
                             appendLine("$label.sizeHeightPx=${layout.size.height}")
