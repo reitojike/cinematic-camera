@@ -344,19 +344,31 @@ jobs:
           # Print "<version>\t<status>" of the one installed row that the
           # pre-flight check below selects for a package, so the shell and
           # the Python check always use the same row. A row counts as
-          # installed when the first Status field is "install" or "hold"
-          # and the third is "installed". Among such rows the native
-          # architecture wins, then "all", then lexicographic order of the
-          # architecture name. Prints nothing when no such row exists.
+          # installed when the first Status field is "install" or "hold",
+          # the second is "ok", and the third is "installed". Among such
+          # rows the native architecture wins, then "all", then lexicographic
+          # order of the architecture name. Prints nothing when no such row
+          # exists.
           mesa_selected_installed_row() {
             local package="$1"
-            local rows
-            rows="$(dpkg-query -W -f='${Architecture}\t${Version}\t${Status}\n' "$package" 2>/dev/null || true)"
+            local rows query_stderr query_status
+            query_stderr="$(mktemp)" || return $?
+            if rows="$(dpkg-query -W -f='${Architecture}\t${Version}\t${Status}\n' "$package" 2>"$query_stderr")"; then
+              rm -f "$query_stderr" || return $?
+            else
+              query_status=$?
+              if [[ "$query_status" -ne 1 ]]; then
+                cat "$query_stderr" >&2
+              fi
+              rm -f "$query_stderr" || return $?
+              [[ "$query_status" -eq 1 ]] && return 0
+              return "$query_status"
+            fi
             [[ -n "$rows" ]] || return 0
             printf '%s\n' "$rows" | awk -F'\t' -v native="$architecture" '
               NF == 3 {
                 count = split($3, fields, " ")
-                if (count == 3 && (fields[1] == "install" || fields[1] == "hold") && fields[3] == "installed") {
+                if (count == 3 && (fields[1] == "install" || fields[1] == "hold") && fields[2] == "ok" && fields[3] == "installed") {
                   key = ($1 != native) ($1 != "all") $1
                   if (!seen || key < best) {
                     best = key
@@ -418,13 +430,12 @@ jobs:
           with open(f"{record}/dpkg-runner-state.txt") as fh:
               for line in fh:
                   package, arch, version, status, depends, pre_depends = line.rstrip("\n").split("\t")
-                  # Installed means the third Status field is "installed";
-                  # the first field may be "install" or "hold" (a held
-                  # package is installed and its dependencies are in
-                  # effect). This matches mesa_selected_installed_row.
+                  # An installed row has "install" or "hold" in the first
+                  # Status field, "ok" in the second, and "installed" in the
+                  # third. This matches mesa_selected_installed_row.
                   status_fields = status.split()
                   if len(status_fields) != 3 or status_fields[0] not in ("install", "hold") \
-                          or status_fields[2] != "installed":
+                          or status_fields[1] != "ok" or status_fields[2] != "installed":
                       continue
                   if not all((package, arch, version)):
                       sys.exit("ERROR: incomplete installed package in runner state")
@@ -537,6 +548,7 @@ jobs:
             read -r -a status_fields <<< "$after_status"
             [[ "${#status_fields[@]}" -eq 3 ]]
             [[ "${status_fields[0]}" == "install" || "${status_fields[0]}" == "hold" ]]
+            [[ "${status_fields[1]}" == "ok" ]]
             [[ "${status_fields[2]}" == "installed" ]]
             if [[ "$class" == "A" ]]; then
               [[ "$after_version" == "$version" ]]
