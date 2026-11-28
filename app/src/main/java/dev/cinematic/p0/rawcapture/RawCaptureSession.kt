@@ -2,6 +2,11 @@ package dev.cinematic.p0.rawcapture
 
 import java.io.OutputStream
 
+internal class RawCaptureInterruptException(
+    val journalSide: Boolean,
+    override val cause: Throwable,
+) : Exception(cause)
+
 /** One live session per capture. Receipt methods use capture IO; handoff uses a separate single worker. */
 internal class RawCaptureSession(
     private val store: RawCaptureStore,
@@ -60,13 +65,14 @@ internal class RawCaptureSession(
         try {
             receipt = store.readReceipt()?.let { store.interrupt(it.revision) }
         } catch (t: Throwable) { failure = t }
+        val journalSide = failure != null
         outputs.values.forEach {
             try { it.close() } catch (t: Throwable) {
                 val previous = failure
                 if (previous == null) failure = t else if (previous !== t) previous.addSuppressed(t)
             }
         }
-        failure?.let { throw it }
+        failure?.let { throw RawCaptureInterruptException(journalSide, it) }
         return receipt
     }
 

@@ -25,6 +25,7 @@ internal class RawCaptureTicket internal constructor(
     val id: String,
     internal val writer: RawHandoffAdmission.Blocker,
     observer: RawCaptureObserver?,
+    internal val recovered: Boolean = false,
 ) {
     internal val observer = WeakReference(observer)
     internal val serial = RawCaptureSerial()
@@ -177,7 +178,7 @@ internal class RawCaptureQueue(
                 directories.forEach { directory ->
                     if (!directory.name.matches(Regex("[A-Za-z0-9_-]{1,64}")) ||
                         !Files.isDirectory(directory.toPath(), LinkOption.NOFOLLOW_LINKS)) return@forEach
-                    val ticket = RawCaptureTicket(directory.name, admission.newBlocker(), null)
+                    val ticket = RawCaptureTicket(directory.name, admission.newBlocker(), null, recovered = true)
                     if (tickets.putIfAbsent(ticket.id, ticket) != null) {
                         admission.remove(ticket.writer)
                         return@forEach
@@ -189,7 +190,7 @@ internal class RawCaptureQueue(
                             ticket.terminal = true
                         } catch (failure: Exception) {
                             ticket.terminal = true
-                            report("RAW_RECOVERY_HELD type=${failure.javaClass.simpleName}")
+                            report("RAW_RECOVERY_HELD source=recovery capture=${ticket.id} type=${failure.javaClass.simpleName}")
                         } finally { releaseWriterIfClosed(ticket); requestWork() }
                     }
                 }
@@ -200,7 +201,18 @@ internal class RawCaptureQueue(
 
     private fun interruptOnIo(ticket: RawCaptureTicket) {
         try { ticket.session?.interruptAndCloseWriters() }
-        catch (failure: Exception) { report("RAW_WRITER_HELD type=${failure.javaClass.simpleName}") }
+        catch (failure: Exception) {
+            val interruption = failure as? RawCaptureInterruptException
+            val original = interruption?.cause ?: failure
+            if (original !is Exception) throw original
+            val source = if (ticket.recovered) "recovery" else "capture"
+            val side = when (interruption?.journalSide) {
+                true -> "journal"
+                false -> "writer"
+                null -> "unknown"
+            }
+            report("RAW_WRITER_HELD source=$source side=$side capture=${ticket.id} type=${original.javaClass.simpleName}")
+        }
         finally { releaseWriterIfClosed(ticket); requestWork() }
     }
     private fun releaseWriterIfClosed(ticket: RawCaptureTicket) {
