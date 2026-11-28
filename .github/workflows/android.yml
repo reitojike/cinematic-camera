@@ -223,6 +223,19 @@ jobs:
             unzip -p rawprobe/build/diagnostic/rawprobe-debug.apk "lib/$abi/libcinematic_dng.so" > "$RUNNER_TEMP/probe-$abi.so"
             "$readelf" --dyn-syms --wide "$RUNNER_TEMP/normal-$abi.so" > "$RUNNER_TEMP/normal-$abi.symbols"
             "$readelf" --dyn-syms --wide "$RUNNER_TEMP/probe-$abi.so" > "$RUNNER_TEMP/probe-$abi.symbols"
+            # libomp is linked statically (-static-openmp). If it ever ends up
+            # in DT_NEEDED instead, the library fails to load on device and
+            # every DNG decode path breaks, so reject it here.
+            "$readelf" --dynamic --wide "$RUNNER_TEMP/normal-$abi.so" > "$RUNNER_TEMP/normal-$abi.dynamic"
+            "$readelf" --dynamic --wide "$RUNNER_TEMP/probe-$abi.so" > "$RUNNER_TEMP/probe-$abi.dynamic"
+            if grep -E 'NEEDED.*\[libomp\.so\]' "$RUNNER_TEMP/normal-$abi.dynamic"; then
+              echo 'libomp.so is a DT_NEEDED of the camera app library; it must be statically linked' >&2
+              exit 1
+            fi
+            if grep -E 'NEEDED.*\[libomp\.so\]' "$RUNNER_TEMP/probe-$abi.dynamic"; then
+              echo 'libomp.so is a DT_NEEDED of the diagnostic app library; it must be statically linked' >&2
+              exit 1
+            fi
             grep -F 'Java_dev_cinematic_p0_raw_NativeDngDecoder_decode' "$RUNNER_TEMP/normal-$abi.symbols"
             if grep -F 'Java_dev_cinematic_rawprobe_' "$RUNNER_TEMP/normal-$abi.symbols"; then
               echo 'Diagnostic JNI leaked into the camera app' >&2
