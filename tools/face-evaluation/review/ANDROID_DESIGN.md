@@ -1,0 +1,154 @@
+# Android 内部の実写評価導線（評価専用・実機未検証）
+
+## 選択
+
+評価専用projectの追加 `comparison` flavorで、同一画像に ML Kit FAST / ACCURATE と
+YuNetを順に実行し、そのapp-private領域に結果・人ラベルを保持する。
+別APK間で写真/顔枠を受け渡す仕組みは作らない。baseline/bundled/Play/YuNetの
+容量比較用4flavorは残し、両SDK同梱comparisonの容量を単体増分へ流用しない。
+製品root settings/app/GPU/原本保存への接続なし。製品の顔枠接続は別判断。
+
+## ローカル処理と画面
+
+- Android標準の選択UIで、本人が指定する静止画のみ選択。広い写真ライブラリ権限や
+  カメラ権限は要求しない。原本には書かない。最初はJPEG/PNGの共通入力を対象とし、
+  DNGのデコードは既存製品経路へ安易に接続せず別に設計する。
+- ImageDecoderで向き・色を適用した同一の不透明sRGB bitmapを最大4MPに固定。
+  オリジナル名/URIをSDK・ログ・集計へ入れず、ランダムな評価IDと画素SHAで対応する。
+- 一度に1枚/1方式を処理。3方式の入力bitmapは同じ正規化結果。
+  AndroidX ViewModel等の通常ライフサイクル所有者で処理と資源を保持し、画面回転で
+  再推論・ラベル消失・二重実行しない。元画像は処理単位でclose、bitmapは完了後release。
+- 画像上に方式別の枠を切替表示し、各枠の誤検出と見逃し数を本人が指定。
+  顔なしも明示確定が必要。未確認/エラー/取消/モデル未取得を区別する。
+- 人ラベルはapp-privateで原子的保存。process再起動後に同じhash/設定との対応を確認。
+  明示的な「集計を書き出す」以外にShare/写真export/生JSONL exportを作らない。
+  集計はdetector/設定、確認枚数、検出数、見逃し、誤検出、時間分布のみのallowlist。
+- 静止画の検出比較専用。撮影プレビューのFPS/熱/消費電力を推測しない。
+
+## ローカルHTMLとの関係
+
+先行するreview/index.htmlは判定操作/集計契約の試作。Androidはnative画面を本線とし、
+file URLを扱う操作ツールの制限を迂回するためのWebView/サーバーは作らない。
+同じ手元PC上でのHTML確認と、PixelからPCへの写真/結果移動は区別する。
+Pixelから写真・URI・顔枠を持ち出してHTMLへ入力する運用は禁止。
+
+## 実装前の確認・完了条件
+
+1. 両SDK用adapterを評価専用sourceSetsで共有し、baseline/単体APKの依存を汚さない。
+2. 元JPEGの向き/色/サイズが3方式で同一、画像SHAが判定と一致。
+3. 読込失敗、検出失敗、取消、画面回転、Back、再起動、重複選択、保存拒否の合成回帰。
+4. 実際のSDK呼出し成功と検出精度は区別。人が未確認の画像は集計対象外。
+5. APK/manifest/ソース監査、個別情報を含まない集計の検査、独立レビュー。
+6. 本人の実機導入/操作承認を得てから30〜50枚の評価。製品採用は結果を見て本人判断。
+
+## 残る設計上の論点
+
+全て小さい顔を落とさず比較するには最大4MPの正規化とML Kit minFaceSize=0.1の
+固定値が不利になる場合がある。最初の固定条件での見逃しを記録し、閾値や解像度を
+後から変えるなら別設定として分ける。結果をよくするために同じ評価表へ混在させない。
+初回/温間/SDK内/変換込みの時間を別々に保持し、1枚の代表値を勝手に混ぜない。
+
+## Android comparison 初期実装（実機・実写・画面操作は未検証）
+
+- comparison は bundled ML Kit FAST/ACCURATE + YuNet の別 application ID。
+  Play 版は含めない。容量用の既存4flavorは維持し、アダプター実装のみsourceSetで共有する。
+- 標準 ACTION_OPEN_DOCUMENT + EXTRA_LOCAL_ONLY でJPEG/PNGを1枚選択。URIは一時的に読取へ使うだけで
+  保存・ログ・SDKへ渡さない。EXTRA_LOCAL_ONLYはproviderへの要求であり、任意providerの無通信保証ではない。
+- ImageDecoder（向き適用、sRGB、software）を最大4MP・各辺8192pxに縮小し、透明部分は黒へ合成。
+  3方式とも同一opaque ARGB_8888。画像別のdecode_nsとinitialization_nsは内部記録に残す。
+- 評価プロセス内のストア共通queueが逐次処理。旧ownerの処理/cleanup/closeから新ownerの復元まで同じqueueを使い、交代済みownerの操作は拒否する。画面回転で再実行しない。取消はSDK完了まで待ち、
+  未完了の画像を採点対象へ追加しない。Back/Activity終了でも入力をSDK処理中に破棄しない。
+- noBackupFilesDirに正規化PNGとAtomicFileの記録を保存。原本は書き換えない。
+  画像確定後のDB更新失敗時は未参照PNGを削除し、再起動では正常記録を検証した後にorphanだけ除去する。
+  記録破損・画素SHA不一致はロックして上書き/集計しない。アプリ削除時は判定も消える。
+- 各方式の枠番号、誤検出チェック、見逃し整数を明示保存。0も明示入力。
+  未保存の入力は回転用Bundleに保持し、保存した判定は再起動後も保持する。
+- native Viewの画像fit範囲から枠を変換。これは評価用の別Viewで、製品GpuPreviewSurfaceへ接続しない。
+  将来製品接続時は固定Surfaceのviewportへ合わせ、パネル開閉の両方を検証する。
+- FLAG_SECUREで画面キャプチャを抑制。自動写真export/共有/FileProvider/外向きHTTP実装はない。
+  書出しは本人が押した集計JSONだけ。ID/SHA/URI/枠/画像をallowlistへ入れない。
+- 時間は手動評価済みSUCCESSのみ、first-callとwarmを分け、SDKとadapterの中央値/件数を記載。
+  first-callはこのownerでの最初の呼出しで、プロセスcold startや実機性能の保証ではない。
+  未評価、FAILED、CANCELLED、NOT_RUNを区別する。画像の途中取消は全体を未追加とする。
+
+### 初期実装時点の未確認（下記の合成Android試験で一部を解消）
+
+標準ピッカーを含む端末内UI実走、EXIF回転と色を含む合成画像の実行試験、
+取消/Back/回転/再起動/ストレージ失敗のAndroid実行試験、30〜50枚の実写精度は未実施。
+ビルド・純粋な記録/集計の単体試験はこれらの代替ではない。配布・実機操作前に本人の承認が必要。
+
+参照: [ImageDecoder](https://developer.android.com/reference/android/graphics/ImageDecoder)、
+[SAF](https://developer.android.com/training/data-storage/shared/documents-files)、
+[ViewModel](https://developer.android.com/topic/libraries/architecture/viewmodel)。
+
+## 合成Android実行試験（2026-11-16）
+
+既存専用AOSP API37のread-only instanceを標準wrapperで起動し、90秒のboot/system_server安定・ANR0を確認。
+実写・Pixelは使用しない。comparisonだけAndroidJUnitRunnerを使い、容量用4flavorのrunnerは変更しない。
+以下の2methodを**個別にこの順序で**実行し、間にcomparisonアプリだけ明示force-stopする。
+同一プロセスの一括実行は復元検証にならないため、restart側は前phaseとのPID相違をassertする。
+
+1. `ComparisonSyntheticTest#generatedImageUiRotationCancelAndPersist`
+   - testが生成した2色JPEGにEXIF90度を設定し、ImageDecoder後の縦横寸法と赤/青の位置を検証。
+   - 読取前後の原本SHA一致、3方式のSUCCESS、同一画像の二重追加なし。
+   - ActivityScenario.recreateで同じViewModel、未保存の見逃し入力保持、余計な画像追加なし。
+   - 3方式の判定保存と集計allowlist、生成6MP画像の即時取消で未追加を検証。
+2. `ComparisonSyntheticTest#persistedRecordAfterProcessRestart`
+   - 明示force-stop後の新PIDをassert。画像SHA照合を通じ、同じ生成ID・寸法・判定を復元。
+   - 既知の合成矩形をrecordへ一時注入し、View.drawの画像fit viewportに緑の枠辺が一致することを検証。
+     この矩形は描画fixtureであり、SDKが顔を検出した精度証拠ではない。
+   - 1方式の寸法だけを破損させ、安全ロックされることを確認。finallyで元recordへ戻す。
+   - markerの生成ID/hashで所有を照合し、試験が作った画像/記録だけ削除。
+
+最終2phaseはそれぞれ成功（5.383秒、3.232秒）。初期探索版の2成功は最終結果に重複計上しない。
+最終app/test APKを実行後のインストール済みAPKとSHA256照合し一致、終了時ANR0・生成dataset/marker不在を確認。
+app SHA256: `aac186aa5b75f279167ba6666dc9d9a3b909d0f7c2125dd532c915ec5a660760`
+AndroidTest SHA256: `3691dcd0dd28475fd63df12d7e54aa4d1b387d7616ce99f361183471c0f17843`
+
+### 引き続き未検証
+
+SAF実ピッカーでの選択/キャンセル、SDK処理途中の取消・Back、OSによる強制終了の任意タイミング、
+disk-full/削除失敗のAndroid故障注入、異なるEXIF/色空間の網羅、実写真の顔精度、Pixel速度/熱/電力。
+今回のView.drawはViewツリーの検証であり、画面キャプチャ/表示合成や目視承認の代替ではない。
+この合成検証を理由に実写真・実機導入・配布の個別承認を省略しない。
+
+
+再実行は専用エミュレーターのidentity/安定gateと空の評価領域を確認後、対象serialを明示する。
+以下は順序の例（shellに合う引用方法で実行）。未指定serialや実機へは実行しない。
+
+```text
+adb -s <専用emulator> shell am instrument -w -r -e syntheticComparisonApproved true -e class org.cinematic.evaluation.ComparisonSyntheticTest#generatedImageUiRotationCancelAndPersist org.cinematic.evaluation.comparison.test/androidx.test.runner.AndroidJUnitRunner
+adb -s <専用emulator> shell am force-stop org.cinematic.evaluation.comparison
+adb -s <専用emulator> shell am instrument -w -r -e syntheticComparisonApproved true -e class org.cinematic.evaluation.ComparisonSyntheticTest#persistedRecordAfterProcessRestart org.cinematic.evaluation.comparison.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+失敗時にmarker/既存判定を強制削除して再開しない。生成データの所有と失敗点を確認する。
+一括connectedAndroidTestでは新PID条件を満たせないため、この2phaseの代用にしない。
+
+
+## レビューP2修正の境界
+
+- private_manifest / PrivateDatasetRunは、manifestに書かれた値を信頼せず実RGBAを検証したSHAで重複を拒否。
+  Android側はdetectorと結果ファイルの作成前に全件をpreflightする。別IDの同一画素を精度件数へ水増ししない。
+- 比較画像のPNG保存後にもcancel/clearedを確認し、未commitなら既存finallyで画像を消去。
+  DB書込み前と書込み後・finishWrite直前も確認し、取消ならfailWriteで未確定分を戻す。
+  **finishWriteが開始した後の取消を取り消せるという保証ではない**。
+- private storeのqueueはプロセス単位。旧ownerのin-flight処理とfinallyをdrainしてから新ownerが読込/cleanupする。
+  新ownerへの交代後は旧ownerをretireして再書込みを拒否する。SDKとBitmapを処理中に強制解放しない。
+- 対象は評価APKのPNG/判定DBだけ。製品の写真open、原本、JPEG保存、GPU ownerを変更しない。
+  v0.1.0外の検証であり、製品側の共有枠を優先する。
+
+追加の合成instrumentation:
+`privateRunnerRejectsVerifiedDuplicatePixels` は検証済み同一画素・別IDを拒否し、結果ファイルを作らないことをassert。
+`cancelAfterPngAndSerializeOwnerReplacement` はPNG実ファイルができた境界でlatch待機し、
+取消とonClearedによる交代を別々に試す。交代先はbusyのままで旧PNGを消さず、旧処理解放後はDB/PNGを残さないことをassert。
+このpackage-private seamは評価版の合成試験用で、通常constructorはno-op。
+実UIのBack操作やfinishWrite途中の任意タイミングを網羅したとは扱わない。
+
+
+P2修正後の検証（2026-11-16）: 5flavor `verifyEvaluation --offline` 成功（1分42秒）、JVM10件成功。
+host36件は35成功・既存symlink作成権限の環境エラー1。条件は緩めていない。
+専用AOSP read-onlyで90秒安定/ANR0を確認後、追加2method（重複拒否0.050秒、postPNG取消/owner交代2.487秒）
+と既存2phase（4.739秒/3.519秒）すべて成功。実行app/test APKのSHAはビルド成果物と一致。
+生成データを片付け、製品側比較作業へ枠を返す。実写・Pixel・配布は行っていない。
+この修正もv0.1.0外であり、実picker/任意時点OS終了/disk-full等の未確認範囲は変えない。
