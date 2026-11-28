@@ -340,6 +340,46 @@ jobs:
           awk -F'\t' '$7 == "yes"' "$RUNNER_TEMP/mesa-manifest.tsv" > "$RUNNER_TEMP/mesa-install-targets.tsv"
           expected_install="$(awk -F': ' '$1 == "install-count" { print $2 }' "$manifest")"
           [[ "$(wc -l < "$RUNNER_TEMP/mesa-install-targets.tsv")" -eq "$expected_install" ]]
+          architecture="$(dpkg --print-architecture)"
+          # Print "<version>\t<status>" of the one installed row that the
+          # pre-flight check below selects for a package, so the shell and
+          # the Python check always use the same row. A row counts as
+          # installed when the first Status field is "install" or "hold",
+          # the second is "ok", and the third is "installed". Among such
+          # rows the native architecture wins, then "all", then lexicographic
+          # order of the architecture name. Prints nothing when no such row
+          # exists.
+          mesa_selected_installed_row() {
+            local package="$1"
+            local rows query_stderr query_status
+            query_stderr="$(mktemp)" || return $?
+            if rows="$(dpkg-query -W -f='${Architecture}\t${Version}\t${Status}\n' "$package" 2>"$query_stderr")"; then
+              rm -f "$query_stderr" || return $?
+            else
+              query_status=$?
+              if [[ "$query_status" -ne 1 ]]; then
+                cat "$query_stderr" >&2
+              fi
+              rm -f "$query_stderr" || return $?
+              [[ "$query_status" -eq 1 ]] && return 0
+              return "$query_status"
+            fi
+            [[ -n "$rows" ]] || return 0
+            printf '%s\n' "$rows" | awk -F'\t' -v native="$architecture" '
+              NF == 3 {
+                count = split($3, fields, " ")
+                if (count == 3 && (fields[1] == "install" || fields[1] == "hold") && fields[2] == "ok" && fields[3] == "installed") {
+                  key = ($1 != native) ($1 != "all") $1
+                  if (!seen || key < best) {
+                    best = key
+                    selected = $2 "\t" $3
+                    seen = 1
+                  }
+                }
+              }
+              END { if (seen) print selected }
+            '
+          }
           # Decide per package, by the class recorded in the manifest.
           # Class A (rendering-determining): always install the stored .deb.
           # Class B: if the runner already has the same or a newer version, keep
@@ -349,7 +389,8 @@ jobs:
           : > "$record/dpkg-before.txt"
           install_files=()
           while IFS=$'\t' read -r file package version arch sha class install; do
-            installed="$(dpkg-query -W -f='${Version}' "$package" 2>/dev/null || true)"
+            selected="$(mesa_selected_installed_row "$package")"
+            installed="${selected%%$'\t'*}"
             [[ -n "$installed" ]] || installed="not-installed"
             if [[ "$class" == "B" && "$installed" != "not-installed" ]] \
               && dpkg --compare-versions "$installed" ge "$version"; then
@@ -361,74 +402,123 @@ jobs:
             echo "$package class=$class manifest=$version before=$installed decision=$decision" >> "$record/dpkg-before.txt"
             echo "$decision" > "$RUNNER_TEMP/mesa-decision-$package.txt"
           done < "$RUNNER_TEMP/mesa-install-targets.tsv"
-          # Exact-version relations, checked inside the install targets only:
-          # some packages require another package at exactly one version in
-          # their .deb control data (for example libc6 requires
-          # libc-gconv-modules-extra, libgcc-s1 / libstdc++6 require
-          # gcc-16-base, libegl1 / libgles2 require libglvnd0, and libx11-xcb1
-          # requires libx11-6). The check is done on the versions in effect
-          # after installation, not on the decisions themselves: a package
-          # that installs the stored .deb is predicted at the stored version,
-          # and a package that keeps the runner's version is predicted at the
-          # runner's version. Decisions may differ inside a relation as long
-          # as the resulting versions agree (for example libegl1 installs the
-          # stored .deb while libglvnd0 keeps the runner's copy of the same
-          # version). Derive the relations mechanically from the downloaded
-          # .deb files and stop here, before installing anything, if a
-          # required version does not match the predicted version of the
-          # package it names. Every relation and its result is recorded
-          # either way.
-          python3 - "$cache" "$RUNNER_TEMP" "$record" <<'PYEOF' | tee "$record/dpkg-groups.txt"
-          import re, subprocess, sys
-          cache, temp, record = sys.argv[1], sys.argv[2], sys.argv[3]
-          rows = []
+          # Check exact-version dependencies on install targets using the
+          # package metadata that will be in effect after installation.
+          dpkg --print-architecture > "$RUNNER_TEMP/mesa-runner-architecture.txt"
+          dpkg-query -W -f='${Package}\t${Architecture}\t${Version}\t${Status}\t${Depends}\t${Pre-Depends}\n' \
+            > "$record/dpkg-runner-state.txt"
+          python3 - "$cache" "$RUNNER_TEMP" "$record" <<'PYEOF' 2>&1 | tee "$record/dpkg-groups.txt"
+          import re
+          import subprocess
+          import sys
+          from collections import Counter
+
+          cache, temp, record = sys.argv[1:]
           with open(f"{temp}/mesa-install-targets.tsv") as fh:
-              for line in fh:
-                  rows.append(line.rstrip("\n").split("\t"))
-          known = {r[1] for r in rows}
-          # Decisions and the runner's current versions, as recorded by the
-          # shell loop above in dpkg-before.txt.
-          info = {}
+              targets = {row[1]: (row[0], row[2]) for row in
+                         (line.rstrip("\n").split("\t") for line in fh)}
           with open(f"{record}/dpkg-before.txt") as fh:
+              decisions = {parts[0]: dict(tok.split("=", 1) for tok in parts[1:])["decision"]
+                           for parts in (line.split() for line in fh)}
+          with open(f"{temp}/mesa-runner-architecture.txt") as fh:
+              native = fh.read().strip()
+          if not native:
+              sys.exit("ERROR: runner architecture is missing")
+
+          runner = {}
+          state_ranks = {}
+          with open(f"{record}/dpkg-runner-state.txt") as fh:
               for line in fh:
-                  fields = dict(tok.split("=", 1) for tok in line.split()[1:])
-                  info[line.split()[0]] = fields
-          # Predicted version after installation: the stored version for
-          # install-stored, the runner's current version for use-runner.
+                  package, arch, version, status, depends, pre_depends = line.rstrip("\n").split("\t")
+                  # An installed row has "install" or "hold" in the first
+                  # Status field, "ok" in the second, and "installed" in the
+                  # third. This matches mesa_selected_installed_row.
+                  status_fields = status.split()
+                  if len(status_fields) != 3 or status_fields[0] not in ("install", "hold") \
+                          or status_fields[1] != "ok" or status_fields[2] != "installed":
+                      continue
+                  if not all((package, arch, version)):
+                      sys.exit("ERROR: incomplete installed package in runner state")
+                  rank = (arch != native, arch != "all", arch)
+                  if package not in runner or rank < state_ranks[package]:
+                      runner[package] = (version, (depends, pre_depends))
+                      state_ranks[package] = rank
+          if not runner:
+              sys.exit("ERROR: runner state contains no installed packages")
+
           predicted = {}
-          for _, package, version, *_ in rows:
-              if info[package]["decision"] == "install-stored":
+          sources = {}
+          for package, (file, version) in targets.items():
+              decision = decisions[package]
+              if decision == "install-stored":
                   predicted[package] = version
+                  sources[package] = "stored-deb"
+              elif decision == "use-runner" and package in runner:
+                  predicted[package] = runner[package][0]
+                  sources[package] = "runner-dpkg"
               else:
-                  predicted[package] = info[package]["before"]
-          # Exact-version (=) relations between install targets, derived from
-          # the downloaded .deb control data.
+                  sys.exit(f"ERROR: {package} has invalid decision or missing runner state ({decision})")
+
+          dependency = re.compile(
+              r"\s*([a-z0-9][a-z0-9+.-]*)(?::[a-z0-9-]+)?"
+              r"(?:\s*\(\s*(<<|<=|=|>=|>>)\s*([^\s()]+)\s*\))?\s*",
+              re.ASCII,
+          )
           relations = set()
-          for file, package, *_ in rows:
-              out = subprocess.run(["dpkg-deb", "-f", f"{cache}/{file}", "Depends", "Pre-Depends"],
-                                   capture_output=True, text=True).stdout
-              deps = " ".join(l.split(":", 1)[1] for l in out.splitlines() if ":" in l)
-              for group in deps.split(","):
-                  for alt in group.split("|"):
-                      m = re.match(r"\s*([A-Za-z0-9.+-]+)\s*\(([^)]*)\)", alt)
-                      if m and m.group(1) in known:
-                          constraint = m.group(2).strip()
-                          if constraint.startswith("="):
-                              relations.add((package, m.group(1), constraint[1:].strip()))
+          for package in sorted(targets.keys() | runner.keys()):
+              source = sources.get(package, "runner-dpkg")
+              if source == "stored-deb":
+                  file = targets[package][0]
+                  try:
+                      control = subprocess.run(
+                          ["dpkg-deb", "-f", f"{cache}/{file}", "Depends", "Pre-Depends"],
+                          stdout=subprocess.PIPE, text=True, check=True,
+                      ).stdout
+                  except subprocess.CalledProcessError as exc:
+                      sys.exit(f"ERROR: could not read dependency metadata for {package} ({exc})")
+                  fields = []
+                  for line in control.splitlines():
+                      field, separator, value = line.partition(":")
+                      if line.startswith((" ", "\t")) and fields:
+                          fields[-1] += " " + line.strip()
+                      elif field in ("Depends", "Pre-Depends") and separator:
+                          fields.append(value.strip())
+                      else:
+                          sys.exit(f"ERROR: unexpected dependency metadata for {package}: {line}")
+                  version = predicted[package]
+              else:
+                  version, fields = runner[package]
+              for field in fields:
+                  if not field.strip():
+                      continue
+                  for alt in re.split(r"[,|]", field):
+                      match = dependency.fullmatch(alt)
+                      if not match:
+                          sys.exit(f"ERROR: cannot parse dependency for {package} ({source}): {alt!r}")
+                      name, operator, required = match.groups()
+                      if operator == "=" and name in targets:
+                          relations.add((package, name, required, source, version))
+
+          counts = Counter()
           mismatches = []
-          for requirer, name, required in sorted(relations):
+          for requirer, name, required, source, version in sorted(relations):
               pred = predicted[name]
+              counts[source] += 1
               result = "match" if pred == required else "MISMATCH"
               print(f"relation: {requirer} requires {name} (= {required}); "
-                    f"{name} predicted={pred} decision={info[name]['decision']} -> {result}")
+                    f"{name} predicted={pred} decision={decisions[name]} "
+                    f"derived-from={source} requirer-version={version} -> {result}")
               if pred != required:
-                  mismatches.append((requirer, name, required, pred))
-          for requirer, name, required, pred in mismatches:
+                  mismatches.append((requirer, version, name, required, pred))
+          for requirer, version, name, required, pred in mismatches:
               print(f"ERROR: {requirer} requires {name} at exactly {required}, "
-                    f"but {name} would be at {pred} after installation; not installing anything")
+                    f"but {name} would be at {pred} after installation "
+                    f"(requirer version {version}); not installing anything")
+          outcome = f"{len(mismatches)} mismatched" if mismatches else "all matched"
+          print(f"exact-version relations: {len(relations)} checked, {outcome}; "
+                f"stored-deb={counts['stored-deb']} runner-dpkg={counts['runner-dpkg']}")
           if mismatches:
-              sys.exit("exact-version relation check failed; not installing anything")
-          print(f"exact-version relations: {len(relations)} checked, all matched")
+              sys.exit(1)
           PYEOF
 
           # Incomplete dependency closure fails here instead of fetching or skipping Mesa.
@@ -443,13 +533,23 @@ jobs:
           # (the runner's version, when it was kept). Anything else fails the job.
           : > "$record/dpkg-after.txt"
           while IFS=$'\t' read -r file package version arch sha class install; do
-            state="$(dpkg-query -W -f='${Version} ${Status}' "$package")"
+            selected="$(mesa_selected_installed_row "$package")"
+            if [[ -z "$selected" ]]; then
+              echo "ERROR: $package has no installed row after installation" >&2
+              exit 1
+            fi
+            after_version="${selected%%$'\t'*}"
+            after_status="${selected#*$'\t'}"
             decision="$(cat "$RUNNER_TEMP/mesa-decision-$package.txt")"
             source="runner"
             [[ "$decision" == "install-stored" ]] && source="stored"
-            echo "$package class=$class source=$source $state" >> "$record/dpkg-after.txt"
-            after_version="${state%% *}"
-            [[ "$state" == "$after_version install ok installed" ]]
+            echo "$package class=$class source=$source $after_version $after_status" >> "$record/dpkg-after.txt"
+            status_fields=()
+            read -r -a status_fields <<< "$after_status"
+            [[ "${#status_fields[@]}" -eq 3 ]]
+            [[ "${status_fields[0]}" == "install" || "${status_fields[0]}" == "hold" ]]
+            [[ "${status_fields[1]}" == "ok" ]]
+            [[ "${status_fields[2]}" == "installed" ]]
             if [[ "$class" == "A" ]]; then
               [[ "$after_version" == "$version" ]]
             else
