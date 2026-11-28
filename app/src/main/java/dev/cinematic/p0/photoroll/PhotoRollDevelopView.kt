@@ -38,10 +38,22 @@ import dev.cinematic.p0.CaptureModeSwitchSurface
 import dev.cinematic.p0.CaptureModeSwitchSurfacePadding
 import dev.cinematic.p0.photoedit.*
 
+private val DevelopSaveRowPadding = 12.dp
+private val DevelopCancelWidth = 88.dp
+private val DevelopSaveWidth = 76.dp
 private val DevelopInlineSwitchWidth = 100.dp
 private val DevelopSwitchButtonPadding = 2.dp
 private const val DevelopDisplayLabel = "表示"
 private const val DevelopCompareLabel = "比較"
+
+internal fun developInlineSwitchWidthPx(
+    rowWidthPx: Int,
+    rowPaddingPx: Int,
+    cancelWidthPx: Int,
+    saveWidthPx: Int,
+    preferredWidthPx: Int,
+): Int = (rowWidthPx - rowPaddingPx * 2 - cancelWidthPx - saveWidthPx)
+    .coerceIn(0, preferredWidthPx)
 
 // border は描画のみで幅を消費しない。実際の丸めに合わせて px で計算し、
 // Row の配分が 1px 異なる場合に備えて、狭い側の字面幅を使う。
@@ -245,8 +257,8 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
             }
             val cancelAndSave: @Composable () -> Unit = {
                 TextButton(onClick = { session?.let { cancel(it.inputToken) } }, enabled = foreground && session != null,
-                    modifier = Modifier.width(88.dp), shape = RectangleShape) { Text("取消") }
-                Column(Modifier.width(76.dp).heightIn(min = 76.dp).semantics(mergeDescendants = true) { contentDescription = productSave?.description ?: when (savePhase) {
+                    modifier = Modifier.width(DevelopCancelWidth), shape = RectangleShape) { Text("取消") }
+                Column(Modifier.width(DevelopSaveWidth).heightIn(min = 76.dp).semantics(mergeDescendants = true) { contentDescription = productSave?.description ?: when (savePhase) {
                     PhotoRollSavePhase.CANCELLED -> "取り消した保存を同じ設定で再試行"; PhotoRollSavePhase.GPU_FAILED -> "同じ GPU 保存を再試行"; PhotoRollSavePhase.PUBLISHED -> "保存したJPEGを照合して開く"; PhotoRollSavePhase.UNCONFIRMED -> "同じ保存を再照合"; else -> "JPEGを保存" }
                     stateDescription = saveLabel
                     if (!saveEnabled) disabled() }.clickable(enabled = saveEnabled, role = Role.Button, onClick = save), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -284,36 +296,7 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
                     } }
                 }
             }
-            // compact はスクロール等を制御し、保存行の2段化はスイッチの字面幅の実測で判定する。
-            val textMeasurer = rememberTextMeasurer()
-            val widestSwitchLabelPx = listOf(DevelopDisplayLabel, DevelopCompareLabel).maxOf { label ->
-                textMeasurer.measure(label, style = CaptureDesign.Label, maxLines = 1, softWrap = false).size.width
-            }
-            val availableSwitchLabelWidthPx = with(LocalDensity.current) {
-                developSwitchLabelWidthPx(
-                    DevelopInlineSwitchWidth.roundToPx(),
-                    CaptureModeSwitchSurfacePadding.roundToPx(),
-                    DevelopSwitchButtonPadding.roundToPx(),
-                )
-            }
-            val switchLabelsNeedFullWidth = developSwitchNeedsTwoRows(widestSwitchLabelPx, availableSwitchLabelWidthPx)
-            if (switchLabelsNeedFullWidth) {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
-                    Row(Modifier.fillMaxWidth().heightIn(min = 96.dp), verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween) {
-                        cancelAndSave()
-                    }
-                    BoxWithConstraints(Modifier.fillMaxWidth()) {
-                        displayCompareSwitch(maxWidth)
-                    }
-                }
-            } else {
-                Row(Modifier.fillMaxWidth().heightIn(min = 96.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween) {
-                    cancelAndSave()
-                    displayCompareSwitch(DevelopInlineSwitchWidth)
-                }
-            }
+            DevelopSaveRow(cancelAndSave, displayCompareSwitch)
         }
     }
     if (information && productMessages != null) CaptureDialog(
@@ -335,4 +318,51 @@ internal fun developSaveLabel(mode: PhotoRollPreviewMode, phase: PhotoRollSavePh
             info()
         } }, confirmButton = { TextButton(onClick = { information = false }) { Text("閉じる") } })
 
+}
+
+@Composable
+internal fun DevelopSaveRow(
+    cancelAndSave: @Composable () -> Unit,
+    displayCompareSwitch: @Composable (Dp) -> Unit,
+) {
+    val textMeasurer = rememberTextMeasurer()
+    val widestSwitchLabelPx = listOf(DevelopDisplayLabel, DevelopCompareLabel).maxOf { label ->
+        textMeasurer.measure(label, style = CaptureDesign.Label, maxLines = 1, softWrap = false).size.width
+    }
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val density = LocalDensity.current
+        val inlineSwitchWidthPx = with(density) {
+            developInlineSwitchWidthPx(
+                constraints.maxWidth,
+                DevelopSaveRowPadding.roundToPx(),
+                DevelopCancelWidth.roundToPx(),
+                DevelopSaveWidth.roundToPx(),
+                DevelopInlineSwitchWidth.roundToPx(),
+            )
+        }
+        val availableSwitchLabelWidthPx = with(density) {
+            developSwitchLabelWidthPx(
+                inlineSwitchWidthPx,
+                CaptureModeSwitchSurfacePadding.roundToPx(),
+                DevelopSwitchButtonPadding.roundToPx(),
+            )
+        }
+        if (developSwitchNeedsTwoRows(widestSwitchLabelPx, availableSwitchLabelWidthPx)) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = DevelopSaveRowPadding)) {
+                Row(Modifier.fillMaxWidth().heightIn(min = 96.dp), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween) {
+                    cancelAndSave()
+                }
+                BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    displayCompareSwitch(maxWidth)
+                }
+            }
+        } else {
+            Row(Modifier.fillMaxWidth().heightIn(min = 96.dp).padding(horizontal = DevelopSaveRowPadding),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                cancelAndSave()
+                displayCompareSwitch(with(density) { inlineSwitchWidthPx.toDp() })
+            }
+        }
+    }
 }

@@ -4,6 +4,22 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DevelopSwitchLayoutTest {
+    @Test fun inlineSwitchWidthUsesRemainingSpace() {
+        assertEquals(100, developInlineSwitchWidthPx(300, 12, 88, 76, 100))
+        assertEquals(100, developInlineSwitchWidthPx(288, 12, 88, 76, 100))
+        assertEquals(99, developInlineSwitchWidthPx(287, 12, 88, 76, 100))
+        assertEquals(0, developInlineSwitchWidthPx(180, 12, 88, 76, 100))
+    }
+
+    @Test fun compressedSwitchChangesLayoutAtActualLabelWidth() {
+        val switchWidthPx = developInlineSwitchWidthPx(268, 12, 88, 76, 100)
+        assertEquals(80, switchWidthPx)
+        val labelWidthPx = developSwitchLabelWidthPx(switchWidthPx, 2, 2)
+        assertEquals(34, labelWidthPx)
+        assertFalse(developSwitchNeedsTwoRows(34, labelWidthPx))
+        assertTrue(developSwitchNeedsTwoRows(35, labelWidthPx))
+    }
+
     @Test fun densityOneFitsLabelsUpTo44Px() {
         // 密度 1.0 相当の丸め後の px。
         val labelWidthPx = developSwitchLabelWidthPx(100, 2, 2)
